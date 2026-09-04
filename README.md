@@ -19,13 +19,24 @@ API** (https://developer.trimble.com/docs/connect/workspace-api/).
 - **Framdrift per område** och **Framdrift per entreprenör**: två paneler
   med horisontella staplar som visar genomsnittlig framdrift (%), antal
   objekt och antal försenade per grupp.
+- **Kommande veckor**: en lookahead-tabell (denna vecka + två veckor
+  framåt) som visar hur många objekt som ska starta respektive vara
+  klara varje vecka, samt hur många av de sistnämnda som redan ligger
+  som försenade. Bygger på `start_date`/`end_date` i `plan_items`.
+- **Försenade objekt**: en lista sorterad på flest dagar över planerat
+  slutdatum längst upp. Baseras på `end_date` jämfört med dagens datum
+  (inte bara statusfältet), så listan fångar även objekt vars status
+  inte hunnit uppdateras manuellt.
+- **Senaste kommentarer**: ett flöde med de senaste kommentarerna från
+  `plan_item_comments` (samma tabell som kommentarerna i 4D-planering),
+  för objekt som matchar den aktuella filtreringen.
 - **Uppdatera-knapp** (↻) i headern hämtar senaste data på begäran; sidan
   visar även när den senast uppdaterades.
 
-Fler delar är tänkta att byggas på ovanpå detta: ett samlat
-kommentars-/avvikelseflöde över alla objekt, och en
-"planerat vs. utfall"-kurva för framdrift över tid. Se avsnittet
-"Vidareutveckling" nedan.
+Allt ovan bygger enbart på tabeller som redan finns (`plan_items` och
+`plan_item_comments`) – ingen ny databasstruktur krävs. En
+"planerat vs. utfall"-kurva för framdrift över tid är fortfarande inte
+byggd; se avsnittet "Vidareutveckling" nedan för varför.
 
 ## Arkitektur
 
@@ -87,18 +98,31 @@ hostas gratis direkt från repot:
 
 ## Vidareutveckling
 
-Två delar diskuterade men inte byggda än:
+Delar som diskuterats men medvetet inte byggts än, eftersom de kräver
+antingen ett beslut om ny databasstruktur eller en extern datakälla –
+att skapa tabellerna själv utan att fråga känns fel eftersom det är du
+som får leva med schemat och fylla i datan skarpt:
 
-- **Kommentarer/avvikelser-flöde**: en samlad lista över de senaste
-  kommentarerna från `plan_item_comments` över alla objekt, med möjlighet
-  att klicka en kommentar för att hoppa till och markera objektet i
-  3D-vyn.
-- **Framdrift över tid**: en "planerat vs. utfall"-kurva. Kräver ett
-  beslut: antingen (a) bara rita en planerad kurva utifrån start-/
-  slutdatum och lägga dagens faktiska snitt som en punkt ovanpå, eller
-  (b) börja logga framdriftshistorik i en ny tabell (progress +
-  tidsstämpel vid varje ändring) för att kunna rita en riktig
-  utfallskurva över tid.
+- **Framdrift över tid** ("planerat vs. utfall"-kurva, S-kurva): kräver
+  ett beslut – antingen (a) bara rita en planerad kurva utifrån start-/
+  slutdatum och lägga dagens faktiska snitt som en punkt ovanpå (inga
+  nya tabeller), eller (b) börja logga framdriftshistorik i en ny tabell
+  (progress + tidsstämpel vid varje ändring) för att kunna rita en
+  riktig utfallskurva.
+- **Milstolpar**: egna markörer (stomresning klar, tätt hus, etc.) i
+  "Kommande veckor"-panelen. Kräver en ny liten tabell, t.ex.
+  `plan_milestones` (namn, datum, klar-flagga).
+- **Bemanning/resurser** per entreprenör och vecka, **leveransplan**,
+  **säkerhet** (tillbud, skyddsronder) och **kvalitet/besiktningar**:
+  alla vanliga på byggdashboards, men kräver egna tabeller och att
+  någon i projektet börjar mata in datan löpande – annars blir panelen
+  bara tom.
+- **Väder**: kräver en extern väder-API-koppling och en plats
+  (koordinater) per projekt.
+
+Vill du gå vidare med någon av dessa, säg till så tar vi fram ett
+konkret tabellförslag (SQL) tillsammans innan något byggs, så att
+schemat passar hur ni faktiskt vill mata in datan.
 
 ## Snabbreferens: navigering i Trimble Connect (för framtida uppdateringar)
 
