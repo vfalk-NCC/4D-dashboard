@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8" />
+<title>4D-dashboard</title>
+<link rel="stylesheet" href="style.css" />
+<script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
+</head>
+<body>
+  <div id="app">
+
+    <!-- ===== Header ===== -->
+    <header>
+      <div class="header-brand">
+        <span class="ncc-mark" title="NCC">NCC</span>
+        <div class="header-titles">
+          <h1>4D-dashboard</h1>
+          <span class="made-by">Made by: VFA</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btnRefresh" title="Hämta senaste data">↻</button>
+        <button id="btnSettings" title="Inställningar (databas)">⚙</button>
+      </div>
+    </header>
+    <div id="connectionWarning" class="hint warning hidden"></div>
+    <div id="lastUpdated" class="hint"></div>
+
+    <!-- ===== Översikt (KPI:er) ===== -->
+    <section class="panel" data-panel-id="overview">
+      <h2>Översikt</h2>
+      <div id="kpiGrid" class="kpi-grid"></div>
+    </section>
+
+    <!-- ===== Statusfördelning ===== -->
+    <section class="panel" data-panel-id="status">
+      <h2>Statusfördelning</h2>
+      <div id="statusChart" class="status-chart"></div>
+    </section>
+
+  </div>
+
+  <!-- Inställningsdialog -->
+  <div id="settingsDialog" class="dialog hidden">
+    <div class="dialog-box">
+      <h2>Inställningar</h2>
+      <label>Supabase-URL <input type="text" id="supabaseUrl" placeholder="https://xxxxx.supabase.co" /></label>
+      <label>Supabase anon key (public) <input type="text" id="supabaseKey" placeholder="eyJhbGciOi..." /></label>
+      <p class="hint">Använd samma Supabase-projekt och nyckel som i 4D-planering, så visar dashboarden
+        samma planeringsdata. Se README.md i 4D-planering-repot för hela uppsättningsguiden.</p>
+      <div class="row">
+        <button id="btnSaveSettings" class="primary">Spara</button>
+        <button id="btnCloseSettings">Stäng</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

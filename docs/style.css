@@ -1,0 +1,176 @@
+:root {
+  --bg: #ffffff;
+  --panel: #f4f5f7;
+  --border: #dcdfe4;
+  --text: #1f2328;
+  --muted: #6b7280;
+  --accent: #0b5fff;
+  font-family: "Segoe UI", Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+#app { padding: 10px; }
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+header h1 { font-size: 16px; margin: 0; }
+header button { background: none; border: none; font-size: 16px; cursor: pointer; }
+
+.header-brand { display: flex; align-items: center; gap: 8px; }
+.header-actions { display: flex; align-items: center; gap: 4px; }
+.ncc-mark {
+  flex: 0 0 auto;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: .02em;
+  color: #fff;
+  background: var(--accent);
+  padding: 3px 6px;
+  border-radius: 3px;
+  line-height: 1;
+}
+.header-titles { display: flex; flex-direction: column; line-height: 1.15; }
+.header-titles h1 { font-size: 16px; margin: 0; }
+.made-by { font-size: 9px; color: var(--muted); }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.panel h2 {
+  font-size: 13px;
+  margin: 0 0 8px 0;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+}
+
+.hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
+.hint.warning { color: #e5484d; font-weight: 600; padding: 6px 8px; background: #fdeceb; border: 1px solid #f3c4c1; border-radius: 4px; }
+
+label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  margin-top: 2px;
+  font-family: inherit;
+}
+
+.row { display: flex; gap: 6px; margin-top: 6px; }
+
+button {
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: white;
+  cursor: pointer;
+  font-size: 12px;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+button:hover { filter: brightness(0.97); }
+button:disabled { opacity: 0.5; cursor: default; filter: none; }
+
+.hidden { display: none !important; }
+
+.dialog {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex; align-items: center; justify-content: center;
+}
+.dialog-box {
+  background: white;
+  padding: 16px;
+  border-radius: 8px;
+  width: 320px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* ---------------------------------------------------------------------
+   KPI-rutnät ("Översikt")
+   ------------------------------------------------------------------- */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.kpi-tile {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  text-align: center;
+}
+.kpi-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.kpi-label {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+.kpi-tile.accent-done .kpi-value { color: #3fb950; }
+.kpi-tile.accent-delayed .kpi-value { color: #e5484d; }
+.kpi-tile.accent-progress .kpi-value { color: var(--accent); }
+
+/* ---------------------------------------------------------------------
+   Statusfördelning
+   ------------------------------------------------------------------- */
+.status-chart { display: flex; flex-direction: column; gap: 6px; }
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.status-row .status-label {
+  flex: 0 0 88px;
+  color: var(--text);
+}
+.status-row .status-track {
+  flex: 1;
+  height: 12px;
+  background: #e2e5ea;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.status-row .status-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+.status-row .status-count {
+  flex: 0 0 56px;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
