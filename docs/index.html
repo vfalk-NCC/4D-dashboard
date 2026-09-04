@@ -26,6 +26,20 @@
     <div id="connectionWarning" class="hint warning hidden"></div>
     <div id="lastUpdated" class="hint"></div>
 
+    <!-- ===== Filtrering ===== -->
+    <div id="filterBar" class="filter-bar">
+      <label>Område
+        <select id="filterArea"><option value="">Alla områden</option></select>
+      </label>
+      <label>Aktivitet
+        <select id="filterActivity"><option value="">Alla aktiviteter</option></select>
+      </label>
+      <label>Entreprenör
+        <select id="filterContractor"><option value="">Alla entreprenörer</option></select>
+      </label>
+      <button id="btnResetFilters" title="Rensa all filtrering">Rensa filter</button>
+    </div>
+
     <!-- ===== Översikt (KPI:er) ===== -->
     <section class="panel" data-panel-id="overview">
       <h2>Översikt</h2>
@@ -36,6 +50,18 @@
     <section class="panel" data-panel-id="status">
       <h2>Statusfördelning</h2>
       <div id="statusChart" class="status-chart"></div>
+    </section>
+
+    <!-- ===== Framdrift per område ===== -->
+    <section class="panel" data-panel-id="area-progress">
+      <h2>Framdrift per område</h2>
+      <div id="areaProgress" class="progress-chart"></div>
+    </section>
+
+    <!-- ===== Framdrift per entreprenör ===== -->
+    <section class="panel" data-panel-id="contractor-progress">
+      <h2>Framdrift per entreprenör</h2>
+      <div id="contractorProgress" class="progress-chart"></div>
     </section>
 
   </div>

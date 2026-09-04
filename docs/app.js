@@ -1,19 +1,26 @@
 /* =========================================================================
    4D-dashboard – Trimble Connect Extension
    ---------------------------------------------------------------------
-   Fristående extension som visar nyckeltal och statusfördelning för
-   samma planeringsdata som 4D-planering skriver till (Supabase-tabellen
-   plan_items). Läser bara data – skriver aldrig något till databasen.
+   Fristående extension som visar nyckeltal, statusfördelning och
+   framdrift (uppdelat på område/entreprenör) för samma planeringsdata
+   som 4D-planering skriver till (Supabase-tabellen plan_items).
+   Läser bara data – skriver aldrig något till databasen.
    Bygger på trimble-connect-workspace-api. Se:
    https://developer.trimble.com/docs/connect/workspace-api/
    ========================================================================= */
 
 let API = null;              // Workspace API-instans
 let projectId = null;        // Aktuellt Trimble Connect-projekt
-let items = [];              // Cache av planeringsposter (från backend)
+let items = [];               // Cache av samtliga planeringsposter (från backend, ofiltrerat)
 let settings = {
   supabaseUrl: "",
   supabaseKey: ""
+};
+// Aktiv filtrering – tomt värde ("") betyder "alla" för respektive fält.
+let filters = {
+  area: "",
+  activity: "",
+  contractor: ""
 };
 
 // Svenska visningsnamn och färger per statusvärde - samma som i
@@ -35,6 +42,10 @@ const STATUS_COLORS = {
   pausad: "#a1a1aa"
 };
 const STATUS_ORDER = ["ej_planerad", "planerad", "pagaende", "forsenad", "klar", "pausad"];
+
+const NO_AREA_LABEL = "Utan område";
+const NO_ACTIVITY_LABEL = "Utan aktivitet";
+const NO_CONTRACTOR_LABEL = "Utan entreprenör";
 
 // Max antal rader att hämta från Supabase per anrop (se samma resonemang
 // som i 4D-planering: PostgRESTs/Supabase-projektets egen "Max Rows"
@@ -67,10 +78,81 @@ function bindUI() {
   document.getElementById("supabaseUrl").value = settings.supabaseUrl;
   document.getElementById("supabaseKey").value = settings.supabaseKey;
   updateConnectionWarning();
+
+  document.getElementById("filterArea").onchange = onFilterChange;
+  document.getElementById("filterActivity").onchange = onFilterChange;
+  document.getElementById("filterContractor").onchange = onFilterChange;
+  document.getElementById("btnResetFilters").onclick = onResetFilters;
 }
 
 function toggle(id, show) {
   document.getElementById(id).classList.toggle("hidden", !show);
+}
+
+/* ---------------------------------------------------------------------
+   Filtrering (område / aktivitet / entreprenör)
+   ------------------------------------------------------------------- */
+function onFilterChange() {
+  filters.area = document.getElementById("filterArea").value;
+  filters.activity = document.getElementById("filterActivity").value;
+  filters.contractor = document.getElementById("filterContractor").value;
+  renderAll();
+}
+
+function onResetFilters() {
+  filters = { area: "", activity: "", contractor: "" };
+  document.getElementById("filterArea").value = "";
+  document.getElementById("filterActivity").value = "";
+  document.getElementById("filterContractor").value = "";
+  renderAll();
+}
+
+function getFilteredItems() {
+  return items.filter(it => {
+    if (filters.area && it.area !== filters.area) return false;
+    if (filters.activity && it.activity !== filters.activity) return false;
+    if (filters.contractor && it.contractor !== filters.contractor) return false;
+    return true;
+  });
+}
+
+// Fyller filtrets tre <select>-fält med de värden som faktiskt finns i
+// datan just nu. Behåller vald filtrering om värdet fortfarande finns
+// kvar i listan efter en omhämtning, annars nollställs det.
+function populateFilterOptions() {
+  fillSelect("filterArea", "area", uniqueValues(it => it.area), "Alla områden");
+  fillSelect("filterActivity", "activity", uniqueValues(it => it.activity), "Alla aktiviteter");
+  fillSelect("filterContractor", "contractor", uniqueValues(it => it.contractor), "Alla entreprenörer");
+}
+
+function uniqueValues(keyFn) {
+  const set = new Set();
+  items.forEach(it => {
+    const v = keyFn(it);
+    if (v) set.add(v);
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "sv"));
+}
+
+function fillSelect(id, filterKey, values, allLabel) {
+  const el = document.getElementById(id);
+  const current = filters[filterKey];
+
+  el.innerHTML = [`<option value="">${escapeHtml(allLabel)}</option>`]
+    .concat(values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`))
+    .join("");
+
+  if (current && values.includes(current)) {
+    el.value = current;
+  } else {
+    filters[filterKey] = "";
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, ch => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[ch]));
 }
 
 /* ---------------------------------------------------------------------
@@ -113,9 +195,20 @@ function updateConnectionWarning() {
    ------------------------------------------------------------------- */
 async function refreshAll() {
   await fetchItems();
+  populateFilterOptions();
+  renderAll();
+  updateLastUpdated();
+}
+
+// Ritar om alla paneler utifrån den aktuella filtreringen. Anropas både
+// efter en ny hämtning och varje gång användaren ändrar ett filter (utan
+// att hämta om data från Supabase).
+function renderAll() {
   renderKpis();
   renderStatusChart();
-  updateLastUpdated();
+  const filtered = getFilteredItems();
+  renderGroupProgress("areaProgress", filtered, it => it.area, NO_AREA_LABEL);
+  renderGroupProgress("contractorProgress", filtered, it => it.contractor, NO_CONTRACTOR_LABEL);
 }
 
 async function fetchItems() {
@@ -143,7 +236,10 @@ function fromRow(row) {
   return {
     id: row.id,
     status: row.status || "planerad",
-    progress: Number.isFinite(row.progress) ? row.progress : 0
+    progress: Number.isFinite(row.progress) ? row.progress : 0,
+    area: (row.area || "").trim(),
+    activity: (row.activity || "").trim(),
+    contractor: (row.contractor || "").trim()
   };
 }
 
@@ -159,16 +255,25 @@ function updateLastUpdated() {
   el.innerText = `Senast uppdaterad: ${pad(now.getHours())}:${pad(now.getMinutes())} (${items.length} objekt)`;
 }
 
+// Meddelande att visa i en panel när det inte finns något att rita.
+// Skiljer mellan "ingen databas", "tomt projekt" och "filtret gav träff
+// på noll objekt", så det alltid är tydligt varför panelen är tom.
+function emptyMessage() {
+  if (!isSupabaseConfigured()) return "Ingen databas ansluten ännu.";
+  if (items.length === 0) return "Inga planerade objekt hittades för det här projektet.";
+  return "Inga objekt matchar den valda filtreringen.";
+}
+
 /* ---------------------------------------------------------------------
    Statistik
    ------------------------------------------------------------------- */
-function computeStats() {
-  const total = items.length;
+function computeStats(list) {
+  const total = list.length;
   const byStatus = {};
   STATUS_ORDER.forEach(s => { byStatus[s] = 0; });
   let progressSum = 0;
 
-  items.forEach(it => {
+  list.forEach(it => {
     if (byStatus[it.status] === undefined) byStatus[it.status] = 0;
     byStatus[it.status]++;
     progressSum += it.progress;
@@ -187,10 +292,11 @@ function computeStats() {
    ------------------------------------------------------------------- */
 function renderKpis() {
   const el = document.getElementById("kpiGrid");
-  const s = computeStats();
+  const list = getFilteredItems();
+  const s = computeStats(list);
 
   if (s.total === 0) {
-    el.innerHTML = `<div class="hint">${isSupabaseConfigured() ? "Inga planerade objekt hittades för det här projektet." : "Ingen databas ansluten ännu."}</div>`;
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
     return;
   }
 
@@ -217,10 +323,11 @@ function renderKpis() {
    ------------------------------------------------------------------- */
 function renderStatusChart() {
   const el = document.getElementById("statusChart");
-  const s = computeStats();
+  const list = getFilteredItems();
+  const s = computeStats(list);
 
   if (s.total === 0) {
-    el.innerHTML = `<div class="hint">${isSupabaseConfigured() ? "Inga planerade objekt att visa." : "Ingen databas ansluten ännu."}</div>`;
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
     return;
   }
 
@@ -236,4 +343,59 @@ function renderStatusChart() {
         <span class="status-count">${count} (${Math.round((count / s.total) * 100)}%)</span>
       </div>`;
   }).join("");
+}
+
+/* ---------------------------------------------------------------------
+   Framdrift per grupp (område / entreprenör) – genomsnittlig progress
+   (%) inom gruppen, ritad som en horisontell stapel, plus antal objekt
+   och antal försenade i gruppen.
+   ------------------------------------------------------------------- */
+function computeGroupProgress(list, keyFn, fallbackLabel) {
+  const map = new Map();
+
+  list.forEach(it => {
+    const raw = keyFn(it);
+    const key = raw ? raw : fallbackLabel;
+    if (!map.has(key)) map.set(key, { count: 0, progressSum: 0, delayed: 0 });
+    const g = map.get(key);
+    g.count++;
+    g.progressSum += it.progress;
+    if (it.status === "forsenad") g.delayed++;
+  });
+
+  const groups = Array.from(map.entries()).map(([label, g]) => ({
+    label,
+    count: g.count,
+    avgProgress: g.count ? Math.round(g.progressSum / g.count) : 0,
+    delayed: g.delayed
+  }));
+
+  // Alfabetisk (svensk) sortering, men "Utan område"/"Utan entreprenör"
+  // hamnar alltid sist eftersom den gruppen är minst relevant att titta på.
+  groups.sort((a, b) => {
+    if (a.label === fallbackLabel) return 1;
+    if (b.label === fallbackLabel) return -1;
+    return a.label.localeCompare(b.label, "sv");
+  });
+
+  return groups;
+}
+
+function renderGroupProgress(containerId, list, keyFn, fallbackLabel) {
+  const el = document.getElementById(containerId);
+
+  if (list.length === 0) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const groups = computeGroupProgress(list, keyFn, fallbackLabel);
+
+  el.innerHTML = groups.map(g => `
+    <div class="progress-row">
+      <span class="progress-label" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
+      <span class="progress-track"><span class="progress-fill" style="width:${g.avgProgress}%"></span></span>
+      <span class="progress-value">${g.avgProgress}%</span>
+      <span class="progress-meta">${g.count} obj${g.delayed ? ` · ${g.delayed} försenade` : ""}</span>
+    </div>`).join("");
 }
