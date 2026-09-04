@@ -13,11 +13,17 @@ API** (https://developer.trimble.com/docs/connect/workspace-api/).
 - **Statusfördelning**: ett stapeldiagram med antal (och andel) objekt per
   status – samma statusar och färger som i 4D-planering, så de två
   apparna känns igen som en helhet.
+- **Filtrering**: tre filter (område, aktivitet, entreprenör) längst upp
+  som styr hela sidan – KPI:er, statusfördelning och framdriftspanelerna
+  räknas om direkt i webbläsaren, utan ny hämtning från databasen.
+- **Framdrift per område** och **Framdrift per entreprenör**: två paneler
+  med horisontella staplar som visar genomsnittlig framdrift (%), antal
+  objekt och antal försenade per grupp.
 - **Uppdatera-knapp** (↻) i headern hämtar senaste data på begäran; sidan
   visar även när den senast uppdaterades.
 
-Fler delar är tänkta att byggas på ovanpå detta: entreprenörsuppföljning,
-ett samlat kommentars-/avvikelseflöde över alla objekt, och en
+Fler delar är tänkta att byggas på ovanpå detta: ett samlat
+kommentars-/avvikelseflöde över alla objekt, och en
 "planerat vs. utfall"-kurva för framdrift över tid. Se avsnittet
 "Vidareutveckling" nedan.
 
@@ -81,11 +87,8 @@ hostas gratis direkt från repot:
 
 ## Vidareutveckling
 
-Tre delar diskuterade men inte byggda än:
+Två delar diskuterade men inte byggda än:
 
-- **Entreprenörsuppföljning**: tabell/diagram som jämför entreprenörer
-  mot varandra (antal objekt, andel klara, snittframdrift, antal
-  försenade).
 - **Kommentarer/avvikelser-flöde**: en samlad lista över de senaste
   kommentarerna från `plan_item_comments` över alla objekt, med möjlighet
   att klicka en kommentar för att hoppa till och markera objektet i
@@ -96,3 +99,13 @@ Tre delar diskuterade men inte byggda än:
   (b) börja logga framdriftshistorik i en ny tabell (progress +
   tidsstämpel vid varje ändring) för att kunna rita en riktig
   utfallskurva över tid.
+
+## Snabbreferens: navigering i Trimble Connect (för framtida uppdateringar)
+
+- **Program och funktioner** (lägga till/hantera extensions): öppna ett
+  projekt → kugghjulet (⚙) längst ned i vänstermenyn → "Program och
+  funktioner" → "Lägg till anpassad" → klistra in manifest-URL:en.
+- **GitHub Pages**: repots **Settings → Pages** → "Deploy from a branch"
+  → branch `main`, mapp `/docs` → Save. Vid en helt tom repo måste första
+  filen laddas upp via `.../upload` (utan branch) innan `main` finns –
+  därefter fungerar `.../upload/main/docs` för nya filer i `docs/`-mappen.
