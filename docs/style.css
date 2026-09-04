@@ -253,3 +253,110 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ---------------------------------------------------------------------
+   Kommande veckor (lookahead)
+   ------------------------------------------------------------------- */
+.lookahead-chart { display: flex; flex-direction: column; gap: 4px; }
+.lookahead-row {
+  display: grid;
+  grid-template-columns: 90px repeat(4, 1fr);
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  padding: 3px 0;
+}
+.lookahead-row.header {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+  margin-bottom: 2px;
+}
+.lookahead-row .lookahead-label { color: var(--text); font-weight: 600; }
+.lookahead-row .lookahead-cell {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.lookahead-row.header .lookahead-cell { color: var(--muted); }
+.lookahead-row .lookahead-cell.delayed { color: #e5484d; font-weight: 700; }
+
+/* ---------------------------------------------------------------------
+   Försenade objekt
+   ------------------------------------------------------------------- */
+.delayed-list { display: flex; flex-direction: column; }
+.delayed-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.delayed-row:last-child { border-bottom: none; }
+.delayed-row .delayed-label {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.delayed-row .delayed-meta {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.delayed-row .delayed-days {
+  color: #e5484d;
+  font-weight: 700;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------
+   Senaste kommentarer
+   ------------------------------------------------------------------- */
+.comments-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.comment-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.comment-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.comment-head .comment-author { font-weight: 700; color: var(--text); }
+.comment-object {
+  font-size: 10px;
+  color: var(--accent);
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.comment-body {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

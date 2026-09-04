@@ -52,6 +52,22 @@ const NO_CONTRACTOR_LABEL = "Utan entreprenör";
 // sätter också ett tak).
 const ITEMS_FETCH_LIMIT = 50000;
 
+// Hur många veckor framåt (denna vecka + kommande) som visas i
+// "Kommande veckor"-panelen.
+const LOOKAHEAD_WEEKS = 3;
+
+// Max antal rader att visa i "Försenade objekt"-listan.
+const DELAYED_LIST_MAX = 15;
+
+// plan_item_comments delas av alla Trimble Connect-projekt som pekar mot
+// samma Supabase-databas (tabellen har ingen egen project_id-kolumn, bara
+// plan_item_id). Vi hämtar därför de N senaste kommentarerna totalt och
+// filtrerar client-side mot de objekt-id:n som hör till det här projektet
+// – enklare och mer robust än att bygga en lång "in.(id1,id2,...)"-fråga.
+const COMMENTS_FETCH_LIMIT = 500;
+const COMMENTS_SHOWN = 20;
+let recentComments = []; // Cache av senast hämtade kommentarer (ofiltrerat på projekt)
+
 /* ---------------------------------------------------------------------
    Init
    ------------------------------------------------------------------- */
@@ -194,7 +210,7 @@ function updateConnectionWarning() {
    Hämta data + rita om allt
    ------------------------------------------------------------------- */
 async function refreshAll() {
-  await fetchItems();
+  await Promise.all([fetchItems(), fetchRecentComments()]);
   populateFilterOptions();
   renderAll();
   updateLastUpdated();
@@ -209,6 +225,9 @@ function renderAll() {
   const filtered = getFilteredItems();
   renderGroupProgress("areaProgress", filtered, it => it.area, NO_AREA_LABEL);
   renderGroupProgress("contractorProgress", filtered, it => it.contractor, NO_CONTRACTOR_LABEL);
+  renderLookahead(filtered);
+  renderDelayedList(filtered);
+  renderComments(filtered);
 }
 
 async function fetchItems() {
@@ -235,12 +254,95 @@ async function fetchItems() {
 function fromRow(row) {
   return {
     id: row.id,
+    objectName: (row.object_name || "").trim(),
     status: row.status || "planerad",
     progress: Number.isFinite(row.progress) ? row.progress : 0,
     area: (row.area || "").trim(),
     activity: (row.activity || "").trim(),
-    contractor: (row.contractor || "").trim()
+    contractor: (row.contractor || "").trim(),
+    startDate: row.start_date || null,
+    endDate: row.end_date || null
   };
+}
+
+// Hämtar de senaste kommentarerna (över alla projekt som delar databasen,
+// se kommentaren vid COMMENTS_FETCH_LIMIT ovan) från 4D-planerings
+// kommentarstabell. Läser bara – dashboarden skriver aldrig kommentarer.
+async function fetchRecentComments() {
+  if (!isSupabaseConfigured()) {
+    recentComments = [];
+    return;
+  }
+  try {
+    const url = `${settings.supabaseUrl}/rest/v1/plan_item_comments?select=*&order=created_at.desc`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: settings.supabaseKey,
+        Authorization: `Bearer ${settings.supabaseKey}`,
+        Range: `0-${COMMENTS_FETCH_LIMIT - 1}`
+      }
+    });
+    recentComments = res.ok ? await res.json() : [];
+  } catch (e) {
+    console.error("Kunde inte hämta kommentarer", e);
+    recentComments = [];
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Datumhjälpfunktioner (UTC-baserade så att "idag" och datumfält från
+   databasen jämförs konsekvent, oavsett webbläsarens tidszon).
+   ------------------------------------------------------------------- */
+function parseDate(value) {
+  if (!value) return null;
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00Z` : value;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function todayUTC() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+function startOfWeekUTC(date) {
+  const day = (date.getUTCDay() + 6) % 7; // Måndag = 0
+  const d = new Date(date);
+  d.setUTCDate(d.getUTCDate() - day);
+  return d;
+}
+
+function isoWeekNumber(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNum = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - dayNum + 3); // torsdag samma vecka
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const firstDayNum = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNum + 3);
+  return 1 + Math.round((d - firstThursday) / (7 * 24 * 60 * 60 * 1000));
+}
+
+function relativeTime(value) {
+  const d = parseDate(value);
+  if (!d) return "";
+  const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return "just nu";
+  if (diffMin < 60) return `${diffMin} min sedan`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `${diffH} tim sedan`;
+  const diffD = Math.round(diffH / 24);
+  if (diffD < 7) return `${diffD} dygn sedan`;
+  return d.toLocaleDateString("sv-SE");
+}
+
+function truncate(str, max) {
+  return str.length > max ? str.slice(0, max - 1) + "…" : str;
+}
+
+// Namnet att visa för ett objekt i listor – objektnamnet om det finns,
+// annars område + aktivitet som fallback.
+function itemLabel(it) {
+  return it.objectName || [it.area, it.activity].filter(Boolean).join(" · ") || "Okänt objekt";
 }
 
 function updateLastUpdated() {
@@ -398,4 +500,157 @@ function renderGroupProgress(containerId, list, keyFn, fallbackLabel) {
       <span class="progress-value">${g.avgProgress}%</span>
       <span class="progress-meta">${g.count} obj${g.delayed ? ` · ${g.delayed} försenade` : ""}</span>
     </div>`).join("");
+}
+
+/* ---------------------------------------------------------------------
+   Kommande veckor (lookahead) – "Denna vecka" + kommande veckor: hur
+   många objekt som ska starta respektive vara klara, och hur många av
+   de sistnämnda som redan ligger som försenade.
+   ------------------------------------------------------------------- */
+function computeLookahead(list) {
+  const weekStart = startOfWeekUTC(todayUTC());
+  const weeks = [];
+
+  for (let i = 0; i < LOOKAHEAD_WEEKS; i++) {
+    const start = new Date(weekStart);
+    start.setUTCDate(start.getUTCDate() + i * 7);
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 6);
+    weeks.push({
+      start, end,
+      label: i === 0 ? "Denna vecka" : `Vecka ${isoWeekNumber(start)}`,
+      starting: 0, due: 0, done: 0, delayed: 0
+    });
+  }
+
+  list.forEach(it => {
+    const sd = parseDate(it.startDate);
+    const ed = parseDate(it.endDate);
+    weeks.forEach(w => {
+      if (sd && sd >= w.start && sd <= w.end) w.starting++;
+      if (ed && ed >= w.start && ed <= w.end) {
+        w.due++;
+        if (it.status === "klar") w.done++;
+        else if (it.status === "forsenad") w.delayed++;
+      }
+    });
+  });
+
+  return weeks;
+}
+
+function renderLookahead(list) {
+  const el = document.getElementById("lookaheadChart");
+
+  if (list.length === 0) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const weeks = computeLookahead(list);
+  const header = `
+    <div class="lookahead-row header">
+      <span></span>
+      <span class="lookahead-cell">Startar</span>
+      <span class="lookahead-cell">Ska vara klara</span>
+      <span class="lookahead-cell">Klara</span>
+      <span class="lookahead-cell">Försenade</span>
+    </div>`;
+
+  el.innerHTML = header + weeks.map(w => `
+    <div class="lookahead-row">
+      <span class="lookahead-label">${escapeHtml(w.label)}</span>
+      <span class="lookahead-cell">${w.starting}</span>
+      <span class="lookahead-cell">${w.due}</span>
+      <span class="lookahead-cell">${w.done}</span>
+      <span class="lookahead-cell${w.delayed ? " delayed" : ""}">${w.delayed}</span>
+    </div>`).join("");
+}
+
+/* ---------------------------------------------------------------------
+   Försenade objekt – sorterad lista på antal dagar över planerat
+   slutdatum (baserat på slutdatum, inte bara status, så listan även
+   fångar objekt vars status inte hunnit uppdateras manuellt).
+   ------------------------------------------------------------------- */
+function computeDelayedList(list) {
+  const today = todayUTC();
+
+  return list
+    .map(it => {
+      const ed = parseDate(it.endDate);
+      if (it.status === "klar" || !ed || ed >= today) return null;
+      const overdueDays = Math.round((today - ed) / (24 * 60 * 60 * 1000));
+      return { it, overdueDays };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.overdueDays - a.overdueDays);
+}
+
+function renderDelayedList(list) {
+  const el = document.getElementById("delayedList");
+
+  if (list.length === 0) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const delayed = computeDelayedList(list);
+  if (delayed.length === 0) {
+    el.innerHTML = `<div class="hint">Inga försenade objekt just nu.</div>`;
+    return;
+  }
+
+  const shown = delayed.slice(0, DELAYED_LIST_MAX);
+  const rows = shown.map(({ it, overdueDays }) => {
+    const meta = [it.area || NO_AREA_LABEL, it.contractor].filter(Boolean).join(" · ");
+    return `
+      <div class="delayed-row">
+        <span class="delayed-label" title="${escapeHtml(itemLabel(it))}">${escapeHtml(itemLabel(it))}</span>
+        <span class="delayed-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>
+        <span class="delayed-days">${overdueDays} dagar</span>
+      </div>`;
+  }).join("");
+
+  const more = delayed.length > DELAYED_LIST_MAX
+    ? `<div class="hint">+ ${delayed.length - DELAYED_LIST_MAX} till</div>`
+    : "";
+
+  el.innerHTML = rows + more;
+}
+
+/* ---------------------------------------------------------------------
+   Senaste kommentarer – de senaste kommentarerna (från 4D-planering)
+   på objekt som hör till den aktuella filtreringen.
+   ------------------------------------------------------------------- */
+function renderComments(list) {
+  const el = document.getElementById("commentsFeed");
+
+  if (!isSupabaseConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const itemById = new Map(list.map(it => [it.id, it]));
+  const relevant = recentComments
+    .filter(c => itemById.has(c.plan_item_id))
+    .slice(0, COMMENTS_SHOWN);
+
+  if (relevant.length === 0) {
+    el.innerHTML = `<div class="hint">Inga kommentarer på matchande objekt ännu.</div>`;
+    return;
+  }
+
+  el.innerHTML = relevant.map(c => {
+    const it = itemById.get(c.plan_item_id);
+    const label = itemLabel(it);
+    return `
+      <div class="comment-row">
+        <div class="comment-head">
+          <span class="comment-author">${escapeHtml(c.author || "Anonym")}</span>
+          <span class="comment-time">${relativeTime(c.created_at)}</span>
+        </div>
+        <div class="comment-object" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+        <div class="comment-body">${escapeHtml(truncate(c.body || "", 160))}</div>
+      </div>`;
+  }).join("");
 }
