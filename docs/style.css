@@ -360,3 +360,230 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ---------------------------------------------------------------------
+   Gemensamt: badge + litet "lägg till"-formulär (återanvänds av flera
+   av de nya panelerna nedan)
+   ------------------------------------------------------------------- */
+.badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--muted);
+  white-space: nowrap;
+}
+
+.add-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.add-form input,
+.add-form select {
+  flex: 1 1 110px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  background: white;
+}
+.add-form button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------
+   S-kurva (framdrift över tid)
+   ------------------------------------------------------------------- */
+.scurve-chart { display: flex; flex-direction: column; }
+.scurve-svg { width: 100%; height: auto; display: block; }
+.scurve-grid { stroke: var(--border); stroke-width: 1; }
+.scurve-axis-label { font-size: 8px; fill: var(--muted); }
+.scurve-line { fill: none; stroke-width: 2; }
+.scurve-line-planned { stroke: var(--muted); stroke-dasharray: 4 3; }
+.scurve-line-utfall { stroke: var(--accent); }
+.scurve-legend {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.scurve-legend-item { display: flex; align-items: center; }
+.scurve-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  margin-right: 4px;
+}
+.scurve-swatch-planned { background: var(--muted); }
+.scurve-swatch-utfall { background: var(--accent); }
+
+/* ---------------------------------------------------------------------
+   Milstolpar
+   ------------------------------------------------------------------- */
+.milestones-list { display: flex; flex-direction: column; }
+.milestone-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.milestone-row .milestone-name { flex: 1; color: var(--text); }
+.milestone-row .milestone-date {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.milestone-row.overdue .milestone-date { color: #e5484d; font-weight: 700; }
+.milestone-row.overdue .milestone-name { color: #e5484d; }
+.milestone-row.done .milestone-name { text-decoration: line-through; color: var(--muted); }
+
+/* ---------------------------------------------------------------------
+   Bemanning
+   ------------------------------------------------------------------- */
+.staffing-chart { display: flex; flex-direction: column; gap: 4px; }
+.staffing-row {
+  display: grid;
+  grid-template-columns: 110px repeat(3, 1fr);
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  padding: 3px 0;
+}
+.staffing-row.header {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+  margin-bottom: 2px;
+}
+.staffing-row .staffing-label {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.staffing-row .staffing-cell {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.staffing-row.header .staffing-cell { color: var(--muted); }
+
+/* ---------------------------------------------------------------------
+   Leveransplan
+   ------------------------------------------------------------------- */
+.deliveries-list { display: flex; flex-direction: column; }
+.delivery-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.delivery-row .delivery-desc {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.delivery-row .delivery-meta {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.delivery-row .delivery-date {
+  color: var(--text);
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------
+   Säkerhet
+   ------------------------------------------------------------------- */
+.safety-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.safety-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.safety-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.safety-date { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.safety-desc { font-size: 11px; color: var(--text); margin-bottom: 2px; }
+.safety-meta { font-size: 10px; color: var(--muted); }
+
+/* ---------------------------------------------------------------------
+   Kvalitet / besiktningar
+   ------------------------------------------------------------------- */
+.inspections-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.inspection-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.inspection-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.inspection-date { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.inspection-item { font-size: 10px; color: var(--accent); margin-bottom: 2px; }
+.inspection-comment { font-size: 11px; color: var(--text); margin-bottom: 2px; }
+.inspection-meta { font-size: 10px; color: var(--muted); }
+
+/* ---------------------------------------------------------------------
+   Väder
+   ------------------------------------------------------------------- */
+.weather-current {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  margin-bottom: 8px;
+}
+.weather-temp { font-size: 26px; font-weight: 700; color: var(--text); }
+.weather-desc { font-size: 12px; color: var(--text); }
+.weather-meta { flex-basis: 100%; font-size: 10px; color: var(--muted); }
+.weather-forecast { display: flex; gap: 8px; }
+.weather-day {
+  flex: 1;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px;
+  text-align: center;
+}
+.weather-day-name { font-size: 10px; font-weight: 700; text-transform: capitalize; color: var(--text); }
+.weather-day-desc { font-size: 9px; color: var(--muted); margin: 2px 0; }
+.weather-day-temp { font-size: 11px; font-weight: 600; color: var(--text); }
+.weather-day-precip { font-size: 9px; color: var(--muted); }
