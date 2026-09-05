@@ -30,6 +30,11 @@ header button { background: none; border: none; font-size: 16px; cursor: pointer
 
 .header-brand { display: flex; align-items: center; gap: 8px; }
 .header-actions { display: flex; align-items: center; gap: 4px; }
+.header-actions #btnExportExcel,
+.header-actions #btnExportPdf {
+  font-size: 11px;
+  padding: 5px 8px;
+}
 .ncc-mark {
   flex: 0 0 auto;
   font-weight: 800;
@@ -401,6 +406,49 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 }
 
 /* ---------------------------------------------------------------------
+   Redigera/ta bort – återanvänds av Milstolpar, Bemanning, Leveransplan,
+   Säkerhet och Kvalitet/besiktningar.
+   ------------------------------------------------------------------- */
+.row-actions {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 6px;
+  flex: 0 0 auto;
+}
+.icon-btn {
+  padding: 3px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  color: var(--text);
+  background: var(--panel);
+  border-color: var(--border);
+  filter: none;
+}
+.row-delete-btn:hover { color: #e5484d; }
+.row-save-btn:hover { color: #3fb950; }
+
+.milestone-row.editing,
+.delivery-row.editing,
+.safety-row.editing,
+.inspection-row.editing {
+  display: flex;
+  flex-wrap: wrap;
+  background: #eef4ff;
+  border-radius: 4px;
+  padding: 6px;
+  margin: -6px 0 -1px 0;
+}
+.delivery-row.editing { border-bottom: none; }
+
+/* ---------------------------------------------------------------------
    S-kurva (framdrift över tid)
    ------------------------------------------------------------------- */
 .scurve-chart { display: flex; flex-direction: column; }
@@ -484,6 +532,22 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   color: var(--text);
 }
 .staffing-row.header .staffing-cell { color: var(--muted); }
+.staffing-cell.staffing-empty { color: var(--muted); }
+.staffing-cell.staffing-cell-filled,
+.staffing-cell.staffing-cell-editing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+.staffing-cell .row-actions { margin-left: 2px; }
+.staffing-cell-editing .edit-headcount {
+  width: 44px;
+  padding: 2px 4px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
 
 /* ---------------------------------------------------------------------
    Leveransplan
@@ -491,7 +555,7 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .deliveries-list { display: flex; flex-direction: column; }
 .delivery-row {
   display: grid;
-  grid-template-columns: 1.4fr 1fr auto auto;
+  grid-template-columns: 1.4fr 1fr auto auto auto;
   gap: 8px;
   align-items: center;
   font-size: 11px;
@@ -587,3 +651,42 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .weather-day-desc { font-size: 9px; color: var(--muted); margin: 2px 0; }
 .weather-day-temp { font-size: 11px; font-weight: 600; color: var(--text); }
 .weather-day-precip { font-size: 9px; color: var(--muted); }
+
+/* ---------------------------------------------------------------------
+   Utskrift / PDF-export (window.print, se onExportPdf i app.js) – döljer
+   knappar, formulär och redigeringskontroller så resultatet blir en ren
+   rapport, och undviker att en panel delas mitt itu över en sidbrytning.
+   ------------------------------------------------------------------- */
+@media print {
+  body { font-size: 11px; background: #fff; }
+  #app { padding: 0; }
+  .header-actions,
+  #btnResetFilters,
+  .add-form,
+  .row-actions,
+  .hint.warning,
+  #lastUpdated {
+    display: none !important;
+  }
+  .dialog { display: none !important; }
+  .panel {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #ccc;
+    background: #fff;
+  }
+  .comments-feed, .safety-feed, .inspections-list {
+    max-height: none;
+    overflow: visible;
+  }
+  .filter-bar {
+    background: none;
+    border: none;
+    padding: 0 0 6px 0;
+  }
+  .filter-bar select {
+    border: none;
+    background: none;
+    padding: 0;
+  }
+}
