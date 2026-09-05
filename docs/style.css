@@ -35,6 +35,10 @@ header button { background: none; border: none; font-size: 16px; cursor: pointer
   font-size: 11px;
   padding: 5px 8px;
 }
+.header-actions #btnCollapseAll {
+  font-size: 14px;
+  padding: 5px 8px;
+}
 .ncc-mark {
   flex: 0 0 auto;
   font-weight: 800;
@@ -63,7 +67,32 @@ header button { background: none; border: none; font-size: 16px; cursor: pointer
   text-transform: uppercase;
   letter-spacing: .03em;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
+.panel-collapse-btn {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: white;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.panel-collapse-btn:hover { color: var(--text); background: var(--panel); }
+.panel.collapsed { padding-bottom: 10px; }
+.panel.collapsed > *:not(h2) { display: none !important; }
 
 .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
 .hint.warning { color: #e5484d; font-weight: 600; padding: 6px 8px; background: #fdeceb; border: 1px solid #f3c4c1; border-radius: 4px; }
@@ -207,6 +236,7 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   overflow: hidden;
 }
 .status-row .status-fill {
+  display: block;
   height: 100%;
   border-radius: 3px;
 }
@@ -260,35 +290,70 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 }
 
 /* ---------------------------------------------------------------------
-   Kommande veckor (lookahead)
+   Kommande veckor (4-veckors lookahead) – ett kort per vecka med fem
+   kategorier av objektnamn (inte bara antal).
    ------------------------------------------------------------------- */
-.lookahead-chart { display: flex; flex-direction: column; gap: 4px; }
-.lookahead-row {
-  display: grid;
-  grid-template-columns: 90px repeat(4, 1fr);
-  gap: 6px;
-  align-items: center;
-  font-size: 11px;
-  padding: 3px 0;
+.lookahead-chart { display: flex; flex-direction: column; gap: 8px; }
+.lookahead-week-card {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
 }
-.lookahead-row.header {
+.lookahead-week-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.lookahead-categories {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+.lookahead-category {
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.lookahead-category-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.lookahead-category-label {
   font-size: 9px;
   font-weight: 700;
-  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: .02em;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 5px;
-  margin-bottom: 2px;
+  color: var(--muted);
 }
-.lookahead-row .lookahead-label { color: var(--text); font-weight: 600; }
-.lookahead-row .lookahead-cell {
-  text-align: center;
-  font-variant-numeric: tabular-nums;
+.lookahead-category-count {
+  font-size: 12px;
+  font-weight: 700;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
-.lookahead-row.header .lookahead-cell { color: var(--muted); }
-.lookahead-row .lookahead-cell.delayed { color: #e5484d; font-weight: 700; }
+.lookahead-category.has-issues .lookahead-category-count { color: #e5484d; }
+.lookahead-empty { font-size: 10px; color: var(--muted); }
+.lookahead-item-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lookahead-item-list li {
+  font-size: 10px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lookahead-item-list li.lookahead-more { color: var(--muted); font-style: italic; }
 
 /* ---------------------------------------------------------------------
    Försenade objekt
@@ -569,11 +634,11 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .staffing-chart { display: flex; flex-direction: column; gap: 4px; }
 .staffing-row {
   display: grid;
-  grid-template-columns: 110px repeat(3, 1fr);
+  grid-template-columns: 90px repeat(3, 1fr);
   gap: 6px;
-  align-items: center;
+  align-items: start;
   font-size: 11px;
-  padding: 3px 0;
+  padding: 4px 0;
 }
 .staffing-row.header {
   font-size: 9px;
@@ -598,17 +663,42 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   color: var(--text);
 }
 .staffing-row.header .staffing-cell { color: var(--muted); }
-.staffing-cell.staffing-empty { color: var(--muted); }
+.staffing-cell.staffing-empty { color: var(--muted); padding-top: 4px; }
 .staffing-cell.staffing-cell-filled,
 .staffing-cell.staffing-cell-editing {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 1px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 2px;
+  position: relative;
 }
-.staffing-cell .row-actions { margin-left: 2px; }
-.staffing-cell-editing .edit-headcount {
-  width: 44px;
+.staffing-cell .row-actions { position: absolute; top: 2px; right: 2px; margin-left: 0; }
+.staffing-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+  font-size: 9px;
+}
+.staffing-stat-label { color: var(--muted); }
+.staffing-stat-value { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.staffing-deviation.positive .staffing-stat-value { color: #3fb950; }
+.staffing-deviation.negative .staffing-stat-value { color: #e5484d; }
+.staffing-edit-field {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.staffing-cell-editing .edit-headcount,
+.staffing-cell-editing .edit-planned-headcount {
+  width: 40px;
   padding: 2px 4px;
   font-size: 11px;
   border: 1px solid var(--border);
@@ -621,7 +711,7 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .deliveries-list { display: flex; flex-direction: column; }
 .delivery-row {
   display: grid;
-  grid-template-columns: 1.4fr 1fr auto auto auto;
+  grid-template-columns: 1.3fr 1fr auto auto auto;
   gap: 8px;
   align-items: center;
   font-size: 11px;
@@ -641,11 +731,57 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.delivery-row .delivery-date {
+.delivery-row .delivery-dates {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-end;
   color: var(--text);
   white-space: nowrap;
-  text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.delivery-date-row { font-size: 10px; }
+.delivery-date-label { color: var(--muted); margin-right: 3px; }
+
+/* ---------------------------------------------------------------------
+   Gemensamma små formulärfält (används av Leveransplan/Leveransplan
+   handlingar för planerat/levererat datum, och av Hinder för
+   flervalslistan över påverkade aktiviteter).
+   ------------------------------------------------------------------- */
+.inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  flex: 0 0 auto;
+  white-space: nowrap;
+  margin-bottom: 0;
+}
+.inline-field input {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 3px 5px;
+}
+.field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--muted);
+  flex: 1 1 220px;
+  margin-bottom: 0;
+}
+.field-label select[multiple] {
+  width: 100%;
+  min-height: 76px;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: white;
 }
 
 /* ---------------------------------------------------------------------
@@ -692,6 +828,61 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .inspection-meta { font-size: 10px; color: var(--muted); }
 
 /* ---------------------------------------------------------------------
+   Hinder (blockers)
+   ------------------------------------------------------------------- */
+.blockers-list { display: flex; flex-direction: column; gap: 6px; }
+.blocker-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.blocker-row.overdue { border-color: #e5484d; }
+.blocker-row.resolved { opacity: 0.7; }
+.blocker-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.blocker-deadline { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.blocker-row.overdue .blocker-deadline { color: #e5484d; font-weight: 700; }
+.blocker-desc { font-size: 11px; color: var(--text); margin-bottom: 2px; }
+.blocker-item { font-size: 10px; color: var(--accent); margin-bottom: 2px; }
+.blocker-affected { font-size: 10px; color: var(--text); margin-bottom: 2px; }
+.blocker-meta { font-size: 10px; color: var(--muted); margin-bottom: 2px; }
+.blocker-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.blocker-resolve-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text);
+  margin-bottom: 0;
+}
+.blocker-comments-toggle {
+  font-size: 10px;
+  padding: 3px 7px;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--border);
+}
+.blocker-comments {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.blocker-comment-row {
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 5px 7px;
+}
+.blocker-comment-form { margin-top: 2px; padding-top: 0; border-top: none; }
+
+/* ---------------------------------------------------------------------
    Väder
    ------------------------------------------------------------------- */
 .weather-current {
@@ -735,6 +926,10 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
     display: none !important;
   }
   .dialog { display: none !important; }
+  .panel-collapse-btn { display: none !important; }
+  /* Ett minimerat block ska ändå exporteras i sin helhet till PDF/utskrift
+     – minimeringen är bara en visuell bekvämlighet i appen. */
+  .panel.collapsed > *:not(h2) { display: block !important; }
   .panel {
     break-inside: avoid;
     page-break-inside: avoid;

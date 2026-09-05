@@ -21,6 +21,7 @@
       <div class="header-actions">
         <button id="btnExportExcel" title="Exportera all data som CSV-filer (öppnas direkt i Excel)">Excel ⤓</button>
         <button id="btnExportPdf" title="Exportera/skriv ut dashboarden som PDF">PDF ⤓</button>
+        <button id="btnCollapseAll" title="Minimera/expandera alla block">⊟</button>
         <button id="btnRefresh" title="Hämta senaste data">↻</button>
         <button id="btnSettings" title="Inställningar (databas)">⚙</button>
       </div>
@@ -100,6 +101,18 @@
     <section class="panel" data-panel-id="deliveries">
       <h2>Leveransplan</h2>
       <div id="deliveriesList" class="deliveries-list"></div>
+    </section>
+
+    <!-- ===== Leveransplan handlingar ===== -->
+    <section class="panel" data-panel-id="document-deliveries">
+      <h2>Leveransplan handlingar</h2>
+      <div id="documentDeliveriesList" class="deliveries-list"></div>
+    </section>
+
+    <!-- ===== Hinder ===== -->
+    <section class="panel" data-panel-id="blockers">
+      <h2>Hinder</h2>
+      <div id="blockersList" class="blockers-list"></div>
     </section>
 
     <!-- ===== Säkerhet ===== -->

@@ -57,8 +57,12 @@ const NO_CONTRACTOR_LABEL = "Utan entreprenör";
 const ITEMS_FETCH_LIMIT = 50000;
 
 // Hur många veckor framåt (denna vecka + kommande) som visas i
-// "Kommande veckor"-panelen.
-const LOOKAHEAD_WEEKS = 3;
+// "Kommande veckor"-panelen (4-veckors lookahead).
+const LOOKAHEAD_WEEKS = 4;
+
+// Max antal objektnamn som visas per kategori i en lookahead-veckas kort
+// innan resten döljs bakom "+ N till".
+const LOOKAHEAD_LIST_MAX = 6;
 
 // Max antal rader att visa i "Försenade objekt"-listan.
 const DELAYED_LIST_MAX = 15;
@@ -86,12 +90,23 @@ const INSPECTIONS_FETCH_LIMIT = 5000;
 // – samma fönster-koncept som "Kommande veckor".
 const STAFFING_WEEKS = 3;
 
+/* ---------------------------------------------------------------------
+   Nya tabeller (Hinder + Leveransplan handlingar, migration_5)
+   ------------------------------------------------------------------- */
+const BLOCKERS_FETCH_LIMIT = 2000;
+const BLOCKER_COMMENTS_FETCH_LIMIT = 2000;
+const DOCUMENT_DELIVERIES_FETCH_LIMIT = 2000;
+
 let progressHistory = []; // plan_item_progress_history, ofiltrerat på item-filter
 let milestones = [];      // plan_milestones
 let staffing = [];        // plan_staffing
 let deliveries = [];      // plan_deliveries
+let documentDeliveries = []; // plan_document_deliveries
 let safetyEvents = [];    // plan_safety_events
 let inspections = [];     // plan_inspections
+let blockers = [];        // plan_blockers
+let blockerComments = []; // plan_blocker_comments (alla hinders kommentarer, ofiltrerat)
+let expandedBlockerId = null; // Vilket hinder som just nu har sin kommentarstråd öppen
 let weather = null;       // Senaste svar från Open-Meteo (eller null)
 let weatherError = null;  // Läsbar felorsak om väderhämtningen misslyckas
 
@@ -101,8 +116,10 @@ let editingState = {
   milestone: null,
   staffing: null,
   delivery: null,
+  documentDelivery: null,
   safety: null,
-  inspection: null
+  inspection: null,
+  blocker: null
 };
 
 const DELIVERY_STATUS_OPTIONS = ["planerad", "på väg", "levererad", "försenad"];
@@ -120,6 +137,10 @@ const SEVERITY_COLORS = { "låg": "#3fb950", medel: "#f5a623", hög: "#e5484d" }
 const INSPECTION_TYPES = ["egenkontroll", "besiktning", "slutbesiktning", "myndighetsbesiktning"];
 const INSPECTION_RESULTS = ["godkänd", "anmärkning", "underkänd"];
 const INSPECTION_RESULT_COLORS = { "godkänd": "#3fb950", "anmärkning": "#f5a623", "underkänd": "#e5484d" };
+
+// Påverkan på produktion – fritextfält på Hinder, men med förslag precis
+// som säkerhets-/besiktningstyperna (se categoryOptions nedan).
+const BLOCKER_IMPACT_SUGGESTIONS = ["Ingen påverkan", "Mindre försening", "Stopp i aktivitet", "Stopp i flera aktiviteter"];
 
 // Namnet ovan (SAFETY_EVENT_TYPES/INSPECTION_TYPES) är bara förslag i en
 // datalist – fältet är fritext i både databasen och UI:t, så vem som helst
@@ -180,6 +201,8 @@ function bindUI() {
   document.getElementById("btnExportExcel").onclick = onExportExcel;
   document.getElementById("btnExportPdf").onclick = onExportPdf;
 
+  initPanelCollapse();
+
   document.getElementById("supabaseUrl").value = settings.supabaseUrl;
   document.getElementById("supabaseKey").value = settings.supabaseKey;
   document.getElementById("settingsLatitude").value = settings.latitude || "";
@@ -194,6 +217,86 @@ function bindUI() {
 
 function toggle(id, show) {
   document.getElementById(id).classList.toggle("hidden", !show);
+}
+
+/* ---------------------------------------------------------------------
+   Minimera/expandera block – varje panel får en liten "−"/"+"-knapp i
+   sin rubrik, plus en global knapp i headern som minimerar/expanderar
+   alla block på en gång. Läget sparas per panel i localStorage så att
+   det inte nollställs vid nästa uppdatering/inläsning.
+   ------------------------------------------------------------------- */
+const PANEL_COLLAPSE_KEY = "4ddash-collapsed";
+
+function loadCollapsedPanels() {
+  try {
+    const raw = window.localStorage.getItem(PANEL_COLLAPSE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveCollapsedPanels(set) {
+  try {
+    window.localStorage.setItem(PANEL_COLLAPSE_KEY, JSON.stringify([...set]));
+  } catch (e) { /* ignorera */ }
+}
+
+function initPanelCollapse() {
+  const collapsed = loadCollapsedPanels();
+  const panels = document.querySelectorAll(".panel[data-panel-id]");
+
+  panels.forEach(panel => {
+    const id = panel.dataset.panelId;
+    const h2 = panel.querySelector("h2");
+    if (!h2) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "panel-collapse-btn";
+    btn.title = "Minimera/expandera det här blocket";
+    h2.appendChild(btn);
+
+    const apply = () => {
+      const isCollapsed = collapsed.has(id);
+      panel.classList.toggle("collapsed", isCollapsed);
+      btn.textContent = isCollapsed ? "+" : "−";
+    };
+    apply();
+
+    btn.onclick = () => {
+      if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+      saveCollapsedPanels(collapsed);
+      apply();
+      updateCollapseAllLabel();
+    };
+  });
+
+  document.getElementById("btnCollapseAll").onclick = () => {
+    const panelIds = [...panels].map(p => p.dataset.panelId);
+    const allCollapsed = panelIds.every(id => collapsed.has(id));
+    panelIds.forEach(id => {
+      if (allCollapsed) collapsed.delete(id); else collapsed.add(id);
+    });
+    saveCollapsedPanels(collapsed);
+    panels.forEach(panel => {
+      const isCollapsed = collapsed.has(panel.dataset.panelId);
+      panel.classList.toggle("collapsed", isCollapsed);
+      const btn = panel.querySelector(".panel-collapse-btn");
+      if (btn) btn.textContent = isCollapsed ? "+" : "−";
+    });
+    updateCollapseAllLabel();
+  };
+
+  function updateCollapseAllLabel() {
+    const btnAll = document.getElementById("btnCollapseAll");
+    const panelIds = [...panels].map(p => p.dataset.panelId);
+    const allCollapsed = panelIds.length > 0 && panelIds.every(id => collapsed.has(id));
+    btnAll.title = allCollapsed ? "Expandera alla block" : "Minimera alla block";
+    btnAll.textContent = allCollapsed ? "⊞" : "⊟";
+  }
+  updateCollapseAllLabel();
 }
 
 /* ---------------------------------------------------------------------
@@ -346,8 +449,11 @@ async function refreshAll() {
     fetchMilestones(),
     fetchStaffing(),
     fetchDeliveries(),
+    fetchDocumentDeliveries(),
     fetchSafetyEvents(),
     fetchInspections(),
+    fetchBlockers(),
+    fetchBlockerComments(),
     fetchWeather()
   ]);
   populateFilterOptions();
@@ -370,8 +476,10 @@ function renderAll() {
   renderGroupProgress("contractorProgress", filtered, it => it.contractor, NO_CONTRACTOR_LABEL);
   renderStaffing();
   renderDeliveries();
+  renderDocumentDeliveries();
   renderSafety();
   renderInspections();
+  renderBlockers();
   renderWeather();
   renderComments(filtered);
 }
@@ -947,10 +1055,18 @@ function renderGroupProgress(containerId, list, keyFn, fallbackLabel) {
 }
 
 /* ---------------------------------------------------------------------
-   Kommande veckor (lookahead) – "Denna vecka" + kommande veckor: hur
-   många objekt som ska starta respektive vara klara, och hur många av
-   de sistnämnda som redan ligger som försenade.
+   Kommande veckor (4-veckors lookahead) – "Denna vecka" + 3 kommande
+   veckor, med objektnamn (inte bara antal) uppdelat på: aktiva objekt,
+   planerade starter, klara aktiviteter, försenade aktiviteter och
+   aktiviteter med ett öppet hinder (korsreferens mot Hinder-panelen).
    ------------------------------------------------------------------- */
+function itemHasOpenBlocker(it) {
+  return blockers.some(b => !b.is_resolved && (
+    Number(b.plan_item_id) === it.id ||
+    (Array.isArray(b.affected_item_ids) && b.affected_item_ids.map(Number).includes(it.id))
+  ));
+}
+
 function computeLookahead(list) {
   const weekStart = startOfWeekUTC(todayUTC());
   const weeks = [];
@@ -963,7 +1079,7 @@ function computeLookahead(list) {
     weeks.push({
       start, end,
       label: i === 0 ? "Denna vecka" : `Vecka ${isoWeekNumber(start)}`,
-      starting: 0, due: 0, done: 0, delayed: 0
+      active: [], starting: [], done: [], delayed: [], blocked: []
     });
   }
 
@@ -971,16 +1087,36 @@ function computeLookahead(list) {
     const sd = parseDate(it.startDate);
     const ed = parseDate(it.endDate);
     weeks.forEach(w => {
-      if (sd && sd >= w.start && sd <= w.end) w.starting++;
-      if (ed && ed >= w.start && ed <= w.end) {
-        w.due++;
-        if (it.status === "klar") w.done++;
-        else if (it.status === "forsenad") w.delayed++;
-      }
+      const activeThisWeek = sd && ed && sd <= w.end && ed >= w.start;
+      const startingThisWeek = sd && sd >= w.start && sd <= w.end;
+      const dueThisWeek = ed && ed >= w.start && ed <= w.end;
+
+      if (activeThisWeek || startingThisWeek || dueThisWeek) w.active.push(it);
+      if (startingThisWeek) w.starting.push(it);
+      if (dueThisWeek && it.status === "klar") w.done.push(it);
+      if (dueThisWeek && it.status === "forsenad") w.delayed.push(it);
+      if ((activeThisWeek || startingThisWeek || dueThisWeek) && itemHasOpenBlocker(it)) w.blocked.push(it);
     });
   });
 
   return weeks;
+}
+
+function lookaheadCategoryHtml(label, list, extraClass) {
+  const names = [...new Set(list.map(itemLabel))];
+  return `
+    <div class="lookahead-category${extraClass ? " " + extraClass : ""}">
+      <div class="lookahead-category-head">
+        <span class="lookahead-category-label">${escapeHtml(label)}</span>
+        <span class="lookahead-category-count">${names.length}</span>
+      </div>
+      ${names.length === 0
+        ? `<div class="lookahead-empty">–</div>`
+        : `<ul class="lookahead-item-list">
+            ${names.slice(0, LOOKAHEAD_LIST_MAX).map(n => `<li title="${escapeHtml(n)}">${escapeHtml(n)}</li>`).join("")}
+            ${names.length > LOOKAHEAD_LIST_MAX ? `<li class="lookahead-more">+ ${names.length - LOOKAHEAD_LIST_MAX} till</li>` : ""}
+          </ul>`}
+    </div>`;
 }
 
 function renderLookahead(list) {
@@ -992,22 +1128,17 @@ function renderLookahead(list) {
   }
 
   const weeks = computeLookahead(list);
-  const header = `
-    <div class="lookahead-row header">
-      <span></span>
-      <span class="lookahead-cell">Startar</span>
-      <span class="lookahead-cell">Ska vara klara</span>
-      <span class="lookahead-cell">Klara</span>
-      <span class="lookahead-cell">Försenade</span>
-    </div>`;
 
-  el.innerHTML = header + weeks.map(w => `
-    <div class="lookahead-row">
-      <span class="lookahead-label">${escapeHtml(w.label)}</span>
-      <span class="lookahead-cell">${w.starting}</span>
-      <span class="lookahead-cell">${w.due}</span>
-      <span class="lookahead-cell">${w.done}</span>
-      <span class="lookahead-cell${w.delayed ? " delayed" : ""}">${w.delayed}</span>
+  el.innerHTML = weeks.map(w => `
+    <div class="lookahead-week-card">
+      <div class="lookahead-week-title">${escapeHtml(w.label)}</div>
+      <div class="lookahead-categories">
+        ${lookaheadCategoryHtml("Aktiviteter denna period", w.active)}
+        ${lookaheadCategoryHtml("Planerade starter", w.starting)}
+        ${lookaheadCategoryHtml("Klara aktiviteter", w.done)}
+        ${lookaheadCategoryHtml("Försenade aktiviteter", w.delayed, w.delayed.length ? "has-issues" : "")}
+        ${lookaheadCategoryHtml("Aktiviteter med hinder", w.blocked, w.blocked.length ? "has-issues" : "")}
+      </div>
     </div>`).join("");
 }
 
@@ -1385,16 +1516,27 @@ function renderStaffing() {
           if (editingState.staffing !== null && String(editingState.staffing) === String(rec.id)) {
             return `
               <span class="staffing-cell staffing-cell-editing" data-editing-id="${rec.id}">
-                <input type="number" min="0" class="edit-headcount" value="${rec.headcount}" />
+                <label class="staffing-edit-field">Planerad
+                  <input type="number" min="0" class="edit-planned-headcount" value="${rec.planned_headcount ?? ""}" />
+                </label>
+                <label class="staffing-edit-field">Faktisk
+                  <input type="number" min="0" class="edit-headcount" value="${rec.headcount}" />
+                </label>
                 <span class="row-actions">
                   <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
                   <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
                 </span>
               </span>`;
           }
+          const hasPlanned = rec.planned_headcount !== null && rec.planned_headcount !== undefined;
+          const deviation = hasPlanned ? rec.headcount - rec.planned_headcount : null;
+          const devClass = deviation === null ? "" : deviation < 0 ? "negative" : deviation > 0 ? "positive" : "neutral";
+          const devText = deviation === null ? "–" : (deviation > 0 ? `+${deviation}` : String(deviation));
           return `
             <span class="staffing-cell staffing-cell-filled">
-              <span class="staffing-value">${rec.headcount}</span>
+              <span class="staffing-stat"><span class="staffing-stat-label">Planerad</span><span class="staffing-stat-value">${hasPlanned ? rec.planned_headcount : "–"}</span></span>
+              <span class="staffing-stat"><span class="staffing-stat-label">Faktisk</span><span class="staffing-stat-value">${rec.headcount}</span></span>
+              <span class="staffing-stat staffing-deviation ${devClass}"><span class="staffing-stat-label">Avvikelse</span><span class="staffing-stat-value">${devText}</span></span>
               ${rowActionsHtml("staffing", rec.id)}
             </span>`;
         }).join("")}
@@ -1418,8 +1560,14 @@ function bindStaffingEditForm(el) {
   if (!cell) return;
   cell.querySelector(".row-save-btn").onclick = async () => {
     const headcount = Number(cell.querySelector(".edit-headcount").value);
+    const plannedRaw = cell.querySelector(".edit-planned-headcount").value;
+    const planned_headcount = plannedRaw === "" ? null : Number(plannedRaw);
     if (!Number.isFinite(headcount) || headcount < 0) { alert("Ange ett giltigt antal personer (0 eller mer)."); return; }
-    const ok = await supaUpdate("plan_staffing", editingState.staffing, { headcount });
+    if (planned_headcount !== null && (!Number.isFinite(planned_headcount) || planned_headcount < 0)) {
+      alert("Ange en giltig planerad bemanning (0 eller mer), eller lämna fältet tomt.");
+      return;
+    }
+    const ok = await supaUpdate("plan_staffing", editingState.staffing, { headcount, planned_headcount });
     if (ok) {
       editingState.staffing = null;
       await fetchStaffing();
@@ -1442,7 +1590,8 @@ function staffingFormHtml(contractors, weeks) {
       <select id="newStaffingWeek">
         ${weeks.map(w => `<option value="${w.start.toISOString().slice(0, 10)}">${escapeHtml(w.label)}</option>`).join("")}
       </select>
-      <input type="number" id="newStaffingHeadcount" min="0" placeholder="Antal personer" />
+      <input type="number" id="newStaffingPlanned" min="0" placeholder="Planerad bemanning" />
+      <input type="number" id="newStaffingHeadcount" min="0" placeholder="Faktisk bemanning (antal personer)" />
       <button id="btnAddStaffing">Spara bemanning</button>
     </div>`;
 }
@@ -1451,8 +1600,14 @@ async function onAddStaffing() {
   const contractor = (document.getElementById("newStaffingContractor").value || "").trim();
   const week_start = document.getElementById("newStaffingWeek").value;
   const headcount = Number(document.getElementById("newStaffingHeadcount").value);
+  const plannedRaw = document.getElementById("newStaffingPlanned").value;
+  const planned_headcount = plannedRaw === "" ? null : Number(plannedRaw);
   if (!contractor || !week_start || !Number.isFinite(headcount) || headcount < 0) {
     alert("Ange entreprenör, vecka och ett giltigt antal personer (0 eller mer).");
+    return;
+  }
+  if (planned_headcount !== null && (!Number.isFinite(planned_headcount) || planned_headcount < 0)) {
+    alert("Ange en giltig planerad bemanning (0 eller mer), eller lämna fältet tomt.");
     return;
   }
   try {
@@ -1465,7 +1620,7 @@ async function onAddStaffing() {
         "Content-Type": "application/json",
         Prefer: "resolution=merge-duplicates,return=representation"
       },
-      body: JSON.stringify({ project_id: projectId, contractor, week_start, headcount })
+      body: JSON.stringify({ project_id: projectId, contractor, week_start, headcount, planned_headcount })
     });
     if (res.ok) {
       await fetchStaffing();
@@ -1480,59 +1635,390 @@ async function onAddStaffing() {
 }
 
 /* ---------------------------------------------------------------------
-   Leveransplan – lista sorterad på planerat datum, med statusmärke.
+   Leveransplan + Leveransplan handlingar – båda listorna fungerar
+   identiskt (lista sorterad på planerat datum, med statusmärke, samt
+   planerat OCH faktiskt leveransdatum), så logiken byggs en gång som en
+   fabrik och instansieras för respektive tabell/panel nedan.
    ------------------------------------------------------------------- */
-function renderDeliveries() {
-  const el = document.getElementById("deliveriesList");
+function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix, addBtnId, emptyText }) {
+  async function fetchFn() {
+    if (!isSupabaseConfigured()) { setArr([]); return; }
+    try {
+      const url = `${settings.supabaseUrl}/rest/v1/${table}?project_id=eq.${encodeURIComponent(projectId)}&select=*&order=planned_date.asc`;
+      const res = await fetch(url, {
+        headers: {
+          apikey: settings.supabaseKey,
+          Authorization: `Bearer ${settings.supabaseKey}`,
+          Range: `0-${DELIVERIES_FETCH_LIMIT - 1}`
+        }
+      });
+      setArr(res.ok ? await res.json() : []);
+    } catch (e) {
+      console.error(`Kunde inte hämta ${table}`, e);
+      setArr([]);
+    }
+  }
+
+  function render() {
+    const el = document.getElementById(elId);
+
+    if (!isSupabaseConfigured()) {
+      el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+      return;
+    }
+
+    const sorted = [...getArr()].sort((a, b) => (a.planned_date || "").localeCompare(b.planned_date || ""));
+
+    const rows = sorted.length === 0
+      ? `<div class="hint">${emptyText}</div>`
+      : sorted.map(d => {
+          if (editingState[editKey] !== null && String(editingState[editKey]) === String(d.id)) return editRowHtml(d);
+          const meta = [d.supplier, d.contractor, d.area].filter(Boolean).join(" · ");
+          const status = d.status || "planerad";
+          const color = DELIVERY_STATUS_COLORS[status] || "#6b7280";
+          return `
+            <div class="delivery-row">
+              <span class="delivery-desc" title="${escapeHtml(d.description || "")}">${escapeHtml(d.description || "")}</span>
+              <span class="delivery-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>
+              <span class="delivery-dates">
+                <span class="delivery-date-row"><span class="delivery-date-label">Planerad</span> ${formatDateSv(d.planned_date)}</span>
+                <span class="delivery-date-row"><span class="delivery-date-label">Levererad</span> ${d.actual_date ? formatDateSv(d.actual_date) : "–"}</span>
+              </span>
+              <span class="badge" style="background:${color}">${escapeHtml(status)}</span>
+              ${rowActionsHtml(editKey, d.id)}
+            </div>`;
+        }).join("");
+
+    el.innerHTML = rows + formHtml();
+    document.getElementById(addBtnId).onclick = onAdd;
+    bindRowActions(el, editKey, {
+      render,
+      remove: id => supaDelete(table, id, "Ta bort leveransen?").then(ok => {
+        if (ok) { fetchFn().then(render); }
+      })
+    });
+    if (editingState[editKey] !== null) bindEditForm(el);
+  }
+
+  function editRowHtml(d) {
+    const contractors = uniqueValues(it => it.contractor);
+    return `
+      <div class="delivery-row editing add-form" data-editing-id="${d.id}">
+        <input type="text" class="edit-desc" value="${escapeHtml(d.description || "")}" placeholder="Beskrivning" />
+        <input type="text" class="edit-supplier" value="${escapeHtml(d.supplier || "")}" placeholder="Leverantör" />
+        <input type="text" class="edit-contractor" value="${escapeHtml(d.contractor || "")}" placeholder="Entreprenör" list="${formPrefix}ContractorListEdit" />
+        <datalist id="${formPrefix}ContractorListEdit">${contractors.map(c => `<option value="${escapeHtml(c)}"></option>`).join("")}</datalist>
+        <input type="text" class="edit-area" value="${escapeHtml(d.area || "")}" placeholder="Område" />
+        <label class="inline-field">Planerad <input type="date" class="edit-date" value="${escapeHtml(d.planned_date || "")}" /></label>
+        <label class="inline-field">Levererad <input type="date" class="edit-actual-date" value="${escapeHtml(d.actual_date || "")}" /></label>
+        <select class="edit-status">
+          ${DELIVERY_STATUS_OPTIONS.map(s => `<option value="${escapeHtml(s)}" ${s === (d.status || "planerad") ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+        </select>
+        <span class="row-actions">
+          <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
+          <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
+        </span>
+      </div>`;
+  }
+
+  function bindEditForm(el) {
+    const row = el.querySelector(`[data-editing-id="${editingState[editKey]}"]`);
+    if (!row) return;
+    row.querySelector(".row-save-btn").onclick = async () => {
+      const description = row.querySelector(".edit-desc").value.trim();
+      const planned_date = row.querySelector(".edit-date").value;
+      if (!description || !planned_date) { alert("Beskrivning och planerat datum måste vara ifyllda."); return; }
+      const ok = await supaUpdate(table, editingState[editKey], {
+        description,
+        supplier: row.querySelector(".edit-supplier").value.trim() || null,
+        contractor: row.querySelector(".edit-contractor").value.trim() || null,
+        area: row.querySelector(".edit-area").value.trim() || null,
+        planned_date,
+        actual_date: row.querySelector(".edit-actual-date").value || null,
+        status: row.querySelector(".edit-status").value
+      });
+      if (ok) {
+        editingState[editKey] = null;
+        await fetchFn();
+        render();
+      }
+    };
+    row.querySelector(".row-cancel-btn").onclick = () => {
+      editingState[editKey] = null;
+      render();
+    };
+  }
+
+  function formHtml() {
+    const contractors = uniqueValues(it => it.contractor);
+    return `
+      <div class="add-form">
+        <input type="text" id="${formPrefix}Desc" placeholder="Beskrivning *" />
+        <input type="text" id="${formPrefix}Supplier" placeholder="Leverantör" />
+        <input type="text" id="${formPrefix}Contractor" placeholder="Entreprenör" list="${formPrefix}ContractorList" />
+        <datalist id="${formPrefix}ContractorList">${contractors.map(c => `<option value="${escapeHtml(c)}"></option>`).join("")}</datalist>
+        <input type="text" id="${formPrefix}Area" placeholder="Område" />
+        <label class="inline-field">Planerad * <input type="date" id="${formPrefix}Date" title="Planerat datum *" /></label>
+        <label class="inline-field">Levererad <input type="date" id="${formPrefix}ActualDate" title="Faktiskt levererad" /></label>
+        <select id="${formPrefix}Status">
+          ${DELIVERY_STATUS_OPTIONS.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}
+        </select>
+        <button id="${addBtnId}">+ Lägg till leverans</button>
+      </div>`;
+  }
+
+  async function onAdd() {
+    const description = document.getElementById(`${formPrefix}Desc`).value.trim();
+    const supplier = document.getElementById(`${formPrefix}Supplier`).value.trim();
+    const contractor = document.getElementById(`${formPrefix}Contractor`).value.trim();
+    const area = document.getElementById(`${formPrefix}Area`).value.trim();
+    const planned_date = document.getElementById(`${formPrefix}Date`).value;
+    const actual_date = document.getElementById(`${formPrefix}ActualDate`).value;
+    const status = document.getElementById(`${formPrefix}Status`).value;
+    if (!description || !planned_date) {
+      alert("Ange både beskrivning och planerat datum för leveransen – annars sparas den inte.");
+      return;
+    }
+    const ok = await supaInsert(table, {
+      project_id: projectId,
+      description,
+      supplier: supplier || null,
+      contractor: contractor || null,
+      area: area || null,
+      planned_date,
+      actual_date: actual_date || null,
+      status
+    });
+    if (ok) {
+      await fetchFn();
+      render();
+    }
+  }
+
+  return { fetch: fetchFn, render };
+}
+
+const deliveriesModule = createDeliveryModule({
+  table: "plan_deliveries",
+  elId: "deliveriesList",
+  editKey: "delivery",
+  getArr: () => deliveries,
+  setArr: v => { deliveries = v; },
+  formPrefix: "newDelivery",
+  addBtnId: "btnAddDelivery",
+  emptyText: "Inga leveranser inplanerade ännu."
+});
+function fetchDeliveries() { return deliveriesModule.fetch(); }
+function renderDeliveries() { return deliveriesModule.render(); }
+
+const documentDeliveriesModule = createDeliveryModule({
+  table: "plan_document_deliveries",
+  elId: "documentDeliveriesList",
+  editKey: "documentDelivery",
+  getArr: () => documentDeliveries,
+  setArr: v => { documentDeliveries = v; },
+  formPrefix: "newDocDelivery",
+  addBtnId: "btnAddDocDelivery",
+  emptyText: "Inga handlingar (ritningar, bygglov, tekn. beskrivningar) inplanerade ännu."
+});
+function fetchDocumentDeliveries() { return documentDeliveriesModule.fetch(); }
+function renderDocumentDeliveries() { return documentDeliveriesModule.render(); }
+
+/* ---------------------------------------------------------------------
+   Hinder (blockers) – varje hinder kan valfritt kopplas till ett
+   planerat objekt (var hindret finns) samt till flera påverkade
+   aktiviteter (flera val), har en ansvarig, en deadline, en fritext för
+   påverkan på produktion, ett löst/olöst-läge och en egen
+   kommentarstråd (separat från 4D-planerings vanliga objektskommentarer).
+   ------------------------------------------------------------------- */
+async function fetchBlockers() {
+  if (!isSupabaseConfigured()) { blockers = []; return; }
+  try {
+    const url = `${settings.supabaseUrl}/rest/v1/plan_blockers?project_id=eq.${encodeURIComponent(projectId)}&select=*&order=deadline.asc`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: settings.supabaseKey,
+        Authorization: `Bearer ${settings.supabaseKey}`,
+        Range: `0-${BLOCKERS_FETCH_LIMIT - 1}`
+      }
+    });
+    blockers = res.ok ? await res.json() : [];
+  } catch (e) {
+    console.error("Kunde inte hämta hinder", e);
+    blockers = [];
+  }
+}
+
+// plan_blocker_comments har ingen egen project_id-kolumn (kopplas via
+// blocker_id), så precis som för plan_item_comments hämtas alla och
+// filtreras client-side mot de hinder-id:n som visas just nu.
+async function fetchBlockerComments() {
+  if (!isSupabaseConfigured()) { blockerComments = []; return; }
+  try {
+    const url = `${settings.supabaseUrl}/rest/v1/plan_blocker_comments?select=*&order=created_at.asc`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: settings.supabaseKey,
+        Authorization: `Bearer ${settings.supabaseKey}`,
+        Range: `0-${BLOCKER_COMMENTS_FETCH_LIMIT - 1}`
+      }
+    });
+    blockerComments = res.ok ? await res.json() : [];
+  } catch (e) {
+    console.error("Kunde inte hämta hinderkommentarer", e);
+    blockerComments = [];
+  }
+}
+
+function renderBlockers() {
+  const el = document.getElementById("blockersList");
 
   if (!isSupabaseConfigured()) {
     el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
     return;
   }
 
-  const sorted = [...deliveries].sort((a, b) => (a.planned_date || "").localeCompare(b.planned_date || ""));
+  const itemById = new Map(items.map(it => [it.id, it]));
+  const today = todayUTC();
+
+  const sorted = [...blockers].sort((a, b) => {
+    if (Boolean(a.is_resolved) !== Boolean(b.is_resolved)) return a.is_resolved ? 1 : -1;
+    return (a.deadline || "9999-99-99").localeCompare(b.deadline || "9999-99-99");
+  });
 
   const rows = sorted.length === 0
-    ? `<div class="hint">Inga leveranser inplanerade ännu.</div>`
-    : sorted.map(d => {
-        if (editingState.delivery !== null && String(editingState.delivery) === String(d.id)) return deliveryEditRowHtml(d);
-        const meta = [d.supplier, d.contractor, d.area].filter(Boolean).join(" · ");
-        const status = d.status || "planerad";
-        const color = DELIVERY_STATUS_COLORS[status] || "#6b7280";
+    ? `<div class="hint">Inga hinder registrerade ännu.</div>`
+    : sorted.map(b => {
+        if (editingState.blocker !== null && String(editingState.blocker) === String(b.id)) return blockerEditRowHtml(b, itemById);
+
+        const dl = parseDate(b.deadline);
+        const overdue = !b.is_resolved && dl && dl < today;
+        const linked = b.plan_item_id && itemById.has(Number(b.plan_item_id)) ? itemLabel(itemById.get(Number(b.plan_item_id))) : "";
+        const affectedLabels = (Array.isArray(b.affected_item_ids) ? b.affected_item_ids : [])
+          .map(id => itemById.get(Number(id)))
+          .filter(Boolean)
+          .map(itemLabel);
+        const comments = blockerComments.filter(c => String(c.blocker_id) === String(b.id));
+        const expanded = expandedBlockerId !== null && String(expandedBlockerId) === String(b.id);
+
         return `
-          <div class="delivery-row">
-            <span class="delivery-desc" title="${escapeHtml(d.description || "")}">${escapeHtml(d.description || "")}</span>
-            <span class="delivery-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>
-            <span class="delivery-date">${formatDateSv(d.planned_date)}</span>
-            <span class="badge" style="background:${color}">${escapeHtml(status)}</span>
-            ${rowActionsHtml("delivery", d.id)}
+          <div class="blocker-row${b.is_resolved ? " resolved" : ""}${overdue ? " overdue" : ""}">
+            <div class="blocker-head">
+              <span class="badge" style="background:${b.is_resolved ? "#3fb950" : "#e5484d"}">${b.is_resolved ? "Löst" : "Öppet"}</span>
+              ${b.deadline ? `<span class="blocker-deadline">Deadline: ${formatDateSv(b.deadline)}</span>` : ""}
+              ${rowActionsHtml("blocker", b.id)}
+            </div>
+            <div class="blocker-desc">${escapeHtml(b.description || "")}</div>
+            ${linked ? `<div class="blocker-item" title="${escapeHtml(linked)}">Objekt: ${escapeHtml(linked)}</div>` : ""}
+            ${affectedLabels.length ? `<div class="blocker-affected" title="${escapeHtml(affectedLabels.join(", "))}">Påverkar: ${escapeHtml(affectedLabels.join(", "))}</div>` : ""}
+            ${b.responsible ? `<div class="blocker-meta">Ansvarig: ${escapeHtml(b.responsible)}</div>` : ""}
+            ${b.production_impact ? `<div class="blocker-meta">Påverkan på produktion: ${escapeHtml(b.production_impact)}</div>` : ""}
+            <div class="blocker-actions-row">
+              <label class="blocker-resolve-label">
+                <input type="checkbox" class="blocker-resolve-check" data-blocker-id="${b.id}" ${b.is_resolved ? "checked" : ""} /> Löst
+              </label>
+              <button type="button" class="blocker-comments-toggle" data-blocker-id="${b.id}">Kommentarer (${comments.length})</button>
+            </div>
+            ${expanded ? blockerCommentsHtml(b, comments) : ""}
           </div>`;
       }).join("");
 
-  el.innerHTML = rows + deliveriesFormHtml();
-  document.getElementById("btnAddDelivery").onclick = onAddDelivery;
-  bindRowActions(el, "delivery", {
-    render: renderDeliveries,
-    remove: id => supaDelete("plan_deliveries", id, "Ta bort leveransen?").then(ok => {
-      if (ok) { fetchDeliveries().then(renderDeliveries); }
+  el.innerHTML = rows + blockerFormHtml();
+
+  document.getElementById("btnAddBlocker").onclick = onAddBlocker;
+  bindRowActions(el, "blocker", {
+    render: renderBlockers,
+    remove: id => supaDelete("plan_blockers", id, "Ta bort hindret? (kommentarerna tas också bort)").then(ok => {
+      if (ok) { fetchBlockers().then(renderBlockers); }
     })
   });
-  if (editingState.delivery !== null) bindDeliveryEditForm(el);
+  el.querySelectorAll(".blocker-resolve-check").forEach(cb => {
+    cb.onchange = () => onToggleBlockerResolved(cb.dataset.blockerId, cb.checked);
+  });
+  el.querySelectorAll(".blocker-comments-toggle").forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.blockerId;
+      expandedBlockerId = (expandedBlockerId !== null && String(expandedBlockerId) === String(id)) ? null : id;
+      renderBlockers();
+    };
+  });
+  el.querySelectorAll(".blocker-comment-add-btn").forEach(btn => {
+    btn.onclick = () => onAddBlockerComment(btn.dataset.blockerId);
+  });
+  if (editingState.blocker !== null) bindBlockerEditForm(el);
 }
 
-function deliveryEditRowHtml(d) {
-  const contractors = uniqueValues(it => it.contractor);
+function blockerCommentsHtml(b, comments) {
+  const sorted = [...comments].sort((a, c) => (a.created_at || "").localeCompare(c.created_at || ""));
   return `
-    <div class="delivery-row editing add-form" data-editing-id="${d.id}">
-      <input type="text" class="edit-desc" value="${escapeHtml(d.description || "")}" placeholder="Beskrivning" />
-      <input type="text" class="edit-supplier" value="${escapeHtml(d.supplier || "")}" placeholder="Leverantör" />
-      <input type="text" class="edit-contractor" value="${escapeHtml(d.contractor || "")}" placeholder="Entreprenör" list="deliveryContractorListEdit" />
-      <datalist id="deliveryContractorListEdit">${contractors.map(c => `<option value="${escapeHtml(c)}"></option>`).join("")}</datalist>
-      <input type="text" class="edit-area" value="${escapeHtml(d.area || "")}" placeholder="Område" />
-      <input type="date" class="edit-date" value="${escapeHtml(d.planned_date || "")}" />
-      <select class="edit-status">
-        ${DELIVERY_STATUS_OPTIONS.map(s => `<option value="${escapeHtml(s)}" ${s === (d.status || "planerad") ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+    <div class="blocker-comments">
+      ${sorted.length === 0
+        ? `<div class="hint">Inga kommentarer ännu.</div>`
+        : sorted.map(c => `
+          <div class="blocker-comment-row">
+            <div class="comment-head">
+              <span class="comment-author">${escapeHtml(c.author || "Anonym")}</span>
+              <span class="comment-time">${relativeTime(c.created_at)}</span>
+            </div>
+            <div class="comment-body">${escapeHtml(c.body || "")}</div>
+          </div>`).join("")}
+      <div class="add-form blocker-comment-form">
+        <input type="text" class="blocker-comment-author" data-blocker-id="${b.id}" placeholder="Ditt namn" />
+        <input type="text" class="blocker-comment-body" data-blocker-id="${b.id}" placeholder="Skriv en kommentar" />
+        <button type="button" class="blocker-comment-add-btn" data-blocker-id="${b.id}">Kommentera</button>
+      </div>
+    </div>`;
+}
+
+async function onAddBlockerComment(blockerId) {
+  const authorInput = document.querySelector(`.blocker-comment-author[data-blocker-id="${blockerId}"]`);
+  const bodyInput = document.querySelector(`.blocker-comment-body[data-blocker-id="${blockerId}"]`);
+  const body = bodyInput.value.trim();
+  if (!body) { alert("Skriv en kommentar innan du sparar."); return; }
+  const author = authorInput.value.trim();
+  const ok = await supaInsert("plan_blocker_comments", { blocker_id: Number(blockerId), body, author: author || null });
+  if (ok) {
+    await fetchBlockerComments();
+    renderBlockers();
+  }
+}
+
+async function onToggleBlockerResolved(id, checked) {
+  const ok = await supaUpdate("plan_blockers", id, { is_resolved: checked, resolved_date: checked ? todayISO() : null });
+  if (ok) {
+    await fetchBlockers();
+    renderBlockers();
+  }
+}
+
+function blockerEditRowHtml(b, itemById) {
+  const filtered = getFilteredItems();
+  const linkedOptions = filtered.some(it => it.id === Number(b.plan_item_id)) || !b.plan_item_id
+    ? filtered
+    : [itemById.get(Number(b.plan_item_id)), ...filtered].filter(Boolean);
+  const affectedIds = Array.isArray(b.affected_item_ids) ? b.affected_item_ids.map(Number) : [];
+  const affectedOptionsSource = [...filtered];
+  affectedIds.forEach(id => {
+    if (!affectedOptionsSource.some(it => it.id === id) && itemById.has(id)) affectedOptionsSource.push(itemById.get(id));
+  });
+  const impactOptions = categoryOptions(BLOCKER_IMPACT_SUGGESTIONS, blockers, x => x.production_impact);
+
+  return `
+    <div class="blocker-row editing add-form" data-editing-id="${b.id}">
+      <input type="text" class="edit-desc" value="${escapeHtml(b.description || "")}" placeholder="Beskrivning av hindret *" />
+      <select class="edit-item">
+        <option value="">Inget objekt kopplat</option>
+        ${linkedOptions.map(it => `<option value="${it.id}" ${it.id === Number(b.plan_item_id) ? "selected" : ""}>${escapeHtml(itemLabel(it))}</option>`).join("")}
       </select>
+      <label class="field-label">Påverkad aktivitet (flera val möjliga)
+        <select class="edit-affected" multiple size="4">
+          ${affectedOptionsSource.map(it => `<option value="${it.id}" ${affectedIds.includes(it.id) ? "selected" : ""}>${escapeHtml(itemLabel(it))}</option>`).join("")}
+        </select>
+      </label>
+      <input type="text" class="edit-responsible" value="${escapeHtml(b.responsible || "")}" placeholder="Ansvarig" />
+      <input type="date" class="edit-deadline" value="${escapeHtml(b.deadline || "")}" />
+      <input type="text" class="edit-impact" list="blockerImpactListEdit" value="${escapeHtml(b.production_impact || "")}" placeholder="Påverkan på produktion" />
+      <datalist id="blockerImpactListEdit">${impactOptions.map(o => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>
       <span class="row-actions">
         <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
         <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
@@ -1540,90 +2026,82 @@ function deliveryEditRowHtml(d) {
     </div>`;
 }
 
-function bindDeliveryEditForm(el) {
-  const row = el.querySelector(`[data-editing-id="${editingState.delivery}"]`);
+function bindBlockerEditForm(el) {
+  const row = el.querySelector(`[data-editing-id="${editingState.blocker}"]`);
   if (!row) return;
   row.querySelector(".row-save-btn").onclick = async () => {
     const description = row.querySelector(".edit-desc").value.trim();
-    const planned_date = row.querySelector(".edit-date").value;
-    if (!description || !planned_date) { alert("Beskrivning och planerat datum måste vara ifyllda."); return; }
-    const ok = await supaUpdate("plan_deliveries", editingState.delivery, {
+    if (!description) { alert("Ange en beskrivning av hindret."); return; }
+    const plan_item_id = row.querySelector(".edit-item").value;
+    const affected_item_ids = [...row.querySelector(".edit-affected").selectedOptions].map(o => Number(o.value));
+    const ok = await supaUpdate("plan_blockers", editingState.blocker, {
       description,
-      supplier: row.querySelector(".edit-supplier").value.trim() || null,
-      contractor: row.querySelector(".edit-contractor").value.trim() || null,
-      area: row.querySelector(".edit-area").value.trim() || null,
-      planned_date,
-      status: row.querySelector(".edit-status").value
+      plan_item_id: plan_item_id ? Number(plan_item_id) : null,
+      affected_item_ids,
+      responsible: row.querySelector(".edit-responsible").value.trim() || null,
+      deadline: row.querySelector(".edit-deadline").value || null,
+      production_impact: row.querySelector(".edit-impact").value.trim() || null
     });
     if (ok) {
-      editingState.delivery = null;
-      await fetchDeliveries();
-      renderDeliveries();
+      editingState.blocker = null;
+      await fetchBlockers();
+      renderBlockers();
     }
   };
   row.querySelector(".row-cancel-btn").onclick = () => {
-    editingState.delivery = null;
-    renderDeliveries();
+    editingState.blocker = null;
+    renderBlockers();
   };
 }
 
-function deliveriesFormHtml() {
-  const contractors = uniqueValues(it => it.contractor);
+function blockerFormHtml() {
+  const filtered = getFilteredItems();
+  const impactOptions = categoryOptions(BLOCKER_IMPACT_SUGGESTIONS, blockers, b => b.production_impact);
   return `
     <div class="add-form">
-      <input type="text" id="newDeliveryDesc" placeholder="Beskrivning *" />
-      <input type="text" id="newDeliverySupplier" placeholder="Leverantör" />
-      <input type="text" id="newDeliveryContractor" placeholder="Entreprenör" list="deliveryContractorList" />
-      <datalist id="deliveryContractorList">${contractors.map(c => `<option value="${escapeHtml(c)}"></option>`).join("")}</datalist>
-      <input type="text" id="newDeliveryArea" placeholder="Område" />
-      <input type="date" id="newDeliveryDate" title="Planerat datum *" />
-      <select id="newDeliveryStatus">
-        ${DELIVERY_STATUS_OPTIONS.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}
+      <input type="text" id="newBlockerDesc" placeholder="Beskrivning av hindret *" />
+      <select id="newBlockerItem">
+        <option value="">Inget objekt kopplat</option>
+        ${filtered.map(it => `<option value="${it.id}">${escapeHtml(itemLabel(it))}</option>`).join("")}
       </select>
-      <button id="btnAddDelivery">+ Lägg till leverans</button>
+      <label class="field-label">Påverkad aktivitet (flera val möjliga)
+        <select id="newBlockerAffected" multiple size="4">
+          ${filtered.map(it => `<option value="${it.id}">${escapeHtml(itemLabel(it))}</option>`).join("")}
+        </select>
+      </label>
+      <input type="text" id="newBlockerResponsible" placeholder="Ansvarig" />
+      <input type="date" id="newBlockerDeadline" title="Deadline" />
+      <input type="text" id="newBlockerImpact" list="blockerImpactList" placeholder="Påverkan på produktion" />
+      <datalist id="blockerImpactList">${impactOptions.map(o => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>
+      <button id="btnAddBlocker">+ Registrera hinder</button>
     </div>`;
 }
 
-async function onAddDelivery() {
-  const description = document.getElementById("newDeliveryDesc").value.trim();
-  const supplier = document.getElementById("newDeliverySupplier").value.trim();
-  const contractor = document.getElementById("newDeliveryContractor").value.trim();
-  const area = document.getElementById("newDeliveryArea").value.trim();
-  const planned_date = document.getElementById("newDeliveryDate").value;
-  const status = document.getElementById("newDeliveryStatus").value;
-  if (!description || !planned_date) {
-    alert("Ange både beskrivning och planerat datum för leveransen – annars sparas den inte.");
+async function onAddBlocker() {
+  const description = document.getElementById("newBlockerDesc").value.trim();
+  if (!description) {
+    alert("Ange en beskrivning av hindret.");
     return;
   }
-  try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_deliveries`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        "Content-Type": "application/json",
-        Prefer: "return=representation"
-      },
-      body: JSON.stringify({
-        project_id: projectId,
-        description,
-        supplier: supplier || null,
-        contractor: contractor || null,
-        area: area || null,
-        planned_date,
-        status
-      })
-    });
-    if (res.ok) {
-      await fetchDeliveries();
-      renderDeliveries();
-    } else {
-      alert(`Kunde inte spara leveransen (${res.status}).`);
-    }
-  } catch (e) {
-    console.error("Kunde inte lägga till leverans", e);
-    alert("Kunde inte spara leveransen – nätverksfel. Försök igen.");
+  const plan_item_id = document.getElementById("newBlockerItem").value;
+  const affected_item_ids = [...document.getElementById("newBlockerAffected").selectedOptions].map(o => Number(o.value));
+  const responsible = document.getElementById("newBlockerResponsible").value.trim();
+  const deadline = document.getElementById("newBlockerDeadline").value;
+  const production_impact = document.getElementById("newBlockerImpact").value.trim();
+
+  const ok = await supaInsert("plan_blockers", {
+    project_id: projectId,
+    description,
+    plan_item_id: plan_item_id ? Number(plan_item_id) : null,
+    affected_item_ids,
+    responsible: responsible || null,
+    deadline: deadline || null,
+    production_impact: production_impact || null,
+    is_resolved: false
+  });
+  if (ok) {
+    await fetchBlockers();
+    renderBlockers();
   }
 }
 
@@ -2204,7 +2682,8 @@ function onExportExcel() {
       columns: [
         ["Entreprenör", "contractor"],
         ["Veckostart", "week_start"],
-        ["Antal personer", "headcount"]
+        ["Planerad bemanning", "planned_headcount"],
+        ["Faktisk bemanning", "headcount"]
       ],
       rows: staffing
     },
@@ -2220,6 +2699,34 @@ function onExportExcel() {
         ["Status", d => d.status || "planerad"]
       ],
       rows: deliveries
+    },
+    {
+      name: `4D-dashboard-leveransplan-handlingar-${ts}.csv`,
+      columns: [
+        ["Beskrivning", "description"],
+        ["Leverantör", "supplier"],
+        ["Entreprenör", "contractor"],
+        ["Område", "area"],
+        ["Planerat datum", "planned_date"],
+        ["Faktiskt datum", "actual_date"],
+        ["Status", d => d.status || "planerad"]
+      ],
+      rows: documentDeliveries
+    },
+    {
+      name: `4D-dashboard-hinder-${ts}.csv`,
+      columns: [
+        ["Beskrivning", "description"],
+        ["Objekt", b => b.plan_item_id && itemById.has(Number(b.plan_item_id)) ? itemLabel(itemById.get(Number(b.plan_item_id))) : ""],
+        ["Påverkade aktiviteter", b => (Array.isArray(b.affected_item_ids) ? b.affected_item_ids : [])
+          .map(id => itemById.get(Number(id))).filter(Boolean).map(itemLabel).join(", ")],
+        ["Ansvarig", "responsible"],
+        ["Deadline", "deadline"],
+        ["Påverkan på produktion", "production_impact"],
+        ["Löst", b => b.is_resolved ? "Ja" : "Nej"],
+        ["Löst datum", "resolved_date"]
+      ],
+      rows: blockers
     },
     {
       name: `4D-dashboard-sakerhet-${ts}.csv`,
