@@ -46,13 +46,16 @@ Workspace API** (https://developer.trimble.com/docs/connect/workspace-api/).
 - **Leveransplan**: en lista över planerade leveranser (beskrivning,
   leverantör, entreprenör, område, datum, status) med ett formulär för
   att lägga till nya. Skriver till `plan_deliveries`.
-- **Säkerhet**: en logg över tillbud, olyckor, skyddsronder och
-  riskobservationer, med allvarlighetsgrad och ett formulär för att
-  registrera nya händelser. Skriver till `plan_safety_events`.
+- **Säkerhet**: en logg över tillbud, olyckor, skyddsronder,
+  riskobservationer eller valfri egen kategori (typen är fritext med
+  förslag, inte en låst lista), med allvarlighetsgrad, ett valfritt
+  bifogat PDF/bild och ett formulär för att registrera nya händelser.
+  Skriver till `plan_safety_events`.
 - **Kvalitet & besiktningar**: en logg över besiktningar (egenkontroll,
-  besiktning, slutbesiktning, myndighetsbesiktning) med resultat
-  (godkänd/anmärkning/underkänd), valfritt kopplad till ett specifikt
-  objekt. Skriver till `plan_inspections`.
+  besiktning, slutbesiktning, myndighetsbesiktning eller valfri egen
+  kategori) med resultat (godkänd/anmärkning/underkänd), valfritt
+  bifogat PDF/bild och valfritt kopplad till ett specifikt objekt.
+  Skriver till `plan_inspections`.
 - **Väder**: aktuellt väder och en 4-dagarsprognos från
   [Open-Meteo](https://open-meteo.com/) (gratis, ingen API-nyckel),
   baserat på koordinater som anges i inställningarna. Ingen ny tabell –
@@ -72,6 +75,14 @@ i **4D-planering**-repot. Den måste köras en gång i Supabase (Dashboard
 går att köra flera gånger utan att krascha. Fram tills dess visar
 panelerna bara sina tomma lägen (dashboarden hanterar det utan att
 krascha).
+
+Bilagorna (PDF/bild) på Säkerhet och Kvalitet & besiktningar kräver
+dessutom `supabase/migration_4_attachments.sql` (samma repo, samma
+sätt att köra den) – den lägger till `attachment_url`/`attachment_name`
+på de två tabellerna och skapar en publik Storage-bucket
+(`dashboard-attachments`) för själva filerna. Utan den migreringen
+fungerar allt annat som vanligt, filuppladdningsfälten visar bara ett
+felmeddelande om man försöker bifoga något.
 
 ## Arkitektur
 
