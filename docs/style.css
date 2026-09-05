@@ -404,6 +404,43 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   flex: 0 0 auto;
   white-space: nowrap;
 }
+.add-form input[type="file"] {
+  flex: 1 1 170px;
+  padding: 3px 4px;
+  font-size: 10px;
+  background: white;
+}
+.edit-remove-attachment-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.current-attachment { flex: 0 0 auto; }
+
+/* ---------------------------------------------------------------------
+   Bilagor (PDF/bild) på Säkerhet och Kvalitet/besiktningar
+   ------------------------------------------------------------------- */
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.attachment:hover { text-decoration: underline; }
+.attachment-image img {
+  display: block;
+  max-width: 90px;
+  max-height: 90px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
 
 /* ---------------------------------------------------------------------
    Redigera/ta bort – återanvänds av Milstolpar, Bemanning, Leveransplan,
@@ -476,19 +513,48 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .scurve-swatch-utfall { background: var(--accent); }
 
 /* ---------------------------------------------------------------------
-   Milstolpar
+   Milstolpar – varje post är ett litet kort (samma mönster som Säkerhet/
+   Besiktningar): en rad för kryssruta+namn+åtgärder, och datumet på en
+   egen rad under. Att lägga datum/åtgärder på en separat rad (istället
+   för att dela utrymmet med namnet på en enda flex-rad) är det som
+   fixar den tidigare layoutbuggen, där ett långt namn kunde tvinga in
+   ett radbrytning mitt i texten bredvid datum/ikoner.
    ------------------------------------------------------------------- */
-.milestones-list { display: flex; flex-direction: column; }
+.milestones-list { display: flex; flex-direction: column; gap: 6px; }
 .milestone-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.milestone-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--border);
 }
-.milestone-row .milestone-name { flex: 1; color: var(--text); }
+/* Utan detta ärver kryssrutan den globala "input { width: 100% }"-regeln
+   (tänkt för formulärfält), vilket gjorde att den tog nästan hela radens
+   bredd i flex-layouten och klämde in namnet i en smal remsa – det var
+   den egentliga orsaken till att texten radbröts konstigt. */
+.milestone-row .milestone-check {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+}
+.milestone-row .milestone-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .milestone-row .milestone-date {
+  display: block;
+  margin-top: 3px;
+  padding-left: 24px;
+  font-size: 10px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

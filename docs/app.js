@@ -121,6 +121,23 @@ const INSPECTION_TYPES = ["egenkontroll", "besiktning", "slutbesiktning", "myndi
 const INSPECTION_RESULTS = ["godkänd", "anmärkning", "underkänd"];
 const INSPECTION_RESULT_COLORS = { "godkänd": "#3fb950", "anmärkning": "#f5a623", "underkänd": "#e5484d" };
 
+// Namnet ovan (SAFETY_EVENT_TYPES/INSPECTION_TYPES) är bara förslag i en
+// datalist – fältet är fritext i både databasen och UI:t, så vem som helst
+// kan skriva in en egen kategori som sedan också dyker upp som förslag
+// nästa gång (se categoryOptions nedan).
+function categoryOptions(fixedList, dataList, keyFn) {
+  const set = new Set(fixedList);
+  dataList.forEach(item => {
+    const v = keyFn(item);
+    if (v) set.add(v);
+  });
+  return [...set];
+}
+
+// Supabase Storage-bucket för bilagor (PDF/bilder) på säkerhetshändelser
+// och besiktningar. Skapas + policys sätts av migration_4_attachments.sql.
+const ATTACHMENTS_BUCKET = "dashboard-attachments";
+
 // Swedish korta beskrivningar för WMO weather_code (Open-Meteo).
 const WMO_DESCRIPTIONS = {
   0: "Klart", 1: "Mest klart", 2: "Delvis molnigt", 3: "Mulet",
@@ -1073,6 +1090,7 @@ const ICON_EDIT = `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" s
 const ICON_TRASH = `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h12M8 6V4.5A1.5 1.5 0 0 1 9.5 3h1A1.5 1.5 0 0 1 12 4.5V6M6 6l.6 10.2A1.5 1.5 0 0 0 8.1 17.6h3.8a1.5 1.5 0 0 0 1.5-1.4L14 6"/></svg>`;
 const ICON_SAVE = `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5l3.5 3.5L16 5"/></svg>`;
 const ICON_CANCEL = `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5l10 10M15 5L5 15"/></svg>`;
+const ICON_ATTACHMENT = `<svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14.5 7.5l-6 6a2.5 2.5 0 0 1-3.5-3.5l6.5-6.5a1.7 1.7 0 0 1 2.4 2.4L7.4 12.4a.9.9 0 0 1-1.3-1.3l5.6-5.6"/></svg>`;
 
 function rowActionsHtml(type, id) {
   return `
@@ -1080,6 +1098,74 @@ function rowActionsHtml(type, id) {
       <button type="button" class="icon-btn row-edit-btn" data-type="${type}" data-id="${id}" title="Redigera">${ICON_EDIT}</button>
       <button type="button" class="icon-btn row-delete-btn" data-type="${type}" data-id="${id}" title="Ta bort">${ICON_TRASH}</button>
     </span>`;
+}
+
+/* ---------------------------------------------------------------------
+   Bilagor (PDF/bilder) på Säkerhet och Kvalitet/besiktningar – laddas
+   upp direkt till Supabase Storage (bucket ATTACHMENTS_BUCKET) via
+   REST-API:t, på samma sätt som tabelldata skrivs via PostgREST ovan.
+   ------------------------------------------------------------------- */
+function isImageAttachment(name) {
+  return /\.(png|jpe?g|gif|webp|heic|bmp)$/i.test(name || "");
+}
+
+function attachmentPathFromUrl(url) {
+  if (!url) return null;
+  const marker = `/storage/v1/object/public/${ATTACHMENTS_BUCKET}/`;
+  const idx = url.indexOf(marker);
+  return idx === -1 ? null : url.slice(idx + marker.length);
+}
+
+async function uploadAttachment(file, folder) {
+  if (!file) return null;
+  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+  const path = `${folder}/${Date.now()}_${safeName}`;
+  try {
+    const res = await fetch(`${settings.supabaseUrl}/storage/v1/object/${ATTACHMENTS_BUCKET}/${path}`, {
+      method: "POST",
+      headers: {
+        apikey: settings.supabaseKey,
+        Authorization: `Bearer ${settings.supabaseKey}`,
+        "Content-Type": file.type || "application/octet-stream"
+      },
+      body: file
+    });
+    if (!res.ok) {
+      alert(`Kunde inte ladda upp filen (${res.status}). Kontrollera att bucketen "${ATTACHMENTS_BUCKET}" finns (se migration_4_attachments.sql).`);
+      return null;
+    }
+    return {
+      url: `${settings.supabaseUrl}/storage/v1/object/public/${ATTACHMENTS_BUCKET}/${path}`,
+      name: file.name
+    };
+  } catch (e) {
+    console.error("Kunde inte ladda upp bilaga", e);
+    alert("Kunde inte ladda upp filen – nätverksfel. Försök igen.");
+    return null;
+  }
+}
+
+async function deleteAttachmentBestEffort(url) {
+  const path = attachmentPathFromUrl(url);
+  if (!path) return;
+  try {
+    await fetch(`${settings.supabaseUrl}/storage/v1/object/${ATTACHMENTS_BUCKET}/${path}`, {
+      method: "DELETE",
+      headers: supaHeaders()
+    });
+  } catch (e) {
+    console.warn("Kunde inte ta bort bilagan (ignoreras)", e);
+  }
+}
+
+function renderAttachment(url, name) {
+  if (!url) return "";
+  if (isImageAttachment(name || url)) {
+    return `<a class="attachment attachment-image" href="${escapeHtml(url)}" target="_blank" rel="noopener">
+      <img src="${escapeHtml(url)}" alt="${escapeHtml(name || "Bilaga")}" />
+    </a>`;
+  }
+  return `<a class="attachment attachment-file" href="${escapeHtml(url)}" target="_blank" rel="noopener">${ICON_ATTACHMENT}${escapeHtml(name || "Bilaga")}</a>`;
 }
 
 /* ---------------------------------------------------------------------
@@ -1106,10 +1192,12 @@ function renderMilestones() {
         const overdue = !m.is_done && td && td < today;
         return `
           <div class="milestone-row${overdue ? " overdue" : ""}${m.is_done ? " done" : ""}">
-            <input type="checkbox" class="milestone-check" data-milestone-id="${m.id}" ${m.is_done ? "checked" : ""} />
-            <span class="milestone-name" title="${escapeHtml(m.name || "")}">${escapeHtml(m.name || "")}</span>
+            <div class="milestone-head">
+              <input type="checkbox" class="milestone-check" data-milestone-id="${m.id}" ${m.is_done ? "checked" : ""} />
+              <span class="milestone-name" title="${escapeHtml(m.name || "")}">${escapeHtml(m.name || "")}</span>
+              ${rowActionsHtml("milestone", m.id)}
+            </div>
             <span class="milestone-date">${formatDateSv(m.target_date)}</span>
-            ${rowActionsHtml("milestone", m.id)}
           </div>`;
       }).join("");
 
@@ -1575,6 +1663,7 @@ function renderSafety() {
             </div>
             ${s.description ? `<div class="safety-desc">${escapeHtml(s.description)}</div>` : ""}
             ${meta ? `<div class="safety-meta">${escapeHtml(meta)}${s.reported_by ? ` · ${escapeHtml(s.reported_by)}` : ""}</div>` : (s.reported_by ? `<div class="safety-meta">${escapeHtml(s.reported_by)}</div>` : "")}
+            ${renderAttachment(s.attachment_url, s.attachment_name)}
           </div>`;
       }).join("");
 
@@ -1582,9 +1671,15 @@ function renderSafety() {
   document.getElementById("btnAddSafety").onclick = onAddSafety;
   bindRowActions(el, "safety", {
     render: renderSafety,
-    remove: id => supaDelete("plan_safety_events", id, "Ta bort säkerhetshändelsen?").then(ok => {
-      if (ok) { fetchSafetyEvents().then(renderSafety); }
-    })
+    remove: id => {
+      const item = safetyEvents.find(s => String(s.id) === String(id));
+      return supaDelete("plan_safety_events", id, "Ta bort säkerhetshändelsen?").then(ok => {
+        if (ok) {
+          if (item && item.attachment_url) deleteAttachmentBestEffort(item.attachment_url);
+          fetchSafetyEvents().then(renderSafety);
+        }
+      });
+    }
   });
   if (editingState.safety !== null) bindSafetyEditForm(el);
 }
@@ -1592,9 +1687,7 @@ function renderSafety() {
 function safetyEditRowHtml(s) {
   return `
     <div class="safety-row editing add-form" data-editing-id="${s.id}">
-      <select class="edit-type">
-        ${SAFETY_EVENT_TYPES.map(t => `<option value="${escapeHtml(t)}" ${t === s.event_type ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}
-      </select>
+      <input type="text" class="edit-type" list="safetyTypeList" value="${escapeHtml(s.event_type || "")}" placeholder="Typ av händelse" />
       <select class="edit-severity">
         <option value="">Allvarlighetsgrad (valfritt)</option>
         ${SAFETY_SEVERITIES.map(sv => `<option value="${escapeHtml(sv)}" ${sv === s.severity ? "selected" : ""}>${escapeHtml(sv)}</option>`).join("")}
@@ -1604,6 +1697,9 @@ function safetyEditRowHtml(s) {
       <input type="text" class="edit-contractor" value="${escapeHtml(s.contractor || "")}" placeholder="Entreprenör" />
       <input type="date" class="edit-date" value="${escapeHtml(s.event_date || "")}" />
       <input type="text" class="edit-reported-by" value="${escapeHtml(s.reported_by || "")}" placeholder="Rapporterad av" />
+      ${s.attachment_url ? `<span class="current-attachment">${renderAttachment(s.attachment_url, s.attachment_name)}</span>
+      <label class="edit-remove-attachment-label"><input type="checkbox" class="edit-remove-attachment" /> Ta bort bilaga</label>` : ""}
+      <input type="file" class="edit-file" accept=".pdf,image/*" />
       <span class="row-actions">
         <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
         <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
@@ -1614,10 +1710,29 @@ function safetyEditRowHtml(s) {
 function bindSafetyEditForm(el) {
   const row = el.querySelector(`[data-editing-id="${editingState.safety}"]`);
   if (!row) return;
+  const original = safetyEvents.find(s => String(s.id) === String(editingState.safety));
   row.querySelector(".row-save-btn").onclick = async () => {
-    const event_type = row.querySelector(".edit-type").value;
+    const event_type = row.querySelector(".edit-type").value.trim();
     const event_date = row.querySelector(".edit-date").value;
     if (!event_type || !event_date) { alert("Typ och datum måste vara ifyllda."); return; }
+
+    let attachment_url = original ? original.attachment_url || null : null;
+    let attachment_name = original ? original.attachment_name || null : null;
+    const fileInput = row.querySelector(".edit-file");
+    const removeAttachment = row.querySelector(".edit-remove-attachment");
+    if (fileInput && fileInput.files[0]) {
+      const uploaded = await uploadAttachment(fileInput.files[0], "safety");
+      if (uploaded) {
+        if (attachment_url) deleteAttachmentBestEffort(attachment_url);
+        attachment_url = uploaded.url;
+        attachment_name = uploaded.name;
+      }
+    } else if (removeAttachment && removeAttachment.checked && attachment_url) {
+      deleteAttachmentBestEffort(attachment_url);
+      attachment_url = null;
+      attachment_name = null;
+    }
+
     const ok = await supaUpdate("plan_safety_events", editingState.safety, {
       event_type,
       severity: row.querySelector(".edit-severity").value || null,
@@ -1625,7 +1740,9 @@ function bindSafetyEditForm(el) {
       area: row.querySelector(".edit-area").value.trim() || null,
       contractor: row.querySelector(".edit-contractor").value.trim() || null,
       event_date,
-      reported_by: row.querySelector(".edit-reported-by").value.trim() || null
+      reported_by: row.querySelector(".edit-reported-by").value.trim() || null,
+      attachment_url,
+      attachment_name
     });
     if (ok) {
       editingState.safety = null;
@@ -1640,11 +1757,11 @@ function bindSafetyEditForm(el) {
 }
 
 function safetyFormHtml() {
+  const typeOptions = categoryOptions(SAFETY_EVENT_TYPES, safetyEvents, s => s.event_type);
   return `
     <div class="add-form">
-      <select id="newSafetyType">
-        ${SAFETY_EVENT_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("")}
-      </select>
+      <input type="text" id="newSafetyType" list="safetyTypeList" placeholder="Typ av händelse" />
+      <datalist id="safetyTypeList">${typeOptions.map(t => `<option value="${escapeHtml(t)}"></option>`).join("")}</datalist>
       <select id="newSafetySeverity">
         <option value="">Allvarlighetsgrad (valfritt)</option>
         ${SAFETY_SEVERITIES.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}
@@ -1654,21 +1771,32 @@ function safetyFormHtml() {
       <input type="text" id="newSafetyContractor" placeholder="Entreprenör" />
       <input type="date" id="newSafetyDate" value="${todayISO()}" />
       <input type="text" id="newSafetyReportedBy" placeholder="Rapporterad av" />
+      <input type="file" id="newSafetyFile" accept=".pdf,image/*" title="Bifoga PDF eller bild (valfritt)" />
       <button id="btnAddSafety">+ Logga händelse</button>
     </div>`;
 }
 
 async function onAddSafety() {
-  const event_type = document.getElementById("newSafetyType").value;
+  const event_type = document.getElementById("newSafetyType").value.trim();
   const severity = document.getElementById("newSafetySeverity").value;
   const description = document.getElementById("newSafetyDesc").value.trim();
   const area = document.getElementById("newSafetyArea").value.trim();
   const contractor = document.getElementById("newSafetyContractor").value.trim();
   const event_date = document.getElementById("newSafetyDate").value || todayISO();
   const reported_by = document.getElementById("newSafetyReportedBy").value.trim();
+  const file = document.getElementById("newSafetyFile").files[0];
   if (!event_type) {
-    alert("Välj en typ av händelse.");
+    alert("Ange en typ av händelse.");
     return;
+  }
+  let attachment_url = null;
+  let attachment_name = null;
+  if (file) {
+    const uploaded = await uploadAttachment(file, "safety");
+    if (uploaded) {
+      attachment_url = uploaded.url;
+      attachment_name = uploaded.name;
+    }
   }
   try {
     const url = `${settings.supabaseUrl}/rest/v1/plan_safety_events`;
@@ -1688,7 +1816,9 @@ async function onAddSafety() {
         area: area || null,
         contractor: contractor || null,
         event_date,
-        reported_by: reported_by || null
+        reported_by: reported_by || null,
+        attachment_url,
+        attachment_name
       })
     });
     if (res.ok) {
@@ -1737,6 +1867,7 @@ function renderInspections() {
             ${linked ? `<div class="inspection-item" title="${escapeHtml(linked)}">${escapeHtml(linked)}</div>` : ""}
             ${i.comment ? `<div class="inspection-comment">${escapeHtml(i.comment)}</div>` : ""}
             ${i.inspected_by ? `<div class="inspection-meta">${escapeHtml(i.inspected_by)}</div>` : ""}
+            ${renderAttachment(i.attachment_url, i.attachment_name)}
           </div>`;
       }).join("");
 
@@ -1744,9 +1875,15 @@ function renderInspections() {
   document.getElementById("btnAddInspection").onclick = onAddInspection;
   bindRowActions(el, "inspection", {
     render: renderInspections,
-    remove: id => supaDelete("plan_inspections", id, "Ta bort besiktningen?").then(ok => {
-      if (ok) { fetchInspections().then(renderInspections); }
-    })
+    remove: id => {
+      const item = inspections.find(i => String(i.id) === String(id));
+      return supaDelete("plan_inspections", id, "Ta bort besiktningen?").then(ok => {
+        if (ok) {
+          if (item && item.attachment_url) deleteAttachmentBestEffort(item.attachment_url);
+          fetchInspections().then(renderInspections);
+        }
+      });
+    }
   });
   if (editingState.inspection !== null) bindInspectionEditForm(el);
 }
@@ -1758,9 +1895,7 @@ function inspectionEditRowHtml(i, itemById) {
     : [itemById.get(i.plan_item_id), ...filtered].filter(Boolean);
   return `
     <div class="inspection-row editing add-form" data-editing-id="${i.id}">
-      <select class="edit-type">
-        ${INSPECTION_TYPES.map(t => `<option value="${escapeHtml(t)}" ${t === i.inspection_type ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}
-      </select>
+      <input type="text" class="edit-type" list="inspectionTypeList" value="${escapeHtml(i.inspection_type || "")}" placeholder="Typ av besiktning" />
       <select class="edit-result">
         <option value="">Resultat (valfritt)</option>
         ${INSPECTION_RESULTS.map(r => `<option value="${escapeHtml(r)}" ${r === i.result ? "selected" : ""}>${escapeHtml(r)}</option>`).join("")}
@@ -1772,6 +1907,9 @@ function inspectionEditRowHtml(i, itemById) {
         <option value="">Inget objekt</option>
         ${linkedOptions.map(it => `<option value="${it.id}" ${it.id === i.plan_item_id ? "selected" : ""}>${escapeHtml(itemLabel(it))}</option>`).join("")}
       </select>
+      ${i.attachment_url ? `<span class="current-attachment">${renderAttachment(i.attachment_url, i.attachment_name)}</span>
+      <label class="edit-remove-attachment-label"><input type="checkbox" class="edit-remove-attachment" /> Ta bort bilaga</label>` : ""}
+      <input type="file" class="edit-file" accept=".pdf,image/*" />
       <span class="row-actions">
         <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
         <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
@@ -1782,17 +1920,38 @@ function inspectionEditRowHtml(i, itemById) {
 function bindInspectionEditForm(el) {
   const row = el.querySelector(`[data-editing-id="${editingState.inspection}"]`);
   if (!row) return;
+  const original = inspections.find(i => String(i.id) === String(editingState.inspection));
   row.querySelector(".row-save-btn").onclick = async () => {
-    const inspection_type = row.querySelector(".edit-type").value;
-    if (!inspection_type) { alert("Välj en typ av besiktning."); return; }
+    const inspection_type = row.querySelector(".edit-type").value.trim();
+    if (!inspection_type) { alert("Ange en typ av besiktning."); return; }
     const plan_item_id = row.querySelector(".edit-item").value;
+
+    let attachment_url = original ? original.attachment_url || null : null;
+    let attachment_name = original ? original.attachment_name || null : null;
+    const fileInput = row.querySelector(".edit-file");
+    const removeAttachment = row.querySelector(".edit-remove-attachment");
+    if (fileInput && fileInput.files[0]) {
+      const uploaded = await uploadAttachment(fileInput.files[0], "inspections");
+      if (uploaded) {
+        if (attachment_url) deleteAttachmentBestEffort(attachment_url);
+        attachment_url = uploaded.url;
+        attachment_name = uploaded.name;
+      }
+    } else if (removeAttachment && removeAttachment.checked && attachment_url) {
+      deleteAttachmentBestEffort(attachment_url);
+      attachment_url = null;
+      attachment_name = null;
+    }
+
     const ok = await supaUpdate("plan_inspections", editingState.inspection, {
       inspection_type,
       result: row.querySelector(".edit-result").value || null,
       comment: row.querySelector(".edit-comment").value.trim() || null,
       inspected_by: row.querySelector(".edit-by").value.trim() || null,
       inspected_at: row.querySelector(".edit-date").value || todayISO(),
-      plan_item_id: plan_item_id ? Number(plan_item_id) : null
+      plan_item_id: plan_item_id ? Number(plan_item_id) : null,
+      attachment_url,
+      attachment_name
     });
     if (ok) {
       editingState.inspection = null;
@@ -1808,11 +1967,11 @@ function bindInspectionEditForm(el) {
 
 function inspectionsFormHtml() {
   const filtered = getFilteredItems();
+  const typeOptions = categoryOptions(INSPECTION_TYPES, inspections, i => i.inspection_type);
   return `
     <div class="add-form">
-      <select id="newInspectionType">
-        ${INSPECTION_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("")}
-      </select>
+      <input type="text" id="newInspectionType" list="inspectionTypeList" placeholder="Typ av besiktning" />
+      <datalist id="inspectionTypeList">${typeOptions.map(t => `<option value="${escapeHtml(t)}"></option>`).join("")}</datalist>
       <select id="newInspectionResult">
         <option value="">Resultat (valfritt)</option>
         ${INSPECTION_RESULTS.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join("")}
@@ -1824,20 +1983,31 @@ function inspectionsFormHtml() {
         <option value="">Inget objekt</option>
         ${filtered.map(it => `<option value="${it.id}">${escapeHtml(itemLabel(it))}</option>`).join("")}
       </select>
+      <input type="file" id="newInspectionFile" accept=".pdf,image/*" title="Bifoga PDF eller bild (valfritt)" />
       <button id="btnAddInspection">+ Logga besiktning</button>
     </div>`;
 }
 
 async function onAddInspection() {
-  const inspection_type = document.getElementById("newInspectionType").value;
+  const inspection_type = document.getElementById("newInspectionType").value.trim();
   const result = document.getElementById("newInspectionResult").value;
   const comment = document.getElementById("newInspectionComment").value.trim();
   const inspected_by = document.getElementById("newInspectionBy").value.trim();
   const inspected_at = document.getElementById("newInspectionDate").value || todayISO();
   const plan_item_id = document.getElementById("newInspectionItem").value;
+  const file = document.getElementById("newInspectionFile").files[0];
   if (!inspection_type) {
-    alert("Välj en typ av besiktning.");
+    alert("Ange en typ av besiktning.");
     return;
+  }
+  let attachment_url = null;
+  let attachment_name = null;
+  if (file) {
+    const uploaded = await uploadAttachment(file, "inspections");
+    if (uploaded) {
+      attachment_url = uploaded.url;
+      attachment_name = uploaded.name;
+    }
   }
   try {
     const url = `${settings.supabaseUrl}/rest/v1/plan_inspections`;
@@ -1856,7 +2026,9 @@ async function onAddInspection() {
         result: result || null,
         comment: comment || null,
         inspected_by: inspected_by || null,
-        inspected_at
+        inspected_at,
+        attachment_url,
+        attachment_name
       })
     });
     if (res.ok) {
