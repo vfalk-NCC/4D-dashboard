@@ -2,11 +2,14 @@
 
 Ett fristående insticksprogram (Extension) som visar en översikt och
 nyckeltal för produktionsplaneringen. Läser samma Supabase-databas
-(tabellen `plan_items`) som **4D-planering** skriver till, men skriver
-aldrig något själv – rent läsläge. Bygger på **Trimble Connect Workspace
-API** (https://developer.trimble.com/docs/connect/workspace-api/).
+(tabellerna `plan_items` och `plan_item_comments`) som **4D-planering**
+skriver till – och skriver aldrig något till dem själv. Dashboarden
+skriver däremot till fem egna, separata tabeller (milstolpar, bemanning,
+leveransplan, säkerhet, besiktningar) via små formulär i respektive
+panel – se "Vad det gör" nedan för detaljer. Bygger på **Trimble Connect
+Workspace API** (https://developer.trimble.com/docs/connect/workspace-api/).
 
-## Vad det gör (första versionen)
+## Vad det gör
 
 - **Översikt**: en KPI-rad högst upp – totalt antal objekt, andel klara,
   andel försenade, genomsnittlig framdrift och antal ej planerade objekt.
@@ -27,16 +30,48 @@ API** (https://developer.trimble.com/docs/connect/workspace-api/).
   slutdatum längst upp. Baseras på `end_date` jämfört med dagens datum
   (inte bara statusfältet), så listan fångar även objekt vars status
   inte hunnit uppdateras manuellt.
+- **Framdrift över tid (S-kurva)**: en kurva med två linjer – "Planerat"
+  (andel objekt vars slutdatum har passerat, vecka för vecka) och
+  "Utfall" (genomsnittlig verklig framdrift, hämtad ur den nya tabellen
+  `plan_item_progress_history`). Historiken fylls på helt automatiskt av
+  en databastrigger i 4D-planering, så dashboarden bara läser den.
+- **Milstolpar**: en lista (t.ex. "Stomresning klar", "Tätt hus") med
+  måldatum, en kryssruta för att markera klar och ett litet formulär för
+  att lägga till nya. Förfallna, ej klara milstolpar flaggas rött.
+  Skriver till `plan_milestones`.
+- **Bemanning**: ett rutnät med antal personer per entreprenör för denna
+  vecka och de två kommande, med ett litet formulär för att
+  registrera/uppdatera bemanningen per vecka. Skriver till
+  `plan_staffing`.
+- **Leveransplan**: en lista över planerade leveranser (beskrivning,
+  leverantör, entreprenör, område, datum, status) med ett formulär för
+  att lägga till nya. Skriver till `plan_deliveries`.
+- **Säkerhet**: en logg över tillbud, olyckor, skyddsronder och
+  riskobservationer, med allvarlighetsgrad och ett formulär för att
+  registrera nya händelser. Skriver till `plan_safety_events`.
+- **Kvalitet & besiktningar**: en logg över besiktningar (egenkontroll,
+  besiktning, slutbesiktning, myndighetsbesiktning) med resultat
+  (godkänd/anmärkning/underkänd), valfritt kopplad till ett specifikt
+  objekt. Skriver till `plan_inspections`.
+- **Väder**: aktuellt väder och en 4-dagarsprognos från
+  [Open-Meteo](https://open-meteo.com/) (gratis, ingen API-nyckel),
+  baserat på koordinater som anges i inställningarna. Ingen ny tabell –
+  koordinaterna sparas lokalt i webbläsaren, precis som Supabase-URL/
+  nyckel.
 - **Senaste kommentarer**: ett flöde med de senaste kommentarerna från
   `plan_item_comments` (samma tabell som kommentarerna i 4D-planering),
   för objekt som matchar den aktuella filtreringen.
 - **Uppdatera-knapp** (↻) i headern hämtar senaste data på begäran; sidan
   visar även när den senast uppdaterades.
 
-Allt ovan bygger enbart på tabeller som redan finns (`plan_items` och
-`plan_item_comments`) – ingen ny databasstruktur krävs. En
-"planerat vs. utfall"-kurva för framdrift över tid är fortfarande inte
-byggd; se avsnittet "Vidareutveckling" nedan för varför.
+De sex nya tabellerna (`plan_item_progress_history`, `plan_milestones`,
+`plan_staffing`, `plan_deliveries`, `plan_safety_events`,
+`plan_inspections`) skapas av `supabase/migration_3_dashboard_features.sql`
+i **4D-planering**-repot. Den måste köras en gång i Supabase (Dashboard
+→ SQL Editor → klistra in → Run) innan panelerna ovan visar riktig data –
+går att köra flera gånger utan att krascha. Fram tills dess visar
+panelerna bara sina tomma lägen (dashboarden hanterar det utan att
+krascha).
 
 ## Arkitektur
 
@@ -49,13 +84,15 @@ docs/     -> Frontend som körs inuti Trimble Connect (sidopanel)
 ```
 Trimble Connect (3D-visare)
    -> docs/ (statiska filer på GitHub Pages, gratis, direkt från repot)
-        -> REST-anrop (läsning) mot https://<samma-projekt-som-4D-planering>.supabase.co
+        -> REST-anrop (läsning + skrivning till de nya tabellerna) mot
+           https://<samma-projekt-som-4D-planering>.supabase.co
 ```
 
-Ingen egen databas eller schema behövs – dashboarden pratar mot exakt
-samma Supabase-projekt och tabell (`plan_items`) som 4D-planering redan
-har satt upp. Se **4D-planering**s README för hela databas-guiden om den
-inte redan finns.
+Ingen egen databas krävs – dashboarden pratar mot exakt samma
+Supabase-projekt som 4D-planering redan har satt upp, plus sex nya
+tabeller (se "Vad det gör" ovan) som skapas av
+`migration_3_dashboard_features.sql`. Se **4D-planering**s README för
+hela databas-guiden om den inte redan finns.
 
 ## Kom igång
 
@@ -83,7 +120,8 @@ hostas gratis direkt från repot:
    extensionen (se steg 4 om den inte redan är tillagd).
 2. Klicka på kugghjulet (⚙) uppe till höger i panelen.
 3. Klistra in **samma** Supabase-URL och anon key som du använder i
-   4D-planering.
+   4D-planering. Vill du även visa väder, ange projektets latitud/
+   longitud i samma dialog (valfritt, används bara av väderpanelen).
 4. Klicka **Spara**. Varningen "Ingen databas ansluten" ska försvinna och
    KPI:erna fyllas i.
 
@@ -98,31 +136,21 @@ hostas gratis direkt från repot:
 
 ## Vidareutveckling
 
-Delar som diskuterats men medvetet inte byggts än, eftersom de kräver
-antingen ett beslut om ny databasstruktur eller en extern datakälla –
-att skapa tabellerna själv utan att fråga känns fel eftersom det är du
-som får leva med schemat och fylla i datan skarpt:
+De sju funktionerna ovan (S-kurva, milstolpar, bemanning, leveransplan,
+säkerhet, kvalitet/besiktningar, väder) är byggda. Kvarstående, öppna
+uppslag:
 
-- **Framdrift över tid** ("planerat vs. utfall"-kurva, S-kurva): kräver
-  ett beslut – antingen (a) bara rita en planerad kurva utifrån start-/
-  slutdatum och lägga dagens faktiska snitt som en punkt ovanpå (inga
-  nya tabeller), eller (b) börja logga framdriftshistorik i en ny tabell
-  (progress + tidsstämpel vid varje ändring) för att kunna rita en
-  riktig utfallskurva.
-- **Milstolpar**: egna markörer (stomresning klar, tätt hus, etc.) i
-  "Kommande veckor"-panelen. Kräver en ny liten tabell, t.ex.
-  `plan_milestones` (namn, datum, klar-flagga).
-- **Bemanning/resurser** per entreprenör och vecka, **leveransplan**,
-  **säkerhet** (tillbud, skyddsronder) och **kvalitet/besiktningar**:
-  alla vanliga på byggdashboards, men kräver egna tabeller och att
-  någon i projektet börjar mata in datan löpande – annars blir panelen
-  bara tom.
-- **Väder**: kräver en extern väder-API-koppling och en plats
-  (koordinater) per projekt.
-
-Vill du gå vidare med någon av dessa, säg till så tar vi fram ett
-konkret tabellförslag (SQL) tillsammans innan något byggs, så att
-schemat passar hur ni faktiskt vill mata in datan.
+- **"Planerat"-formeln i S-kurvan** är en enkel första version (andel
+  objekt vars slutdatum har passerat). Går att förfina senare, t.ex.
+  genom att vikta objekt olika efter storlek/omfattning istället för att
+  räkna dem lika.
+- **Milstolpar i "Kommande veckor"**: milstolpar visas idag i en egen
+  panel, inte som markörer i lookahead-tabellen – kan slås ihop senare
+  om det efterfrågas.
+- **plan_item_progress_history växer kontinuerligt** (en rad per
+  ändring av progress/status). Inga problem för Postgres i nuvarande
+  skala, men en enkel städrutin (t.ex. behåll bara en rad per objekt och
+  dag) kan behövas längre fram.
 
 ## Snabbreferens: navigering i Trimble Connect (för framtida uppdateringar)
 
