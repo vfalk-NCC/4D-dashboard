@@ -47,6 +47,7 @@
     <section class="panel" data-panel-id="overview">
       <h2>Översikt</h2>
       <div id="kpiGrid" class="kpi-grid"></div>
+      <div id="statusDonut" class="status-donut"></div>
     </section>
 
     <!-- ===== Statusfördelning ===== -->
@@ -149,6 +150,7 @@
       <label>Supabase anon key (public) <input type="text" id="supabaseKey" placeholder="eyJhbGciOi..." /></label>
       <label>Latitud (väder, valfritt) <input type="text" id="settingsLatitude" placeholder="59.33" /></label>
       <label>Longitud (väder, valfritt) <input type="text" id="settingsLongitude" placeholder="18.06" /></label>
+      <label>Platsnamn (väder, valfritt) <input type="text" id="settingsLocationName" placeholder="t.ex. Gällivare" /></label>
       <p class="hint">Använd samma Supabase-projekt och nyckel som i 4D-planering, så visar dashboarden
         samma planeringsdata. Se README.md i 4D-planering-repot för hela uppsättningsguiden.
         Koordinaterna används bara för väderpanelen och sparas lokalt i webbläsaren.</p>

@@ -177,6 +177,39 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .kpi-tile.accent-delayed .kpi-value { color: #e5484d; }
 .kpi-tile.accent-progress .kpi-value { color: var(--accent); }
 
+.status-donut { margin-top: 10px; }
+.donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.donut-svg { width: 120px; height: 120px; flex-shrink: 0; }
+.donut-svg circle { transition: stroke-dasharray 0.3s ease; }
+.donut-center-value { font-size: 22px; font-weight: 700; fill: var(--text); }
+.donut-center-label { font-size: 8px; fill: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 120px;
+}
+.donut-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.donut-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.donut-legend-label { color: var(--text); }
+.donut-legend-value { color: var(--muted); margin-left: auto; font-weight: 600; }
+
 /* ---------------------------------------------------------------------
    Filtrering (område / aktivitet / entreprenör)
    ------------------------------------------------------------------- */
@@ -475,6 +508,45 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   font-size: 10px;
   background: white;
 }
+/* ---------------------------------------------------------------------
+   Objektval i 3D-modellen – används i formulären för Hinder, Kvalitet/
+   besiktningar och Säkerhet (istället för att koppla till ett planerat
+   objekt), samt som en liten klickbar badge på redan sparade rader.
+   ------------------------------------------------------------------- */
+.model-object-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 200px;
+}
+.model-pick-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: white;
+}
+.model-pick-clear { flex: 0 0 auto; }
+.model-object-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 10px;
+  cursor: pointer;
+}
+.model-object-badge:hover { background: white; border-color: var(--accent); }
+
 .edit-remove-attachment-label {
   display: inline-flex;
   align-items: center;
@@ -668,20 +740,26 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .staffing-cell.staffing-cell-editing {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   gap: 1px;
   background: white;
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 4px 2px;
-  position: relative;
+  padding: 2px 5px 4px;
 }
-.staffing-cell .row-actions { position: absolute; top: 2px; right: 2px; margin-left: 0; }
+.staffing-cell-head {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 16px;
+}
+.staffing-cell-head:empty { display: none; }
+.staffing-cell .row-actions { margin-left: 0; }
 .staffing-stat {
   display: flex;
   justify-content: space-between;
-  gap: 4px;
+  align-items: baseline;
+  gap: 6px;
   width: 100%;
   font-size: 9px;
 }
@@ -887,14 +965,26 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
    ------------------------------------------------------------------- */
 .weather-current {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 10px;
+  flex-direction: column;
+  gap: 2px;
   margin-bottom: 8px;
 }
+.weather-location {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.weather-current-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.weather-emoji { font-size: 32px; line-height: 1; }
 .weather-temp { font-size: 26px; font-weight: 700; color: var(--text); }
 .weather-desc { font-size: 12px; color: var(--text); }
-.weather-meta { flex-basis: 100%; font-size: 10px; color: var(--muted); }
+.weather-meta { font-size: 10px; color: var(--muted); }
 .weather-forecast { display: flex; gap: 8px; }
 .weather-day {
   flex: 1;
@@ -905,6 +995,7 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   text-align: center;
 }
 .weather-day-name { font-size: 10px; font-weight: 700; text-transform: capitalize; color: var(--text); }
+.weather-day-emoji { font-size: 18px; line-height: 1.2; }
 .weather-day-desc { font-size: 9px; color: var(--muted); margin: 2px 0; }
 .weather-day-temp { font-size: 11px; font-weight: 600; color: var(--text); }
 .weather-day-precip { font-size: 9px; color: var(--muted); }

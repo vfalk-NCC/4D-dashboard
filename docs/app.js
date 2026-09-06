@@ -18,7 +18,8 @@ let settings = {
   supabaseUrl: "",
   supabaseKey: "",
   latitude: "",
-  longitude: ""
+  longitude: "",
+  locationName: ""
 };
 // Aktiv filtrering – tomt värde ("") betyder "alla" för respektive fält.
 let filters = {
@@ -122,6 +123,16 @@ let editingState = {
   blocker: null
 };
 
+// Håller det objekt som (eventuellt) just valts i 3D-modellen för
+// respektive lägg till/redigera-formulär (Hinder, Kvalitet/besiktningar,
+// Säkerhet) – se "Objektval i 3D-modellen" längre ner.
+let newBlockerModelObject = emptyModelObjectRef();
+let editBlockerModelObject = emptyModelObjectRef();
+let newInspectionModelObject = emptyModelObjectRef();
+let editInspectionModelObject = emptyModelObjectRef();
+let newSafetyModelObject = emptyModelObjectRef();
+let editSafetyModelObject = emptyModelObjectRef();
+
 const DELIVERY_STATUS_OPTIONS = ["planerad", "på väg", "levererad", "försenad"];
 const DELIVERY_STATUS_COLORS = {
   planerad: "#94a3b8",
@@ -176,6 +187,44 @@ function weatherDescription(code) {
   return WMO_DESCRIPTIONS[code] || "Okänt väder";
 }
 
+// Emoji som speglar vädret, samma WMO weather_code som beskrivningarna
+// ovan. is_day (0/1 från Open-Meteo) används för att skilja sol/måne.
+const WMO_EMOJIS = {
+  0: { day: "☀️", night: "🌙" },
+  1: { day: "🌤️", night: "🌙" },
+  2: { day: "⛅", night: "☁️" },
+  3: { day: "☁️", night: "☁️" },
+  45: { day: "🌫️", night: "🌫️" },
+  48: { day: "🌫️", night: "🌫️" },
+  51: { day: "🌦️", night: "🌦️" },
+  53: { day: "🌦️", night: "🌦️" },
+  55: { day: "🌧️", night: "🌧️" },
+  56: { day: "🌧️", night: "🌧️" },
+  57: { day: "🌧️", night: "🌧️" },
+  61: { day: "🌦️", night: "🌦️" },
+  63: { day: "🌧️", night: "🌧️" },
+  65: { day: "🌧️", night: "🌧️" },
+  66: { day: "🌧️", night: "🌧️" },
+  67: { day: "🌧️", night: "🌧️" },
+  71: { day: "🌨️", night: "🌨️" },
+  73: { day: "🌨️", night: "🌨️" },
+  75: { day: "❄️", night: "❄️" },
+  77: { day: "❄️", night: "❄️" },
+  80: { day: "🌦️", night: "🌧️" },
+  81: { day: "🌧️", night: "🌧️" },
+  82: { day: "⛈️", night: "⛈️" },
+  85: { day: "🌨️", night: "🌨️" },
+  86: { day: "❄️", night: "❄️" },
+  95: { day: "⛈️", night: "⛈️" },
+  96: { day: "⛈️", night: "⛈️" },
+  99: { day: "⛈️", night: "⛈️" }
+};
+function weatherEmoji(code, isDay) {
+  const entry = WMO_EMOJIS[code];
+  if (!entry) return "🌡️";
+  return isDay === 0 ? entry.night : entry.day;
+}
+
 /* ---------------------------------------------------------------------
    Init
    ------------------------------------------------------------------- */
@@ -207,6 +256,7 @@ function bindUI() {
   document.getElementById("supabaseKey").value = settings.supabaseKey;
   document.getElementById("settingsLatitude").value = settings.latitude || "";
   document.getElementById("settingsLongitude").value = settings.longitude || "";
+  document.getElementById("settingsLocationName").value = settings.locationName || "";
   updateConnectionWarning();
 
   document.getElementById("filterArea").onchange = onFilterChange;
@@ -390,6 +440,7 @@ function onSaveSettings() {
   const lonRaw = document.getElementById("settingsLongitude").value.trim();
   settings.latitude = normalizeCoord(latRaw);
   settings.longitude = normalizeCoord(lonRaw);
+  settings.locationName = document.getElementById("settingsLocationName").value.trim();
   document.getElementById("settingsLatitude").value = settings.latitude;
   document.getElementById("settingsLongitude").value = settings.longitude;
   window.localStorage.setItem("4ddash-settings", JSON.stringify(settings));
@@ -466,6 +517,7 @@ async function refreshAll() {
 // att hämta om data från Supabase).
 function renderAll() {
   renderKpis();
+  renderStatusDonut();
   renderStatusChart();
   const filtered = getFilteredItems();
   renderScurve(filtered);
@@ -666,7 +718,7 @@ async function fetchWeather() {
   if (!isWeatherConfigured()) return;
   const { lat, lon } = parsedCoords();
   try {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current=temperature_2m,precipitation,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&timezone=auto&forecast_days=4`;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current=temperature_2m,precipitation,wind_speed_10m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&timezone=auto&forecast_days=4`;
     const res = await fetch(url);
     if (res.ok) {
       weather = await res.json();
@@ -837,6 +889,66 @@ function renderKpis() {
       <div class="kpi-value">${t.value}</div>
       <div class="kpi-label">${t.label}</div>
     </div>`).join("");
+}
+
+// Cirkeldiagram (donut) över statusfördelningen, som komplement till
+// KPI-rutnätet i Översikt-panelen. Samma STATUS_ORDER/STATUS_COLORS/
+// STATUS_LABELS som Statusfördelning-panelens stapeldiagram, ritat som
+// inline SVG (ingen extern chart-bibliotek).
+function renderStatusDonut() {
+  const el = document.getElementById("statusDonut");
+  if (!el) return;
+
+  const list = getFilteredItems();
+  const s = computeStats(list);
+
+  if (s.total === 0) {
+    el.innerHTML = "";
+    return;
+  }
+
+  const size = 140;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = 52;
+  const strokeWidth = 22;
+  const circumference = 2 * Math.PI * r;
+
+  let offset = 0;
+  const segments = STATUS_ORDER.map(status => {
+    const count = s.byStatus[status] || 0;
+    if (count === 0) return "";
+    const fraction = count / s.total;
+    const dash = fraction * circumference;
+    const gap = circumference - dash;
+    const seg = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${STATUS_COLORS[status]}"
+      stroke-width="${strokeWidth}" stroke-dasharray="${dash} ${gap}" stroke-dashoffset="${-offset}"
+      transform="rotate(-90 ${cx} ${cy})"><title>${escapeHtml(STATUS_LABELS[status])}: ${count} (${Math.round(fraction * 100)}%)</title></circle>`;
+    offset += dash;
+    return seg;
+  }).join("");
+
+  const legend = STATUS_ORDER.filter(status => (s.byStatus[status] || 0) > 0).map(status => {
+    const count = s.byStatus[status] || 0;
+    const pct = Math.round((count / s.total) * 100);
+    return `
+      <div class="donut-legend-row">
+        <span class="donut-legend-swatch" style="background:${STATUS_COLORS[status]}"></span>
+        <span class="donut-legend-label">${escapeHtml(STATUS_LABELS[status])}</span>
+        <span class="donut-legend-value">${count} (${pct}%)</span>
+      </div>`;
+  }).join("");
+
+  el.innerHTML = `
+    <div class="donut-wrap">
+      <svg viewBox="0 0 ${size} ${size}" class="donut-svg" role="img" aria-label="Statusfördelning">
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${strokeWidth}"></circle>
+        ${segments}
+        <text x="${cx}" y="${cy - 4}" text-anchor="middle" class="donut-center-value">${s.total}</text>
+        <text x="${cx}" y="${cy + 12}" text-anchor="middle" class="donut-center-label">objekt</text>
+      </svg>
+      <div class="donut-legend">${legend}</div>
+    </div>`;
 }
 
 /* ---------------------------------------------------------------------
@@ -1300,6 +1412,126 @@ function renderAttachment(url, name) {
 }
 
 /* ---------------------------------------------------------------------
+   Objektval i 3D-modellen – används av Hinder, Kvalitet/besiktningar och
+   Säkerhet istället för att koppla till ett planerat objekt (plan_items).
+   Användaren markerar ett objekt i Trimble Connects 3D-vy och klickar
+   sedan på knappen, som läser av markeringen via Workspace API:et
+   (API.viewer.getSelection/getObjectProperties). Se
+   https://developer.trimble.com/docs/connect/workspace-api/ – "Selection"
+   är en lista av { modelId, objectRuntimeIds }, och ett läsbart namn
+   hämtas (bästa försök) från ObjectProperties.product.name.
+   ------------------------------------------------------------------- */
+const ICON_TARGET = `<svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="6.5"/><circle cx="10" cy="10" r="1.4" fill="currentColor" stroke="none"/><path d="M10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3"/></svg>`;
+
+function emptyModelObjectRef() {
+  return { model_id: null, model_object_id: null, model_object_name: null };
+}
+
+function modelObjectRefFromRow(row) {
+  return {
+    model_id: row && row.model_id ? row.model_id : null,
+    model_object_id: row && row.model_object_id !== undefined ? row.model_object_id : null,
+    model_object_name: row && row.model_object_name ? row.model_object_name : null
+  };
+}
+
+// Läser av den aktuella markeringen i 3D-vyn och fyller `ref` (muterar
+// objektet, precis som editingState) med modell-id, objekt-id och ett
+// (bästa försök) läsbart namn.
+async function pickModelObjectInto(ref) {
+  if (!API || !API.viewer || typeof API.viewer.getSelection !== "function") {
+    alert("3D-modellen är inte tillgänglig just nu (extensionen verkar inte vara ansluten till vyn).");
+    return;
+  }
+  try {
+    const selection = await API.viewer.getSelection();
+    const first = Array.isArray(selection)
+      ? selection.find(s => s && Array.isArray(s.objectRuntimeIds) && s.objectRuntimeIds.length > 0)
+      : null;
+    if (!first) {
+      alert("Markera ett objekt i 3D-modellen och klicka sedan på knappen igen.");
+      return;
+    }
+    const modelId = first.modelId;
+    const runtimeId = first.objectRuntimeIds[0];
+    let name = `Objekt ${runtimeId}`;
+    try {
+      const props = await API.viewer.getObjectProperties(modelId, [runtimeId]);
+      if (props && props[0]) {
+        name = (props[0].product && props[0].product.name) || props[0].class || name;
+      }
+    } catch (e) { /* behåll fallback-namnet ovan */ }
+    ref.model_id = modelId;
+    ref.model_object_id = runtimeId;
+    ref.model_object_name = name;
+  } catch (e) {
+    console.error("Kunde inte hämta markering från 3D-modellen", e);
+    alert("Kunde inte hämta markering från 3D-modellen.");
+  }
+}
+
+// Markerar (highlightar) ett tidigare valt objekt i 3D-vyn igen – en liten
+// bekvämlighet så man kan hitta tillbaka till objektet i modellen.
+async function highlightModelObject(ref) {
+  if (!ref || !ref.model_id || ref.model_object_id === null || ref.model_object_id === undefined) return;
+  if (!API || !API.viewer || typeof API.viewer.setSelection !== "function") {
+    alert("3D-modellen är inte tillgänglig just nu.");
+    return;
+  }
+  try {
+    await API.viewer.setSelection({ modelId: ref.model_id, objectRuntimeIds: [Number(ref.model_object_id)] }, "set");
+  } catch (e) {
+    console.error("Kunde inte markera objektet i 3D-modellen", e);
+    alert("Kunde inte markera objektet i 3D-modellen.");
+  }
+}
+
+function modelObjectPickerHtml(ref, wrapperId, btnId, clearBtnId) {
+  const hasPicked = Boolean(ref.model_object_name);
+  return `
+    <div class="model-object-picker" id="${wrapperId}">
+      <button type="button" class="model-pick-btn" id="${btnId}" title="Markera ett objekt i 3D-vyn och klicka här">
+        ${hasPicked ? "📦 " + escapeHtml(ref.model_object_name) : "Välj objekt i modell"}
+      </button>
+      ${hasPicked ? `<button type="button" class="icon-btn model-pick-clear" id="${clearBtnId}" title="Rensa objektval">${ICON_CANCEL}</button>` : ""}
+    </div>`;
+}
+
+function bindModelObjectPicker(ref, wrapperId, btnId, clearBtnId) {
+  const rerender = () => {
+    const wrapper = document.getElementById(wrapperId);
+    if (!wrapper) return;
+    wrapper.outerHTML = modelObjectPickerHtml(ref, wrapperId, btnId, clearBtnId);
+    bindModelObjectPicker(ref, wrapperId, btnId, clearBtnId);
+  };
+  const btn = document.getElementById(btnId);
+  if (btn) btn.onclick = async () => { await pickModelObjectInto(ref); rerender(); };
+  const clearBtn = document.getElementById(clearBtnId);
+  if (clearBtn) clearBtn.onclick = () => {
+    ref.model_id = null;
+    ref.model_object_id = null;
+    ref.model_object_name = null;
+    rerender();
+  };
+}
+
+// Liten "hitta i modellen"-knapp för sparade rader (Hinder/Kvalitet/
+// Säkerhet) som redan har ett objekt kopplat.
+function modelObjectBadgeHtml(row) {
+  if (!row || !row.model_object_name) return "";
+  return `<button type="button" class="model-object-badge" data-model-id="${escapeHtml(row.model_id || "")}" data-model-object-id="${row.model_object_id ?? ""}" title="Markera objektet i 3D-modellen">${ICON_TARGET} ${escapeHtml(row.model_object_name)}</button>`;
+}
+
+function bindModelObjectBadges(el) {
+  el.querySelectorAll(".model-object-badge").forEach(btn => {
+    btn.onclick = () => highlightModelObject({
+      model_id: btn.dataset.modelId,
+      model_object_id: btn.dataset.modelObjectId
+    });
+  });
+}
+
+/* ---------------------------------------------------------------------
    Milstolpar – lista sorterad på måldatum, med en kryssruta som PATCHar
    is_done (och sätter/nollställer completed_date) samt ett litet
    formulär för att lägga till nya milstolpar.
@@ -1534,10 +1766,10 @@ function renderStaffing() {
           const devText = deviation === null ? "–" : (deviation > 0 ? `+${deviation}` : String(deviation));
           return `
             <span class="staffing-cell staffing-cell-filled">
+              <span class="staffing-cell-head">${rowActionsHtml("staffing", rec.id)}</span>
               <span class="staffing-stat"><span class="staffing-stat-label">Planerad</span><span class="staffing-stat-value">${hasPlanned ? rec.planned_headcount : "–"}</span></span>
               <span class="staffing-stat"><span class="staffing-stat-label">Faktisk</span><span class="staffing-stat-value">${rec.headcount}</span></span>
               <span class="staffing-stat staffing-deviation ${devClass}"><span class="staffing-stat-label">Avvikelse</span><span class="staffing-stat-value">${devText}</span></span>
-              ${rowActionsHtml("staffing", rec.id)}
             </span>`;
         }).join("")}
       </div>`).join("");
@@ -1893,7 +2125,6 @@ function renderBlockers() {
 
         const dl = parseDate(b.deadline);
         const overdue = !b.is_resolved && dl && dl < today;
-        const linked = b.plan_item_id && itemById.has(Number(b.plan_item_id)) ? itemLabel(itemById.get(Number(b.plan_item_id))) : "";
         const affectedLabels = (Array.isArray(b.affected_item_ids) ? b.affected_item_ids : [])
           .map(id => itemById.get(Number(id)))
           .filter(Boolean)
@@ -1909,7 +2140,7 @@ function renderBlockers() {
               ${rowActionsHtml("blocker", b.id)}
             </div>
             <div class="blocker-desc">${escapeHtml(b.description || "")}</div>
-            ${linked ? `<div class="blocker-item" title="${escapeHtml(linked)}">Objekt: ${escapeHtml(linked)}</div>` : ""}
+            ${modelObjectBadgeHtml(b)}
             ${affectedLabels.length ? `<div class="blocker-affected" title="${escapeHtml(affectedLabels.join(", "))}">Påverkar: ${escapeHtml(affectedLabels.join(", "))}</div>` : ""}
             ${b.responsible ? `<div class="blocker-meta">Ansvarig: ${escapeHtml(b.responsible)}</div>` : ""}
             ${b.production_impact ? `<div class="blocker-meta">Påverkan på produktion: ${escapeHtml(b.production_impact)}</div>` : ""}
@@ -1926,6 +2157,8 @@ function renderBlockers() {
   el.innerHTML = rows + blockerFormHtml();
 
   document.getElementById("btnAddBlocker").onclick = onAddBlocker;
+  bindModelObjectPicker(newBlockerModelObject, "newBlockerModelPicker", "newBlockerModelPickBtn", "newBlockerModelClearBtn");
+  bindModelObjectBadges(el);
   bindRowActions(el, "blocker", {
     render: renderBlockers,
     remove: id => supaDelete("plan_blockers", id, "Ta bort hindret? (kommentarerna tas också bort)").then(ok => {
@@ -1993,23 +2226,18 @@ async function onToggleBlockerResolved(id, checked) {
 
 function blockerEditRowHtml(b, itemById) {
   const filtered = getFilteredItems();
-  const linkedOptions = filtered.some(it => it.id === Number(b.plan_item_id)) || !b.plan_item_id
-    ? filtered
-    : [itemById.get(Number(b.plan_item_id)), ...filtered].filter(Boolean);
   const affectedIds = Array.isArray(b.affected_item_ids) ? b.affected_item_ids.map(Number) : [];
   const affectedOptionsSource = [...filtered];
   affectedIds.forEach(id => {
     if (!affectedOptionsSource.some(it => it.id === id) && itemById.has(id)) affectedOptionsSource.push(itemById.get(id));
   });
   const impactOptions = categoryOptions(BLOCKER_IMPACT_SUGGESTIONS, blockers, x => x.production_impact);
+  editBlockerModelObject = modelObjectRefFromRow(b);
 
   return `
     <div class="blocker-row editing add-form" data-editing-id="${b.id}">
       <input type="text" class="edit-desc" value="${escapeHtml(b.description || "")}" placeholder="Beskrivning av hindret *" />
-      <select class="edit-item">
-        <option value="">Inget objekt kopplat</option>
-        ${linkedOptions.map(it => `<option value="${it.id}" ${it.id === Number(b.plan_item_id) ? "selected" : ""}>${escapeHtml(itemLabel(it))}</option>`).join("")}
-      </select>
+      ${modelObjectPickerHtml(editBlockerModelObject, "editBlockerModelPicker", "editBlockerModelPickBtn", "editBlockerModelClearBtn")}
       <label class="field-label">Påverkad aktivitet (flera val möjliga)
         <select class="edit-affected" multiple size="4">
           ${affectedOptionsSource.map(it => `<option value="${it.id}" ${affectedIds.includes(it.id) ? "selected" : ""}>${escapeHtml(itemLabel(it))}</option>`).join("")}
@@ -2029,14 +2257,16 @@ function blockerEditRowHtml(b, itemById) {
 function bindBlockerEditForm(el) {
   const row = el.querySelector(`[data-editing-id="${editingState.blocker}"]`);
   if (!row) return;
+  bindModelObjectPicker(editBlockerModelObject, "editBlockerModelPicker", "editBlockerModelPickBtn", "editBlockerModelClearBtn");
   row.querySelector(".row-save-btn").onclick = async () => {
     const description = row.querySelector(".edit-desc").value.trim();
     if (!description) { alert("Ange en beskrivning av hindret."); return; }
-    const plan_item_id = row.querySelector(".edit-item").value;
     const affected_item_ids = [...row.querySelector(".edit-affected").selectedOptions].map(o => Number(o.value));
     const ok = await supaUpdate("plan_blockers", editingState.blocker, {
       description,
-      plan_item_id: plan_item_id ? Number(plan_item_id) : null,
+      model_id: editBlockerModelObject.model_id,
+      model_object_id: editBlockerModelObject.model_object_id,
+      model_object_name: editBlockerModelObject.model_object_name,
       affected_item_ids,
       responsible: row.querySelector(".edit-responsible").value.trim() || null,
       deadline: row.querySelector(".edit-deadline").value || null,
@@ -2060,10 +2290,7 @@ function blockerFormHtml() {
   return `
     <div class="add-form">
       <input type="text" id="newBlockerDesc" placeholder="Beskrivning av hindret *" />
-      <select id="newBlockerItem">
-        <option value="">Inget objekt kopplat</option>
-        ${filtered.map(it => `<option value="${it.id}">${escapeHtml(itemLabel(it))}</option>`).join("")}
-      </select>
+      ${modelObjectPickerHtml(newBlockerModelObject, "newBlockerModelPicker", "newBlockerModelPickBtn", "newBlockerModelClearBtn")}
       <label class="field-label">Påverkad aktivitet (flera val möjliga)
         <select id="newBlockerAffected" multiple size="4">
           ${filtered.map(it => `<option value="${it.id}">${escapeHtml(itemLabel(it))}</option>`).join("")}
@@ -2083,7 +2310,6 @@ async function onAddBlocker() {
     alert("Ange en beskrivning av hindret.");
     return;
   }
-  const plan_item_id = document.getElementById("newBlockerItem").value;
   const affected_item_ids = [...document.getElementById("newBlockerAffected").selectedOptions].map(o => Number(o.value));
   const responsible = document.getElementById("newBlockerResponsible").value.trim();
   const deadline = document.getElementById("newBlockerDeadline").value;
@@ -2092,7 +2318,9 @@ async function onAddBlocker() {
   const ok = await supaInsert("plan_blockers", {
     project_id: projectId,
     description,
-    plan_item_id: plan_item_id ? Number(plan_item_id) : null,
+    model_id: newBlockerModelObject.model_id,
+    model_object_id: newBlockerModelObject.model_object_id,
+    model_object_name: newBlockerModelObject.model_object_name,
     affected_item_ids,
     responsible: responsible || null,
     deadline: deadline || null,
@@ -2100,6 +2328,7 @@ async function onAddBlocker() {
     is_resolved: false
   });
   if (ok) {
+    newBlockerModelObject = emptyModelObjectRef();
     await fetchBlockers();
     renderBlockers();
   }
@@ -2140,6 +2369,7 @@ function renderSafety() {
               ${rowActionsHtml("safety", s.id)}
             </div>
             ${s.description ? `<div class="safety-desc">${escapeHtml(s.description)}</div>` : ""}
+            ${modelObjectBadgeHtml(s)}
             ${meta ? `<div class="safety-meta">${escapeHtml(meta)}${s.reported_by ? ` · ${escapeHtml(s.reported_by)}` : ""}</div>` : (s.reported_by ? `<div class="safety-meta">${escapeHtml(s.reported_by)}</div>` : "")}
             ${renderAttachment(s.attachment_url, s.attachment_name)}
           </div>`;
@@ -2147,6 +2377,8 @@ function renderSafety() {
 
   el.innerHTML = rows + safetyFormHtml();
   document.getElementById("btnAddSafety").onclick = onAddSafety;
+  bindModelObjectPicker(newSafetyModelObject, "newSafetyModelPicker", "newSafetyModelPickBtn", "newSafetyModelClearBtn");
+  bindModelObjectBadges(el);
   bindRowActions(el, "safety", {
     render: renderSafety,
     remove: id => {
@@ -2163,6 +2395,7 @@ function renderSafety() {
 }
 
 function safetyEditRowHtml(s) {
+  editSafetyModelObject = modelObjectRefFromRow(s);
   return `
     <div class="safety-row editing add-form" data-editing-id="${s.id}">
       <input type="text" class="edit-type" list="safetyTypeList" value="${escapeHtml(s.event_type || "")}" placeholder="Typ av händelse" />
@@ -2171,6 +2404,7 @@ function safetyEditRowHtml(s) {
         ${SAFETY_SEVERITIES.map(sv => `<option value="${escapeHtml(sv)}" ${sv === s.severity ? "selected" : ""}>${escapeHtml(sv)}</option>`).join("")}
       </select>
       <input type="text" class="edit-desc" value="${escapeHtml(s.description || "")}" placeholder="Beskrivning" />
+      ${modelObjectPickerHtml(editSafetyModelObject, "editSafetyModelPicker", "editSafetyModelPickBtn", "editSafetyModelClearBtn")}
       <input type="text" class="edit-area" value="${escapeHtml(s.area || "")}" placeholder="Område" />
       <input type="text" class="edit-contractor" value="${escapeHtml(s.contractor || "")}" placeholder="Entreprenör" />
       <input type="date" class="edit-date" value="${escapeHtml(s.event_date || "")}" />
@@ -2188,6 +2422,7 @@ function safetyEditRowHtml(s) {
 function bindSafetyEditForm(el) {
   const row = el.querySelector(`[data-editing-id="${editingState.safety}"]`);
   if (!row) return;
+  bindModelObjectPicker(editSafetyModelObject, "editSafetyModelPicker", "editSafetyModelPickBtn", "editSafetyModelClearBtn");
   const original = safetyEvents.find(s => String(s.id) === String(editingState.safety));
   row.querySelector(".row-save-btn").onclick = async () => {
     const event_type = row.querySelector(".edit-type").value.trim();
@@ -2219,6 +2454,9 @@ function bindSafetyEditForm(el) {
       contractor: row.querySelector(".edit-contractor").value.trim() || null,
       event_date,
       reported_by: row.querySelector(".edit-reported-by").value.trim() || null,
+      model_id: editSafetyModelObject.model_id,
+      model_object_id: editSafetyModelObject.model_object_id,
+      model_object_name: editSafetyModelObject.model_object_name,
       attachment_url,
       attachment_name
     });
@@ -2245,6 +2483,7 @@ function safetyFormHtml() {
         ${SAFETY_SEVERITIES.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}
       </select>
       <input type="text" id="newSafetyDesc" placeholder="Beskrivning" />
+      ${modelObjectPickerHtml(newSafetyModelObject, "newSafetyModelPicker", "newSafetyModelPickBtn", "newSafetyModelClearBtn")}
       <input type="text" id="newSafetyArea" placeholder="Område" />
       <input type="text" id="newSafetyContractor" placeholder="Entreprenör" />
       <input type="date" id="newSafetyDate" value="${todayISO()}" />
@@ -2295,11 +2534,15 @@ async function onAddSafety() {
         contractor: contractor || null,
         event_date,
         reported_by: reported_by || null,
+        model_id: newSafetyModelObject.model_id,
+        model_object_id: newSafetyModelObject.model_object_id,
+        model_object_name: newSafetyModelObject.model_object_name,
         attachment_url,
         attachment_name
       })
     });
     if (res.ok) {
+      newSafetyModelObject = emptyModelObjectRef();
       await fetchSafetyEvents();
       renderSafety();
     } else {
@@ -2323,17 +2566,15 @@ function renderInspections() {
     return;
   }
 
-  const itemById = new Map(items.map(it => [it.id, it]));
   const sorted = [...inspections].sort((a, b) => (b.inspected_at || "").localeCompare(a.inspected_at || ""));
 
   const rows = sorted.length === 0
     ? `<div class="hint">Inga besiktningar loggade ännu.</div>`
     : sorted.map(i => {
-        if (editingState.inspection !== null && String(editingState.inspection) === String(i.id)) return inspectionEditRowHtml(i, itemById);
+        if (editingState.inspection !== null && String(editingState.inspection) === String(i.id)) return inspectionEditRowHtml(i);
         const resultBadge = i.result
           ? `<span class="badge" style="background:${INSPECTION_RESULT_COLORS[i.result] || "#6b7280"}">${escapeHtml(i.result)}</span>`
           : "";
-        const linked = i.plan_item_id && itemById.has(i.plan_item_id) ? itemLabel(itemById.get(i.plan_item_id)) : "";
         return `
           <div class="inspection-row">
             <div class="inspection-head">
@@ -2342,7 +2583,7 @@ function renderInspections() {
               <span class="inspection-date">${formatDateSv(i.inspected_at)}</span>
               ${rowActionsHtml("inspection", i.id)}
             </div>
-            ${linked ? `<div class="inspection-item" title="${escapeHtml(linked)}">${escapeHtml(linked)}</div>` : ""}
+            ${modelObjectBadgeHtml(i)}
             ${i.comment ? `<div class="inspection-comment">${escapeHtml(i.comment)}</div>` : ""}
             ${i.inspected_by ? `<div class="inspection-meta">${escapeHtml(i.inspected_by)}</div>` : ""}
             ${renderAttachment(i.attachment_url, i.attachment_name)}
@@ -2351,6 +2592,8 @@ function renderInspections() {
 
   el.innerHTML = rows + inspectionsFormHtml();
   document.getElementById("btnAddInspection").onclick = onAddInspection;
+  bindModelObjectPicker(newInspectionModelObject, "newInspectionModelPicker", "newInspectionModelPickBtn", "newInspectionModelClearBtn");
+  bindModelObjectBadges(el);
   bindRowActions(el, "inspection", {
     render: renderInspections,
     remove: id => {
@@ -2366,11 +2609,8 @@ function renderInspections() {
   if (editingState.inspection !== null) bindInspectionEditForm(el);
 }
 
-function inspectionEditRowHtml(i, itemById) {
-  const filtered = getFilteredItems();
-  const linkedOptions = filtered.some(it => it.id === i.plan_item_id) || !i.plan_item_id
-    ? filtered
-    : [itemById.get(i.plan_item_id), ...filtered].filter(Boolean);
+function inspectionEditRowHtml(i) {
+  editInspectionModelObject = modelObjectRefFromRow(i);
   return `
     <div class="inspection-row editing add-form" data-editing-id="${i.id}">
       <input type="text" class="edit-type" list="inspectionTypeList" value="${escapeHtml(i.inspection_type || "")}" placeholder="Typ av besiktning" />
@@ -2381,10 +2621,7 @@ function inspectionEditRowHtml(i, itemById) {
       <input type="text" class="edit-comment" value="${escapeHtml(i.comment || "")}" placeholder="Kommentar" />
       <input type="text" class="edit-by" value="${escapeHtml(i.inspected_by || "")}" placeholder="Besiktigad av" />
       <input type="date" class="edit-date" value="${escapeHtml(i.inspected_at || "")}" />
-      <select class="edit-item">
-        <option value="">Inget objekt</option>
-        ${linkedOptions.map(it => `<option value="${it.id}" ${it.id === i.plan_item_id ? "selected" : ""}>${escapeHtml(itemLabel(it))}</option>`).join("")}
-      </select>
+      ${modelObjectPickerHtml(editInspectionModelObject, "editInspectionModelPicker", "editInspectionModelPickBtn", "editInspectionModelClearBtn")}
       ${i.attachment_url ? `<span class="current-attachment">${renderAttachment(i.attachment_url, i.attachment_name)}</span>
       <label class="edit-remove-attachment-label"><input type="checkbox" class="edit-remove-attachment" /> Ta bort bilaga</label>` : ""}
       <input type="file" class="edit-file" accept=".pdf,image/*" />
@@ -2398,11 +2635,11 @@ function inspectionEditRowHtml(i, itemById) {
 function bindInspectionEditForm(el) {
   const row = el.querySelector(`[data-editing-id="${editingState.inspection}"]`);
   if (!row) return;
+  bindModelObjectPicker(editInspectionModelObject, "editInspectionModelPicker", "editInspectionModelPickBtn", "editInspectionModelClearBtn");
   const original = inspections.find(i => String(i.id) === String(editingState.inspection));
   row.querySelector(".row-save-btn").onclick = async () => {
     const inspection_type = row.querySelector(".edit-type").value.trim();
     if (!inspection_type) { alert("Ange en typ av besiktning."); return; }
-    const plan_item_id = row.querySelector(".edit-item").value;
 
     let attachment_url = original ? original.attachment_url || null : null;
     let attachment_name = original ? original.attachment_name || null : null;
@@ -2427,7 +2664,9 @@ function bindInspectionEditForm(el) {
       comment: row.querySelector(".edit-comment").value.trim() || null,
       inspected_by: row.querySelector(".edit-by").value.trim() || null,
       inspected_at: row.querySelector(".edit-date").value || todayISO(),
-      plan_item_id: plan_item_id ? Number(plan_item_id) : null,
+      model_id: editInspectionModelObject.model_id,
+      model_object_id: editInspectionModelObject.model_object_id,
+      model_object_name: editInspectionModelObject.model_object_name,
       attachment_url,
       attachment_name
     });
@@ -2444,7 +2683,6 @@ function bindInspectionEditForm(el) {
 }
 
 function inspectionsFormHtml() {
-  const filtered = getFilteredItems();
   const typeOptions = categoryOptions(INSPECTION_TYPES, inspections, i => i.inspection_type);
   return `
     <div class="add-form">
@@ -2457,10 +2695,7 @@ function inspectionsFormHtml() {
       <input type="text" id="newInspectionComment" placeholder="Kommentar" />
       <input type="text" id="newInspectionBy" placeholder="Besiktigad av" />
       <input type="date" id="newInspectionDate" value="${todayISO()}" />
-      <select id="newInspectionItem">
-        <option value="">Inget objekt</option>
-        ${filtered.map(it => `<option value="${it.id}">${escapeHtml(itemLabel(it))}</option>`).join("")}
-      </select>
+      ${modelObjectPickerHtml(newInspectionModelObject, "newInspectionModelPicker", "newInspectionModelPickBtn", "newInspectionModelClearBtn")}
       <input type="file" id="newInspectionFile" accept=".pdf,image/*" title="Bifoga PDF eller bild (valfritt)" />
       <button id="btnAddInspection">+ Logga besiktning</button>
     </div>`;
@@ -2472,7 +2707,6 @@ async function onAddInspection() {
   const comment = document.getElementById("newInspectionComment").value.trim();
   const inspected_by = document.getElementById("newInspectionBy").value.trim();
   const inspected_at = document.getElementById("newInspectionDate").value || todayISO();
-  const plan_item_id = document.getElementById("newInspectionItem").value;
   const file = document.getElementById("newInspectionFile").files[0];
   if (!inspection_type) {
     alert("Ange en typ av besiktning.");
@@ -2499,7 +2733,9 @@ async function onAddInspection() {
       },
       body: JSON.stringify({
         project_id: projectId,
-        plan_item_id: plan_item_id ? Number(plan_item_id) : null,
+        model_id: newInspectionModelObject.model_id,
+        model_object_id: newInspectionModelObject.model_object_id,
+        model_object_name: newInspectionModelObject.model_object_name,
         inspection_type,
         result: result || null,
         comment: comment || null,
@@ -2510,6 +2746,7 @@ async function onAddInspection() {
       })
     });
     if (res.ok) {
+      newInspectionModelObject = emptyModelObjectRef();
       await fetchInspections();
       renderInspections();
     } else {
@@ -2543,9 +2780,17 @@ function renderWeather() {
   const c = weather.current;
   const daily = weather.daily;
 
+  const locationHtml = settings.locationName
+    ? `<div class="weather-location">${escapeHtml(settings.locationName)}</div>`
+    : "";
+
   const currentHtml = `
     <div class="weather-current">
-      <div class="weather-temp">${Math.round(c.temperature_2m)}°C</div>
+      ${locationHtml}
+      <div class="weather-current-main">
+        <div class="weather-emoji">${weatherEmoji(c.weather_code, c.is_day)}</div>
+        <div class="weather-temp">${Math.round(c.temperature_2m)}°C</div>
+      </div>
       <div class="weather-desc">${escapeHtml(weatherDescription(c.weather_code))}</div>
       <div class="weather-meta">Vind ${Math.round(c.wind_speed_10m)} m/s · Nederbörd ${c.precipitation ?? 0} mm</div>
     </div>`;
@@ -2558,6 +2803,7 @@ function renderWeather() {
       return `
         <div class="weather-day">
           <div class="weather-day-name">${escapeHtml(dayName)}</div>
+          <div class="weather-day-emoji">${weatherEmoji(daily.weather_code[i], 1)}</div>
           <div class="weather-day-desc">${escapeHtml(weatherDescription(daily.weather_code[i]))}</div>
           <div class="weather-day-temp">${Math.round(daily.temperature_2m_max[i])}° / ${Math.round(daily.temperature_2m_min[i])}°</div>
           <div class="weather-day-precip">${daily.precipitation_sum[i] ?? 0} mm</div>
