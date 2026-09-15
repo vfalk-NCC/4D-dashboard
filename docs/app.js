@@ -3,7 +3,8 @@
    ---------------------------------------------------------------------
    Fristående extension som visar nyckeltal, statusfördelning och
    framdrift (uppdelat på område/entreprenör) för samma planeringsdata
-   som 4D-planering skriver till (Supabase-tabellen plan_items).
+   som 4D-planering skriver till (plan_items.json i det privata GitHub-
+   repot vfalk-NCC/4D-data, se github-storage.js).
    Läser plan_items/plan_item_comments (skriver aldrig till dem), men
    skriver via små formulär till fem separata tabeller (milstolpar,
    bemanning, leveransplan, säkerhet, besiktningar) – se README.md.
@@ -15,8 +16,7 @@ let API = null;              // Workspace API-instans
 let projectId = null;        // Aktuellt Trimble Connect-projekt
 let items = [];               // Cache av samtliga planeringsposter (från backend, ofiltrerat)
 let settings = {
-  supabaseUrl: "",
-  supabaseKey: "",
+  githubToken: "",             // fine-grained PAT scopead till vfalk-NCC/4D-data, se GITHUB_TOKEN_SETUP.md
   latitude: "",
   longitude: "",
   locationName: ""
@@ -52,11 +52,6 @@ const NO_AREA_LABEL = "Utan område";
 const NO_ACTIVITY_LABEL = "Utan aktivitet";
 const NO_CONTRACTOR_LABEL = "Utan entreprenör";
 
-// Max antal rader att hämta från Supabase per anrop (se samma resonemang
-// som i 4D-planering: PostgRESTs/Supabase-projektets egen "Max Rows"
-// sätter också ett tak).
-const ITEMS_FETCH_LIMIT = 50000;
-
 // Hur många veckor framåt (denna vecka + kommande) som visas i
 // "Kommande veckor"-panelen (4-veckors lookahead).
 const LOOKAHEAD_WEEKS = 4;
@@ -68,12 +63,9 @@ const LOOKAHEAD_LIST_MAX = 6;
 // Max antal rader att visa i "Försenade objekt"-listan.
 const DELAYED_LIST_MAX = 15;
 
-// plan_item_comments delas av alla Trimble Connect-projekt som pekar mot
-// samma Supabase-databas (tabellen har ingen egen project_id-kolumn, bara
-// plan_item_id). Vi hämtar därför de N senaste kommentarerna totalt och
-// filtrerar client-side mot de objekt-id:n som hör till det här projektet
-// – enklare och mer robust än att bygga en lång "in.(id1,id2,...)"-fråga.
-const COMMENTS_FETCH_LIMIT = 500;
+// plan_item_comments ligger numera i en egen fil per projekt
+// (projects/<projectId>/plan_item_comments.json), så ingen filtrering på
+// projekt behövs vid läsning - filens innehåll ÄR projektets kommentarer.
 const COMMENTS_SHOWN = 20;
 let recentComments = []; // Cache av senast hämtade kommentarer (ofiltrerat på projekt)
 
@@ -92,11 +84,8 @@ const INSPECTIONS_FETCH_LIMIT = 5000;
 const STAFFING_WEEKS = 3;
 
 /* ---------------------------------------------------------------------
-   Nya tabeller (Hinder + Leveransplan handlingar, migration_5)
+   Hinder + Leveransplan handlingar
    ------------------------------------------------------------------- */
-const BLOCKERS_FETCH_LIMIT = 2000;
-const BLOCKER_COMMENTS_FETCH_LIMIT = 2000;
-const DOCUMENT_DELIVERIES_FETCH_LIMIT = 2000;
 
 let progressHistory = []; // plan_item_progress_history, ofiltrerat på item-filter
 let milestones = [];      // plan_milestones
@@ -166,10 +155,6 @@ function categoryOptions(fixedList, dataList, keyFn) {
   return [...set];
 }
 
-// Supabase Storage-bucket för bilagor (PDF/bilder) på säkerhetshändelser
-// och besiktningar. Skapas + policys sätts av migration_4_attachments.sql.
-const ATTACHMENTS_BUCKET = "dashboard-attachments";
-
 // Swedish korta beskrivningar för WMO weather_code (Open-Meteo).
 const WMO_DESCRIPTIONS = {
   0: "Klart", 1: "Mest klart", 2: "Delvis molnigt", 3: "Mulet",
@@ -226,11 +211,56 @@ function weatherEmoji(code, isDay) {
 }
 
 /* ---------------------------------------------------------------------
+   Lösenordsgrind - enbart en klientsidesspärr (koden och all data är
+   fortsatt fullt synlig för den som öppnar utvecklarverktygen), inte
+   riktig säkerhet. Rätt lösenord låser upp och kommer ihåg valet i
+   localStorage så man inte behöver skriva om det varje gång.
+   ------------------------------------------------------------------- */
+const ACCESS_PASSWORD = "ändra-mig";
+const ACCESS_STORAGE_KEY = "4ddash-unlocked";
+
+function isUnlocked() {
+  try {
+    return window.localStorage.getItem(ACCESS_STORAGE_KEY) === "1";
+  } catch (e) {
+    return false;
+  }
+}
+
+function bindAccessGate() {
+  const input = document.getElementById("accessPassword");
+  const errorEl = document.getElementById("accessError");
+  const submit = () => {
+    if (input.value === ACCESS_PASSWORD) {
+      try { window.localStorage.setItem(ACCESS_STORAGE_KEY, "1"); } catch (e) {}
+      document.getElementById("accessGate").classList.add("hidden");
+      initApp();
+    } else {
+      errorEl.classList.remove("hidden");
+      input.value = "";
+      input.focus();
+    }
+  };
+  document.getElementById("btnAccessSubmit").onclick = submit;
+  input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
+  input.focus();
+}
+
+/* ---------------------------------------------------------------------
    Init
    ------------------------------------------------------------------- */
-window.addEventListener("DOMContentLoaded", init);
+window.addEventListener("DOMContentLoaded", boot);
 
-async function init() {
+function boot() {
+  if (isUnlocked()) {
+    document.getElementById("accessGate").classList.add("hidden");
+    initApp();
+  } else {
+    bindAccessGate();
+  }
+}
+
+async function initApp() {
   loadLocalSettings();
   bindUI();
 
@@ -252,8 +282,7 @@ function bindUI() {
 
   initPanelCollapse();
 
-  document.getElementById("supabaseUrl").value = settings.supabaseUrl;
-  document.getElementById("supabaseKey").value = settings.supabaseKey;
+  document.getElementById("githubToken").value = settings.githubToken;
   document.getElementById("settingsLatitude").value = settings.latitude || "";
   document.getElementById("settingsLongitude").value = settings.longitude || "";
   document.getElementById("settingsLocationName").value = settings.locationName || "";
@@ -429,8 +458,7 @@ function loadLocalSettings() {
 }
 
 function onSaveSettings() {
-  settings.supabaseUrl = document.getElementById("supabaseUrl").value.trim().replace(/\/$/, "");
-  settings.supabaseKey = document.getElementById("supabaseKey").value.trim();
+  settings.githubToken = document.getElementById("githubToken").value.trim();
   // Normalisera decimalkomma till punkt direkt vid sparande – annars
   // tolkas t.ex. "63,82" som ogiltigt tal (Number("63,82") === NaN) och
   // väderpanelen visar bara "ange koordinater", även om användaren har
@@ -456,8 +484,8 @@ function normalizeCoord(value) {
   return String(value || "").trim().replace(",", ".");
 }
 
-function isSupabaseConfigured() {
-  return Boolean(settings.supabaseUrl && settings.supabaseKey);
+function isBackendConfigured() {
+  return Boolean(settings.githubToken);
 }
 
 // Väder kräver bara koordinater (ingen Supabase-koppling). Tolererar
@@ -480,12 +508,12 @@ function isWeatherConfigured() {
 function updateConnectionWarning() {
   const el = document.getElementById("connectionWarning");
   if (!el) return;
-  if (isSupabaseConfigured()) {
+  if (isBackendConfigured()) {
     el.classList.add("hidden");
     el.innerText = "";
   } else {
     el.classList.remove("hidden");
-    el.innerText = "⚠️ Ingen databas ansluten – öppna inställningarna (kugghjulet) och ange samma Supabase-URL och nyckel som i 4D-planering.";
+    el.innerText = "⚠️ Ingen databas ansluten – öppna inställningarna (kugghjulet) och ange GitHub-token. Se GITHUB_TOKEN_SETUP.md.";
   }
 }
 
@@ -536,21 +564,19 @@ function renderAll() {
   renderComments(filtered);
 }
 
+// Byggar sökvägen till en tabells JSON-fil i det privata datarepot
+// (vfalk-NCC/4D-data), en mapp per Trimble-projekt. Se github-storage.js.
+function tablePath(table) {
+  return `projects/${encodeURIComponent(projectId)}/${table}.json`;
+}
+
 async function fetchItems() {
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     items = [];
     return;
   }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_items?project_id=eq.${encodeURIComponent(projectId)}&select=*`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${ITEMS_FETCH_LIMIT - 1}`
-      }
-    });
-    items = res.ok ? (await res.json()).map(fromRow) : [];
+    items = (await ghReadJSON(settings.githubToken, tablePath("plan_items"))).map(fromRow);
   } catch (e) {
     console.error("Kunde inte hämta planeringsdata", e);
     items = [];
@@ -571,46 +597,31 @@ function fromRow(row) {
   };
 }
 
-// Hämtar de senaste kommentarerna (över alla projekt som delar databasen,
-// se kommentaren vid COMMENTS_FETCH_LIMIT ovan) från 4D-planerings
-// kommentarstabell. Läser bara – dashboarden skriver aldrig kommentarer.
+// Hämtar kommentarerna för det här projektet. Med GitHub-lagringen ligger
+// varje projekts kommentarer redan i en egen fil (projects/<id>/...),
+// så till skillnad från den gamla Supabase-lösningen (en delad tabell
+// utan project_id, filtrerad client-side) behövs ingen global hämtning +
+// filtrering längre. Läser bara – dashboarden skriver aldrig kommentarer.
 async function fetchRecentComments() {
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     recentComments = [];
     return;
   }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_item_comments?select=*&order=created_at.desc`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${COMMENTS_FETCH_LIMIT - 1}`
-      }
-    });
-    recentComments = res.ok ? await res.json() : [];
+    recentComments = await ghReadJSON(settings.githubToken, tablePath("plan_item_comments"));
   } catch (e) {
     console.error("Kunde inte hämta kommentarer", e);
     recentComments = [];
   }
 }
 
-// Framdriftshistorik (S-kurva). Fylls på automatiskt av en trigger i
-// 4D-planerings databas – dashboarden läser bara. Om tabellen inte finns
-// än (migreringen inte körd) ger Supabase ett icke-2xx-svar och vi
-// faller tillbaka på en tom lista, precis som för övriga hämtningar.
+// Framdriftshistorik (S-kurva). Fylls på av 4D-planering varje gång
+// progress/status ändras (se logProgressHistory i dess app.js) –
+// dashboarden läser bara.
 async function fetchProgressHistory() {
-  if (!isSupabaseConfigured()) { progressHistory = []; return; }
+  if (!isBackendConfigured()) { progressHistory = []; return; }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_item_progress_history?project_id=eq.${encodeURIComponent(projectId)}&select=*&order=recorded_at.asc`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${PROGRESS_HISTORY_FETCH_LIMIT - 1}`
-      }
-    });
-    progressHistory = res.ok ? await res.json() : [];
+    progressHistory = await ghReadJSON(settings.githubToken, tablePath("plan_item_progress_history"));
   } catch (e) {
     console.error("Kunde inte hämta framdriftshistorik", e);
     progressHistory = [];
@@ -618,17 +629,9 @@ async function fetchProgressHistory() {
 }
 
 async function fetchMilestones() {
-  if (!isSupabaseConfigured()) { milestones = []; return; }
+  if (!isBackendConfigured()) { milestones = []; return; }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_milestones?project_id=eq.${encodeURIComponent(projectId)}&select=*&order=target_date.asc`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${MILESTONES_FETCH_LIMIT - 1}`
-      }
-    });
-    milestones = res.ok ? await res.json() : [];
+    milestones = await ghReadJSON(settings.githubToken, tablePath("plan_milestones"));
   } catch (e) {
     console.error("Kunde inte hämta milstolpar", e);
     milestones = [];
@@ -636,17 +639,9 @@ async function fetchMilestones() {
 }
 
 async function fetchStaffing() {
-  if (!isSupabaseConfigured()) { staffing = []; return; }
+  if (!isBackendConfigured()) { staffing = []; return; }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_staffing?project_id=eq.${encodeURIComponent(projectId)}&select=*`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${STAFFING_FETCH_LIMIT - 1}`
-      }
-    });
-    staffing = res.ok ? await res.json() : [];
+    staffing = await ghReadJSON(settings.githubToken, tablePath("plan_staffing"));
   } catch (e) {
     console.error("Kunde inte hämta bemanning", e);
     staffing = [];
@@ -654,17 +649,9 @@ async function fetchStaffing() {
 }
 
 async function fetchDeliveries() {
-  if (!isSupabaseConfigured()) { deliveries = []; return; }
+  if (!isBackendConfigured()) { deliveries = []; return; }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_deliveries?project_id=eq.${encodeURIComponent(projectId)}&select=*&order=planned_date.asc`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${DELIVERIES_FETCH_LIMIT - 1}`
-      }
-    });
-    deliveries = res.ok ? await res.json() : [];
+    deliveries = await ghReadJSON(settings.githubToken, tablePath("plan_deliveries"));
   } catch (e) {
     console.error("Kunde inte hämta leveransplan", e);
     deliveries = [];
@@ -672,17 +659,9 @@ async function fetchDeliveries() {
 }
 
 async function fetchSafetyEvents() {
-  if (!isSupabaseConfigured()) { safetyEvents = []; return; }
+  if (!isBackendConfigured()) { safetyEvents = []; return; }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_safety_events?project_id=eq.${encodeURIComponent(projectId)}&select=*&order=event_date.desc`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${SAFETY_FETCH_LIMIT - 1}`
-      }
-    });
-    safetyEvents = res.ok ? await res.json() : [];
+    safetyEvents = await ghReadJSON(settings.githubToken, tablePath("plan_safety_events"));
   } catch (e) {
     console.error("Kunde inte hämta säkerhetshändelser", e);
     safetyEvents = [];
@@ -690,17 +669,9 @@ async function fetchSafetyEvents() {
 }
 
 async function fetchInspections() {
-  if (!isSupabaseConfigured()) { inspections = []; return; }
+  if (!isBackendConfigured()) { inspections = []; return; }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_inspections?project_id=eq.${encodeURIComponent(projectId)}&select=*&order=inspected_at.desc`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${INSPECTIONS_FETCH_LIMIT - 1}`
-      }
-    });
-    inspections = res.ok ? await res.json() : [];
+    inspections = await ghReadJSON(settings.githubToken, tablePath("plan_inspections"));
   } catch (e) {
     console.error("Kunde inte hämta besiktningar", e);
     inspections = [];
@@ -819,7 +790,7 @@ function itemLabel(it) {
 function updateLastUpdated() {
   const el = document.getElementById("lastUpdated");
   if (!el) return;
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     el.innerText = "";
     return;
   }
@@ -832,7 +803,7 @@ function updateLastUpdated() {
 // Skiljer mellan "ingen databas", "tomt projekt" och "filtret gav träff
 // på noll objekt", så det alltid är tydligt varför panelen är tom.
 function emptyMessage() {
-  if (!isSupabaseConfigured()) return "Ingen databas ansluten ännu.";
+  if (!isBackendConfigured()) return "Ingen databas ansluten ännu.";
   if (items.length === 0) return "Inga planerade objekt hittades för det här projektet.";
   return "Inga objekt matchar den valda filtreringen.";
 }
@@ -1173,9 +1144,11 @@ function renderGroupProgress(containerId, list, keyFn, fallbackLabel) {
    aktiviteter med ett öppet hinder (korsreferens mot Hinder-panelen).
    ------------------------------------------------------------------- */
 function itemHasOpenBlocker(it) {
+  // plan_item_id/affected_item_ids är numera UUID-strängar (inte bigint),
+  // så jämförelsen görs som strängar - Number() på en UUID ger NaN.
   return blockers.some(b => !b.is_resolved && (
-    Number(b.plan_item_id) === it.id ||
-    (Array.isArray(b.affected_item_ids) && b.affected_item_ids.map(Number).includes(it.id))
+    String(b.plan_item_id) === String(it.id) ||
+    (Array.isArray(b.affected_item_ids) && b.affected_item_ids.map(String).includes(String(it.id)))
   ));
 }
 
@@ -1255,31 +1228,18 @@ function renderLookahead(list) {
 }
 
 /* ---------------------------------------------------------------------
-   Generella CRUD-hjälpfunktioner mot Supabase (används av Milstolpar,
-   Bemanning, Leveransplan, Säkerhet och Kvalitet/besiktningar nedan) –
-   samlar ihop headers/felhantering på ett ställe istället för att
-   upprepa dem i varje sektion.
+   Generella CRUD-hjälpfunktioner mot GitHub-lagringen (används av
+   Milstolpar, Bemanning, Leveransplan, Säkerhet och
+   Kvalitet/besiktningar nedan) – samlar ihop felhantering på ett ställe
+   istället för att upprepa den i varje sektion. Namnen (supaInsert/
+   supaUpdate/supaDelete) är kvar från Supabase-tiden för att undvika att
+   röra alla anropsställen i varje panel - det är bara det som händer
+   inuti som bytts ut.
    ------------------------------------------------------------------- */
-function supaHeaders(extra) {
-  return {
-    apikey: settings.supabaseKey,
-    Authorization: `Bearer ${settings.supabaseKey}`,
-    "Content-Type": "application/json",
-    ...extra
-  };
-}
-
 async function supaInsert(table, body) {
   try {
-    const res = await fetch(`${settings.supabaseUrl}/rest/v1/${table}`, {
-      method: "POST",
-      headers: supaHeaders({ Prefer: "return=representation" }),
-      body: JSON.stringify(body)
-    });
-    if (!res.ok) {
-      alert(`Kunde inte spara (${res.status}). Kontrollera att alla obligatoriska fält är ifyllda.`);
-      return false;
-    }
+    const row = { id: ghNewId(), ...body };
+    await ghWriteJSON(settings.githubToken, tablePath(table), (arr) => [...arr, row], `Ny rad i ${table}`);
     return true;
   } catch (e) {
     console.error(`Kunde inte lägga till i ${table}`, e);
@@ -1290,15 +1250,12 @@ async function supaInsert(table, body) {
 
 async function supaUpdate(table, id, body) {
   try {
-    const res = await fetch(`${settings.supabaseUrl}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      headers: supaHeaders({ Prefer: "return=representation" }),
-      body: JSON.stringify(body)
-    });
-    if (!res.ok) {
-      alert(`Kunde inte spara ändringen (${res.status}).`);
-      return false;
-    }
+    await ghWriteJSON(
+      settings.githubToken,
+      tablePath(table),
+      (arr) => arr.map((r) => (String(r.id) === String(id) ? { ...r, ...body } : r)),
+      `Uppdatera rad i ${table}`
+    );
     return true;
   } catch (e) {
     console.error(`Kunde inte uppdatera i ${table}`, e);
@@ -1310,13 +1267,23 @@ async function supaUpdate(table, id, body) {
 async function supaDelete(table, id, confirmMsg) {
   if (!window.confirm(confirmMsg || "Ta bort den här raden?")) return false;
   try {
-    const res = await fetch(`${settings.supabaseUrl}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      headers: supaHeaders({ Prefer: "return=minimal" })
-    });
-    if (!res.ok) {
-      alert(`Kunde inte ta bort raden (${res.status}).`);
-      return false;
+    await ghWriteJSON(
+      settings.githubToken,
+      tablePath(table),
+      (arr) => arr.filter((r) => String(r.id) !== String(id)),
+      `Ta bort rad i ${table}`
+    );
+    // plan_blockers -> plan_blocker_comments motsvarar den gamla FK-
+    // cascade:n (on delete cascade) som Postgres skötte automatiskt -
+    // måste göras manuellt här eftersom GitHub-lagringen inte har någon
+    // motsvarighet till foreign keys.
+    if (table === "plan_blockers") {
+      await ghWriteJSON(
+        settings.githubToken,
+        tablePath("plan_blocker_comments"),
+        (arr) => arr.filter((c) => String(c.blocker_id) !== String(id)),
+        "Ta bort hinderkommentarer (cascade)"
+      );
     }
     return true;
   } catch (e) {
@@ -1344,43 +1311,29 @@ function rowActionsHtml(type, id) {
 }
 
 /* ---------------------------------------------------------------------
-   Bilagor (PDF/bilder) på Säkerhet och Kvalitet/besiktningar – laddas
-   upp direkt till Supabase Storage (bucket ATTACHMENTS_BUCKET) via
-   REST-API:t, på samma sätt som tabelldata skrivs via PostgREST ovan.
+   Bilagor (PDF/bilder) på Säkerhet och Kvalitet/besiktningar – laddas upp
+   som binärfiler i det privata GitHub-repot (github-storage.js), under
+   projects/<projectId>/attachments/<folder>/. Fältet attachment_url
+   (namnet är kvar från Supabase-tiden) innehåller numera repo-sökvägen,
+   inte en publik URL - repot är privat så det finns ingen sådan. Visning
+   kräver därför ett autentiserat anrop (ghReadBinaryUrl) som görs
+   asynkront efter att raderna renderats, se resolveAttachmentLinks().
    ------------------------------------------------------------------- */
 function isImageAttachment(name) {
   return /\.(png|jpe?g|gif|webp|heic|bmp)$/i.test(name || "");
 }
 
-function attachmentPathFromUrl(url) {
-  if (!url) return null;
-  const marker = `/storage/v1/object/public/${ATTACHMENTS_BUCKET}/`;
-  const idx = url.indexOf(marker);
-  return idx === -1 ? null : url.slice(idx + marker.length);
+function attachmentsFolderPath(folder) {
+  return `projects/${encodeURIComponent(projectId)}/attachments/${folder}`;
 }
 
 async function uploadAttachment(file, folder) {
   if (!file) return null;
   const safeName = file.name.replace(/[^\w.\-]+/g, "_");
-  const path = `${folder}/${Date.now()}_${safeName}`;
+  const path = `${attachmentsFolderPath(folder)}/${Date.now()}_${safeName}`;
   try {
-    const res = await fetch(`${settings.supabaseUrl}/storage/v1/object/${ATTACHMENTS_BUCKET}/${path}`, {
-      method: "POST",
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        "Content-Type": file.type || "application/octet-stream"
-      },
-      body: file
-    });
-    if (!res.ok) {
-      alert(`Kunde inte ladda upp filen (${res.status}). Kontrollera att bucketen "${ATTACHMENTS_BUCKET}" finns (se migration_4_attachments.sql).`);
-      return null;
-    }
-    return {
-      url: `${settings.supabaseUrl}/storage/v1/object/public/${ATTACHMENTS_BUCKET}/${path}`,
-      name: file.name
-    };
+    await ghUploadBinary(settings.githubToken, path, file, `Lägg till bilaga (${folder})`);
+    return { url: path, name: file.name };
   } catch (e) {
     console.error("Kunde inte ladda upp bilaga", e);
     alert("Kunde inte ladda upp filen – nätverksfel. Försök igen.");
@@ -1388,27 +1341,37 @@ async function uploadAttachment(file, folder) {
   }
 }
 
-async function deleteAttachmentBestEffort(url) {
-  const path = attachmentPathFromUrl(url);
+async function deleteAttachmentBestEffort(path) {
   if (!path) return;
-  try {
-    await fetch(`${settings.supabaseUrl}/storage/v1/object/${ATTACHMENTS_BUCKET}/${path}`, {
-      method: "DELETE",
-      headers: supaHeaders()
-    });
-  } catch (e) {
-    console.warn("Kunde inte ta bort bilagan (ignoreras)", e);
-  }
+  await ghDeleteBinary(settings.githubToken, path, "Ta bort bilaga");
 }
 
-function renderAttachment(url, name) {
-  if (!url) return "";
-  if (isImageAttachment(name || url)) {
-    return `<a class="attachment attachment-image" href="${escapeHtml(url)}" target="_blank" rel="noopener">
-      <img src="${escapeHtml(url)}" alt="${escapeHtml(name || "Bilaga")}" />
-    </a>`;
+function renderAttachment(path, name) {
+  if (!path) return "";
+  const isImg = isImageAttachment(name || path);
+  return `<a class="attachment ${isImg ? "attachment-image" : "attachment-file"}" data-attachment-path="${escapeHtml(path)}" href="#" target="_blank" rel="noopener">
+    ${isImg ? `<img data-attachment-img alt="${escapeHtml(name || "Bilaga")}" />` : `${ICON_ATTACHMENT}${escapeHtml(name || "Bilaga")}`}
+  </a>`;
+}
+
+/** Slår upp de bilagor som just renderats (data-attachment-path) och sätter
+ *  en blob:-URL som href/src, en i taget, eftersom repot är privat och inte
+ *  kan länkas till direkt. Körs asynkront efter att innerHTML satts. */
+async function resolveAttachmentLinks(container) {
+  const links = container.querySelectorAll("[data-attachment-path]:not([data-resolved])");
+  for (const link of links) {
+    link.setAttribute("data-resolved", "1");
+    const path = link.getAttribute("data-attachment-path");
+    try {
+      const blobUrl = await ghReadBinaryUrl(settings.githubToken, path);
+      link.href = blobUrl;
+      const img = link.querySelector("[data-attachment-img]");
+      if (img) img.src = blobUrl;
+    } catch (e) {
+      console.warn("Kunde inte hämta bilaga", path, e);
+      link.title = "Kunde inte hämta bilagan";
+    }
   }
-  return `<a class="attachment attachment-file" href="${escapeHtml(url)}" target="_blank" rel="noopener">${ICON_ATTACHMENT}${escapeHtml(name || "Bilaga")}</a>`;
 }
 
 /* ---------------------------------------------------------------------
@@ -1539,7 +1502,7 @@ function bindModelObjectBadges(el) {
 function renderMilestones() {
   const el = document.getElementById("milestonesList");
 
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
     return;
   }
@@ -1719,7 +1682,7 @@ function renderDelayedList(list) {
 function renderStaffing() {
   const el = document.getElementById("staffingChart");
 
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
     return;
   }
@@ -1843,23 +1806,15 @@ async function onAddStaffing() {
     return;
   }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_staffing?on_conflict=project_id,contractor,week_start`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates,return=representation"
-      },
-      body: JSON.stringify({ project_id: projectId, contractor, week_start, headcount, planned_headcount })
-    });
-    if (res.ok) {
-      await fetchStaffing();
-      renderStaffing();
-    } else {
-      alert(`Kunde inte spara bemanningen (${res.status}).`);
-    }
+    await ghUpsertOne(
+      settings.githubToken,
+      tablePath("plan_staffing"),
+      { id: ghNewId(), project_id: projectId, contractor, week_start, headcount, planned_headcount },
+      (r) => `${r.project_id}::${r.contractor}::${r.week_start}`,
+      "Spara bemanning"
+    );
+    await fetchStaffing();
+    renderStaffing();
   } catch (e) {
     console.error("Kunde inte spara bemanning", e);
     alert("Kunde inte spara bemanningen – nätverksfel. Försök igen.");
@@ -1874,17 +1829,9 @@ async function onAddStaffing() {
    ------------------------------------------------------------------- */
 function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix, addBtnId, emptyText }) {
   async function fetchFn() {
-    if (!isSupabaseConfigured()) { setArr([]); return; }
+    if (!isBackendConfigured()) { setArr([]); return; }
     try {
-      const url = `${settings.supabaseUrl}/rest/v1/${table}?project_id=eq.${encodeURIComponent(projectId)}&select=*&order=planned_date.asc`;
-      const res = await fetch(url, {
-        headers: {
-          apikey: settings.supabaseKey,
-          Authorization: `Bearer ${settings.supabaseKey}`,
-          Range: `0-${DELIVERIES_FETCH_LIMIT - 1}`
-        }
-      });
-      setArr(res.ok ? await res.json() : []);
+      setArr(await ghReadJSON(settings.githubToken, tablePath(table)));
     } catch (e) {
       console.error(`Kunde inte hämta ${table}`, e);
       setArr([]);
@@ -1894,7 +1841,7 @@ function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix
   function render() {
     const el = document.getElementById(elId);
 
-    if (!isSupabaseConfigured()) {
+    if (!isBackendConfigured()) {
       el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
       return;
     }
@@ -2064,38 +2011,22 @@ function renderDocumentDeliveries() { return documentDeliveriesModule.render(); 
    kommentarstråd (separat från 4D-planerings vanliga objektskommentarer).
    ------------------------------------------------------------------- */
 async function fetchBlockers() {
-  if (!isSupabaseConfigured()) { blockers = []; return; }
+  if (!isBackendConfigured()) { blockers = []; return; }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_blockers?project_id=eq.${encodeURIComponent(projectId)}&select=*&order=deadline.asc`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${BLOCKERS_FETCH_LIMIT - 1}`
-      }
-    });
-    blockers = res.ok ? await res.json() : [];
+    blockers = await ghReadJSON(settings.githubToken, tablePath("plan_blockers"));
   } catch (e) {
     console.error("Kunde inte hämta hinder", e);
     blockers = [];
   }
 }
 
-// plan_blocker_comments har ingen egen project_id-kolumn (kopplas via
-// blocker_id), så precis som för plan_item_comments hämtas alla och
-// filtreras client-side mot de hinder-id:n som visas just nu.
+// plan_blocker_comments ligger i samma projektmapp som allt annat, så till
+// skillnad från den gamla Supabase-lösningen behövs ingen global hämtning +
+// client-filtrering.
 async function fetchBlockerComments() {
-  if (!isSupabaseConfigured()) { blockerComments = []; return; }
+  if (!isBackendConfigured()) { blockerComments = []; return; }
   try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_blocker_comments?select=*&order=created_at.asc`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        Range: `0-${BLOCKER_COMMENTS_FETCH_LIMIT - 1}`
-      }
-    });
-    blockerComments = res.ok ? await res.json() : [];
+    blockerComments = await ghReadJSON(settings.githubToken, tablePath("plan_blocker_comments"));
   } catch (e) {
     console.error("Kunde inte hämta hinderkommentarer", e);
     blockerComments = [];
@@ -2105,7 +2036,7 @@ async function fetchBlockerComments() {
 function renderBlockers() {
   const el = document.getElementById("blockersList");
 
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
     return;
   }
@@ -2126,7 +2057,7 @@ function renderBlockers() {
         const dl = parseDate(b.deadline);
         const overdue = !b.is_resolved && dl && dl < today;
         const affectedLabels = (Array.isArray(b.affected_item_ids) ? b.affected_item_ids : [])
-          .map(id => itemById.get(Number(id)))
+          .map(id => itemById.get(id))
           .filter(Boolean)
           .map(itemLabel);
         const comments = blockerComments.filter(c => String(c.blocker_id) === String(b.id));
@@ -2209,7 +2140,8 @@ async function onAddBlockerComment(blockerId) {
   const body = bodyInput.value.trim();
   if (!body) { alert("Skriv en kommentar innan du sparar."); return; }
   const author = authorInput.value.trim();
-  const ok = await supaInsert("plan_blocker_comments", { blocker_id: Number(blockerId), body, author: author || null });
+  // blockerId är numera ett UUID-string (inte bigint) - skickas oförändrat.
+  const ok = await supaInsert("plan_blocker_comments", { blocker_id: blockerId, body, author: author || null });
   if (ok) {
     await fetchBlockerComments();
     renderBlockers();
@@ -2226,7 +2158,7 @@ async function onToggleBlockerResolved(id, checked) {
 
 function blockerEditRowHtml(b, itemById) {
   const filtered = getFilteredItems();
-  const affectedIds = Array.isArray(b.affected_item_ids) ? b.affected_item_ids.map(Number) : [];
+  const affectedIds = Array.isArray(b.affected_item_ids) ? b.affected_item_ids.map(String) : [];
   const affectedOptionsSource = [...filtered];
   affectedIds.forEach(id => {
     if (!affectedOptionsSource.some(it => it.id === id) && itemById.has(id)) affectedOptionsSource.push(itemById.get(id));
@@ -2261,7 +2193,7 @@ function bindBlockerEditForm(el) {
   row.querySelector(".row-save-btn").onclick = async () => {
     const description = row.querySelector(".edit-desc").value.trim();
     if (!description) { alert("Ange en beskrivning av hindret."); return; }
-    const affected_item_ids = [...row.querySelector(".edit-affected").selectedOptions].map(o => Number(o.value));
+    const affected_item_ids = [...row.querySelector(".edit-affected").selectedOptions].map(o => o.value); // item-id är numera ett UUID-string, inte ett tal
     const ok = await supaUpdate("plan_blockers", editingState.blocker, {
       description,
       model_id: editBlockerModelObject.model_id,
@@ -2310,7 +2242,7 @@ async function onAddBlocker() {
     alert("Ange en beskrivning av hindret.");
     return;
   }
-  const affected_item_ids = [...document.getElementById("newBlockerAffected").selectedOptions].map(o => Number(o.value));
+  const affected_item_ids = [...document.getElementById("newBlockerAffected").selectedOptions].map(o => o.value); // item-id är numera ett UUID-string, inte ett tal
   const responsible = document.getElementById("newBlockerResponsible").value.trim();
   const deadline = document.getElementById("newBlockerDeadline").value;
   const production_impact = document.getElementById("newBlockerImpact").value.trim();
@@ -2341,7 +2273,7 @@ async function onAddBlocker() {
 function renderSafety() {
   const el = document.getElementById("safetyFeed");
 
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
     return;
   }
@@ -2392,6 +2324,7 @@ function renderSafety() {
     }
   });
   if (editingState.safety !== null) bindSafetyEditForm(el);
+  resolveAttachmentLinks(el);
 }
 
 function safetyEditRowHtml(s) {
@@ -2515,42 +2448,25 @@ async function onAddSafety() {
       attachment_name = uploaded.name;
     }
   }
-  try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_safety_events`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        "Content-Type": "application/json",
-        Prefer: "return=representation"
-      },
-      body: JSON.stringify({
-        project_id: projectId,
-        event_type,
-        severity: severity || null,
-        description: description || null,
-        area: area || null,
-        contractor: contractor || null,
-        event_date,
-        reported_by: reported_by || null,
-        model_id: newSafetyModelObject.model_id,
-        model_object_id: newSafetyModelObject.model_object_id,
-        model_object_name: newSafetyModelObject.model_object_name,
-        attachment_url,
-        attachment_name
-      })
-    });
-    if (res.ok) {
-      newSafetyModelObject = emptyModelObjectRef();
-      await fetchSafetyEvents();
-      renderSafety();
-    } else {
-      alert(`Kunde inte logga händelsen (${res.status}).`);
-    }
-  } catch (e) {
-    console.error("Kunde inte logga säkerhetshändelse", e);
-    alert("Kunde inte logga händelsen – nätverksfel. Försök igen.");
+  const ok = await supaInsert("plan_safety_events", {
+    project_id: projectId,
+    event_type,
+    severity: severity || null,
+    description: description || null,
+    area: area || null,
+    contractor: contractor || null,
+    event_date,
+    reported_by: reported_by || null,
+    model_id: newSafetyModelObject.model_id,
+    model_object_id: newSafetyModelObject.model_object_id,
+    model_object_name: newSafetyModelObject.model_object_name,
+    attachment_url,
+    attachment_name
+  });
+  if (ok) {
+    newSafetyModelObject = emptyModelObjectRef();
+    await fetchSafetyEvents();
+    renderSafety();
   }
 }
 
@@ -2561,7 +2477,7 @@ async function onAddSafety() {
 function renderInspections() {
   const el = document.getElementById("inspectionsList");
 
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
     return;
   }
@@ -2607,6 +2523,7 @@ function renderInspections() {
     }
   });
   if (editingState.inspection !== null) bindInspectionEditForm(el);
+  resolveAttachmentLinks(el);
 }
 
 function inspectionEditRowHtml(i) {
@@ -2721,40 +2638,23 @@ async function onAddInspection() {
       attachment_name = uploaded.name;
     }
   }
-  try {
-    const url = `${settings.supabaseUrl}/rest/v1/plan_inspections`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        apikey: settings.supabaseKey,
-        Authorization: `Bearer ${settings.supabaseKey}`,
-        "Content-Type": "application/json",
-        Prefer: "return=representation"
-      },
-      body: JSON.stringify({
-        project_id: projectId,
-        model_id: newInspectionModelObject.model_id,
-        model_object_id: newInspectionModelObject.model_object_id,
-        model_object_name: newInspectionModelObject.model_object_name,
-        inspection_type,
-        result: result || null,
-        comment: comment || null,
-        inspected_by: inspected_by || null,
-        inspected_at,
-        attachment_url,
-        attachment_name
-      })
-    });
-    if (res.ok) {
-      newInspectionModelObject = emptyModelObjectRef();
-      await fetchInspections();
-      renderInspections();
-    } else {
-      alert(`Kunde inte logga besiktningen (${res.status}).`);
-    }
-  } catch (e) {
-    console.error("Kunde inte logga besiktning", e);
-    alert("Kunde inte logga besiktningen – nätverksfel. Försök igen.");
+  const ok = await supaInsert("plan_inspections", {
+    project_id: projectId,
+    model_id: newInspectionModelObject.model_id,
+    model_object_id: newInspectionModelObject.model_object_id,
+    model_object_name: newInspectionModelObject.model_object_name,
+    inspection_type,
+    result: result || null,
+    comment: comment || null,
+    inspected_by: inspected_by || null,
+    inspected_at,
+    attachment_url,
+    attachment_name
+  });
+  if (ok) {
+    newInspectionModelObject = emptyModelObjectRef();
+    await fetchInspections();
+    renderInspections();
   }
 }
 
@@ -2821,7 +2721,7 @@ function renderWeather() {
 function renderComments(list) {
   const el = document.getElementById("commentsFeed");
 
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
     return;
   }
@@ -2891,7 +2791,7 @@ function downloadCsv(filename, columns, rows) {
 }
 
 function onExportExcel() {
-  if (!isSupabaseConfigured()) {
+  if (!isBackendConfigured()) {
     alert("Ingen databas ansluten – det finns inget att exportera ännu.");
     return;
   }
@@ -2963,9 +2863,9 @@ function onExportExcel() {
       name: `4D-dashboard-hinder-${ts}.csv`,
       columns: [
         ["Beskrivning", "description"],
-        ["Objekt", b => b.plan_item_id && itemById.has(Number(b.plan_item_id)) ? itemLabel(itemById.get(Number(b.plan_item_id))) : ""],
+        ["Objekt", b => b.plan_item_id && itemById.has(b.plan_item_id) ? itemLabel(itemById.get(b.plan_item_id)) : ""],
         ["Påverkade aktiviteter", b => (Array.isArray(b.affected_item_ids) ? b.affected_item_ids : [])
-          .map(id => itemById.get(Number(id))).filter(Boolean).map(itemLabel).join(", ")],
+          .map(id => itemById.get(id)).filter(Boolean).map(itemLabel).join(", ")],
         ["Ansvarig", "responsible"],
         ["Deadline", "deadline"],
         ["Påverkan på produktion", "production_impact"],

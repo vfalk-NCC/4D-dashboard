@@ -146,6 +146,37 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   overflow-y: auto;
 }
 
+/* Lösenordsgrind - visas innan appen laddas, se ACCESS_PASSWORD i app.js.
+   Enbart en klientsidesspärr, ingen riktig säkerhet - koden och all data
+   är fortsatt synlig för den som öppnar utvecklarverktygen. */
+.access-gate {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.access-box {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 280px;
+  text-align: center;
+}
+.access-box h2 { margin: 0 0 10px; font-size: 18px; }
+.access-box input {
+  width: 100%;
+  margin: 8px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.access-box button {
+  width: 100%;
+  margin-top: 6px;
+}
+.access-box .warning { color: #e5484d; margin: 4px 0 0; }
+
 /* ---------------------------------------------------------------------
    KPI-rutnät ("Översikt")
    ------------------------------------------------------------------- */

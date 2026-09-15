@@ -7,6 +7,17 @@
 <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
 </head>
 <body>
+
+  <!-- Lösenordsgrind - visas tills rätt lösenord angetts, se app.js -->
+  <div id="accessGate" class="access-gate">
+    <div class="access-box">
+      <h2>Du har ej åtkomst</h2>
+      <input type="password" id="accessPassword" autocomplete="off" placeholder="Lösenord" />
+      <div id="accessError" class="warning hidden">Fel lösenord.</div>
+      <button id="btnAccessSubmit" class="primary">Fortsätt</button>
+    </div>
+  </div>
+
   <div id="app">
 
     <!-- ===== Header ===== -->
@@ -23,7 +34,7 @@
         <button id="btnExportPdf" title="Exportera/skriv ut dashboarden som PDF">PDF ⤓</button>
         <button id="btnCollapseAll" title="Minimera/expandera alla block">⊟</button>
         <button id="btnRefresh" title="Hämta senaste data">↻</button>
-        <button id="btnSettings" title="Inställningar (databas)">⚙</button>
+        <button id="btnSettings" title="Inställningar (GitHub-token, väder)">⚙</button>
       </div>
     </header>
     <div id="connectionWarning" class="hint warning hidden"></div>
@@ -146,14 +157,13 @@
   <div id="settingsDialog" class="dialog hidden">
     <div class="dialog-box">
       <h2>Inställningar</h2>
-      <label>Supabase-URL <input type="text" id="supabaseUrl" placeholder="https://xxxxx.supabase.co" /></label>
-      <label>Supabase anon key (public) <input type="text" id="supabaseKey" placeholder="eyJhbGciOi..." /></label>
+      <label>GitHub-token <input type="password" id="githubToken" placeholder="github_pat_..." /></label>
       <label>Latitud (väder, valfritt) <input type="text" id="settingsLatitude" placeholder="59.33" /></label>
       <label>Longitud (väder, valfritt) <input type="text" id="settingsLongitude" placeholder="18.06" /></label>
       <label>Platsnamn (väder, valfritt) <input type="text" id="settingsLocationName" placeholder="t.ex. Gällivare" /></label>
-      <p class="hint">Använd samma Supabase-projekt och nyckel som i 4D-planering, så visar dashboarden
-        samma planeringsdata. Se README.md i 4D-planering-repot för hela uppsättningsguiden.
-        Koordinaterna används bara för väderpanelen och sparas lokalt i webbläsaren.</p>
+      <p class="hint">En fine-grained token scopead till repot <strong>vfalk-NCC/4D-data</strong> – se GITHUB_TOKEN_SETUP.md
+        för hur du skapar en (tar under en minut). Använd samma token som i 4D-planering, så visar dashboarden
+        samma planeringsdata. Koordinaterna används bara för väderpanelen och sparas lokalt i webbläsaren.</p>
       <div class="row">
         <button id="btnSaveSettings" class="primary">Spara</button>
         <button id="btnCloseSettings">Stäng</button>
@@ -161,6 +171,7 @@
     </div>
   </div>
 
+  <script src="github-storage.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
