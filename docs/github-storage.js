@@ -123,11 +123,25 @@ async function ghReadJSON(token, path) {
   return Array.isArray(data) ? data : [];
 }
 
+// Ett par väntande skrivningar mot SAMMA path (t.ex. att optimistisk
+// sparning hinner skicka iväg ändring nr 2 innan ändring nr 1:s
+// nätverksanrop hunnit landa) kön:as här, en Promise-kedja per path, så att
+// de körs EFTER varandra istället för att racea om samma fil samtidigt. Det
+// eliminerar inte skrivkrockar helt (en ANNAN flik/användare kan fortfarande
+// skriva mellan vår läsning och skrivning - därför finns omförsöks-loopen i
+// ghWriteJSONAttempt kvar som sista skyddsnät), men det gör att våra EGNA,
+// egeninitierade skrivningar mot samma fil i den här fliken inte i onödan
+// krockar och slösar omförsök på varandra.
+const ghWriteQueues = new Map(); // path -> Promise (senaste köade skrivningen)
+
 /**
  * Läser en JSON-array-fil, kör mutateFn(currentArray) -> nyArray, och skriver
  * tillbaka den. Vid skrivkrock (någon annan hann skriva emellan) läses filen
  * om och mutateFn körs igen, upp till maxRetries gånger - motsvarar Postgres
- * radlåsning fast optimistiskt via filens sha.
+ * radlåsning fast optimistiskt via filens sha. Skrivningar mot samma `path`
+ * kö:as (se ghWriteQueues ovan) och körs i tur och ordning; skrivningar mot
+ * OLIKA paths (t.ex. plan_items.json och plan_item_progress_history.json)
+ * påverkas inte av varandra och körs fortsatt parallellt.
  *
  * `preFetched` (valfri) är ett redan inläst {data, sha} för samma path - t.ex.
  * från en ghGetFile()/ghReadJSON()-läsning appen ändå precis gjorde för att
@@ -135,10 +149,31 @@ async function ghReadJSON(token, path) {
  * onödig extra GET (annars läses filen två gånger i rad för varje sparning -
  * en i uppringande kod för att få "före"-listan, en till här - vilket
  * dubblerar väntetiden i onödan, extra märkbart nu när plan_items.json är
- * stort). Vid en skrivkrock (409) läses filen alltid om på riktigt inför
- * omförsöket, oavsett preFetched.
+ * stort). Om ett annat köat anrop hann skriva emellan (så preFetched blivit
+ * inaktuell) upptäcks det som en vanlig skrivkrock (409) och läker sig
+ * automatiskt via omförsöks-loopen, precis som en krock från en annan flik.
  */
-async function ghWriteJSON(token, path, mutateFn, message, maxRetries = 6, preFetched = null) {
+function ghWriteJSON(token, path, mutateFn, message, maxRetries = 6, preFetched = null) {
+  const previous = ghWriteQueues.get(path) || Promise.resolve();
+  const run = previous
+    .catch(() => {}) // en tidigare köad skrivnings fel ska inte stoppa nästa i kön
+    .then(() => ghWriteJSONAttempt(token, path, mutateFn, message, maxRetries, preFetched));
+  ghWriteQueues.set(path, run);
+  // Städa bort kön för denna path när den senaste skrivningen är klar, så
+  // kartan inte växer obegränsat under en lång session. Detta görs via en
+  // EGEN, fristående kedja (.catch().then(), inte .finally() direkt på
+  // `run`) så att den alltid landar i "resolved" - annars skulle en
+  // misslyckad skrivning (t.ex. ett riktigt serverfel) skapa ett owatchat,
+  // ohanterat promise-avslag härifrån (utöver det avslag den anropande
+  // koden redan fångar via `run` själv), vilket webbläsaren loggar som ett
+  // extra, missvisande konsolfel.
+  run.catch(() => {}).then(() => {
+    if (ghWriteQueues.get(path) === run) ghWriteQueues.delete(path);
+  });
+  return run;
+}
+
+async function ghWriteJSONAttempt(token, path, mutateFn, message, maxRetries, preFetched) {
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
