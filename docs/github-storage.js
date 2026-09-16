@@ -128,8 +128,17 @@ async function ghReadJSON(token, path) {
  * tillbaka den. Vid skrivkrock (någon annan hann skriva emellan) läses filen
  * om och mutateFn körs igen, upp till maxRetries gånger - motsvarar Postgres
  * radlåsning fast optimistiskt via filens sha.
+ *
+ * `preFetched` (valfri) är ett redan inläst {data, sha} för samma path - t.ex.
+ * från en ghGetFile()/ghReadJSON()-läsning appen ändå precis gjorde för att
+ * visa/jämföra "före"-läget. Då slipper FÖRSTA försöket göra en egen,
+ * onödig extra GET (annars läses filen två gånger i rad för varje sparning -
+ * en i uppringande kod för att få "före"-listan, en till här - vilket
+ * dubblerar väntetiden i onödan, extra märkbart nu när plan_items.json är
+ * stort). Vid en skrivkrock (409) läses filen alltid om på riktigt inför
+ * omförsöket, oavsett preFetched.
  */
-async function ghWriteJSON(token, path, mutateFn, message, maxRetries = 6) {
+async function ghWriteJSON(token, path, mutateFn, message, maxRetries = 6, preFetched = null) {
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
@@ -143,11 +152,22 @@ async function ghWriteJSON(token, path, mutateFn, message, maxRetries = 6) {
       const delay = Math.min(250 * 2 ** (attempt - 1), 3000) + Math.random() * 200;
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
-    const { data, sha } = await ghGetFile(token, path);
+    const { data, sha } = (attempt === 0 && preFetched) ? preFetched : await ghGetFile(token, path);
     const current = Array.isArray(data) ? data : [];
     const next = mutateFn(current.slice());
     try {
-      await ghPutFile(token, path, ghUtf8ToB64(JSON.stringify(next, null, 2)), sha, message);
+      // Kompakt JSON (ingen indentering) istället för JSON.stringify(next, null, 2)
+      // - filerna (särskilt plan_items.json, som nu innehåller hundratals
+      // poster) skrivs om i sin HELHET vid varje sparning (GitHub Contents
+      // API har ingen "ändra bara denna rad"-variant), så själva
+      // datamängden som ska laddas upp är den största kvarvarande
+      // förklaringen till upplevd sparningstid. Indentering drar annars med
+      // sig en hel del rena mellanslagstecken i onödan (grovt sett +25-35%
+      // av filstorleken för den här typen av data) utan att fylla något
+      // syfte - filen är inte tänkt att läsas för hand. Bonus: eftersom
+      // filen sedan LAGRAS kompakt blir även nästa sparnings inledande
+      // läsning av filen mindre, så vinsten byggs på sig själv över tid.
+      await ghPutFile(token, path, ghUtf8ToB64(JSON.stringify(next)), sha, message);
       return next;
     } catch (e) {
       lastErr = e;
