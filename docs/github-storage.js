@@ -112,6 +112,50 @@ async function ghPutFile(token, path, contentB64, sha, message) {
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.json()).message || ""; } catch (e) {}
+
+    // GitHub kör en separat, strängare gräns för SKRIVANDE anrop ("secondary
+    // rate limit"/"content-generating requests" - max 80/minut, 500/timme,
+    // se docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
+    // Varje sparning i appen skriver dessutom minst två filer (plan_items.json
+    // + progresshistorik), så den nås lättare än man kanske tror vid många
+    // sparningar i följd. Träffar man den svarar GitHub med 403 eller 429.
+    //
+    // OBS: GitHub exponerar INTE "retry-after" via CORS för anrop gjorda
+    // från webbläsaren (vår app körs ju på ett annat origin än
+    // api.github.com) - deras egen dokumenterade Access-Control-Expose-
+    // Headers-lista innehåller bara ETag, Link, x-ratelimit-limit,
+    // x-ratelimit-remaining, x-ratelimit-reset, X-OAuth-Scopes,
+    // X-Accepted-OAuth-Scopes, X-Poll-Interval - INTE retry-after. Så även
+    // om GitHub skickar den headern är den osynlig för oss här (verifierat
+    // med ett riktigt Playwright/Chromium-test, se
+    // test/test_github_rate_limit_retry.js). Vi läser den ändå defensivt
+    // (kostar inget, och fungerar om GitHub någon gång börjar exponera den),
+    // men i praktiken är det x-ratelimit-remaining/-reset (om just DEN
+    // gränsen råkar vara skälet) eller annars GitHubs egen
+    // standardrekommendation på minst 60 sekunder som avgör väntetiden. Se
+    // Victors rapport 2026-09-16 (tog tid och fick ~60 sekunder varje gång)
+    // och ghWriteJSONAttempt()/ghRateLimitGate nedan för hur vi väntar ut
+    // tiden EN gång (inte upprepade snabba försök - det skulle bara
+    // förlänga spärren) och sedan försöker på nytt automatiskt, istället för
+    // att bara visa "Kunde inte spara" och kräva manuell väntan.
+    const retryAfterHeader = res.headers.get("retry-after");
+    const remainingHeader = res.headers.get("x-ratelimit-remaining");
+    const resetHeader = res.headers.get("x-ratelimit-reset");
+    const isRateLimit = (res.status === 403 || res.status === 429) && (
+      res.status === 429 || retryAfterHeader !== null || remainingHeader === "0" || /rate limit/i.test(detail)
+    );
+
+    if (isRateLimit) {
+      let retryAfterMs;
+      if (retryAfterHeader) retryAfterMs = Number(retryAfterHeader) * 1000;
+      else if (remainingHeader === "0" && resetHeader) retryAfterMs = Math.max(0, Number(resetHeader) * 1000 - Date.now());
+      else retryAfterMs = 60000; // GitHubs egen standardrekommendation när ingen header ger en exakt tid
+      const err = new Error(`GitHub-gräns (rate limit) nådd vid ${path}${detail ? ": " + detail : ""}`);
+      err.rateLimited = true;
+      err.retryAfterMs = retryAfterMs;
+      throw err;
+    }
+
     throw new Error(`GitHub PUT ${path} misslyckades: ${res.status} ${detail}`);
   }
   return res.json();
@@ -134,6 +178,45 @@ async function ghReadJSON(token, path) {
 // krockar och slösar omförsök på varandra.
 const ghWriteQueues = new Map(); // path -> Promise (senaste köade skrivningen)
 
+// GitHubs rate limit för skrivande anrop gäller HELA kontot/token:et, inte
+// en enskild fil - till skillnad från ghWriteQueues ovan (som bara serialiserar
+// skrivningar mot SAMMA path) behöver cooldown-väntan alltså delas mellan
+// ALLA paths. Utan det skulle t.ex. plan_items.json och
+// plan_item_progress_history.json (som skrivs parallellt vid varje sparning,
+// se ghWriteJSON-anropen i app.js) kunna trigga varsin oberoende 60-
+// sekundersväntan och ändå krocka med varandra på nytt så fort den ena är
+// klar.
+//
+// ghRateLimitGate är en delad, kedjad Promise som fungerar som en gemensam
+// grind: varje skrivförsök väntar in den INNAN det ens försöker (se
+// ghWriteJSONAttempt), och en skrivning som träffar en rate limit förlänger
+// grinden med sin egen väntetid. Eftersom förlängningen kedjas EFTER vad som
+// redan väntar (inte parallellt) börjar nästa köade skrivnings väntetid
+// räknas från när FÖREGÅENDE väntan är över - inte från när den själv
+// ursprungligen försökte skriva. Det var precis vad Victor bad om
+// 2026-09-16: att flera köade sparningar inte skulle räkna ner sin egen
+// 60-sekundersklocka oberoende av varandra (och då studsa tillbaka och
+// krocka med GitHub igen nästan samtidigt), utan köas efter varandra.
+let ghRateLimitGate = Promise.resolve();
+
+/** Väntar in en ev. redan pågående rate-limit-cooldown innan ett skrivförsök görs. */
+function ghAwaitRateLimitGate() {
+  return ghRateLimitGate;
+}
+
+/**
+ * Förlänger den delade cooldown-grinden med `waitMs`, KÖAT efter vad som
+ * eventuellt redan väntar - inte en ny, oberoende väntan som skulle kunna
+ * löpa ut samtidigt som en annan. Returnerar den (nya) grinden så anroparen
+ * kan vänta in just den.
+ */
+function ghExtendRateLimitGate(waitMs) {
+  ghRateLimitGate = ghRateLimitGate.catch(() => {}).then(
+    () => new Promise((resolve) => setTimeout(resolve, waitMs))
+  );
+  return ghRateLimitGate;
+}
+
 /**
  * Läser en JSON-array-fil, kör mutateFn(currentArray) -> nyArray, och skriver
  * tillbaka den. Vid skrivkrock (någon annan hann skriva emellan) läses filen
@@ -152,6 +235,12 @@ const ghWriteQueues = new Map(); // path -> Promise (senaste köade skrivningen)
  * stort). Om ett annat köat anrop hann skriva emellan (så preFetched blivit
  * inaktuell) upptäcks det som en vanlig skrivkrock (409) och läker sig
  * automatiskt via omförsöks-loopen, precis som en krock från en annan flik.
+ *
+ * Nås GitHubs separata rate limit för skrivande anrop (se ghPutFile) väntar
+ * funktionen ut hela den tid GitHub bad om (eller ~60 sekunder som standard)
+ * i EN sammanhängande paus och gör sedan EXAKT ETT nytt försök - upprepas
+ * inte i onödan under tiden, det skulle bara förlänga spärren. Se Victors
+ * rapport 2026-09-16 om att sparningar krävde ~60 sekunders manuell väntan.
  */
 function ghWriteJSON(token, path, mutateFn, message, maxRetries = 6, preFetched = null) {
   const previous = ghWriteQueues.get(path) || Promise.resolve();
@@ -175,7 +264,23 @@ function ghWriteJSON(token, path, mutateFn, message, maxRetries = 6, preFetched 
 
 async function ghWriteJSONAttempt(token, path, mutateFn, message, maxRetries, preFetched) {
   let lastErr;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  // Eget, litet tak för hur många gånger vi väntar ut en rate limit (se
+  // ghPutFile) - oberoende av maxRetries, som är budgeten för skrivkrockar
+  // (409) och har helt andra, mycket kortare väntetider. Mer än ett par
+  // rate-limit-väntor i rad vore ovanligt och tyder på ett större problem
+  // (t.ex. att appen används av flera personer samtidigt under lång tid),
+  // inte något som är värt att fortsätta dölja i det oändliga.
+  let rateLimitRetriesLeft = 2;
+  let attempt = 0;
+  // Sant precis EFTER att VI SJÄLVA väntat ut en rate limit (se
+  // ghExtendRateLimitGate-anropet nedan) - då har vi redan gjort vår tur och
+  // ska försöka igen direkt, utan att gå via gate-kollen igen. Annars skulle
+  // vi kunna dras in i en ANNAN, senare tillkommen skrivnings YTTERLIGARE
+  // förlängning av den delade grinden (som kan ha hunnit läggas till precis
+  // efter att vår egen väntan var klar) och sluta vänta dubbelt - vilket
+  // omintetgör hela poängen med att vänta i tur och ordning.
+  let skipGateWaitOnce = false;
+  while (true) {
     if (attempt > 0) {
       // Backoff innan omförsök vid skrivkrock (409). Utan paus tenderar två
       // samtidiga skrivningar mot samma fil (t.ex. ett dubbelklick på
@@ -187,6 +292,14 @@ async function ghWriteJSONAttempt(token, path, mutateFn, message, maxRetries, pr
       const delay = Math.min(250 * 2 ** (attempt - 1), 3000) + Math.random() * 200;
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
+    if (!skipGateWaitOnce) {
+      // Väntar in en ev. redan pågående rate-limit-cooldown (delad mellan
+      // ALLA paths, se ghRateLimitGate ovan) INNAN vi ens försöker - annars
+      // skulle en skrivning mot en ANNAN fil kunna smyga sig förbi och
+      // trigga en ny rate limit medan vi väntar ut den förra.
+      await ghAwaitRateLimitGate();
+    }
+    skipGateWaitOnce = false;
     const { data, sha } = (attempt === 0 && preFetched) ? preFetched : await ghGetFile(token, path);
     const current = Array.isArray(data) ? data : [];
     const next = mutateFn(current.slice());
@@ -206,11 +319,29 @@ async function ghWriteJSONAttempt(token, path, mutateFn, message, maxRetries, pr
       return next;
     } catch (e) {
       lastErr = e;
+      if (e.rateLimited && rateLimitRetriesLeft > 0) {
+        rateLimitRetriesLeft--;
+        // Förlänger den DELADE cooldown-grinden (inte bara en lokal väntan
+        // här) och väntar sedan in den - så en ANNAN köad skrivning (mot en
+        // annan path, t.ex. progresshistoriken som skrivs parallellt med
+        // plan_items.json) som råkar kolla grinden under tiden också väntar
+        // in samma cooldown, istället för att smyga förbi och trigga en ny
+        // rate limit. Nästa försök görs EXAKT en gång efteråt - inte
+        // upprepade snabba försök under tiden, det skulle bara förlänga
+        // spärren ytterligare. Räknas medvetet inte mot `attempt`/maxRetries
+        // (en annan budget, för det separata skrivkrocksfallet med helt
+        // andra väntetider).
+        console.warn(`GitHub rate limit nådd vid ${path} - väntar ${Math.round(e.retryAfterMs / 1000)}s och försöker igen automatiskt.`);
+        await ghExtendRateLimitGate(e.retryAfterMs);
+        skipGateWaitOnce = true;
+        continue;
+      }
       if (!e.conflict) throw e;
+      if (attempt >= maxRetries) throw lastErr;
+      attempt++;
       // annars: loopa (efter paus ovan) och försök igen med färsk sha
     }
   }
-  throw lastErr;
 }
 
 /**
