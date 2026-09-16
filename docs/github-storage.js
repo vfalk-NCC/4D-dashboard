@@ -129,9 +129,20 @@ async function ghReadJSON(token, path) {
  * om och mutateFn körs igen, upp till maxRetries gånger - motsvarar Postgres
  * radlåsning fast optimistiskt via filens sha.
  */
-async function ghWriteJSON(token, path, mutateFn, message, maxRetries = 4) {
+async function ghWriteJSON(token, path, mutateFn, message, maxRetries = 6) {
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      // Backoff innan omförsök vid skrivkrock (409). Utan paus tenderar två
+      // samtidiga skrivningar mot samma fil (t.ex. ett dubbelklick på
+      // "Spara", eller två flikar/användare igång samtidigt) att hela tiden
+      // kollidera med varandra på nytt - med en stigande, lite slumpad paus
+      // hinner den ena skrivningen bli klar innan den andra läser om filen,
+      // så de flesta krockar löser sig av sig själva istället för att ta
+      // slut på omförsök.
+      const delay = Math.min(250 * 2 ** (attempt - 1), 3000) + Math.random() * 200;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
     const { data, sha } = await ghGetFile(token, path);
     const current = Array.isArray(data) ? data : [];
     const next = mutateFn(current.slice());
@@ -141,7 +152,7 @@ async function ghWriteJSON(token, path, mutateFn, message, maxRetries = 4) {
     } catch (e) {
       lastErr = e;
       if (!e.conflict) throw e;
-      // annars: loopa och försök igen med färsk sha
+      // annars: loopa (efter paus ovan) och försök igen med färsk sha
     }
   }
   throw lastErr;
