@@ -593,7 +593,8 @@ function fromRow(row) {
     activity: (row.activity || "").trim(),
     contractor: (row.contractor || "").trim(),
     startDate: row.start_date || null,
-    endDate: row.end_date || null
+    endDate: row.end_date || null,
+    actualEndDate: row.actual_end_date || null
   };
 }
 
@@ -828,7 +829,16 @@ function computeStats(list) {
   const notPlanned = byStatus.ej_planerad || 0;
   const avgProgress = total > 0 ? Math.round(progressSum / total) : 0;
 
-  return { total, byStatus, done, delayed, notPlanned, avgProgress };
+  // Av de klarmarkerade objekten: hur många blev klara EFTER planerat
+  // slutdatum (utifrån det nya fältet "Verkligt avslut" i 4D-planering).
+  // Objekt som klarmarkerats utan ett ifyllt verkligt avslut (äldre data,
+  // eller inget planerat slutdatum satt) räknas inte som försent klara här
+  // - vi vet helt enkelt inte, så vi gissar inte åt fel håll.
+  const doneLate = list.filter(it =>
+    it.status === "klar" && it.actualEndDate && it.endDate && it.actualEndDate > it.endDate
+  ).length;
+
+  return { total, byStatus, done, delayed, notPlanned, avgProgress, doneLate };
 }
 
 /* ---------------------------------------------------------------------
@@ -852,11 +862,12 @@ function renderKpis() {
     { value: `${donePct}%`, label: "Klara", accent: "accent-done" },
     { value: `${delayedPct}%`, label: "Försenade", accent: "accent-delayed" },
     { value: `${s.avgProgress}%`, label: "Snittframdrift", accent: "accent-progress" },
-    { value: s.notPlanned, label: "Ej planerade", accent: "" }
+    { value: s.notPlanned, label: "Ej planerade", accent: "" },
+    { value: s.doneLate, label: "Klara, men försent", accent: "accent-delayed", title: "Klarmarkerade objekt vars verkliga avslut låg efter planerat slutdatum" }
   ];
 
   el.innerHTML = tiles.map(t => `
-    <div class="kpi-tile ${t.accent}">
+    <div class="kpi-tile ${t.accent}"${t.title ? ` title="${escapeHtml(t.title)}"` : ""}>
       <div class="kpi-value">${t.value}</div>
       <div class="kpi-label">${t.label}</div>
     </div>`).join("");
@@ -2809,7 +2820,8 @@ function onExportExcel() {
         ["Aktivitet", "activity"],
         ["Entreprenör", "contractor"],
         ["Startdatum", "startDate"],
-        ["Slutdatum", "endDate"]
+        ["Slutdatum", "endDate"],
+        ["Verkligt avslut", "actualEndDate"]
       ],
       rows: items
     },
