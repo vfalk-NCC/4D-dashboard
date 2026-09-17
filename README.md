@@ -86,6 +86,30 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   objekten som räknats med en riktig verklig start (t.ex. "3 av 5 med
   verklig start"), så du ser direkt hur tillförlitlig siffran är och kan
   avgöra om det är värt att börja fylla i Verklig start mer konsekvent.
+- **Gantt-schema**: en rad per objekt (planerat start- till slutdatum) i
+  tidsordning. Objekt med sparade delaktiviteter (från 4D-planerings
+  "Koppla markering") har en utfällbar pil som visar delaktiviteterna som
+  egna, mindre staplar under objektet. Kryssrutan "Visa verkligt" lägger
+  till en extra, mörk stapel med verklig start/avslut bredvid den
+  planerade – bara för objekt som har **båda** fälten ifyllda i
+  4D-planering (av som standard). Delaktiviteter har ännu inga egna
+  verkliga datum, så de visas alltid bara med sin planerade stapel.
+- **Resurstimmar (planerat)**: ett enkelt planeringsunderlag som fördelar
+  varje objekts – eller, om objektet har delaktiviteter, varje
+  delaktivitets – "Uppskattade timmar" (fylls i i 4D-planering) jämnt
+  över dess datumintervall och summerar timmarna per vecka och
+  entreprenör, ungefär som ett bemanningsschema. Objekt utan ifyllda
+  timmar och/eller datum räknas inte med (en hint visar hur många). Visar
+  bara planerad tidsåtgång i denna omgång, ingen jämförelse mot verkligt
+  nedlagd tid ännu.
+- **Synliga block**: i inställningarna (kugghjulet) kan du bocka ur vilka
+  block som ska visas i dashboarden. Ett urbockat block försvinner direkt
+  och tas heller inte med i PDF-exporten (utskriften) – och för de block
+  som har en egen Excel-fil (Cykeltidsanalys, Milstolpar, Bemanning,
+  Leveransplan, Leveransplan handlingar, Hinder, Säkerhet, Besiktningar,
+  Väder) utesluts den filen ur Excel-exporten också. Den grundläggande
+  objektlistan (planeringsobjekt) hör inte till något enskilt block och
+  tas alltid med. Valet sparas lokalt i webbläsaren.
 
 Alla filer som paneler ovan använder (`plan_item_progress_history.json`,
 `plan_milestones.json`, `plan_staffing.json`, `plan_deliveries.json`,
