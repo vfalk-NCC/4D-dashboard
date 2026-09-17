@@ -112,9 +112,12 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   radtäthet (Kompakt/Bekväm) och zooma in/ut (med horisontell scroll vid
   inzoomning) – och "Visa från/till" låter dig begränsa vilket
   datumintervall som visas (objekt helt utanför intervallet döljs, med en
-  hint om hur många). Alla dessa inställningar (utom "Visa verkligt", som
-  medvetet alltid är av vid sidladdning) sparas i webbläsaren och gäller
-  vid nästa besök. Delaktiviteter har ännu inga egna verkliga datum, så de
+  hint om hur många). Objekt-, delaktivitets- och gruppnamnen är
+  fastklistrade i vänsterkanten och förblir alltid synliga även när man
+  skrollar i sidled i inzoomat läge. Alla dessa inställningar (utom "Visa
+  verkligt", som medvetet alltid är av vid sidladdning) sparas i
+  webbläsaren och gäller vid nästa besök. Delaktiviteter har ännu inga egna
+  verkliga datum, så de
   visas alltid bara med sin planerade stapel.
 - **Statusfärger** (i inställningarna, kugghjulet): de sex statusfärgerna
   (Ej planerad/Planerad/Pågående/Försenad/Klar/Pausad) går att byta ut mot
