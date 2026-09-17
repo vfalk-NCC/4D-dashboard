@@ -251,6 +251,41 @@ async function run() {
   }
   console.log('OK: klick på ett objektnamn med känd 3D-koppling markerar objektet i modellen');
 
+  // ---- 13) Namnen (och grupphuvudenas namn) förblir synliga vid sidledes
+  // scroll i inzoomat läge - se Victors synpunkt 2026-09-17.
+  await page.locator('#ganttGroupBy').selectOption('area');
+  await page.waitForTimeout(50);
+  for (let i = 0; i < 5; i++) await page.locator('#ganttZoomIn').click();
+  await page.waitForTimeout(50);
+  const scrollInfo = await page.evaluate(() => {
+    const chart = document.getElementById('ganttChart');
+    return { scrollWidth: chart.scrollWidth, clientWidth: chart.clientWidth };
+  });
+  if (scrollInfo.scrollWidth <= scrollInfo.clientWidth) {
+    throw new Error('Förväntade att den inzoomade tidslinjen är bredare än synliga ytan (för att testa sidledes scroll), fick: ' + JSON.stringify(scrollInfo));
+  }
+  await page.evaluate(() => { document.getElementById('ganttChart').scrollLeft = 300; });
+  await page.waitForTimeout(50);
+  const positionsAfterScroll = await page.evaluate(() => {
+    const chartRect = document.getElementById('ganttChart').getBoundingClientRect();
+    const within = el => {
+      const r = el.getBoundingClientRect();
+      return r.left >= chartRect.left - 1 && r.left < chartRect.right;
+    };
+    return {
+      labels: Array.from(document.querySelectorAll('.gantt-label')).every(within),
+      toggles: Array.from(document.querySelectorAll('.gantt-toggle:not(.gantt-toggle-empty)')).every(within),
+      groups: Array.from(document.querySelectorAll('.gantt-group-sticky')).every(within)
+    };
+  });
+  if (!positionsAfterScroll.labels) throw new Error('Förväntade att objekt-/delaktivitetsnamnen förblir synliga (fastklistrade) vid sidledes scroll');
+  if (!positionsAfterScroll.toggles) throw new Error('Förväntade att utfällningspilarna förblir synliga vid sidledes scroll');
+  if (!positionsAfterScroll.groups) throw new Error('Förväntade att grupphuvudenas namn förblir synliga vid sidledes scroll');
+  await page.locator('#ganttZoomFit').click();
+  await page.locator('#ganttGroupBy').selectOption('');
+  await page.waitForTimeout(50);
+  console.log('OK: objekt-, delaktivitets- och gruppnamn förblir synliga (fastklistrade i sidled) vid scroll i inzoomat läge');
+
   await browser.close();
   server.close();
 
