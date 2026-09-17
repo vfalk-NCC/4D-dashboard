@@ -18,6 +18,25 @@ let items = [];               // Cache av samtliga planeringsposter (från backe
 let activities = [];           // plan_item_activities (delaktiviteter) - läses read-only, skrivs bara av 4D-planering
 let ganttExpandedIds = new Set(); // vilka objekt (plan_item.id) som just nu visar sina delaktiviteter i Gantt-schemat
 let ganttShowActual = false;      // kryssrutan "Visa verkligt" i Gantt-schemat
+// Läsbarhetsinställningar för Gantt-schemat (Victors förfrågan 2026-09-17
+// om att göra det tydligare) - sparas i localStorage, se GANTT_PREFS_KEY.
+let ganttGroupBy = "";             // "" | "area" | "contractor" | "activity"
+let ganttSortBy = "startDate";     // "startDate" | "contractor" | "status" | "name"
+let ganttDensity = "compact";      // "compact" | "comfortable"
+let ganttZoomPxPerDay = null;      // null = "Anpassa" (procentbaserat, fyller bredden) annars antal px/dag
+let ganttCollapsedGroups = new Set(); // vilka grupper (nyckel: "<ganttGroupBy>:<gruppnamn>") som är hopfällda
+let ganttRangeStart = null;        // eget visat datumintervall (annars auto utifrån objektens datum)
+let ganttRangeEnd = null;
+let ganttTooltipEl = null;         // återanvänd DOM-nod för hover-/fokustooltip, se ensureGanttTooltip()
+const GANTT_PREFS_KEY = "4ddash-gantt-prefs";
+const GANTT_ZOOM_LEVELS = [3, 6, 10, 18, 30, 50]; // px per dag, stigande zoomnivåer
+// Bredden (px) som toggle- och etikettkolumnerna + mellanrummen äter av varje
+// rad (.gantt-row { grid-template-columns: 14px 110px 1fr; gap: 6px; }) -
+// 14 + 110 + 2*6 = 136. Används för att räkna ut .gantt-inner:s totala bredd
+// vid inzoomning så att spårkolumnen (1fr) får exakt domainDays*pxPerDay px,
+// se buildGanttTimeline/renderGantt.
+const GANTT_ROW_PREFIX_PX = 136;
+const GANTT_MONTH_NAMES_SV = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 let settings = {
   githubToken: "",             // fine-grained PAT scopead till vfalk-NCC/4D-data, se GITHUB_TOKEN_SETUP.md
   latitude: "",
@@ -298,10 +317,7 @@ function bindUI() {
   document.getElementById("filterContractor").onchange = onFilterChange;
   document.getElementById("btnResetFilters").onclick = onResetFilters;
 
-  document.getElementById("ganttShowActual").onchange = (ev) => {
-    ganttShowActual = ev.target.checked;
-    renderGantt(getFilteredItems());
-  };
+  initGanttControls();
 }
 
 function toggle(id, show) {
@@ -515,6 +531,18 @@ function escapeHtml(str) {
   }[ch]));
 }
 
+// Gör om en "#rrggbb"-färg till en rgba()-sträng med given opacitet - används
+// av Gantt-schemats framdriftsstaplar (ljus bas i statusfärgen, se
+// renderGantt) för att undvika en helt separat, urvattnad färgpalett.
+function hexToRgba(hex, alpha) {
+  const h = String(hex || "").replace("#", "");
+  const full = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
+  const n = parseInt(full, 16);
+  if (!Number.isFinite(n)) return `rgba(148, 163, 184, ${alpha})`;
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 /* ---------------------------------------------------------------------
    Inställningar (lagras lokalt i webbläsaren för denna extension)
    ------------------------------------------------------------------- */
@@ -687,7 +715,11 @@ function fromRow(row) {
     endDate: row.end_date || null,
     actualStartDate: row.actual_start_date || null,
     actualEndDate: row.actual_end_date || null,
-    estimatedHours: Number.isFinite(row.estimated_hours) ? row.estimated_hours : null
+    estimatedHours: Number.isFinite(row.estimated_hours) ? row.estimated_hours : null,
+    // Används av Gantt-schemat för att kunna markera objektet i 3D-modellen
+    // vid klick på dess namn - se selectGanttItemInModel().
+    modelId: row.model_id ?? null,
+    objectId: row.object_id ?? null
   };
 }
 
@@ -1696,28 +1728,345 @@ function bindModelObjectBadges(el) {
    lägger till en extra stapel med verklig start/avslut (där ifyllt) bredvid
    den planerade - bara för objektraderna, delaktiviteter har inga egna
    verkliga datum ännu (bara planerade). Se Victors förfrågan 2026-09-17.
+
+   Läsbarhetsuppdatering (samma dag, Victors förfrågan om tydlighet):
+   grid-/helglinjer + idag-markör i tidsaxeln, anpassningsbart datumintervall,
+   custom hover-/fokustooltips, framdrift-fyllda staplar, färgförklaring,
+   gruppering/sortering/densitet/zoom och klick-för-3D-markering. Se
+   README.md för en sammanfattning riktad till Victor.
    ------------------------------------------------------------------- */
+
+// Läser sparade Gantt-inställningar från localStorage (se GANTT_PREFS_KEY)
+// in i de globala ganttXxx-variablerna. Trasig/saknad data ignoreras tyst -
+// då används bara de vanliga standardvärdena som redan är satta ovan.
+function loadGanttPrefs() {
+  try {
+    const raw = window.localStorage.getItem(GANTT_PREFS_KEY);
+    if (!raw) return;
+    const prefs = JSON.parse(raw);
+    if (typeof prefs.groupBy === "string") ganttGroupBy = prefs.groupBy;
+    if (typeof prefs.sortBy === "string") ganttSortBy = prefs.sortBy;
+    if (prefs.density === "compact" || prefs.density === "comfortable") ganttDensity = prefs.density;
+    if (prefs.zoomPxPerDay === null || Number.isFinite(prefs.zoomPxPerDay)) ganttZoomPxPerDay = prefs.zoomPxPerDay;
+    if (Array.isArray(prefs.collapsedGroups)) ganttCollapsedGroups = new Set(prefs.collapsedGroups);
+    if (typeof prefs.rangeStart === "string" || prefs.rangeStart === null) ganttRangeStart = prefs.rangeStart;
+    if (typeof prefs.rangeEnd === "string" || prefs.rangeEnd === null) ganttRangeEnd = prefs.rangeEnd;
+  } catch (e) {
+    console.warn("Kunde inte läsa sparade Gantt-inställningar", e);
+  }
+}
+
+// OBS: "Visa verkligt" (ganttShowActual) sparas medvetet INTE här - den ska
+// alltid stå av vid sidladdning, se deklarationen av variabeln.
+function saveGanttPrefs() {
+  try {
+    window.localStorage.setItem(GANTT_PREFS_KEY, JSON.stringify({
+      groupBy: ganttGroupBy,
+      sortBy: ganttSortBy,
+      density: ganttDensity,
+      zoomPxPerDay: ganttZoomPxPerDay,
+      collapsedGroups: [...ganttCollapsedGroups],
+      rangeStart: ganttRangeStart,
+      rangeEnd: ganttRangeEnd
+    }));
+  } catch (e) {
+    console.warn("Kunde inte spara Gantt-inställningar", e);
+  }
+}
+
+function ganttGroupKeyFor(it) {
+  if (ganttGroupBy === "area") return it.area || NO_AREA_LABEL;
+  if (ganttGroupBy === "contractor") return it.contractor || NO_CONTRACTOR_LABEL;
+  if (ganttGroupBy === "activity") return it.activity || NO_ACTIVITY_LABEL;
+  return "";
+}
+
+function ganttComparator(sortBy) {
+  const keyOf = it => {
+    switch (sortBy) {
+      case "contractor": return (it.contractor || "").toLowerCase();
+      case "status": return String(STATUS_ORDER.indexOf(it.status)).padStart(2, "0");
+      case "name": return itemLabel(it).toLowerCase();
+      case "startDate":
+      default: return it.startDate || "";
+    }
+  };
+  return (a, b) => {
+    const ka = keyOf(a), kb = keyOf(b);
+    if (ka < kb) return -1;
+    if (ka > kb) return 1;
+    // Sekundärsortering på startdatum så ordningen blir stabil/förutsägbar
+    // även när huvudnyckeln är lika (t.ex. samma entreprenör/status).
+    return (a.startDate || "").localeCompare(b.startDate || "");
+  };
+}
+
+// Bygger dels de CSS-bakgrundslager (grid-/helglinjer + idag-markör) som
+// sätts som CSS-variabler på .gantt-inner och ärvs ner till varje
+// .gantt-track (se style.css), dels HTML för själva linjalraden (månads-,
+// vecko- och idag-etiketter). Allt positioneras i samma enhet (% i
+// "Anpassa"-läge, px i zoomat läge) som gantt-staplarna, via samma toUnit.
+function buildGanttTimeline(domainStart, domainEnd, domainDays, isFit, pxPerDay) {
+  const suffix = isFit ? "%" : "px";
+  const toUnit = days => isFit ? (days / domainDays * 100) : (days * pxPerDay);
+
+  const layers = [];      // {image, pos, size, repeat} - först i listan hamnar överst (mest synlig)
+  const monthLabels = [];
+  const weekLabels = [];
+  let todayLabel = "";
+
+  const startD = parseDate(domainStart);
+  const endD = parseDate(domainEnd);
+
+  // Månadsetiketter + en linje vid varje månadsskifte inom intervallet.
+  let cursor = new Date(Date.UTC(startD.getUTCFullYear(), startD.getUTCMonth(), 1));
+  while (cursor <= endD) {
+    const isoStart = cursor.toISOString().slice(0, 10);
+    const labelIso = isoStart > domainStart ? isoStart : domainStart;
+    const labelOffset = Math.max(0, daysBetweenIso(domainStart, labelIso));
+    monthLabels.push(`<span class="gantt-month-label" style="left:${toUnit(labelOffset)}${suffix}">${GANTT_MONTH_NAMES_SV[cursor.getUTCMonth()]} ${cursor.getUTCFullYear()}</span>`);
+    if (isoStart > domainStart) {
+      const lineOffset = daysBetweenIso(domainStart, isoStart);
+      layers.push({
+        image: "linear-gradient(var(--gantt-grid-month), var(--gantt-grid-month))",
+        pos: `${toUnit(lineOffset)}${suffix} 0`, size: "1px 100%", repeat: "no-repeat"
+      });
+    }
+    cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1));
+  }
+
+  // Veckoetiketter (ISO-veckonummer) - en per måndag inom intervallet, plus
+  // en extra längst till vänster om intervallet börjar mitt i en vecka.
+  const dow = startD.getUTCDay(); // 0 = söndag ... 6 = lördag
+  const daysToFirstMonday = dow === 1 ? 0 : (8 - dow) % 7;
+  if (daysToFirstMonday > 0) {
+    weekLabels.push(`<span class="gantt-week-label" style="left:0${suffix}">v.${isoWeekNumber(startD)}</span>`);
+  }
+  for (let d = daysToFirstMonday; d <= domainDays; d += 7) {
+    const mondayDate = new Date(startD.getTime() + d * 86400000);
+    const mondayIso = mondayDate.toISOString().slice(0, 10);
+    if (mondayIso > domainEnd) break;
+    weekLabels.push(`<span class="gantt-week-label" style="left:${toUnit(d)}${suffix}">v.${isoWeekNumber(mondayDate)}</span>`);
+  }
+
+  // Veckolinjer (vid varje måndag) + helgskuggning (lör-sön) - periodiska
+  // mönster (period 7 dagar), förskjutna så periodgränsen hamnar på måndagar.
+  const period = toUnit(7);
+  const weekendStart = toUnit(5);
+  layers.push({
+    image: `repeating-linear-gradient(to right, var(--gantt-grid-week) 0 1px, transparent 1px ${period}${suffix})`,
+    pos: `${toUnit(daysToFirstMonday)}${suffix} 0`, size: "auto", repeat: "repeat"
+  });
+  layers.push({
+    image: `repeating-linear-gradient(to right, transparent 0 ${weekendStart}${suffix}, var(--gantt-weekend-solid) ${weekendStart}${suffix} ${period}${suffix})`,
+    pos: `${toUnit(daysToFirstMonday)}${suffix} 0`, size: "auto", repeat: "repeat"
+  });
+
+  // Dagens datum - tydlig linje + etikett, om den ligger inom det visade intervallet.
+  const today = todayISO();
+  if (today >= domainStart && today <= domainEnd) {
+    const offset = daysBetweenIso(domainStart, today);
+    layers.unshift({
+      image: "linear-gradient(var(--accent), var(--accent))",
+      pos: `${toUnit(offset)}${suffix} 0`, size: "2px 100%", repeat: "no-repeat"
+    });
+    todayLabel = `<span class="gantt-today-label" style="left:${toUnit(offset)}${suffix}">Idag</span>`;
+  }
+
+  const gridStyle = {
+    image: layers.map(l => l.image).join(", "),
+    pos: layers.map(l => l.pos).join(", "),
+    size: layers.map(l => l.size).join(", "),
+    repeat: layers.map(l => l.repeat).join(", ")
+  };
+
+  const rulerHtml = `
+    <div class="gantt-row gantt-ruler-row">
+      <span></span><span></span>
+      <div class="gantt-ruler-track">${monthLabels.join("")}${weekLabels.join("")}${todayLabel}</div>
+    </div>`;
+
+  return { gridStyle, rulerHtml };
+}
+
+/* ---------------------------------------------------------------------
+   Custom hover-/fokustooltip för Gantt-staplarna - en återanvänd DOM-nod
+   (skapas lazy, hängs på <body> så den aldrig klipps av .gantt-charts
+   overflow:auto). Innehåll skickas som färdig HTML (byggd med escapeHtml,
+   samma mönster som resten av appen), nyckeltat via data-gantt-tip så vi
+   slipper HTML-i-attribut-eskapering.
+   ------------------------------------------------------------------- */
+function ensureGanttTooltip() {
+  if (ganttTooltipEl) return ganttTooltipEl;
+  const el = document.createElement("div");
+  el.className = "gantt-tooltip hidden";
+  el.setAttribute("role", "tooltip");
+  document.body.appendChild(el);
+  ganttTooltipEl = el;
+  return el;
+}
+
+function positionGanttTooltip(evt) {
+  const el = ganttTooltipEl;
+  if (!el) return;
+  const pad = 14;
+  let x = evt.clientX + pad;
+  let y = evt.clientY + pad;
+  const rect = el.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth - 4) x = evt.clientX - rect.width - pad;
+  if (y + rect.height > window.innerHeight - 4) y = evt.clientY - rect.height - pad;
+  el.style.left = `${Math.max(4, x)}px`;
+  el.style.top = `${Math.max(4, y)}px`;
+}
+
+function showGanttTooltip(evt, html) {
+  const el = ensureGanttTooltip();
+  el.innerHTML = html;
+  el.classList.remove("hidden");
+  positionGanttTooltip(evt);
+}
+
+// Tangentbordsfokus har ingen muspekare att positionera efter - placera
+// tooltipen strax under den fokuserade stapeln istället (samma detaljnivå
+// som vid hover, se interaction.md "Same details on keyboard focus").
+function showGanttTooltipAt(targetEl, html) {
+  const el = ensureGanttTooltip();
+  el.innerHTML = html;
+  el.classList.remove("hidden");
+  const rect = targetEl.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - el.offsetWidth - 4, Math.max(4, rect.left));
+  el.style.left = `${left}px`;
+  el.style.top = `${rect.bottom + 6}px`;
+}
+
+function hideGanttTooltip() {
+  if (ganttTooltipEl) ganttTooltipEl.classList.add("hidden");
+}
+
+function ganttTooltipRow(label, value) {
+  return `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${escapeHtml(label)}</span><span class="gantt-tooltip-value">${escapeHtml(value)}</span></div>`;
+}
+
+function ganttTooltipHtmlForItem(it) {
+  const rows = [
+    ganttTooltipRow("Status", STATUS_LABELS[it.status] || it.status),
+    ganttTooltipRow("Planerat", `${it.startDate} – ${it.endDate}`),
+    ganttTooltipRow("Framdrift", `${Math.round(Number(it.progress) || 0)}%`)
+  ];
+  if (it.contractor) rows.push(ganttTooltipRow("Entreprenör", it.contractor));
+  if (it.actualStartDate || it.actualEndDate) {
+    rows.push(ganttTooltipRow("Verkligt", `${it.actualStartDate || "?"} – ${it.actualEndDate || "?"}`));
+  }
+  return `<div class="gantt-tooltip-title">${escapeHtml(itemLabel(it))}</div>${rows.join("")}`;
+}
+
+function ganttTooltipHtmlForActual(it) {
+  const rows = [ganttTooltipRow("Verkligt", `${it.actualStartDate} – ${it.actualEndDate}`)];
+  return `<div class="gantt-tooltip-title">${escapeHtml(itemLabel(it))}</div>${rows.join("")}`;
+}
+
+function ganttTooltipHtmlForActivity(a, parentItem) {
+  const rows = [ganttTooltipRow("Datum", `${a.start_date} – ${a.end_date}`)];
+  if (Number.isFinite(a.estimated_hours)) rows.push(ganttTooltipRow("Uppskattade timmar", String(a.estimated_hours)));
+  if (parentItem) rows.push(ganttTooltipRow("Tillhör", itemLabel(parentItem)));
+  return `<div class="gantt-tooltip-title">${escapeHtml(a.name || "(namnlös delaktivitet)")}</div>${rows.join("")}`;
+}
+
+// Färgförklaringen är statisk (beror inte på den aktuella datan), så den
+// byggs en gång vid start snarare än om och om igen i varje renderGantt.
+function renderGanttLegend() {
+  const el = document.getElementById("ganttLegend");
+  if (!el) return;
+  const statusItems = STATUS_ORDER.map(s =>
+    `<span class="gantt-legend-item"><span class="gantt-legend-dot" style="background:${STATUS_COLORS[s]}"></span>${escapeHtml(STATUS_LABELS[s])}</span>`
+  ).join("");
+  el.innerHTML = statusItems + `
+    <span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-actual"></span>Verkligt (där ifyllt)</span>
+    <span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-weekend"></span>Helg</span>
+    <span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-today"></span>Idag</span>
+  `;
+}
+
+// Markerar (selekterar) ett Gantt-objekt i 3D-modellen, om det har en känd
+// modell-/objekt-koppling (modelId/objectId, se fromRow). Till skillnad
+// från highlightModelObject (som används av Hinder/Säkerhet/Besiktningar
+// och kräver en redan konverterad runtime-ID) gör den här konverteringen
+// från externt objekt-ID till runtime-ID direkt vid klick - samma mönster
+// som 4D-planerings modellmarkering. Misslyckas tyst (objektet finns
+// kanske inte i den just nu inlästa modellversionen) - det här är en
+// bekvämlighetsfunktion, inte kritisk för Gantt-schemats huvudsyfte.
+async function selectGanttItemInModel(it) {
+  if (!it || !it.modelId || !it.objectId) return;
+  if (!API || !API.viewer || typeof API.viewer.convertToObjectRuntimeIds !== "function") return;
+  try {
+    const runtimeIds = await API.viewer.convertToObjectRuntimeIds(it.modelId, [it.objectId]);
+    const valid = (runtimeIds || []).filter(id => id !== undefined && id !== null);
+    if (valid.length === 0) return;
+    await API.viewer.setSelection({ modelObjectIds: [{ modelId: it.modelId, objectRuntimeIds: valid }] }, "set");
+  } catch (e) {
+    console.warn("Kunde inte markera Gantt-objektet i 3D-modellen", e);
+  }
+}
+
 function renderGantt(list) {
   const el = document.getElementById("ganttChart");
+  const notesEl = document.getElementById("ganttNotes");
   const withDates = list.filter(it => it.startDate && it.endDate);
 
   if (withDates.length === 0) {
+    el.className = "gantt-chart";
     el.innerHTML = `<div class="hint">${isBackendConfigured() ? "Inga objekt med både start- och slutdatum att visa ännu." : emptyMessage()}</div>`;
+    if (notesEl) notesEl.innerHTML = "";
     return;
   }
 
-  // Domän: tidigaste till senaste datum bland de synliga objekten (och
-  // deras verkliga datum också, om "Visa verkligt" är ikryssad - annars
-  // skulle en stapel kunna klippas av utanför den synliga bredden).
-  let allDates = withDates.flatMap(it => [it.startDate, it.endDate]);
-  if (ganttShowActual) {
-    allDates = allDates.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
+  // Domän: eget valt intervall ("Visa från/till") om satt, annars tidigaste
+  // till senaste datum bland de synliga objekten (och deras verkliga datum
+  // också, om "Visa verkligt" är ikryssad - annars kan en verklig stapel
+  // klippas av utanför den auto-beräknade bredden).
+  let domainStart, domainEnd;
+  if (ganttRangeStart && ganttRangeEnd) {
+    domainStart = ganttRangeStart;
+    domainEnd = ganttRangeEnd;
+  } else {
+    let allDates = withDates.flatMap(it => [it.startDate, it.endDate]);
+    if (ganttShowActual) {
+      allDates = allDates.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
+    }
+    allDates.sort();
+    domainStart = allDates[0];
+    domainEnd = allDates[allDates.length - 1];
   }
-  allDates.sort();
-  const domainStart = allDates[0];
-  const domainEnd = allDates[allDates.length - 1];
   const domainDays = Math.max(1, daysBetweenIso(domainStart, domainEnd));
-  const pct = (dateStr) => Math.max(0, Math.min(100, (daysBetweenIso(domainStart, dateStr) / domainDays) * 100));
+
+  // Objekt som (helt eller delvis) överlappar det visade intervallet -
+  // objekt helt utanför visas inte (annars skulle en fast angiven "Visa
+  // från/till"-ruta kunna svämma över av staplar som klipps bort ändå).
+  const visible = withDates.filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
+  const skippedNoDate = list.length - withDates.length;
+  const skippedRange = withDates.length - visible.length;
+
+  if (visible.length === 0) {
+    el.className = "gantt-chart";
+    el.innerHTML = `<div class="hint">Inga objekt med både start- och slutdatum inom det valda intervallet ${domainStart} – ${domainEnd}.</div>`;
+    if (notesEl) notesEl.innerHTML = "";
+    return;
+  }
+
+  const isFit = ganttZoomPxPerDay === null;
+  const pxPerDay = ganttZoomPxPerDay || 0;
+  const suffix = isFit ? "%" : "px";
+  const toUnit = days => isFit ? (days / domainDays * 100) : (days * pxPerDay);
+  const posOf = dateStr => {
+    const days = Math.max(0, Math.min(domainDays, daysBetweenIso(domainStart, dateStr)));
+    return toUnit(days);
+  };
+  const minWidth = isFit ? 0.5 : 2;
+  const barPos = (startStr, endStr) => {
+    const left = posOf(startStr);
+    const width = Math.max(minWidth, posOf(endStr) - left);
+    return { left: `${left}${suffix}`, width: `${width}${suffix}` };
+  };
 
   const activitiesByItem = new Map();
   activities.forEach(a => {
@@ -1726,53 +2075,117 @@ function renderGantt(list) {
     activitiesByItem.set(a.plan_item_id, forItem);
   });
 
-  const sorted = withDates.slice().sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0));
+  // Tooltip-innehåll byggs en gång per stapel och läggs i en Map (nyckel ->
+  // HTML), refererad via data-gantt-tip på respektive stapel - se
+  // bindGanttInteractions. Undviker HTML-i-attribut-eskapering helt.
+  const tooltips = new Map();
+  let tipCounter = 0;
+  const registerTip = html => {
+    const key = `t${tipCounter++}`;
+    tooltips.set(key, html);
+    return key;
+  };
 
-  const rowsHtml = sorted.map(it => {
+  const comparator = ganttComparator(ganttSortBy);
+  const sorted = visible.slice().sort(comparator);
+
+  function rowsHtmlFor(it) {
     const itemActivities = (activitiesByItem.get(it.id) || []).filter(a => a.start_date && a.end_date);
     const hasActivities = itemActivities.length > 0;
     const expanded = ganttExpandedIds.has(it.id);
-    const left = pct(it.startDate);
-    const width = Math.max(0.5, pct(it.endDate) - left);
+    const { left, width } = barPos(it.startDate, it.endDate);
     const color = STATUS_COLORS[it.status] || STATUS_COLORS.planerad;
+    const barBg = hexToRgba(color, 0.32);
+    const progressPct = Math.max(0, Math.min(100, Number(it.progress) || 0));
     const hasActual = ganttShowActual && it.actualStartDate && it.actualEndDate;
-    const actualLeft = hasActual ? pct(it.actualStartDate) : 0;
-    const actualWidth = hasActual ? Math.max(0.5, pct(it.actualEndDate) - actualLeft) : 0;
+    const canSelectIn3d = Boolean(it.modelId && it.objectId);
+    const tipKey = registerTip(ganttTooltipHtmlForItem(it));
+
+    let actualHtml = "";
+    if (hasActual) {
+      const actualPos = barPos(it.actualStartDate, it.actualEndDate);
+      const actualTipKey = registerTip(ganttTooltipHtmlForActual(it));
+      actualHtml = `<span class="gantt-bar gantt-bar-actual" style="left:${actualPos.left}; width:${actualPos.width};" data-gantt-tip="${actualTipKey}" tabindex="0"></span>`;
+    }
 
     const rowHtml = `
       <div class="gantt-row">
         <span class="gantt-toggle${hasActivities ? "" : " gantt-toggle-empty"}"${hasActivities ? ` data-action="toggle-gantt" data-item-id="${escapeHtml(String(it.id))}"` : ""}>${hasActivities ? (expanded ? "▾" : "▸") : ""}</span>
-        <span class="gantt-label" title="${escapeHtml(itemLabel(it))}">${escapeHtml(itemLabel(it))}</span>
+        <span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}</span>
         <div class="gantt-track">
-          <span class="gantt-bar" style="left:${left}%; width:${width}%; background:${color};" title="Planerat: ${it.startDate} – ${it.endDate}"></span>
-          ${hasActual ? `<span class="gantt-bar gantt-bar-actual" style="left:${actualLeft}%; width:${actualWidth}%;" title="Verkligt: ${it.actualStartDate} – ${it.actualEndDate}"></span>` : ""}
+          <span class="gantt-bar" style="left:${left}; width:${width}; background:${barBg};" data-gantt-tip="${tipKey}" tabindex="0">
+            <span class="gantt-bar-fill" style="width:${progressPct}%; background:${color};"></span>
+          </span>
+          ${actualHtml}
         </div>
       </div>`;
 
     const subRowsHtml = expanded ? itemActivities.map(a => {
-      const aLeft = pct(a.start_date);
-      const aWidth = Math.max(0.5, pct(a.end_date) - aLeft);
+      const aPos = barPos(a.start_date, a.end_date);
       const aName = a.name || "(namnlös delaktivitet)";
+      const aTipKey = registerTip(ganttTooltipHtmlForActivity(a, it));
       return `
         <div class="gantt-row gantt-subrow">
           <span class="gantt-toggle"></span>
           <span class="gantt-label gantt-sublabel" title="${escapeHtml(aName)}">${escapeHtml(aName)}</span>
           <div class="gantt-track">
-            <span class="gantt-bar gantt-bar-sub" style="left:${aLeft}%; width:${aWidth}%;" title="${escapeHtml(aName)}: ${a.start_date} – ${a.end_date}"></span>
+            <span class="gantt-bar gantt-bar-sub" style="left:${aPos.left}; width:${aPos.width};" data-gantt-tip="${aTipKey}" tabindex="0"></span>
           </div>
         </div>`;
     }).join("") : "";
 
     return rowHtml + subRowsHtml;
-  }).join("");
+  }
 
-  const skipped = list.length - withDates.length;
+  let rowsHtml;
+  if (ganttGroupBy) {
+    const groups = new Map();
+    sorted.forEach(it => {
+      const key = ganttGroupKeyFor(it);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    });
+    const groupKeys = [...groups.keys()].sort((a, b) => a.localeCompare(b, "sv"));
+    rowsHtml = groupKeys.map(key => {
+      const groupItems = groups.get(key);
+      const collapseKey = `${ganttGroupBy}:${key}`;
+      const collapsed = ganttCollapsedGroups.has(collapseKey);
+      const header = `
+        <div class="gantt-group" data-action="toggle-gantt-group" data-group-key="${escapeHtml(collapseKey)}">
+          <span class="gantt-group-arrow">${collapsed ? "▸" : "▾"}</span>
+          <span>${escapeHtml(key)}</span>
+          <span class="gantt-group-count">(${groupItems.length})</span>
+        </div>`;
+      const body = collapsed ? "" : groupItems.map(rowsHtmlFor).join("");
+      return header + body;
+    }).join("");
+  } else {
+    rowsHtml = sorted.map(rowsHtmlFor).join("");
+  }
+
+  const { gridStyle, rulerHtml } = buildGanttTimeline(domainStart, domainEnd, domainDays, isFit, pxPerDay);
+  const innerWidth = isFit ? "100%" : `${domainDays * pxPerDay + GANTT_ROW_PREFIX_PX}px`;
+  const innerStyle = `width:${innerWidth}; --gg-image:${gridStyle.image}; --gg-pos:${gridStyle.pos}; --gg-size:${gridStyle.size}; --gg-repeat:${gridStyle.repeat};`;
+
+  el.className = `gantt-chart${ganttDensity === "comfortable" ? " gantt-density-comfortable" : ""}`;
   el.innerHTML = `
-    <div class="gantt-axis"><span>${domainStart}</span><span>${domainEnd}</span></div>
-    ${rowsHtml}
-    ${skipped > 0 ? `<div class="hint">${skipped} objekt utan både start- och slutdatum visas inte.</div>` : ""}
+    <div class="gantt-inner" style="${innerStyle}">
+      ${rulerHtml}
+      <div class="gantt-rows-wrap">${rowsHtml}</div>
+    </div>
   `;
 
+  if (notesEl) {
+    const notes = [];
+    if (skippedNoDate > 0) notes.push(`${skippedNoDate} objekt utan både start- och slutdatum visas inte.`);
+    if (skippedRange > 0) notes.push(`${skippedRange} objekt utanför det valda datumintervallet visas inte.`);
+    notesEl.innerText = notes.join(" ");
+  }
+
+  bindGanttInteractions(el, list, tooltips);
+}
+
+function bindGanttInteractions(el, list, tooltips) {
   el.querySelectorAll('[data-action="toggle-gantt"]').forEach(toggleEl => {
     toggleEl.onclick = () => {
       const id = toggleEl.dataset.itemId;
@@ -1780,6 +2193,157 @@ function renderGantt(list) {
       renderGantt(list);
     };
   });
+
+  el.querySelectorAll('[data-action="toggle-gantt-group"]').forEach(headerEl => {
+    headerEl.onclick = () => {
+      const key = headerEl.dataset.groupKey;
+      if (ganttCollapsedGroups.has(key)) ganttCollapsedGroups.delete(key); else ganttCollapsedGroups.add(key);
+      saveGanttPrefs();
+      renderGantt(list);
+    };
+  });
+
+  el.querySelectorAll('[data-action="select-gantt-3d"]').forEach(labelEl => {
+    const activate = () => {
+      const id = labelEl.dataset.itemId;
+      const it = list.find(x => String(x.id) === id);
+      if (it) selectGanttItemInModel(it);
+    };
+    labelEl.onclick = activate;
+    labelEl.onkeydown = evt => {
+      if (evt.key === "Enter" || evt.key === " ") { evt.preventDefault(); activate(); }
+    };
+  });
+
+  el.querySelectorAll("[data-gantt-tip]").forEach(markEl => {
+    const html = tooltips.get(markEl.dataset.ganttTip);
+    if (!html) return;
+    markEl.onmouseover = evt => showGanttTooltip(evt, html);
+    markEl.onmousemove = evt => positionGanttTooltip(evt);
+    markEl.onmouseout = hideGanttTooltip;
+    markEl.onfocusin = () => showGanttTooltipAt(markEl, html);
+    markEl.onfocusout = hideGanttTooltip;
+  });
+}
+
+function updateGanttDensityButton() {
+  const btn = document.getElementById("ganttDensityToggle");
+  if (!btn) return;
+  btn.innerText = ganttDensity === "compact" ? "Kompakt" : "Bekväm";
+  btn.setAttribute("aria-pressed", ganttDensity === "comfortable" ? "true" : "false");
+}
+
+// Stegar zoomnivån (px/dag) upp/ned i GANTT_ZOOM_LEVELS. direction > 0 =
+// zooma in, < 0 = zooma ut. Från "Anpassa" (null) zoomar man in till minsta
+// nivån; zoomar man ut förbi minsta nivån hamnar man tillbaka i "Anpassa".
+function ganttZoomStep(direction) {
+  if (ganttZoomPxPerDay === null) {
+    if (direction > 0) ganttZoomPxPerDay = GANTT_ZOOM_LEVELS[0];
+  } else {
+    const idx = GANTT_ZOOM_LEVELS.indexOf(ganttZoomPxPerDay);
+    const nextIdx = (idx === -1 ? 0 : idx) + direction;
+    if (nextIdx < 0) {
+      ganttZoomPxPerDay = null;
+    } else {
+      ganttZoomPxPerDay = GANTT_ZOOM_LEVELS[Math.min(GANTT_ZOOM_LEVELS.length - 1, nextIdx)];
+    }
+  }
+  saveGanttPrefs();
+  renderGantt(getFilteredItems());
+}
+
+function updateGanttRangeStatus(rangeStatusEl) {
+  if (!rangeStatusEl) return;
+  rangeStatusEl.classList.remove("error");
+  rangeStatusEl.innerText = (ganttRangeStart && ganttRangeEnd) ? `Visar ${ganttRangeStart} – ${ganttRangeEnd}` : "";
+}
+
+// Kopplar alla toolbar-kontroller i Gantt-panelen (gruppering, sortering,
+// densitet, zoom, "Visa verkligt" samt det egna datumintervallet) - anropas
+// en gång från bindUI(). Läser sparade inställningar först (loadGanttPrefs)
+// så kontrollerna visar rätt värden direkt vid sidladdning.
+function initGanttControls() {
+  loadGanttPrefs();
+  renderGanttLegend();
+
+  const groupSel = document.getElementById("ganttGroupBy");
+  const sortSel = document.getElementById("ganttSortBy");
+  const densityBtn = document.getElementById("ganttDensityToggle");
+  const zoomOutBtn = document.getElementById("ganttZoomOut");
+  const zoomFitBtn = document.getElementById("ganttZoomFit");
+  const zoomInBtn = document.getElementById("ganttZoomIn");
+  const actualCheckbox = document.getElementById("ganttShowActual");
+  const rangeStartInput = document.getElementById("ganttRangeStart");
+  const rangeEndInput = document.getElementById("ganttRangeEnd");
+  const rangeApplyBtn = document.getElementById("ganttRangeApply");
+  const rangeResetBtn = document.getElementById("ganttRangeReset");
+  const rangeStatusEl = document.getElementById("ganttRangeStatus");
+
+  groupSel.value = ganttGroupBy;
+  sortSel.value = ganttSortBy;
+  updateGanttDensityButton();
+  actualCheckbox.checked = ganttShowActual;
+  if (ganttRangeStart) rangeStartInput.value = ganttRangeStart;
+  if (ganttRangeEnd) rangeEndInput.value = ganttRangeEnd;
+  updateGanttRangeStatus(rangeStatusEl);
+
+  groupSel.onchange = () => {
+    ganttGroupBy = groupSel.value;
+    ganttCollapsedGroups = new Set(); // ny gruppering -> börja utfällt
+    saveGanttPrefs();
+    renderGantt(getFilteredItems());
+  };
+  sortSel.onchange = () => {
+    ganttSortBy = sortSel.value;
+    saveGanttPrefs();
+    renderGantt(getFilteredItems());
+  };
+  densityBtn.onclick = () => {
+    ganttDensity = ganttDensity === "compact" ? "comfortable" : "compact";
+    saveGanttPrefs();
+    updateGanttDensityButton();
+    renderGantt(getFilteredItems());
+  };
+  zoomOutBtn.onclick = () => ganttZoomStep(-1);
+  zoomInBtn.onclick = () => ganttZoomStep(1);
+  zoomFitBtn.onclick = () => {
+    ganttZoomPxPerDay = null;
+    saveGanttPrefs();
+    renderGantt(getFilteredItems());
+  };
+  actualCheckbox.onchange = () => {
+    ganttShowActual = actualCheckbox.checked; // sparas medvetet INTE, se deklarationen ovan
+    renderGantt(getFilteredItems());
+  };
+
+  rangeApplyBtn.onclick = () => {
+    const start = rangeStartInput.value || "";
+    const end = rangeEndInput.value || "";
+    if (!start || !end) {
+      rangeStatusEl.innerText = "Ange både från- och till-datum.";
+      rangeStatusEl.classList.add("error");
+      return;
+    }
+    if (start > end) {
+      rangeStatusEl.innerText = "Från-datumet måste vara innan (eller samma som) till-datumet.";
+      rangeStatusEl.classList.add("error");
+      return;
+    }
+    ganttRangeStart = start;
+    ganttRangeEnd = end;
+    saveGanttPrefs();
+    updateGanttRangeStatus(rangeStatusEl);
+    renderGantt(getFilteredItems());
+  };
+  rangeResetBtn.onclick = () => {
+    ganttRangeStart = null;
+    ganttRangeEnd = null;
+    rangeStartInput.value = "";
+    rangeEndInput.value = "";
+    saveGanttPrefs();
+    updateGanttRangeStatus(rangeStatusEl);
+    renderGantt(getFilteredItems());
+  };
 }
 
 /* ---------------------------------------------------------------------

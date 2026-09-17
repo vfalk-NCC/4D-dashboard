@@ -84,11 +84,51 @@
     <section class="panel" data-panel-id="gantt">
       <h2>Gantt-schema</h2>
       <p class="hint">En rad per objekt (planerat start-slut). Klicka på pilen för att fälla ut objektets
-        delaktiviteter som egna, mindre staplar. Kryssrutan visar verklig start/avslut (där ifyllt) som en extra
-        stapel bredvid den planerade.</p>
-      <label class="gantt-actual-toggle">
-        <input type="checkbox" id="ganttShowActual" /> Visa verkligt (där ifyllt)
-      </label>
+        delaktiviteter, eller på objektnamnet för att markera det i 3D-modellen (där det går). Hovra (eller
+        tabba till) en stapel för detaljer. Helger är skuggade, dagens datum är markerat med en linje.</p>
+
+      <div class="gantt-toolbar">
+        <label class="gantt-toolbar-field">Gruppera
+          <select id="ganttGroupBy">
+            <option value="">Inget</option>
+            <option value="area">Område</option>
+            <option value="contractor">Entreprenör</option>
+            <option value="activity">Aktivitet</option>
+          </select>
+        </label>
+        <label class="gantt-toolbar-field">Sortera
+          <select id="ganttSortBy">
+            <option value="startDate">Startdatum</option>
+            <option value="contractor">Entreprenör</option>
+            <option value="status">Status</option>
+            <option value="name">Namn</option>
+          </select>
+        </label>
+        <button type="button" id="ganttDensityToggle" class="gantt-toolbar-btn">Kompakt</button>
+        <div class="gantt-zoom-group">
+          <button type="button" id="ganttZoomOut" class="gantt-toolbar-btn" title="Zooma ut">−</button>
+          <button type="button" id="ganttZoomFit" class="gantt-toolbar-btn" title="Anpassa till bredden">Anpassa</button>
+          <button type="button" id="ganttZoomIn" class="gantt-toolbar-btn" title="Zooma in">+</button>
+        </div>
+        <label class="gantt-actual-toggle">
+          <input type="checkbox" id="ganttShowActual" /> Visa verkligt (där ifyllt)
+        </label>
+      </div>
+
+      <div class="gantt-toolbar gantt-range-row">
+        <label class="gantt-toolbar-field">Visa från
+          <input type="date" id="ganttRangeStart" />
+        </label>
+        <label class="gantt-toolbar-field">till
+          <input type="date" id="ganttRangeEnd" />
+        </label>
+        <button type="button" id="ganttRangeApply" class="gantt-toolbar-btn">Använd</button>
+        <button type="button" id="ganttRangeReset" class="gantt-toolbar-btn">Auto (hela spannet)</button>
+        <span id="ganttRangeStatus" class="hint gantt-range-status"></span>
+      </div>
+
+      <div id="ganttLegend" class="gantt-legend"></div>
+      <div id="ganttNotes" class="hint"></div>
       <div id="ganttChart" class="gantt-chart"></div>
     </section>
 
