@@ -87,20 +87,27 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   verklig start"), så du ser direkt hur tillförlitlig siffran är och kan
   avgöra om det är värt att börja fylla i Verklig start mer konsekvent.
 - **Gantt-schema**: en rad per objekt (planerat start- till slutdatum),
-  läsbarhetsuppdaterat 2026-09-17. Tidsaxeln visar månads- och
-  veckogridlinjer, veckonummer, helgskuggning (lör-sön) och en tydlig
-  "Idag"-linje. Staplarna är "meter"-fyllda – en ljus bas i statusfärgen med
-  en solid fyllning som motsvarar objektets framdrift i procent – och har
-  en egen hover-/tabb-tooltip med status, datum, framdrift och entreprenör
-  (ersätter webbläsarens inbyggda title-rutor). En färgförklaring ovanför
-  visar statusarna samt vad verkligt/helg/idag betyder. Objekt med sparade
-  delaktiviteter (från 4D-planerings "Koppla markering") har en utfällbar
-  pil som visar delaktiviteterna som egna, mindre staplar under objektet;
-  klick på ett objektnamn markerar det i 3D-modellen (där koppling finns).
-  Kryssrutan "Visa verkligt" lägger till en extra, randig stapel med
-  verklig start/avslut bredvid den planerade – bara för objekt som har
-  **båda** fälten ifyllda i 4D-planering (av som standard). Toolbaren låter
-  dig gruppera raderna (Område/Entreprenör/Aktivitet, med hopfällbara
+  läsbarhetsuppdaterat 2026-09-17 (och en gång till samma dag efter
+  feedback om att det fortfarande var svårläst). Tidsaxeln visar månads-
+  och veckogridlinjer, veckonummer, helgskuggning (lör-sön) och en tydlig
+  "Idag"-linje – alla tre hålls medvetet dämpade/bakgrundstysta så de inte
+  konkurrerar med staplarna om uppmärksamheten. Varje stapel har en fast,
+  alltid synlig bottenfärg, en heldragen kant i statusfärgen (bär
+  identiteten, syns även för ljusa statusfärger) och en solid fyllning som
+  motsvarar objektets framdrift i procent, samt en tunn ring i panelens
+  egen bakgrundsfärg som lyfter den från rutnätet bakom. Staplar har en
+  minsta synlig bredd så att även korta delaktiviteter (någon enstaka dag)
+  inte försvinner helt vid utzoomning. En hover-/tabb-tooltip visar status,
+  datum, framdrift och entreprenör (ersätter webbläsarens inbyggda
+  title-rutor), och en färgförklaring ovanför visar statusarna samt vad
+  verkligt/helg/idag betyder. Objekt med sparade delaktiviteter (från
+  4D-planerings "Koppla markering") har en utfällbar pil som visar
+  delaktiviteterna som egna, mindre staplar under objektet; klick på ett
+  objektnamn markerar det i 3D-modellen (där koppling finns). Kryssrutan
+  "Visa verkligt" lägger till en extra, randig stapel med verklig
+  start/avslut bredvid den planerade – bara för objekt som har **båda**
+  fälten ifyllda i 4D-planering (av som standard). Toolbaren låter dig
+  gruppera raderna (Område/Entreprenör/Aktivitet, med hopfällbara
   grupphuvuden), sortera (Startdatum/Entreprenör/Status/Namn), växla
   radtäthet (Kompakt/Bekväm) och zooma in/ut (med horisontell scroll vid
   inzoomning) – och "Visa från/till" låter dig begränsa vilket
@@ -109,6 +116,12 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   medvetet alltid är av vid sidladdning) sparas i webbläsaren och gäller
   vid nästa besök. Delaktiviteter har ännu inga egna verkliga datum, så de
   visas alltid bara med sin planerade stapel.
+- **Statusfärger** (i inställningarna, kugghjulet): de sex statusfärgerna
+  (Ej planerad/Planerad/Pågående/Försenad/Klar/Pausad) går att byta ut mot
+  egna via en färgruta per status – ändringen syns direkt i Gantt-schemat,
+  cirkeldiagrammet och statusfördelningen, utan att behöva klicka Spara.
+  Sparas i webbläsaren och gäller vid nästa besök. "Återställ
+  standardfärger" nollställer alla sex till de ursprungliga.
 - **Resurstimmar (planerat)**: ett enkelt planeringsunderlag som fördelar
   varje objekts – eller, om objektet har delaktiviteter, varje
   delaktivitets – "Uppskattade timmar" (fylls i i 4D-planering) jämnt
