@@ -80,6 +80,18 @@
       <div id="lookaheadChart" class="lookahead-chart"></div>
     </section>
 
+    <!-- ===== Gantt-schema ===== -->
+    <section class="panel" data-panel-id="gantt">
+      <h2>Gantt-schema</h2>
+      <p class="hint">En rad per objekt (planerat start-slut). Klicka på pilen för att fälla ut objektets
+        delaktiviteter som egna, mindre staplar. Kryssrutan visar verklig start/avslut (där ifyllt) som en extra
+        stapel bredvid den planerade.</p>
+      <label class="gantt-actual-toggle">
+        <input type="checkbox" id="ganttShowActual" /> Visa verkligt (där ifyllt)
+      </label>
+      <div id="ganttChart" class="gantt-chart"></div>
+    </section>
+
     <!-- ===== Milstolpar ===== -->
     <section class="panel" data-panel-id="milestones">
       <h2>Milstolpar</h2>
@@ -116,6 +128,15 @@
     <section class="panel" data-panel-id="staffing">
       <h2>Bemanning</h2>
       <div id="staffingChart" class="staffing-chart"></div>
+    </section>
+
+    <!-- ===== Resurstimmar ===== -->
+    <section class="panel" data-panel-id="resource-hours">
+      <h2>Resurstimmar (planerat)</h2>
+      <p class="hint">Ett planeringsunderlag: varje objekts (eller delaktivitets) uppskattade timmar fördelas jämnt
+        över dess datumintervall och summeras per vecka och entreprenör. Bygger på "Uppskattade timmar" i
+        4D-planering. Visar enbart planerad tidsåtgång, ingen jämförelse mot verkligt utfall ännu.</p>
+      <div id="resourceHoursChart" class="reshours-chart"></div>
     </section>
 
     <!-- ===== Leveransplan ===== -->
@@ -173,6 +194,12 @@
       <p class="hint">En fine-grained token scopead till repot <strong>vfalk-NCC/4D-data</strong> – se GITHUB_TOKEN_SETUP.md
         för hur du skapar en (tar under en minut). Använd samma token som i 4D-planering, så visar dashboarden
         samma planeringsdata. Koordinaterna används bara för väderpanelen och sparas lokalt i webbläsaren.</p>
+
+      <h2 style="margin-top:14px">Synliga block</h2>
+      <p class="hint">Bocka ur ett block för att dölja det i dashboarden. Dolda block utesluts även ur Excel- och
+        PDF-exporten. Sparas direkt i webbläsaren, ingen "Spara"-knapp behövs för detta val.</p>
+      <div id="panelVisibilityList" class="panel-visibility-list"></div>
+
       <div class="row">
         <button id="btnSaveSettings" class="primary">Spara</button>
         <button id="btnCloseSettings">Stäng</button>

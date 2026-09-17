@@ -31,6 +31,7 @@ header button { background: none; border: none; font-size: 16px; cursor: pointer
 .header-brand { display: flex; align-items: center; gap: 8px; }
 .header-actions { display: flex; align-items: center; gap: 4px; }
 .header-actions #btnExportExcel,
+.header-actions #btnExportIcs,
 .header-actions #btnExportPdf {
   font-size: 11px;
   padding: 5px 8px;
@@ -93,6 +94,29 @@ header button { background: none; border: none; font-size: 16px; cursor: pointer
 .panel-collapse-btn:hover { color: var(--text); background: var(--panel); }
 .panel.collapsed { padding-bottom: 10px; }
 .panel.collapsed > *:not(h2) { display: none !important; }
+/* Dolt via "Synliga block" i Inställningar - till skillnad från
+   minimering (.collapsed) ska ett dolt block INTE dyka upp i PDF-export/
+   utskrift heller, se onExportPdf/@media print. */
+.panel.panel-hidden { display: none !important; }
+
+.panel-visibility-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 6px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.panel-visibility-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 400;
+}
 
 .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
 .hint.warning { color: #e5484d; font-weight: 600; padding: 6px 8px; background: #fdeceb; border: 1px solid #f3c4c1; border-radius: 4px; }
@@ -382,6 +406,58 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .cycle-time-fill.actual-under { background: #3fb950; }
 .cycle-time-bar-value { text-align: right; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .cycle-time-meta { color: var(--muted); white-space: nowrap; text-align: right; }
+
+/* ---------------------------------------------------------------------
+   Gantt-schema - en rad per objekt, infällbara delaktivitetsrader under.
+   ------------------------------------------------------------------- */
+.gantt-actual-toggle { display: block; font-size: 11px; color: var(--text); margin-bottom: 8px; }
+.gantt-chart { display: flex; flex-direction: column; gap: 3px; max-height: 420px; overflow-y: auto; }
+.gantt-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  padding: 0 2px;
+}
+.gantt-row {
+  display: grid;
+  grid-template-columns: 14px 110px 1fr;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  min-height: 20px;
+}
+.gantt-toggle {
+  cursor: pointer;
+  color: var(--accent);
+  text-align: center;
+  user-select: none;
+}
+.gantt-toggle-empty { cursor: default; }
+.gantt-label {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gantt-subrow { background: rgba(11, 95, 255, 0.03); border-radius: 3px; }
+.gantt-sublabel { color: var(--muted); padding-left: 6px; }
+.gantt-track { position: relative; height: 14px; background: #eef0f3; border-radius: 3px; }
+.gantt-bar {
+  position: absolute;
+  top: 2px;
+  height: 10px;
+  border-radius: 2px;
+  min-width: 2px;
+}
+.gantt-bar-actual {
+  top: -3px;
+  height: 4px;
+  background: var(--text);
+  border-radius: 2px;
+}
+.gantt-bar-sub { top: 3px; height: 8px; background: #9fb4d9; }
 
 /* ---------------------------------------------------------------------
    Kommande veckor (4-veckors lookahead) – ett kort per vecka med fem
@@ -843,6 +919,43 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   border: 1px solid var(--border);
   border-radius: 3px;
 }
+
+/* ---------------------------------------------------------------------
+   Resurstimmar
+   ------------------------------------------------------------------- */
+.reshours-scroll { overflow-x: auto; }
+.reshours-table { border-collapse: collapse; font-size: 10px; white-space: nowrap; }
+.reshours-table th, .reshours-table td {
+  padding: 3px 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.reshours-table thead th {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+.reshours-table thead th:first-child { text-align: left; }
+.reshours-table .reshours-rowlabel {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reshours-table td, .reshours-table tbody th { color: var(--text); }
+.reshours-table .reshours-rowtotal { font-weight: 700; }
+.reshours-table tfoot th, .reshours-table tfoot td {
+  border-top: 1px solid var(--border);
+  font-weight: 700;
+  color: var(--text);
+}
+.reshours-table tfoot th { text-align: left; }
 
 /* ---------------------------------------------------------------------
    Leveransplan

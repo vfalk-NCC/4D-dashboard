@@ -15,6 +15,9 @@
 let API = null;              // Workspace API-instans
 let projectId = null;        // Aktuellt Trimble Connect-projekt
 let items = [];               // Cache av samtliga planeringsposter (från backend, ofiltrerat)
+let activities = [];           // plan_item_activities (delaktiviteter) - läses read-only, skrivs bara av 4D-planering
+let ganttExpandedIds = new Set(); // vilka objekt (plan_item.id) som just nu visar sina delaktiviteter i Gantt-schemat
+let ganttShowActual = false;      // kryssrutan "Visa verkligt" i Gantt-schemat
 let settings = {
   githubToken: "",             // fine-grained PAT scopead till vfalk-NCC/4D-data, se GITHUB_TOKEN_SETUP.md
   latitude: "",
@@ -282,6 +285,7 @@ function bindUI() {
   document.getElementById("btnExportPdf").onclick = onExportPdf;
 
   initPanelCollapse();
+  initPanelVisibility();
 
   document.getElementById("githubToken").value = settings.githubToken;
   document.getElementById("settingsLatitude").value = settings.latitude || "";
@@ -293,6 +297,11 @@ function bindUI() {
   document.getElementById("filterActivity").onchange = onFilterChange;
   document.getElementById("filterContractor").onchange = onFilterChange;
   document.getElementById("btnResetFilters").onclick = onResetFilters;
+
+  document.getElementById("ganttShowActual").onchange = (ev) => {
+    ganttShowActual = ev.target.checked;
+    renderGantt(getFilteredItems());
+  };
 }
 
 function toggle(id, show) {
@@ -377,6 +386,67 @@ function initPanelCollapse() {
     btnAll.textContent = allCollapsed ? "⊞" : "⊟";
   }
   updateCollapseAllLabel();
+}
+
+/* ---------------------------------------------------------------------
+   Synliga block – till skillnad från minimering (ovan) döljer detta
+   blocket helt (ingen rubrik ens), och styr dessutom vad som tas med i
+   Excel- och PDF-exporten (se onExportExcel/onExportPdf + hiddenPanels
+   nedan). Kryssrutorna byggs dynamiskt utifrån samtliga [data-panel-id]
+   och läget sparas direkt i localStorage, samma mönster som
+   collapsedPanels men en helt separat, egen inställning.
+   ------------------------------------------------------------------- */
+const PANEL_VISIBILITY_KEY = "4ddash-hidden-panels";
+let hiddenPanels = new Set();
+
+function loadHiddenPanels() {
+  try {
+    const raw = window.localStorage.getItem(PANEL_VISIBILITY_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveHiddenPanels() {
+  try {
+    window.localStorage.setItem(PANEL_VISIBILITY_KEY, JSON.stringify([...hiddenPanels]));
+  } catch (e) { /* ignorera */ }
+}
+
+function initPanelVisibility() {
+  hiddenPanels = loadHiddenPanels();
+  const panels = document.querySelectorAll(".panel[data-panel-id]");
+  const listEl = document.getElementById("panelVisibilityList");
+
+  const applyPanel = (panel) => {
+    panel.classList.toggle("panel-hidden", hiddenPanels.has(panel.dataset.panelId));
+  };
+  panels.forEach(applyPanel);
+
+  if (listEl) {
+    listEl.innerHTML = [...panels].map(panel => {
+      const id = panel.dataset.panelId;
+      const h2 = panel.querySelector("h2");
+      // Ta bara den ursprungliga textnoden (h2:s första barn) som titel -
+      // minimera-knappen som initPanelCollapse lägger till är ett senare
+      // barn i h2 och ska inte hamna med i kryssrutans etikett.
+      const title = h2 && h2.childNodes[0] ? h2.childNodes[0].textContent.trim() : id;
+      const checked = hiddenPanels.has(id) ? "" : "checked";
+      return `<label><input type="checkbox" class="panel-visibility-check" data-panel-id="${escapeHtml(id)}" ${checked} /> ${escapeHtml(title)}</label>`;
+    }).join("");
+
+    listEl.querySelectorAll(".panel-visibility-check").forEach(cb => {
+      cb.onchange = () => {
+        const id = cb.dataset.panelId;
+        if (cb.checked) hiddenPanels.delete(id); else hiddenPanels.add(id);
+        saveHiddenPanels();
+        const panel = document.querySelector(`.panel[data-panel-id="${id}"]`);
+        if (panel) applyPanel(panel);
+      };
+    });
+  }
 }
 
 /* ---------------------------------------------------------------------
@@ -524,6 +594,7 @@ function updateConnectionWarning() {
 async function refreshAll() {
   await Promise.all([
     fetchItems(),
+    fetchActivities(),
     fetchRecentComments(),
     fetchProgressHistory(),
     fetchMilestones(),
@@ -551,12 +622,14 @@ function renderAll() {
   const filtered = getFilteredItems();
   renderScurve(filtered);
   renderLookahead(filtered);
+  renderGantt(filtered);
   renderMilestones();
   renderDelayedList(filtered);
   renderGroupProgress("areaProgress", filtered, it => it.area, NO_AREA_LABEL);
   renderGroupProgress("contractorProgress", filtered, it => it.contractor, NO_CONTRACTOR_LABEL);
   renderCycleTime(filtered);
   renderStaffing();
+  renderResourceHours(filtered);
   renderDeliveries();
   renderDocumentDeliveries();
   renderSafety();
@@ -585,6 +658,22 @@ async function fetchItems() {
   }
 }
 
+// Delaktiviteter (plan_item_activities) - skrivs bara av 4D-planering (se
+// dess app.js/saveActivitiesForItem). Dashboarden läser dem read-only, för
+// Gantt-schemat (infällbara delaktivitetsrader under respektive objekt).
+async function fetchActivities() {
+  if (!isBackendConfigured()) {
+    activities = [];
+    return;
+  }
+  try {
+    activities = await ghReadJSON(settings.githubToken, tablePath("plan_item_activities"));
+  } catch (e) {
+    console.error("Kunde inte hämta delaktiviteter", e);
+    activities = [];
+  }
+}
+
 function fromRow(row) {
   return {
     id: row.id,
@@ -597,7 +686,8 @@ function fromRow(row) {
     startDate: row.start_date || null,
     endDate: row.end_date || null,
     actualStartDate: row.actual_start_date || null,
-    actualEndDate: row.actual_end_date || null
+    actualEndDate: row.actual_end_date || null,
+    estimatedHours: Number.isFinite(row.estimated_hours) ? row.estimated_hours : null
   };
 }
 
@@ -1600,6 +1690,99 @@ function bindModelObjectBadges(el) {
 }
 
 /* ---------------------------------------------------------------------
+   Gantt-schema - en rad per objekt (planerat start-slut), infällbar för
+   att visa delaktiviteter (plan_item_activities, skrivs av 4D-planering)
+   som egna, mindre staplar under objektet. Kryssrutan "Visa verkligt"
+   lägger till en extra stapel med verklig start/avslut (där ifyllt) bredvid
+   den planerade - bara för objektraderna, delaktiviteter har inga egna
+   verkliga datum ännu (bara planerade). Se Victors förfrågan 2026-09-17.
+   ------------------------------------------------------------------- */
+function renderGantt(list) {
+  const el = document.getElementById("ganttChart");
+  const withDates = list.filter(it => it.startDate && it.endDate);
+
+  if (withDates.length === 0) {
+    el.innerHTML = `<div class="hint">${isBackendConfigured() ? "Inga objekt med både start- och slutdatum att visa ännu." : emptyMessage()}</div>`;
+    return;
+  }
+
+  // Domän: tidigaste till senaste datum bland de synliga objekten (och
+  // deras verkliga datum också, om "Visa verkligt" är ikryssad - annars
+  // skulle en stapel kunna klippas av utanför den synliga bredden).
+  let allDates = withDates.flatMap(it => [it.startDate, it.endDate]);
+  if (ganttShowActual) {
+    allDates = allDates.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
+  }
+  allDates.sort();
+  const domainStart = allDates[0];
+  const domainEnd = allDates[allDates.length - 1];
+  const domainDays = Math.max(1, daysBetweenIso(domainStart, domainEnd));
+  const pct = (dateStr) => Math.max(0, Math.min(100, (daysBetweenIso(domainStart, dateStr) / domainDays) * 100));
+
+  const activitiesByItem = new Map();
+  activities.forEach(a => {
+    const forItem = activitiesByItem.get(a.plan_item_id) || [];
+    forItem.push(a);
+    activitiesByItem.set(a.plan_item_id, forItem);
+  });
+
+  const sorted = withDates.slice().sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0));
+
+  const rowsHtml = sorted.map(it => {
+    const itemActivities = (activitiesByItem.get(it.id) || []).filter(a => a.start_date && a.end_date);
+    const hasActivities = itemActivities.length > 0;
+    const expanded = ganttExpandedIds.has(it.id);
+    const left = pct(it.startDate);
+    const width = Math.max(0.5, pct(it.endDate) - left);
+    const color = STATUS_COLORS[it.status] || STATUS_COLORS.planerad;
+    const hasActual = ganttShowActual && it.actualStartDate && it.actualEndDate;
+    const actualLeft = hasActual ? pct(it.actualStartDate) : 0;
+    const actualWidth = hasActual ? Math.max(0.5, pct(it.actualEndDate) - actualLeft) : 0;
+
+    const rowHtml = `
+      <div class="gantt-row">
+        <span class="gantt-toggle${hasActivities ? "" : " gantt-toggle-empty"}"${hasActivities ? ` data-action="toggle-gantt" data-item-id="${escapeHtml(String(it.id))}"` : ""}>${hasActivities ? (expanded ? "▾" : "▸") : ""}</span>
+        <span class="gantt-label" title="${escapeHtml(itemLabel(it))}">${escapeHtml(itemLabel(it))}</span>
+        <div class="gantt-track">
+          <span class="gantt-bar" style="left:${left}%; width:${width}%; background:${color};" title="Planerat: ${it.startDate} – ${it.endDate}"></span>
+          ${hasActual ? `<span class="gantt-bar gantt-bar-actual" style="left:${actualLeft}%; width:${actualWidth}%;" title="Verkligt: ${it.actualStartDate} – ${it.actualEndDate}"></span>` : ""}
+        </div>
+      </div>`;
+
+    const subRowsHtml = expanded ? itemActivities.map(a => {
+      const aLeft = pct(a.start_date);
+      const aWidth = Math.max(0.5, pct(a.end_date) - aLeft);
+      const aName = a.name || "(namnlös delaktivitet)";
+      return `
+        <div class="gantt-row gantt-subrow">
+          <span class="gantt-toggle"></span>
+          <span class="gantt-label gantt-sublabel" title="${escapeHtml(aName)}">${escapeHtml(aName)}</span>
+          <div class="gantt-track">
+            <span class="gantt-bar gantt-bar-sub" style="left:${aLeft}%; width:${aWidth}%;" title="${escapeHtml(aName)}: ${a.start_date} – ${a.end_date}"></span>
+          </div>
+        </div>`;
+    }).join("") : "";
+
+    return rowHtml + subRowsHtml;
+  }).join("");
+
+  const skipped = list.length - withDates.length;
+  el.innerHTML = `
+    <div class="gantt-axis"><span>${domainStart}</span><span>${domainEnd}</span></div>
+    ${rowsHtml}
+    ${skipped > 0 ? `<div class="hint">${skipped} objekt utan både start- och slutdatum visas inte.</div>` : ""}
+  `;
+
+  el.querySelectorAll('[data-action="toggle-gantt"]').forEach(toggleEl => {
+    toggleEl.onclick = () => {
+      const id = toggleEl.dataset.itemId;
+      if (ganttExpandedIds.has(id)) ganttExpandedIds.delete(id); else ganttExpandedIds.add(id);
+      renderGantt(list);
+    };
+  });
+}
+
+/* ---------------------------------------------------------------------
    Milstolpar – lista sorterad på måldatum, med en kryssruta som PATCHar
    is_done (och sätter/nollställer completed_date) samt ett litet
    formulär för att lägga till nya milstolpar.
@@ -1924,6 +2107,121 @@ async function onAddStaffing() {
     console.error("Kunde inte spara bemanning", e);
     alert("Kunde inte spara bemanningen – nätverksfel. Försök igen.");
   }
+}
+
+/* ---------------------------------------------------------------------
+   Resurstimmar (planerat) – ett enkelt planeringsunderlag: varje objekts
+   (eller, om objektet har delaktiviteter, varje delaktivitets) uppskattade
+   timmar fördelas jämnt över dess datumintervall och summeras per vecka
+   och entreprenör - liknande strukturen som Bemanning-panelen, men byggt
+   från "Uppskattade timmar" i 4D-planering istället för manuellt
+   inrapporterad bemanning. Victor har bett om enbart planerad tidsåtgång
+   i denna omgång, ingen jämförelse mot verkligt utfall (se hans svar
+   2026-09-17 på klargörande fråga om resursuppföljning).
+   ------------------------------------------------------------------- */
+function renderResourceHours(list) {
+  const el = document.getElementById("resourceHoursChart");
+  if (!el) return;
+
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const activitiesByItem = new Map();
+  activities.forEach(a => {
+    const forItem = activitiesByItem.get(a.plan_item_id) || [];
+    forItem.push(a);
+    activitiesByItem.set(a.plan_item_id, forItem);
+  });
+
+  // Bygg en "hink" per objekt eller delaktivitet som har både datum och
+  // uppskattade timmar ifyllda - det är det enda vi kan fördela ut.
+  const buckets = [];
+  let skipped = 0;
+  list.forEach(it => {
+    const itemActivities = (activitiesByItem.get(it.id) || []).filter(
+      a => a.start_date && a.end_date && Number.isFinite(a.estimated_hours) && a.estimated_hours > 0
+    );
+    if (itemActivities.length > 0) {
+      itemActivities.forEach(a => {
+        buckets.push({ contractor: it.contractor || NO_CONTRACTOR_LABEL, start: a.start_date, end: a.end_date, hours: a.estimated_hours });
+      });
+    } else if (it.startDate && it.endDate && Number.isFinite(it.estimatedHours) && it.estimatedHours > 0) {
+      buckets.push({ contractor: it.contractor || NO_CONTRACTOR_LABEL, start: it.startDate, end: it.endDate, hours: it.estimatedHours });
+    } else {
+      skipped++;
+    }
+  });
+
+  const skipHint = skipped > 0
+    ? `<div class="hint">${skipped} objekt saknar uppskattade timmar och/eller datum och visas inte här.</div>`
+    : "";
+
+  if (buckets.length === 0) {
+    el.innerHTML = `<div class="hint">Inga objekt med ifyllda uppskattade timmar ännu. Fyll i "Uppskattade timmar" på objekt eller delaktiviteter i 4D-planering.</div>${skipHint}`;
+    return;
+  }
+
+  // Veckofönster (måndag-söndag) som täcker hela spannet av hinkarna, inte
+  // bara kommande veckor som i Bemanning - ett resursunderlag behöver
+  // kunna visa hela objektets/projektets planerade period.
+  const domainStart = buckets.reduce((min, b) => (b.start < min ? b.start : min), buckets[0].start);
+  const domainEnd = buckets.reduce((max, b) => (b.end > max ? b.end : max), buckets[0].end);
+  const firstWeek = startOfWeekUTC(parseDate(domainStart));
+  const lastWeek = startOfWeekUTC(parseDate(domainEnd));
+  const weeks = [];
+  for (let d = new Date(firstWeek); d <= lastWeek; d.setUTCDate(d.getUTCDate() + 7)) {
+    const start = new Date(d);
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 6);
+    weeks.push({ start, end, iso: start.toISOString().slice(0, 10), label: `v.${isoWeekNumber(start)}` });
+  }
+
+  // Fördela varje hinks timmar jämnt per dag över dess datumintervall, och
+  // lägg respektive veckas andel i rutnätet [entreprenör][veckoindex].
+  const contractors = Array.from(new Set(buckets.map(b => b.contractor))).sort((a, b) => a.localeCompare(b, "sv"));
+  const grid = new Map(contractors.map(c => [c, new Array(weeks.length).fill(0)]));
+
+  buckets.forEach(b => {
+    const totalDays = Math.max(1, daysBetweenIso(b.start, b.end) + 1);
+    const hoursPerDay = b.hours / totalDays;
+    weeks.forEach((w, wi) => {
+      const overlapStartIso = b.start > w.iso ? b.start : w.iso;
+      const weekEndIso = w.end.toISOString().slice(0, 10);
+      const overlapEndIso = b.end < weekEndIso ? b.end : weekEndIso;
+      if (overlapStartIso > overlapEndIso) return;
+      const overlapDays = daysBetweenIso(overlapStartIso, overlapEndIso) + 1;
+      grid.get(b.contractor)[wi] += hoursPerDay * overlapDays;
+    });
+  });
+
+  const fmt1 = (n) => (Math.round(n * 10) / 10).toString().replace(".", ",");
+  const weekTotals = weeks.map((w, wi) => contractors.reduce((sum, c) => sum + grid.get(c)[wi], 0));
+  const grandTotal = weekTotals.reduce((a, b) => a + b, 0);
+
+  const headerCells = weeks.map((w, wi) =>
+    `<th title="${w.iso} – ${w.end.toISOString().slice(0, 10)}">${w.label}</th>`
+  ).join("");
+
+  const bodyRows = contractors.map(c => {
+    const rowTotal = grid.get(c).reduce((a, b) => a + b, 0);
+    const cells = grid.get(c).map(v => `<td>${v > 0 ? fmt1(v) : "–"}</td>`).join("");
+    return `<tr><th class="reshours-rowlabel" title="${escapeHtml(c)}">${escapeHtml(c)}</th>${cells}<td class="reshours-rowtotal">${fmt1(rowTotal)}</td></tr>`;
+  }).join("");
+
+  const totalRow = `<tr class="reshours-total-row"><th>Totalt</th>${weekTotals.map(v => `<td>${v > 0 ? fmt1(v) : "–"}</td>`).join("")}<td class="reshours-rowtotal">${fmt1(grandTotal)}</td></tr>`;
+
+  el.innerHTML = `
+    <div class="reshours-scroll">
+      <table class="reshours-table">
+        <thead><tr><th></th>${headerCells}<th>Totalt</th></tr></thead>
+        <tbody>${bodyRows}</tbody>
+        <tfoot>${totalRow}</tfoot>
+      </table>
+    </div>
+    ${skipHint}
+  `;
 }
 
 /* ---------------------------------------------------------------------
@@ -3015,6 +3313,7 @@ function onExportExcel() {
     },
     {
       name: `4D-dashboard-cykeltidsanalys-${ts}.csv`,
+      panelId: "cycle-time",
       columns: [
         ["Aktivitet", "label"],
         ["Antal objekt", "count"],
@@ -3027,6 +3326,7 @@ function onExportExcel() {
     },
     {
       name: `4D-dashboard-milstolpar-${ts}.csv`,
+      panelId: "milestones",
       columns: [
         ["Namn", "name"],
         ["Måldatum", "target_date"],
@@ -3037,6 +3337,7 @@ function onExportExcel() {
     },
     {
       name: `4D-dashboard-bemanning-${ts}.csv`,
+      panelId: "staffing",
       columns: [
         ["Entreprenör", "contractor"],
         ["Veckostart", "week_start"],
@@ -3047,6 +3348,7 @@ function onExportExcel() {
     },
     {
       name: `4D-dashboard-leveransplan-${ts}.csv`,
+      panelId: "deliveries",
       columns: [
         ["Beskrivning", "description"],
         ["Leverantör", "supplier"],
@@ -3060,6 +3362,7 @@ function onExportExcel() {
     },
     {
       name: `4D-dashboard-leveransplan-handlingar-${ts}.csv`,
+      panelId: "document-deliveries",
       columns: [
         ["Beskrivning", "description"],
         ["Leverantör", "supplier"],
@@ -3073,6 +3376,7 @@ function onExportExcel() {
     },
     {
       name: `4D-dashboard-hinder-${ts}.csv`,
+      panelId: "blockers",
       columns: [
         ["Beskrivning", "description"],
         ["Objekt", b => b.plan_item_id && itemById.has(b.plan_item_id) ? itemLabel(itemById.get(b.plan_item_id)) : ""],
@@ -3088,6 +3392,7 @@ function onExportExcel() {
     },
     {
       name: `4D-dashboard-sakerhet-${ts}.csv`,
+      panelId: "safety",
       columns: [
         ["Typ", "event_type"],
         ["Allvarlighetsgrad", "severity"],
@@ -3101,6 +3406,7 @@ function onExportExcel() {
     },
     {
       name: `4D-dashboard-besiktningar-${ts}.csv`,
+      panelId: "inspections",
       columns: [
         ["Typ", "inspection_type"],
         ["Resultat", "result"],
@@ -3116,6 +3422,7 @@ function onExportExcel() {
   if (weather && weather.current) {
     exports.push({
       name: `4D-dashboard-vader-${ts}.csv`,
+      panelId: "weather",
       columns: [
         ["Temperatur (°C)", () => weather.current.temperature_2m],
         ["Väderbeskrivning", () => weatherDescription(weather.current.weather_code)],
@@ -3128,8 +3435,10 @@ function onExportExcel() {
 
   // En fil per tabell (namngiven per kategori), laddas ner i tur och
   // ordning med en liten fördröjning – annars kan webbläsaren blockera
-  // flera samtidiga nedladdningar från samma klick.
-  exports.forEach((exp, idx) => {
+  // flera samtidiga nedladdningar från samma klick. Filer vars block är
+  // dolt via "Synliga block" i Inställningar tas inte med (panelId).
+  const visibleExports = exports.filter(exp => !exp.panelId || !hiddenPanels.has(exp.panelId));
+  visibleExports.forEach((exp, idx) => {
     setTimeout(() => downloadCsv(exp.name, exp.columns, exp.rows), idx * 200);
   });
 }
