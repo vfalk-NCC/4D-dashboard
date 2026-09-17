@@ -596,6 +596,7 @@ function fromRow(row) {
     contractor: (row.contractor || "").trim(),
     startDate: row.start_date || null,
     endDate: row.end_date || null,
+    actualStartDate: row.actual_start_date || null,
     actualEndDate: row.actual_end_date || null
   };
 }
@@ -1151,11 +1152,22 @@ function renderGroupProgress(containerId, list, keyFn, fallbackLabel) {
 }
 
 /* ---------------------------------------------------------------------
-   Cykeltidsanalys - jämför planerad varaktighet (startDate -> endDate)
-   mot verklig varaktighet (startDate -> actualEndDate) per aktivitet, för
-   klarmarkerade objekt som har samtliga tre datum ifyllda. Ett positivt
+   Cykeltidsanalys - jämför planerad varaktighet (startDate -> endDate) mot
+   verklig varaktighet per aktivitet, för klarmarkerade objekt som har
+   start-, slut- och verkligt avslutsdatum ifyllda. Ett positivt
    snittavvikelse-värde betyder att aktiviteten i snitt tar LÄNGRE tid än
    planerat. Se Victors förfrågan 2026-09-17.
+
+   Verklig varaktighet räknas numera från "Verklig start" (actualStartDate)
+   när den finns ifylld - annars faller den tillbaka på samma proxy som
+   innan (planerat startdatum -> verkligt avslut), eftersom de flesta
+   befintliga objekt ännu inte har någon verklig start ifylld. Se Victors
+   fråga 2026-09-17 ("Om man fyller i detta så tänker jag att man kan få en
+   väldigt kraftfull uppföljning...") - med verklig start blir cykeltiden
+   den FAKTISKA tiden objektet tog, inte bara hur sent det blev klart
+   relativt en planerad starttidpunkt som kanske aldrig stämde. Gruppen
+   visar hur många av objekten som räknats med riktig verklig start
+   (realStartCount), så skillnaden i tillförlitlighet syns i UI:t.
    ------------------------------------------------------------------- */
 function daysBetweenIso(fromStr, toStr) {
   const days = Math.round((new Date(toStr) - new Date(fromStr)) / 86400000);
@@ -1167,19 +1179,22 @@ function computeCycleTimeByActivity(list) {
   list.forEach(it => {
     if (it.status !== "klar" || !it.startDate || !it.endDate || !it.actualEndDate) return;
     const planned = daysBetweenIso(it.startDate, it.endDate);
-    const actual = daysBetweenIso(it.startDate, it.actualEndDate);
+    const usesRealStart = Boolean(it.actualStartDate);
+    const actual = daysBetweenIso(usesRealStart ? it.actualStartDate : it.startDate, it.actualEndDate);
     if (planned === null || actual === null) return;
     const key = (it.activity || "").trim() || NO_ACTIVITY_LABEL;
-    if (!map.has(key)) map.set(key, { label: key, count: 0, plannedSum: 0, actualSum: 0 });
+    if (!map.has(key)) map.set(key, { label: key, count: 0, plannedSum: 0, actualSum: 0, realStartCount: 0 });
     const g = map.get(key);
     g.count++;
     g.plannedSum += planned;
     g.actualSum += actual;
+    if (usesRealStart) g.realStartCount++;
   });
 
   const groups = Array.from(map.values()).map(g => ({
     label: g.label,
     count: g.count,
+    realStartCount: g.realStartCount,
     avgPlanned: Math.round((g.plannedSum / g.count) * 10) / 10,
     avgActual: Math.round((g.actualSum / g.count) * 10) / 10,
     avgDeviation: Math.round(((g.actualSum - g.plannedSum) / g.count) * 10) / 10
@@ -1222,7 +1237,7 @@ function renderCycleTime(list) {
             <span class="cycle-time-bar-value">${g.avgActual} d</span>
           </div>
         </div>
-        <span class="cycle-time-meta">${deviationLabel} snitt · ${g.count} obj</span>
+        <span class="cycle-time-meta">${deviationLabel} snitt · ${g.count} obj${g.realStartCount > 0 ? ` · ${g.realStartCount} av ${g.count} med verklig start` : ""}</span>
       </div>`;
   }).join("");
 }
@@ -2993,6 +3008,7 @@ function onExportExcel() {
         ["Entreprenör", "contractor"],
         ["Startdatum", "startDate"],
         ["Slutdatum", "endDate"],
+        ["Verklig start", "actualStartDate"],
         ["Verkligt avslut", "actualEndDate"]
       ],
       rows: items
@@ -3002,6 +3018,7 @@ function onExportExcel() {
       columns: [
         ["Aktivitet", "label"],
         ["Antal objekt", "count"],
+        ["Varav med verklig start", "realStartCount"],
         ["Planerad varaktighet (snitt, dagar)", "avgPlanned"],
         ["Verklig varaktighet (snitt, dagar)", "avgActual"],
         ["Avvikelse (snitt, dagar)", "avgDeviation"]
