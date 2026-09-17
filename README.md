@@ -86,14 +86,29 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   objekten som räknats med en riktig verklig start (t.ex. "3 av 5 med
   verklig start"), så du ser direkt hur tillförlitlig siffran är och kan
   avgöra om det är värt att börja fylla i Verklig start mer konsekvent.
-- **Gantt-schema**: en rad per objekt (planerat start- till slutdatum) i
-  tidsordning. Objekt med sparade delaktiviteter (från 4D-planerings
-  "Koppla markering") har en utfällbar pil som visar delaktiviteterna som
-  egna, mindre staplar under objektet. Kryssrutan "Visa verkligt" lägger
-  till en extra, mörk stapel med verklig start/avslut bredvid den
-  planerade – bara för objekt som har **båda** fälten ifyllda i
-  4D-planering (av som standard). Delaktiviteter har ännu inga egna
-  verkliga datum, så de visas alltid bara med sin planerade stapel.
+- **Gantt-schema**: en rad per objekt (planerat start- till slutdatum),
+  läsbarhetsuppdaterat 2026-09-17. Tidsaxeln visar månads- och
+  veckogridlinjer, veckonummer, helgskuggning (lör-sön) och en tydlig
+  "Idag"-linje. Staplarna är "meter"-fyllda – en ljus bas i statusfärgen med
+  en solid fyllning som motsvarar objektets framdrift i procent – och har
+  en egen hover-/tabb-tooltip med status, datum, framdrift och entreprenör
+  (ersätter webbläsarens inbyggda title-rutor). En färgförklaring ovanför
+  visar statusarna samt vad verkligt/helg/idag betyder. Objekt med sparade
+  delaktiviteter (från 4D-planerings "Koppla markering") har en utfällbar
+  pil som visar delaktiviteterna som egna, mindre staplar under objektet;
+  klick på ett objektnamn markerar det i 3D-modellen (där koppling finns).
+  Kryssrutan "Visa verkligt" lägger till en extra, randig stapel med
+  verklig start/avslut bredvid den planerade – bara för objekt som har
+  **båda** fälten ifyllda i 4D-planering (av som standard). Toolbaren låter
+  dig gruppera raderna (Område/Entreprenör/Aktivitet, med hopfällbara
+  grupphuvuden), sortera (Startdatum/Entreprenör/Status/Namn), växla
+  radtäthet (Kompakt/Bekväm) och zooma in/ut (med horisontell scroll vid
+  inzoomning) – och "Visa från/till" låter dig begränsa vilket
+  datumintervall som visas (objekt helt utanför intervallet döljs, med en
+  hint om hur många). Alla dessa inställningar (utom "Visa verkligt", som
+  medvetet alltid är av vid sidladdning) sparas i webbläsaren och gäller
+  vid nästa besök. Delaktiviteter har ännu inga egna verkliga datum, så de
+  visas alltid bara med sin planerade stapel.
 - **Resurstimmar (planerat)**: ett enkelt planeringsunderlag som fördelar
   varje objekts – eller, om objektet har delaktiviteter, varje
   delaktivitets – "Uppskattade timmar" (fylls i i 4D-planering) jämnt
