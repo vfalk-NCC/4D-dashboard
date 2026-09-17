@@ -74,12 +74,18 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   att importera i Outlook eller Google Kalender. Ren nedladdning – ingen
   delningslänk eller levande koppling, samma GitHub-token som resten av
   appen behövs inte av mottagaren.
-- **Cykeltidsanalys**: en ny panel som jämför planerad varaktighet
-  (start- till slutdatum) mot verklig varaktighet (start- till verkligt
-  avslut) per aktivitet, för klarmarkerade objekt med samtliga tre datum
-  ifyllda. Visar snittavvikelsen i dagar och antal objekt per aktivitet,
-  störst avvikelse överst – en indikation på vilka aktiviteter som
-  systematiskt tar längre (eller kortare) tid än planerat.
+- **Cykeltidsanalys**: en panel som jämför planerad varaktighet (start-
+  till slutdatum) mot verklig varaktighet per aktivitet, för klarmarkerade
+  objekt med start-, slut- och verkligt avslutsdatum ifyllda. Visar
+  snittavvikelsen i dagar och antal objekt per aktivitet, störst avvikelse
+  överst – en indikation på vilka aktiviteter som systematiskt tar längre
+  (eller kortare) tid än planerat. Verklig varaktighet räknas från
+  **Verklig start** (fylls i valfritt i 4D-planering, se dess README) när
+  den finns – annars faller den tillbaka på planerat startdatum som en
+  ungefärlig proxy. Metaraden för varje aktivitet visar hur många av
+  objekten som räknats med en riktig verklig start (t.ex. "3 av 5 med
+  verklig start"), så du ser direkt hur tillförlitlig siffran är och kan
+  avgöra om det är värt att börja fylla i Verklig start mer konsekvent.
 
 Alla filer som paneler ovan använder (`plan_item_progress_history.json`,
 `plan_milestones.json`, `plan_staffing.json`, `plan_deliveries.json`,
