@@ -60,7 +60,16 @@ const STATUS_LABELS = {
   klar: "Klar",
   pausad: "Pausad"
 };
-const STATUS_COLORS = {
+// DEFAULT_STATUS_COLORS är de ursprungliga, fasta standardfärgerna (bl.a.
+// för "Återställ standardfärger"-knappen). STATUS_COLORS är samma objekt
+// till att börja med, men muteras (INTE byts ut - const skyddar bara mot
+// omtilldelning, inte mot att ändra egenskaperna) av sparade, egna färger
+// vid start (se loadStatusColorOverrides) och när användaren ändrar en
+// färg i Inställningar (se initStatusColorControls). Allt som läser
+// STATUS_COLORS[status] på andra ställen i filen (donut, statusfördelning,
+// Gantt-schemat) behöver därför inte ändras - de får automatiskt de
+// senaste färgerna nästa gång de renderas.
+const DEFAULT_STATUS_COLORS = {
   ej_planerad: "#cbd5e1",
   planerad: "#94a3b8",
   pagaende: "#f5a623",
@@ -68,6 +77,8 @@ const STATUS_COLORS = {
   klar: "#3fb950",
   pausad: "#a1a1aa"
 };
+const STATUS_COLORS = { ...DEFAULT_STATUS_COLORS };
+const STATUS_COLORS_KEY = "4ddash-status-colors";
 const STATUS_ORDER = ["ej_planerad", "planerad", "pagaende", "forsenad", "klar", "pausad"];
 
 const NO_AREA_LABEL = "Utan område";
@@ -284,6 +295,7 @@ function boot() {
 
 async function initApp() {
   loadLocalSettings();
+  loadStatusColorOverrides();
   bindUI();
 
   API = await TrimbleConnectWorkspace.connect(window.parent, () => {}, 30000);
@@ -305,6 +317,7 @@ function bindUI() {
 
   initPanelCollapse();
   initPanelVisibility();
+  initStatusColorControls();
 
   document.getElementById("githubToken").value = settings.githubToken;
   document.getElementById("settingsLatitude").value = settings.latitude || "";
@@ -466,6 +479,64 @@ function initPanelVisibility() {
 }
 
 /* ---------------------------------------------------------------------
+   Statusfärger – låter dig byta ut de sex statusfärgerna (används av
+   Gantt-schemat, cirkeldiagrammet och statusfördelningen) mot egna, se
+   Victors förfrågan 2026-09-17. Sparas direkt i webbläsaren (samma
+   "ingen Spara-knapp behövs"-mönster som Synliga block ovan).
+   ------------------------------------------------------------------- */
+function loadStatusColorOverrides() {
+  try {
+    const raw = window.localStorage.getItem(STATUS_COLORS_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    STATUS_ORDER.forEach(s => {
+      if (typeof saved[s] === "string" && /^#[0-9a-fA-F]{6}$/.test(saved[s])) {
+        STATUS_COLORS[s] = saved[s];
+      }
+    });
+  } catch (e) {
+    console.warn("Kunde inte läsa sparade statusfärger", e);
+  }
+}
+
+function saveStatusColorOverrides() {
+  try {
+    window.localStorage.setItem(STATUS_COLORS_KEY, JSON.stringify(STATUS_COLORS));
+  } catch (e) {
+    console.warn("Kunde inte spara statusfärger", e);
+  }
+}
+
+function initStatusColorControls() {
+  const listEl = document.getElementById("statusColorList");
+  if (!listEl) return;
+
+  listEl.innerHTML = STATUS_ORDER.map(s => `
+    <label class="status-color-row">
+      <input type="color" data-status="${escapeHtml(s)}" value="${escapeHtml(STATUS_COLORS[s])}" />
+      ${escapeHtml(STATUS_LABELS[s])}
+    </label>`).join("");
+
+  listEl.querySelectorAll('input[type="color"]').forEach(inp => {
+    inp.oninput = () => {
+      STATUS_COLORS[inp.dataset.status] = inp.value;
+      saveStatusColorOverrides();
+      renderAll();
+    };
+  });
+
+  const resetBtn = document.getElementById("btnResetStatusColors");
+  if (resetBtn) {
+    resetBtn.onclick = () => {
+      Object.assign(STATUS_COLORS, DEFAULT_STATUS_COLORS);
+      try { window.localStorage.removeItem(STATUS_COLORS_KEY); } catch (e) { /* ignorera */ }
+      initStatusColorControls(); // rita om inputfälten med återställda värden
+      renderAll();
+    };
+  }
+}
+
+/* ---------------------------------------------------------------------
    Filtrering (område / aktivitet / entreprenör)
    ------------------------------------------------------------------- */
 function onFilterChange() {
@@ -529,18 +600,6 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, ch => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[ch]));
-}
-
-// Gör om en "#rrggbb"-färg till en rgba()-sträng med given opacitet - används
-// av Gantt-schemats framdriftsstaplar (ljus bas i statusfärgen, se
-// renderGantt) för att undvika en helt separat, urvattnad färgpalett.
-function hexToRgba(hex, alpha) {
-  const h = String(hex || "").replace("#", "");
-  const full = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
-  const n = parseInt(full, 16);
-  if (!Number.isFinite(n)) return `rgba(148, 163, 184, ${alpha})`;
-  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 /* ---------------------------------------------------------------------
@@ -2011,6 +2070,10 @@ async function selectGanttItemInModel(it) {
 function renderGantt(list) {
   const el = document.getElementById("ganttChart");
   const notesEl = document.getElementById("ganttNotes");
+  // Ritas om varje gång (billigt, beror bara på STATUS_COLORS/STATUS_ORDER)
+  // istället för bara en gång vid start - annars hamnar den på fel färger
+  // efter att en statusfärg ändrats i Inställningar (se initStatusColorControls).
+  renderGanttLegend();
   const withDates = list.filter(it => it.startDate && it.endDate);
 
   if (withDates.length === 0) {
@@ -2095,7 +2158,6 @@ function renderGantt(list) {
     const expanded = ganttExpandedIds.has(it.id);
     const { left, width } = barPos(it.startDate, it.endDate);
     const color = STATUS_COLORS[it.status] || STATUS_COLORS.planerad;
-    const barBg = hexToRgba(color, 0.32);
     const progressPct = Math.max(0, Math.min(100, Number(it.progress) || 0));
     const hasActual = ganttShowActual && it.actualStartDate && it.actualEndDate;
     const canSelectIn3d = Boolean(it.modelId && it.objectId);
@@ -2105,15 +2167,22 @@ function renderGantt(list) {
     if (hasActual) {
       const actualPos = barPos(it.actualStartDate, it.actualEndDate);
       const actualTipKey = registerTip(ganttTooltipHtmlForActual(it));
-      actualHtml = `<span class="gantt-bar gantt-bar-actual" style="left:${actualPos.left}; width:${actualPos.width};" data-gantt-tip="${actualTipKey}" tabindex="0"></span>`;
+      actualHtml = `<span class="gantt-bar gantt-bar-actual" style="left:${actualPos.left}; width:${actualPos.width}; border-color:${color};" data-gantt-tip="${actualTipKey}" tabindex="0"></span>`;
     }
 
+    // Stapelns botten är en fast neutral färg (satt i CSS) som alltid syns,
+    // oavsett hur ljus statusfärgen (nu ev. användarvald) råkar vara -
+    // identiteten bärs istället av den heldragna kanten (border-color) och
+    // framdriften av den solida, fullfärgade fyllningen (.gantt-bar-fill).
+    // Se Victors synpunkt 2026-09-17 om att de blekaste statusarna
+    // (Ej planerad/Planerad) nästan försvann helt i den gamla urblekta
+    // "meter"-designen.
     const rowHtml = `
       <div class="gantt-row">
         <span class="gantt-toggle${hasActivities ? "" : " gantt-toggle-empty"}"${hasActivities ? ` data-action="toggle-gantt" data-item-id="${escapeHtml(String(it.id))}"` : ""}>${hasActivities ? (expanded ? "▾" : "▸") : ""}</span>
         <span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}</span>
         <div class="gantt-track">
-          <span class="gantt-bar" style="left:${left}; width:${width}; background:${barBg};" data-gantt-tip="${tipKey}" tabindex="0">
+          <span class="gantt-bar" style="left:${left}; width:${width}; border-color:${color};" data-gantt-tip="${tipKey}" tabindex="0">
             <span class="gantt-bar-fill" style="width:${progressPct}%; background:${color};"></span>
           </span>
           ${actualHtml}

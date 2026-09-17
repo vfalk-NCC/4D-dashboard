@@ -118,6 +118,37 @@ header button { background: none; border: none; font-size: 16px; cursor: pointer
   font-weight: 400;
 }
 
+/* Statusfärger (Victors förfrågan 2026-09-17: kunna välja egna färger för
+   ej planerad/planerad/pågående/försenad/klar/pausad) - samma listruta-
+   mönster som Synliga block ovan, en <input type="color"> per status. */
+.status-color-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.status-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  margin: 0;
+}
+.status-color-row input[type="color"] {
+  width: 30px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
 .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
 .hint.warning { color: #e5484d; font-weight: 600; padding: 6px 8px; background: #fdeceb; border: 1px solid #f3c4c1; border-radius: 4px; }
 
@@ -471,9 +502,14 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .gantt-legend-dot.gantt-legend-today { width: 2px; height: 10px; background: var(--accent); border-radius: 0; }
 
 .gantt-chart {
-  --gantt-grid-week: #e7e9ed;
-  --gantt-grid-month: #c9cdd4;
-  --gantt-weekend-solid: #cbd2de;
+  /* Rutnätet ska vara en tyst bakgrund, inte tävla med staplarna om
+     uppmärksamheten (Victors synpunkt 2026-09-17: för "rutigt papper"-
+     känsla tidigare) - därför bara en aning mörkare än spårets egen
+     bakgrund (#eef0f3), inte tydligt egna färger. Månadslinjen får vara
+     lite tydligare än vecko-/helglagren eftersom den bär mest struktur. */
+  --gantt-grid-week: #e4e7eb;
+  --gantt-grid-month: #c7ccd3;
+  --gantt-weekend-solid: #e3e6ec;
   display: flex;
   flex-direction: column;
   max-height: 460px;
@@ -594,12 +630,26 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   border-radius: 3px;
   overflow: hidden;
 }
+/* Stapelns "anatomi", omarbetad 2026-09-17 för tydlighet (och för att
+   fungera oavsett hur ljus/mörk en användarvald statusfärg är, se
+   Statusfärger i inställningarna): en fast, neutral bottenfärg som alltid
+   är synlig (oavsett status eller framdrift), en 1px kant i FULL
+   statusfärg runt hela stapeln som bär identiteten (syns även om själva
+   fyllnadsfärgen råkar vara ljus), och en 2px "ring" i panelens egen
+   bakgrundsfärg som lyfter stapeln från det (nu tonade ned) rutnätet
+   bakom den. box-sizing:border-box så kanten ryms inom befintlig höjd
+   istället för att växa stapeln.
+   ------------------------------------------------------------------- */
 .gantt-bar {
   position: absolute;
   top: 2px;
   height: 10px;
+  box-sizing: border-box;
+  background: #e4e7eb;
+  border: 1px solid transparent; /* border-color sätts inline per statusfärg */
   border-radius: 4px;
-  min-width: 3px;
+  min-width: 5px;
+  box-shadow: 0 0 0 2px var(--panel);
   overflow: hidden;
   cursor: pointer;
 }
@@ -616,7 +666,7 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   background-image: repeating-linear-gradient(135deg, var(--text) 0 2px, #4b5563 2px 4px);
   cursor: pointer;
 }
-.gantt-bar-sub { top: 3px; height: 8px; background: #9fb4d9; border-radius: 3px; cursor: pointer; }
+.gantt-bar-sub { top: 3px; height: 8px; background: #5c85bf; border-radius: 3px; cursor: pointer; }
 
 .gantt-tooltip {
   position: fixed;
