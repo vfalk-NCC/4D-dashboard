@@ -278,6 +278,7 @@ function bindUI() {
   document.getElementById("btnCloseSettings").onclick = () => toggle("settingsDialog", false);
   document.getElementById("btnSaveSettings").onclick = onSaveSettings;
   document.getElementById("btnExportExcel").onclick = onExportExcel;
+  document.getElementById("btnExportIcs").onclick = onExportIcs;
   document.getElementById("btnExportPdf").onclick = onExportPdf;
 
   initPanelCollapse();
@@ -554,6 +555,7 @@ function renderAll() {
   renderDelayedList(filtered);
   renderGroupProgress("areaProgress", filtered, it => it.area, NO_AREA_LABEL);
   renderGroupProgress("contractorProgress", filtered, it => it.contractor, NO_CONTRACTOR_LABEL);
+  renderCycleTime(filtered);
   renderStaffing();
   renderDeliveries();
   renderDocumentDeliveries();
@@ -1146,6 +1148,83 @@ function renderGroupProgress(containerId, list, keyFn, fallbackLabel) {
       <span class="progress-value">${g.avgProgress}%</span>
       <span class="progress-meta">${g.count} obj${g.delayed ? ` · ${g.delayed} försenade` : ""}</span>
     </div>`).join("");
+}
+
+/* ---------------------------------------------------------------------
+   Cykeltidsanalys - jämför planerad varaktighet (startDate -> endDate)
+   mot verklig varaktighet (startDate -> actualEndDate) per aktivitet, för
+   klarmarkerade objekt som har samtliga tre datum ifyllda. Ett positivt
+   snittavvikelse-värde betyder att aktiviteten i snitt tar LÄNGRE tid än
+   planerat. Se Victors förfrågan 2026-09-17.
+   ------------------------------------------------------------------- */
+function daysBetweenIso(fromStr, toStr) {
+  const days = Math.round((new Date(toStr) - new Date(fromStr)) / 86400000);
+  return Number.isFinite(days) ? days : null;
+}
+
+function computeCycleTimeByActivity(list) {
+  const map = new Map();
+  list.forEach(it => {
+    if (it.status !== "klar" || !it.startDate || !it.endDate || !it.actualEndDate) return;
+    const planned = daysBetweenIso(it.startDate, it.endDate);
+    const actual = daysBetweenIso(it.startDate, it.actualEndDate);
+    if (planned === null || actual === null) return;
+    const key = (it.activity || "").trim() || NO_ACTIVITY_LABEL;
+    if (!map.has(key)) map.set(key, { label: key, count: 0, plannedSum: 0, actualSum: 0 });
+    const g = map.get(key);
+    g.count++;
+    g.plannedSum += planned;
+    g.actualSum += actual;
+  });
+
+  const groups = Array.from(map.values()).map(g => ({
+    label: g.label,
+    count: g.count,
+    avgPlanned: Math.round((g.plannedSum / g.count) * 10) / 10,
+    avgActual: Math.round((g.actualSum / g.count) * 10) / 10,
+    avgDeviation: Math.round(((g.actualSum - g.plannedSum) / g.count) * 10) / 10
+  }));
+
+  // Störst avvikelse (längst över planerad tid) överst - det är där det är
+  // mest intressant att titta på framöver.
+  groups.sort((a, b) => b.avgDeviation - a.avgDeviation || a.label.localeCompare(b.label, "sv"));
+  return groups;
+}
+
+function renderCycleTime(list) {
+  const el = document.getElementById("cycleTimeChart");
+  const groups = computeCycleTimeByActivity(list);
+
+  if (groups.length === 0) {
+    el.innerHTML = `<div class="hint">${isBackendConfigured() ? "Inga klarmarkerade objekt med start-, slut- och verkligt avslutsdatum ännu." : emptyMessage()}</div>`;
+    return;
+  }
+
+  const maxDays = Math.max(1, ...groups.map(g => Math.max(g.avgPlanned, g.avgActual)));
+
+  el.innerHTML = groups.map(g => {
+    const overBudget = g.avgDeviation > 0;
+    const plannedPct = Math.min(100, Math.round((g.avgPlanned / maxDays) * 100));
+    const actualPct = Math.min(100, Math.round((g.avgActual / maxDays) * 100));
+    const deviationLabel = g.avgDeviation === 0 ? "i tid" : `${overBudget ? "+" : ""}${g.avgDeviation} d`;
+    return `
+      <div class="cycle-time-row">
+        <span class="cycle-time-label" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
+        <div class="cycle-time-bars">
+          <div class="cycle-time-bar-line">
+            <span class="cycle-time-bar-caption">Planerat</span>
+            <span class="cycle-time-track"><span class="cycle-time-fill planned" style="width:${plannedPct}%"></span></span>
+            <span class="cycle-time-bar-value">${g.avgPlanned} d</span>
+          </div>
+          <div class="cycle-time-bar-line">
+            <span class="cycle-time-bar-caption">Verkligt</span>
+            <span class="cycle-time-track"><span class="cycle-time-fill ${overBudget ? "actual-over" : "actual-under"}" style="width:${actualPct}%"></span></span>
+            <span class="cycle-time-bar-value">${g.avgActual} d</span>
+          </div>
+        </div>
+        <span class="cycle-time-meta">${deviationLabel} snitt · ${g.count} obj</span>
+      </div>`;
+  }).join("");
 }
 
 /* ---------------------------------------------------------------------
@@ -2801,6 +2880,99 @@ function downloadCsv(filename, columns, rows) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+/* ---------------------------------------------------------------------
+   Kalenderexport (.ics) - milstolpar och leveransplan som en nedladdad
+   fil (ingen delningslänk, ingen levande koppling), så de går att
+   importera i Outlook/Google Kalender. Se Victors förfrågan 2026-09-17.
+   ------------------------------------------------------------------- */
+function icsDateValue(dateStr) {
+  return (dateStr || "").replace(/-/g, "");
+}
+
+function icsAddDays(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Rader i iCalendar-formatet ska inte innehålla otecknade ; , eller radbrytningar. */
+function icsEscape(s) {
+  return String(s || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\r?\n/g, "\\n");
+}
+
+/**
+ * Bygger en .ics-kalender av en lista heldagshändelser [{uid, dateStr,
+ * summary, description}]. DTEND sätts till dagen EFTER dateStr, eftersom
+ * iCalendar-heldagshändelser är exklusiva i slutet (annars visas
+ * händelsen som två dagar lång i de flesta kalenderprogram).
+ */
+function buildIcsCalendar(events) {
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//4D-dashboard//Kalenderexport//SV",
+    "CALSCALE:GREGORIAN"
+  ];
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  events.filter(ev => ev.dateStr).forEach(ev => {
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${ev.uid}@4d-dashboard.vfalk-ncc`);
+    lines.push(`DTSTAMP:${stamp}`);
+    lines.push(`DTSTART;VALUE=DATE:${icsDateValue(ev.dateStr)}`);
+    lines.push(`DTEND;VALUE=DATE:${icsDateValue(icsAddDays(ev.dateStr, 1))}`);
+    lines.push(`SUMMARY:${icsEscape(ev.summary)}`);
+    if (ev.description) lines.push(`DESCRIPTION:${icsEscape(ev.description)}`);
+    lines.push("END:VEVENT");
+  });
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n") + "\r\n";
+}
+
+function downloadIcs(filename, icsContent) {
+  const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function onExportIcs() {
+  if (!isBackendConfigured()) {
+    alert("Ingen databas ansluten – det finns inget att exportera ännu.");
+    return;
+  }
+
+  const events = [
+    ...milestones.map(m => ({
+      uid: `milestone-${m.id}`,
+      dateStr: m.target_date,
+      summary: `Milstolpe: ${m.name || ""}`,
+      description: m.is_done ? "Klarmarkerad" : "Ej klarmarkerad"
+    })),
+    ...deliveries.map(d => ({
+      uid: `delivery-${d.id}`,
+      dateStr: d.planned_date,
+      summary: `Leverans: ${d.description || ""}`,
+      description: [d.supplier, d.contractor, d.area].filter(Boolean).join(" · ")
+    }))
+  ];
+
+  if (events.filter(ev => ev.dateStr).length === 0) {
+    alert("Inga milstolpar eller leveranser med datum att exportera ännu.");
+    return;
+  }
+
+  downloadIcs(`4D-dashboard-kalender-${todayISO()}.ics`, buildIcsCalendar(events));
+}
+
 function onExportExcel() {
   if (!isBackendConfigured()) {
     alert("Ingen databas ansluten – det finns inget att exportera ännu.");
@@ -2824,6 +2996,17 @@ function onExportExcel() {
         ["Verkligt avslut", "actualEndDate"]
       ],
       rows: items
+    },
+    {
+      name: `4D-dashboard-cykeltidsanalys-${ts}.csv`,
+      columns: [
+        ["Aktivitet", "label"],
+        ["Antal objekt", "count"],
+        ["Planerad varaktighet (snitt, dagar)", "avgPlanned"],
+        ["Verklig varaktighet (snitt, dagar)", "avgActual"],
+        ["Avvikelse (snitt, dagar)", "avgDeviation"]
+      ],
+      rows: computeCycleTimeByActivity(items)
     },
     {
       name: `4D-dashboard-milstolpar-${ts}.csv`,

@@ -354,6 +354,36 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 }
 
 /* ---------------------------------------------------------------------
+   Cykeltidsanalys - planerad vs. verklig varaktighet per aktivitet.
+   Egen layout (inte progress-row) eftersom varje rad visar TVÅ staplar
+   (planerat/verkligt) istället för en.
+   ------------------------------------------------------------------- */
+.cycle-time-chart { display: flex; flex-direction: column; gap: 10px; }
+.cycle-time-row {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.cycle-time-label {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cycle-time-bars { display: flex; flex-direction: column; gap: 3px; }
+.cycle-time-bar-line { display: grid; grid-template-columns: 46px 1fr 34px; align-items: center; gap: 6px; }
+.cycle-time-bar-caption { color: var(--muted); }
+.cycle-time-track { height: 8px; background: #e2e5ea; border-radius: 3px; overflow: hidden; }
+.cycle-time-fill { display: block; height: 100%; border-radius: 3px; }
+.cycle-time-fill.planned { background: var(--accent); }
+.cycle-time-fill.actual-over { background: #e5484d; }
+.cycle-time-fill.actual-under { background: #3fb950; }
+.cycle-time-bar-value { text-align: right; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cycle-time-meta { color: var(--muted); white-space: nowrap; text-align: right; }
+
+/* ---------------------------------------------------------------------
    Kommande veckor (4-veckors lookahead) – ett kort per vecka med fem
    kategorier av objektnamn (inte bara antal).
    ------------------------------------------------------------------- */

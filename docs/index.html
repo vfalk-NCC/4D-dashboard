@@ -31,6 +31,7 @@
       </div>
       <div class="header-actions">
         <button id="btnExportExcel" title="Exportera all data som CSV-filer (öppnas direkt i Excel)">Excel ⤓</button>
+        <button id="btnExportIcs" title="Exportera milstolpar och leveransplan som .ics-kalenderfil (importera i Outlook/Google Kalender)">Kalender ⤓</button>
         <button id="btnExportPdf" title="Exportera/skriv ut dashboarden som PDF">PDF ⤓</button>
         <button id="btnCollapseAll" title="Minimera/expandera alla block">⊟</button>
         <button id="btnRefresh" title="Hämta senaste data">↻</button>
@@ -101,6 +102,14 @@
     <section class="panel" data-panel-id="contractor-progress">
       <h2>Framdrift per entreprenör</h2>
       <div id="contractorProgress" class="progress-chart"></div>
+    </section>
+
+    <!-- ===== Cykeltidsanalys ===== -->
+    <section class="panel" data-panel-id="cycle-time">
+      <h2>Cykeltidsanalys</h2>
+      <p class="hint">Planerad varaktighet (start- till slutdatum) jämfört med verklig varaktighet (start- till
+        verkligt avslut) per aktivitet, för klarmarkerade objekt med samtliga tre datum ifyllda.</p>
+      <div id="cycleTimeChart" class="cycle-time-chart"></div>
     </section>
 
     <!-- ===== Bemanning ===== -->
