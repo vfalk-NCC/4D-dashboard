@@ -2221,9 +2221,11 @@ function renderGantt(list) {
       const collapsed = ganttCollapsedGroups.has(collapseKey);
       const header = `
         <div class="gantt-group" data-action="toggle-gantt-group" data-group-key="${escapeHtml(collapseKey)}">
-          <span class="gantt-group-arrow">${collapsed ? "▸" : "▾"}</span>
-          <span>${escapeHtml(key)}</span>
-          <span class="gantt-group-count">(${groupItems.length})</span>
+          <span class="gantt-group-sticky">
+            <span class="gantt-group-arrow">${collapsed ? "▸" : "▾"}</span>
+            <span>${escapeHtml(key)}</span>
+            <span class="gantt-group-count">(${groupItems.length})</span>
+          </span>
         </div>`;
       const body = collapsed ? "" : groupItems.map(rowsHtmlFor).join("");
       return header + body;

@@ -526,20 +526,37 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .gantt-inner { position: relative; }
 
 .gantt-group {
+  /* OBS: INTE position:sticky direkt här - .gantt-group är själv en
+     flex-item (sträckt till full bredd av .gantt-rows-wraps
+     align-items:stretch), och sticky på en sträckt flex-item visade sig
+     inte fungera tillförlitligt (Chromium-versionen i den här miljön
+     "glömde" fastklistringen redan efter ett kort scroll). Samma mönster
+     som funkar för .gantt-toggle/.gantt-label (som är GRID-items, inte
+     flex-items) löses här genom att lägga sticky på ett separat
+     innehållselement (.gantt-group-sticky) EN nivå ner istället - se
+     Victors synpunkt 2026-09-17 om att namnet alltid ska synas vid
+     sidledes scroll. */
+  background: var(--panel);
+  border-radius: 3px;
+  margin: 6px 0 2px;
+  cursor: pointer;
+  user-select: none;
+}
+.gantt-group:first-child { margin-top: 0; }
+.gantt-group-sticky {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 11px;
   font-weight: 700;
   color: var(--text);
-  background: var(--panel);
-  border-radius: 3px;
   padding: 4px 6px;
-  margin: 6px 0 2px;
-  cursor: pointer;
-  user-select: none;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: max-content;
+  max-width: 100%;
 }
-.gantt-group:first-child { margin-top: 0; }
 .gantt-group-arrow { color: var(--accent); flex: 0 0 auto; }
 .gantt-group-count { color: var(--muted); font-weight: 400; }
 
@@ -598,11 +615,23 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .gantt-chart.gantt-density-comfortable .gantt-bar { top: 3px; height: 12px; }
 .gantt-chart.gantt-density-comfortable .gantt-bar-sub { top: 4px; height: 10px; }
 
+/* Objekt-/delaktivitetsnamnet (och dess pil) ska alltid vara synligt, även
+   vid sidledes scroll i inzoomat läge (Victors synpunkt 2026-09-17) -
+   därför sticky med vänsterkant fastklistrad mot #ganttChart:s (den
+   skrollande förfaderns) synliga kant. Offset för .gantt-label (20px) =
+   togglekolumnens 14px + 6px mellanrum (.gantt-row grid-template-columns/
+   gap), så de två inte hamnar på varandra. Egen, ogenomskinlig bakgrund
+   krävs så att staplar/rutnät i spårkolumnen inte lyser igenom när de
+   skrollar in "under" den fastklistrade etiketten. */
 .gantt-toggle {
   cursor: pointer;
   color: var(--accent);
   text-align: center;
   user-select: none;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--panel);
 }
 .gantt-toggle-empty { cursor: default; }
 .gantt-label {
@@ -610,6 +639,10 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  position: sticky;
+  left: 20px;
+  z-index: 1;
+  background: var(--panel);
 }
 .gantt-label-clickable { cursor: pointer; }
 .gantt-label-clickable:hover, .gantt-label-clickable:focus-visible {
@@ -617,6 +650,7 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   text-decoration: underline;
 }
 .gantt-subrow { background: rgba(11, 95, 255, 0.03); border-radius: 3px; }
+.gantt-subrow .gantt-toggle, .gantt-subrow .gantt-label { background: #f7f9fe; }
 .gantt-sublabel { color: var(--muted); padding-left: 6px; }
 
 .gantt-track {
