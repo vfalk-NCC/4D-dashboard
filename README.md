@@ -119,6 +119,30 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   webbläsaren och gäller vid nästa besök. Delaktiviteter har ännu inga egna
   verkliga datum, så de
   visas alltid bara med sin planerade stapel.
+  **Beroenden** (Victors förfrågan 2026-09-21): ett objekt kan i
+  4D-planering ("Koppla markering" → "Beroenden") sättas att bero på ett
+  eller flera andra objekt (t.ex. "Gjutning Pelare A" beror på "Formning
+  Pelare A"). Ett objekt vars beroende inte är klarmarkerat OCH vars
+  (verkliga, annars planerade) slutdatum krockar med objektets egen
+  planerade start får en varnande streckad ring i Gantt-schemat – en
+  konkret, synlig konsekvens av förseningen, inte bara "har ett beroende".
+  Ett 🔗/⚠-märke i objektnamnet går att klicka (eller klicka själva
+  stapeln) för att highlighta hela kedjan (alla uppströms- och
+  nedströms-objekt, transitivt) och tona ned resten av schemat; hover-
+  tooltipen visar alltid både "Beroende av" och – minst lika viktigt –
+  "Blockerar" (vilka objekt som drabbas om DET HÄR blir försenat). Cykler
+  (A beror på B som beror på A) går inte att skapa – skyddas redan i
+  sökrutan i 4D-planering.
+  **Redigerbar Gantt**: kryssrutan "Redigerbar (dra för att schemalägga
+  om)" i verktygsraden gör huvudstaplarna dragbara direkt i dashboarden –
+  dra i mitten för att flytta hela objektet, eller i vänster-/högerkanten
+  för att bara ändra start- respektive slutdatum. Sparas direkt till
+  samma `plan_items.json` som 4D-planerings formulär skriver till (och
+  loggar en baseline-historikrad, se Planstabilitet nedan) – schemat är
+  alltså inte längre strikt read-only, men fortfarande av som standard så
+  ett oavsiktligt klick aldrig råkar flytta något. Ett vanligt klick (utan
+  att dra) highlightar beroendekedjan som vanligt, oavsett om redigerbart
+  läge är på eller av.
 - **Statusfärger** (i inställningarna, kugghjulet): de sex statusfärgerna
   (Ej planerad/Planerad/Pågående/Försenad/Klar/Pausad) går att byta ut mot
   egna via en färgruta per status – ändringen syns direkt i Gantt-schemat,
@@ -133,6 +157,27 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   timmar och/eller datum räknas inte med (en hint visar hur många). Visar
   bara planerad tidsåtgång i denna omgång, ingen jämförelse mot verkligt
   nedlagd tid ännu.
+- **Bevakningsbanner** (Victors förfrågan 2026-09-21, "ingen
+  bevakning/notiser"): en alltid synlig rad direkt under headern (ovanför
+  filtren) som sammanfattar försenade objekt, passerade eller snart
+  förestående milstolpar (tröskeln ställs in i inställningarna, standard 7
+  dagar) och objekt som riskerar försening pga ett beroende – grön bock om
+  allt ser bra ut, annars klickbara varningsrutor som scrollar dig direkt
+  till rätt panel. Det här täcker "se det direkt när man öppnar appen"; för
+  en riktig ping UTAN att behöva öppna dashboarden alls finns nu även ett
+  schemalagt GitHub Actions-jobb i `4D-data`-repot som mejlar dig
+  automatiskt (och valfritt kan posta till Slack/Teams/Discord via en egen
+  webhook-hemlighet) – se `BEVAKNING_SETUP.md` i det repot.
+- **Planstabilitet** (Victors förfrågan 2026-09-21, "ingen baseline"): en
+  ny panel som visar hur mycket varje objekts start-/slutdatum har flyttats
+  sedan de först planerades (t.ex. "Start: 2026-03-01 → 2026-03-15") och
+  hur många gånger – till för att hitta de kroniskt instabila delarna av
+  projektet, inte bara "planerat vs verkligt" för ett enskilt objekt.
+  Bygger på en ny historikfil, `plan_item_baseline_history.json`, som
+  fylls på automatiskt varje gång ett datum ändras (i 4D-planerings
+  formulär ELLER via en drag-omschemaläggning här i dashboarden) – exakt
+  samma mönster som den befintliga framdriftshistoriken
+  (`plan_item_progress_history.json`).
 - **Synliga block**: i inställningarna (kugghjulet) kan du bocka ur vilka
   block som ska visas i dashboarden. Ett urbockat block försvinner direkt
   och tas heller inte med i PDF-exporten (utskriften) – och för de block
@@ -143,7 +188,8 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   tas alltid med. Valet sparas lokalt i webbläsaren.
 
 Alla filer som paneler ovan använder (`plan_item_progress_history.json`,
-`plan_milestones.json`, `plan_staffing.json`, `plan_deliveries.json`,
+`plan_item_baseline_history.json`, `plan_milestones.json`,
+`plan_staffing.json`, `plan_deliveries.json`,
 `plan_document_deliveries.json`, `plan_safety_events.json`,
 `plan_inspections.json`, `plan_blockers.json`,
 `plan_blocker_comments.json`) skapas automatiskt av `github-storage.js`
