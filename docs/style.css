@@ -190,6 +190,16 @@ input {
   margin-top: 2px;
   font-family: inherit;
 }
+/* Kryssrutor ska INTE ärva width:100% - annars blir deras (osynliga)
+   layoutbredd lika bred som hela sin flex-rad, vilket trycker undan
+   text/etikett bredvid och gör att den radbryts konstigt trots gott om
+   plats (hittat 2026-09-21 vid felsökning av det "röriga" Gantt-verktygs-
+   fältet: en kryssruta hade en 66px bred osynlig layout-box). */
+input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+  margin-top: 0;
+}
 
 .row { display: flex; gap: 6px; margin-top: 6px; }
 
@@ -471,6 +481,23 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   align-items: center;
   gap: 10px 14px;
   margin-bottom: 8px;
+}
+/* Bara den SISTA .gantt-toolbar-raden innan Gantt-schemat äger den
+   avdelande linjen (annars blir det dubbla/tätt intilliggande linjer när
+   toolbaren delas upp i flera rader, se .gantt-toggle-row nedan). */
+.gantt-toolbar:not(.gantt-toggle-row) {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+/* Kryssrutorna ("Visa verkligt"/"Redigerbar") får en egen rad istället för
+   att blandas in i samma flex-wrap som Gruppera/Sortera/Kompakt/zoom -
+   annars radbryts de oförutsägbart mitt ibland de andra kontrollerna i en
+   smal panel (Victors skärmdumpar 2026-09-21: "det ser rörigt ut"). */
+.gantt-toolbar.gantt-toggle-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: -4px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }

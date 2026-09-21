@@ -2502,12 +2502,25 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
         ? (trackWidthPx / Math.max(1, geometry.domainDays))
         : geometry.pxPerDay;
 
-      const offsetX = evt.clientX - barRect.left;
-      const EDGE_PX = 6;
+      // I inzoomat läge är #ganttChart (elementet "el" här) en skrollbar
+      // ruta (overflow:auto) som ofta är SMALARE än själva stapeln - en
+      // lång stapel kan alltså ha sin vänster- och/eller högerkant utanför
+      // den synliga/klickbara ytan just nu, utan att användaren skrollat
+      // dit. Utan hänsyn till det landar EDGE_PX-zonen på ett antal pixlar
+      // som helt enkelt aldrig går att klicka (de klipps bort av
+      // overflow:hidden/auto), vilket gjorde att hörnen "inte gick att dra
+      // i" i praktiken (Victors förfrågan 2026-09-21) - bara mitten av
+      // stapeln (byt-läge) var nåbar. Lösning: räkna kant-zonen mot den
+      // FAKTISKT synliga kanten (barRect beskuren mot #ganttChart:s egen
+      // klientyta) istället för stapelns fulla, ev. delvis dolda, bredd.
+      const chartRect = el.getBoundingClientRect();
+      const visibleLeft = Math.max(barRect.left, chartRect.left);
+      const visibleRight = Math.min(barRect.left + barRect.width, chartRect.right);
+      const EDGE_PX = 8;
       let mode = "move";
-      if (ganttEditable) {
-        if (offsetX <= EDGE_PX) mode = "resize-left";
-        else if (offsetX >= barRect.width - EDGE_PX) mode = "resize-right";
+      if (ganttEditable && visibleRight > visibleLeft) {
+        if (evt.clientX <= visibleLeft + EDGE_PX) mode = "resize-left";
+        else if (evt.clientX >= visibleRight - EDGE_PX) mode = "resize-right";
       }
 
       let moved = false;
