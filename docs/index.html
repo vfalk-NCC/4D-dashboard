@@ -40,6 +40,7 @@
     </header>
     <div id="connectionWarning" class="hint warning hidden"></div>
     <div id="lastUpdated" class="hint"></div>
+    <div id="watchBanner" class="watch-banner hidden"></div>
 
     <!-- ===== Filtrering ===== -->
     <div id="filterBar" class="filter-bar">
@@ -113,7 +114,11 @@
         <label class="gantt-actual-toggle">
           <input type="checkbox" id="ganttShowActual" /> Visa verkligt (där ifyllt)
         </label>
+        <label class="gantt-actual-toggle" title="Dra i en stapel för att flytta den, eller i dess kanter för att ändra start-/slutdatum. Sparas direkt till 4D-data (samma som ett sparat formulär i 4D-planering).">
+          <input type="checkbox" id="ganttEditable" /> Redigerbar (dra för att schemalägga om)
+        </label>
       </div>
+      <div id="ganttEditableHint" class="hint hidden">✏️ Redigerbart läge: dra i en stapel för att flytta den, eller i dess vänster-/högerkant för att ändra start- eller slutdatum. Ändringen sparas direkt.</div>
 
       <div class="gantt-toolbar gantt-range-row">
         <label class="gantt-toolbar-field">Visa från
@@ -154,6 +159,15 @@
     <section class="panel" data-panel-id="contractor-progress">
       <h2>Framdrift per entreprenör</h2>
       <div id="contractorProgress" class="progress-chart"></div>
+    </section>
+
+    <!-- ===== Planstabilitet ===== -->
+    <section class="panel" data-panel-id="stability">
+      <h2>Planstabilitet</h2>
+      <p class="hint">Hur mycket varje objekts start-/slutdatum har flyttats sedan det först planerades - bra för
+        att hitta de kroniskt instabila delarna av projektet. Bygger på historik som loggas automatiskt varje
+        gång ett datum ändras (i 4D-planering eller genom att dra en stapel i Gantt-schemat här).</p>
+      <div id="stabilityList" class="stability-list"></div>
     </section>
 
     <!-- ===== Cykeltidsanalys ===== -->
@@ -231,6 +245,7 @@
       <label>Latitud (väder, valfritt) <input type="text" id="settingsLatitude" placeholder="59.33" /></label>
       <label>Longitud (väder, valfritt) <input type="text" id="settingsLongitude" placeholder="18.06" /></label>
       <label>Platsnamn (väder, valfritt) <input type="text" id="settingsLocationName" placeholder="t.ex. Gällivare" /></label>
+      <label>Bevakning: varna om en milstolpe ligger inom <input type="number" id="settingsWatchDays" min="0" step="1" style="width:4em" /> dagar</label>
       <p class="hint">En fine-grained token scopead till repot <strong>vfalk-NCC/4D-data</strong> – se GITHUB_TOKEN_SETUP.md
         för hur du skapar en (tar under en minut). Använd samma token som i 4D-planering, så visar dashboarden
         samma planeringsdata. Koordinaterna används bara för väderpanelen och sparas lokalt i webbläsaren.</p>

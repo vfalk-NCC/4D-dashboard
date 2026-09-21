@@ -16,6 +16,10 @@ let API = null;              // Workspace API-instans
 let projectId = null;        // Aktuellt Trimble Connect-projekt
 let items = [];               // Cache av samtliga planeringsposter (från backend, ofiltrerat)
 let activities = [];           // plan_item_activities (delaktiviteter) - läses read-only, skrivs bara av 4D-planering
+let baselineHistory = [];      // plan_item_baseline_history - historik över start_date/end_date-ändringar, se logBaselineHistory i 4D-planering + saveItemSchedule här
+let ganttHighlightChainId = null; // vilket objekts beroendekedja (om något) som just nu är highlightad i Gantt-schemat, se toggleGanttDependencyChain
+let ganttEditable = false;    // "Redigerbar Gantt" - tillåter dra-för-att-schemalägga-om direkt på staplarna, se initGanttEditableToggle
+let ganttDrag = null;          // pågående drag-interaktion i Gantt-schemat (null om ingen), se onGanttBarPointerDown
 let ganttExpandedIds = new Set(); // vilka objekt (plan_item.id) som just nu visar sina delaktiviteter i Gantt-schemat
 let ganttShowActual = false;      // kryssrutan "Visa verkligt" i Gantt-schemat
 // Läsbarhetsinställningar för Gantt-schemat (Victors förfrågan 2026-09-17
@@ -41,7 +45,8 @@ let settings = {
   githubToken: "",             // fine-grained PAT scopead till vfalk-NCC/4D-data, se GITHUB_TOKEN_SETUP.md
   latitude: "",
   longitude: "",
-  locationName: ""
+  locationName: "",
+  watchMilestoneDays: 7        // "Bevakning": varna om en milstolpe ligger inom så här många dagar, se renderWatchBanner
 };
 // Aktiv filtrering – tomt värde ("") betyder "alla" för respektive fält.
 let filters = {
@@ -323,6 +328,7 @@ function bindUI() {
   document.getElementById("settingsLatitude").value = settings.latitude || "";
   document.getElementById("settingsLongitude").value = settings.longitude || "";
   document.getElementById("settingsLocationName").value = settings.locationName || "";
+  document.getElementById("settingsWatchDays").value = Number.isFinite(settings.watchMilestoneDays) ? settings.watchMilestoneDays : 7;
   updateConnectionWarning();
 
   document.getElementById("filterArea").onchange = onFilterChange;
@@ -629,6 +635,9 @@ function onSaveSettings() {
   settings.locationName = document.getElementById("settingsLocationName").value.trim();
   document.getElementById("settingsLatitude").value = settings.latitude;
   document.getElementById("settingsLongitude").value = settings.longitude;
+  const watchDaysRaw = Number(document.getElementById("settingsWatchDays").value);
+  settings.watchMilestoneDays = Number.isFinite(watchDaysRaw) && watchDaysRaw >= 0 ? watchDaysRaw : 7;
+  document.getElementById("settingsWatchDays").value = settings.watchMilestoneDays;
   window.localStorage.setItem("4ddash-settings", JSON.stringify(settings));
   updateConnectionWarning();
   toggle("settingsDialog", false);
@@ -684,6 +693,7 @@ async function refreshAll() {
     fetchActivities(),
     fetchRecentComments(),
     fetchProgressHistory(),
+    fetchBaselineHistory(),
     fetchMilestones(),
     fetchStaffing(),
     fetchDeliveries(),
@@ -703,6 +713,7 @@ async function refreshAll() {
 // efter en ny hämtning och varje gång användaren ändrar ett filter (utan
 // att hämta om data från Supabase).
 function renderAll() {
+  renderWatchBanner();
   renderKpis();
   renderStatusDonut();
   renderStatusChart();
@@ -714,6 +725,7 @@ function renderAll() {
   renderDelayedList(filtered);
   renderGroupProgress("areaProgress", filtered, it => it.area, NO_AREA_LABEL);
   renderGroupProgress("contractorProgress", filtered, it => it.contractor, NO_CONTRACTOR_LABEL);
+  renderStability();
   renderCycleTime(filtered);
   renderStaffing();
   renderResourceHours(filtered);
@@ -778,7 +790,8 @@ function fromRow(row) {
     // Används av Gantt-schemat för att kunna markera objektet i 3D-modellen
     // vid klick på dess namn - se selectGanttItemInModel().
     modelId: row.model_id ?? null,
-    objectId: row.object_id ?? null
+    objectId: row.object_id ?? null,
+    dependsOn: Array.isArray(row.depends_on) ? row.depends_on.map(String) : []
   };
 }
 
@@ -810,6 +823,22 @@ async function fetchProgressHistory() {
   } catch (e) {
     console.error("Kunde inte hämta framdriftshistorik", e);
     progressHistory = [];
+  }
+}
+
+// Baseline-historik (start_date/end_date över tid) - fylls på av 4D-planering
+// varje gång ett objekts datum ändras (se logBaselineHistory i dess app.js),
+// samt av dashboarden själv vid en dra-och-släpp-omschemaläggning i Gantt-
+// schemat (se saveItemSchedule). Dashboarden läser den och visar
+// "Planstabilitet" (renderStability) - Victors förfrågan 2026-09-21 om att
+// se hur PLANEN själv har ändrats över tid, inte bara planerat vs verkligt.
+async function fetchBaselineHistory() {
+  if (!isBackendConfigured()) { baselineHistory = []; return; }
+  try {
+    baselineHistory = await ghReadJSON(settings.githubToken, tablePath("plan_item_baseline_history"));
+  } catch (e) {
+    console.error("Kunde inte hämta baseline-historik", e);
+    baselineHistory = [];
   }
 }
 
@@ -1355,6 +1384,16 @@ function daysBetweenIso(fromStr, toStr) {
   return Number.isFinite(days) ? days : null;
 }
 
+// Lägger till (eller drar ifrån, med ett negativt tal) `days` dagar på ett
+// "YYYY-MM-DD"-datum och returnerar resultatet i samma format. Används vid
+// dra-och-släpp-omschemaläggning i Gantt-schemat (se onGanttBarPointerMove).
+function addDaysIso(dateStr, days) {
+  const d = parseDate(dateStr);
+  if (!d) return dateStr;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function computeCycleTimeByActivity(list) {
   const map = new Map();
   list.forEach(it => {
@@ -1547,6 +1586,58 @@ async function supaUpdate(table, id, body) {
     console.error(`Kunde inte uppdatera i ${table}`, e);
     alert("Kunde inte spara ändringen – nätverksfel. Försök igen.");
     return false;
+  }
+}
+
+/**
+ * Sparar en ny start-/slutdatum-kombination för ett objekt efter en
+ * dra-och-släpp-omschemaläggning i Gantt-schemat (Victors förfrågan
+ * 2026-09-21: "Gantt-schemat är read-only i dashboarden"). Till skillnad
+ * från supaUpdate ("tyst" generisk CRUD) uppdaterar den här ÄVEN den
+ * lokala items-cachen direkt (optimistiskt, precis som 4D-planerings eget
+ * sparflöde) och loggar en baseline-historikrad - samma logg som
+ * logBaselineHistory i 4D-planerings app.js skriver, så "Planstabilitet"
+ * (renderStability) fångar ändringar oavsett vilken app de gjordes i.
+ */
+async function saveItemSchedule(it, newStart, newEnd) {
+  const oldStart = it.startDate;
+  const oldEnd = it.endDate;
+  it.startDate = newStart;
+  it.endDate = newEnd;
+  renderGantt(getFilteredItems());
+  renderStability();
+
+  const ok = await supaUpdate("plan_items", it.id, {
+    start_date: newStart,
+    end_date: newEnd,
+    updated_at: new Date().toISOString()
+  });
+  if (!ok) {
+    // supaUpdate har redan visat ett felmeddelande - återställ lokalt.
+    it.startDate = oldStart;
+    it.endDate = oldEnd;
+    renderGantt(getFilteredItems());
+    return;
+  }
+
+  try {
+    await ghWriteJSON(
+      settings.githubToken,
+      tablePath("plan_item_baseline_history"),
+      (arr) => [...arr, {
+        id: ghNewId(),
+        plan_item_id: it.id,
+        project_id: projectId,
+        start_date: newStart,
+        end_date: newEnd,
+        recorded_at: new Date().toISOString()
+      }],
+      "Logga baseline-historik (omschemaläggning i Gantt-schemat)"
+    );
+    await fetchBaselineHistory();
+    renderStability();
+  } catch (e) {
+    console.error("Kunde inte logga baseline-historik för drag-omschemaläggningen", e);
   }
 }
 
@@ -1810,6 +1901,7 @@ function loadGanttPrefs() {
     if (Array.isArray(prefs.collapsedGroups)) ganttCollapsedGroups = new Set(prefs.collapsedGroups);
     if (typeof prefs.rangeStart === "string" || prefs.rangeStart === null) ganttRangeStart = prefs.rangeStart;
     if (typeof prefs.rangeEnd === "string" || prefs.rangeEnd === null) ganttRangeEnd = prefs.rangeEnd;
+    if (typeof prefs.editable === "boolean") ganttEditable = prefs.editable;
   } catch (e) {
     console.warn("Kunde inte läsa sparade Gantt-inställningar", e);
   }
@@ -1826,7 +1918,8 @@ function saveGanttPrefs() {
       zoomPxPerDay: ganttZoomPxPerDay,
       collapsedGroups: [...ganttCollapsedGroups],
       rangeStart: ganttRangeStart,
-      rangeEnd: ganttRangeEnd
+      rangeEnd: ganttRangeEnd,
+      editable: ganttEditable
     }));
   } catch (e) {
     console.warn("Kunde inte spara Gantt-inställningar", e);
@@ -2006,7 +2099,7 @@ function ganttTooltipRow(label, value) {
   return `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${escapeHtml(label)}</span><span class="gantt-tooltip-value">${escapeHtml(value)}</span></div>`;
 }
 
-function ganttTooltipHtmlForItem(it) {
+function ganttTooltipHtmlForItem(it, depById) {
   const rows = [
     ganttTooltipRow("Status", STATUS_LABELS[it.status] || it.status),
     ganttTooltipRow("Planerat", `${it.startDate} – ${it.endDate}`),
@@ -2015,6 +2108,26 @@ function ganttTooltipHtmlForItem(it) {
   if (it.contractor) rows.push(ganttTooltipRow("Entreprenör", it.contractor));
   if (it.actualStartDate || it.actualEndDate) {
     rows.push(ganttTooltipRow("Verkligt", `${it.actualStartDate || "?"} – ${it.actualEndDate || "?"}`));
+  }
+  // Beroendekedjan (Victors förfrågan 2026-09-21) - vad objektet väntar på
+  // och vad som i sin tur väntar på DET, så konsekvensen av en försening
+  // syns direkt i hovertooltipen utan att behöva klicka något.
+  if (depById && Array.isArray(it.dependsOn) && it.dependsOn.length > 0) {
+    const names = it.dependsOn.map(id => {
+      const dep = depById.get(id);
+      if (!dep) return "(borttaget objekt)";
+      const label = dep.objectName || dep.objectId || "?";
+      return dep.status === "klar" ? label : `${label} (${STATUS_LABELS[dep.status] || dep.status})`;
+    });
+    rows.push(ganttTooltipRow("Beroende av", names.join(", ")));
+  }
+  if (depById) {
+    const downstream = downstreamOf(it.id, depById);
+    if (downstream.length > 0) {
+      const names = downstream.slice(0, 6).map(d => d.objectName || d.objectId || "?");
+      const more = downstream.length > 6 ? ` + ${downstream.length - 6} till` : "";
+      rows.push(ganttTooltipRow("Blockerar", names.join(", ") + more));
+    }
   }
   return `<div class="gantt-tooltip-title">${escapeHtml(itemLabel(it))}</div>${rows.join("")}`;
 }
@@ -2138,6 +2251,35 @@ function renderGantt(list) {
     activitiesByItem.set(a.plan_item_id, forItem);
   });
 
+  // Beroenden (Victors förfrågan 2026-09-21) - beräknas mot ALLA inlästa
+  // objekt (items), inte bara det filtrerade urvalet (list/visible), så en
+  // beroendekedja eller risk-flagga syns korrekt även om ett uppströms-
+  // eller nedströms-objekt råkar vara filtrerat bort just nu.
+  const depById = itemsByIdAll();
+  const hasSuccessorId = new Set();
+  items.forEach(it => (it.dependsOn || []).forEach(depId => hasSuccessorId.add(depId)));
+
+  // Om en beroendekedja just nu är highlightad (klick på 🔗-märket, se
+  // toggleGanttDependencyChain) - vilka id:n som ingår i den (fokusobjektet
+  // + alla dess uppströms- och nedströms-objekt, transitivt). Övriga rader
+  // tonas ned i CSS (gantt-row-dim) så kedjan sticker ut.
+  let chainIds = null;
+  if (ganttHighlightChainId && depById.has(ganttHighlightChainId)) {
+    chainIds = new Set([ganttHighlightChainId]);
+    let frontier = [ganttHighlightChainId];
+    while (frontier.length) {
+      const next = [];
+      frontier.forEach(id => {
+        const node = depById.get(id);
+        (node && node.dependsOn ? node.dependsOn : []).forEach(depId => {
+          if (!chainIds.has(depId)) { chainIds.add(depId); next.push(depId); }
+        });
+      });
+      frontier = next;
+    }
+    downstreamOf(ganttHighlightChainId, depById).forEach(it => chainIds.add(it.id));
+  }
+
   // Tooltip-innehåll byggs en gång per stapel och läggs i en Map (nyckel ->
   // HTML), refererad via data-gantt-tip på respektive stapel - se
   // bindGanttInteractions. Undviker HTML-i-attribut-eskapering helt.
@@ -2161,7 +2303,43 @@ function renderGantt(list) {
     const progressPct = Math.max(0, Math.min(100, Number(it.progress) || 0));
     const hasActual = ganttShowActual && it.actualStartDate && it.actualEndDate;
     const canSelectIn3d = Boolean(it.modelId && it.objectId);
-    const tipKey = registerTip(ganttTooltipHtmlForItem(it));
+    const tipKey = registerTip(ganttTooltipHtmlForItem(it, depById));
+
+    // Beroenderisk: minst ett ofärdigt beroende vars (verkliga, annars
+    // planerade) slutdatum ligger på eller efter det här objektets planerade
+    // start - dvs en konkret, synlig konsekvens av en försening uppströms,
+    // inte bara "har beroenden". Se Victors förfrågan om att kunna räkna ut
+    // vad en försening faktiskt får för konsekvenser nedströms.
+    const predecessors = (it.dependsOn || []).map(id => depById.get(id)).filter(Boolean);
+    const unfinishedPredecessors = predecessors.filter(p => p.status !== "klar");
+    const overlappingPredecessors = unfinishedPredecessors.filter(p => {
+      const predEnd = p.actualEndDate || p.endDate;
+      return predEnd && it.startDate && predEnd >= it.startDate;
+    });
+    const isBlockedRisk = overlappingPredecessors.length > 0;
+    const hasDeps = (it.dependsOn && it.dependsOn.length > 0) || hasSuccessorId.has(it.id);
+    // Bara en visuell markör i etiketten (inte klickbar själv - texten
+    // klipps annars av .gantt-label:s text-overflow:ellipsis för långa
+    // namn). Klick för att visa/dölja beroendekedjan görs istället på
+    // SJÄLVA stapeln, se attachGanttBarClick i bindGanttInteractions - det
+    // ger en stor, tillförlitlig klickyta oavsett namnlängd.
+    const depBadgeHtml = hasDeps
+      ? `<span class="gantt-dep-badge${isBlockedRisk ? " risk" : ""}" title="${isBlockedRisk ? "Risk: väntar på ett ofärdigt beroende - klicka stapeln för att visa kedjan" : "Har beroenden - klicka stapeln för att visa kedjan"}">${isBlockedRisk ? "⚠" : "🔗"}</span>`
+      : "";
+
+    const isChainFocus = chainIds && it.id === ganttHighlightChainId;
+    const isChainRelated = chainIds && chainIds.has(it.id) && !isChainFocus;
+    const isChainDim = chainIds && !chainIds.has(it.id);
+    const rowClass = `gantt-row${isChainFocus ? " gantt-row-chain-focus" : ""}${isChainRelated ? " gantt-row-chain-related" : ""}${isChainDim ? " gantt-row-dim" : ""}`;
+
+    // Huvudstapelns data-item-id används både för klick-för-att-visa-kedjan
+    // (alltid) och för dra-för-att-schemalägga-om (bara i redigerbart läge) -
+    // se attachGanttBarClick/onGanttBarPointerDown i bindGanttInteractions.
+    // "Redigerbar Gantt" är Victors förfrågan 2026-09-21 om att kunna
+    // schemalägga om direkt på staplarna istället för bara via formulär i
+    // 4D-planering.
+    const draggableAttrs = ganttEditable ? ` data-action="drag-gantt-bar"` : "";
+    const barClass = `gantt-bar${isBlockedRisk ? " gantt-bar-risk" : ""}${ganttEditable ? " gantt-bar-draggable" : ""}`;
 
     let actualHtml = "";
     if (hasActual) {
@@ -2178,11 +2356,11 @@ function renderGantt(list) {
     // (Ej planerad/Planerad) nästan försvann helt i den gamla urblekta
     // "meter"-designen.
     const rowHtml = `
-      <div class="gantt-row">
+      <div class="${rowClass}">
         <span class="gantt-toggle${hasActivities ? "" : " gantt-toggle-empty"}"${hasActivities ? ` data-action="toggle-gantt" data-item-id="${escapeHtml(String(it.id))}"` : ""}>${hasActivities ? (expanded ? "▾" : "▸") : ""}</span>
-        <span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}</span>
+        <span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}${depBadgeHtml}</span>
         <div class="gantt-track">
-          <span class="gantt-bar" style="left:${left}; width:${width}; border-color:${color};" data-gantt-tip="${tipKey}" tabindex="0">
+          <span class="${barClass}" style="left:${left}; width:${width}; border-color:${color};" data-gantt-tip="${tipKey}" data-item-id="${escapeHtml(String(it.id))}"${hasDeps ? ` data-has-deps="1"` : ""} tabindex="0"${draggableAttrs}>
             <span class="gantt-bar-fill" style="width:${progressPct}%; background:${color};"></span>
           </span>
           ${actualHtml}
@@ -2253,10 +2431,10 @@ function renderGantt(list) {
     notesEl.innerText = notes.join(" ");
   }
 
-  bindGanttInteractions(el, list, tooltips);
+  bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays });
 }
 
-function bindGanttInteractions(el, list, tooltips) {
+function bindGanttInteractions(el, list, tooltips, geometry) {
   el.querySelectorAll('[data-action="toggle-gantt"]').forEach(toggleEl => {
     toggleEl.onclick = () => {
       const id = toggleEl.dataset.itemId;
@@ -2294,6 +2472,95 @@ function bindGanttInteractions(el, list, tooltips) {
     markEl.onmouseout = hideGanttTooltip;
     markEl.onfocusin = () => showGanttTooltipAt(markEl, html);
     markEl.onfocusout = hideGanttTooltip;
+  });
+
+  // Klick på en huvudstapel (med beroenden) växlar highlight av dess
+  // beroendekedja, oavsett redigerbart läge. Drag flyttar/ändrar staplen
+  // (bara i redigerbart läge, se ganttEditable) - de två skiljs åt genom
+  // hur långt musen faktiskt flyttat sig mellan ned- och uppklick (ett
+  // "klick" har i praktiken alltid några enstaka pixlars rörelse). Se
+  // Victors förfrågan 2026-09-21 om att Gantt-schemat är read-only samt om
+  // att kunna se en försenings konsekvenser nedströms.
+  const CLICK_MOVE_THRESHOLD_PX = 4;
+  el.querySelectorAll(".gantt-bar[data-item-id]").forEach(barEl => {
+    const itemId = barEl.dataset.itemId;
+    const it = list.find(x => String(x.id) === itemId) || items.find(x => String(x.id) === itemId);
+    if (!it) return;
+
+    barEl.addEventListener("pointerdown", (evt) => {
+      if (evt.button !== undefined && evt.button !== 0) return; // bara vänsterklick/primär pekare
+      const startX = evt.clientX;
+      const barRect = barEl.getBoundingClientRect();
+      const trackEl = barEl.parentElement; // .gantt-track
+      const trackWidthPx = trackEl ? trackEl.getBoundingClientRect().width : 0;
+      // Effektiv px/dag just nu - i "Anpassa"-läge (isFit) är stapelns
+      // position/bredd satt i %, så vi räknar om spårets FAKTISKA
+      // pixelbredd till px/dag för att kunna räkna om musens rörelse i px
+      // till en dagsförskjutning. I inzoomat läge används samma pxPerDay
+      // som redan styr barPos().
+      const effectivePxPerDay = geometry.isFit
+        ? (trackWidthPx / Math.max(1, geometry.domainDays))
+        : geometry.pxPerDay;
+
+      const offsetX = evt.clientX - barRect.left;
+      const EDGE_PX = 6;
+      let mode = "move";
+      if (ganttEditable) {
+        if (offsetX <= EDGE_PX) mode = "resize-left";
+        else if (offsetX >= barRect.width - EDGE_PX) mode = "resize-right";
+      }
+
+      let moved = false;
+      let previewStart = it.startDate;
+      let previewEnd = it.endDate;
+
+      const onMove = (moveEvt) => {
+        const deltaPx = moveEvt.clientX - startX;
+        if (Math.abs(deltaPx) >= CLICK_MOVE_THRESHOLD_PX) moved = true;
+        if (!ganttEditable || !moved || !effectivePxPerDay) return;
+        const deltaDays = Math.round(deltaPx / effectivePxPerDay);
+        if (mode === "move") {
+          previewStart = addDaysIso(it.startDate, deltaDays);
+          previewEnd = addDaysIso(it.endDate, deltaDays);
+        } else if (mode === "resize-left") {
+          previewStart = addDaysIso(it.startDate, deltaDays);
+          if (previewStart > it.endDate) previewStart = it.endDate;
+          previewEnd = it.endDate;
+        } else {
+          previewEnd = addDaysIso(it.endDate, deltaDays);
+          if (previewEnd < it.startDate) previewEnd = it.startDate;
+          previewStart = it.startDate;
+        }
+        barEl.classList.add("gantt-bar-dragging");
+        barEl.style.transform = `translateX(${deltaPx}px)`;
+      };
+
+      const onUp = () => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        barEl.style.transform = "";
+        barEl.classList.remove("gantt-bar-dragging");
+
+        if (!moved) {
+          // Ett riktigt klick (ingen nämnvärd rörelse) - visa/dölj
+          // beroendekedjan om objektet har några beroenden eller är någon
+          // annans beroende.
+          if (barEl.dataset.hasDeps) {
+            ganttHighlightChainId = (ganttHighlightChainId === itemId) ? null : itemId;
+            renderGantt(list);
+          }
+          return;
+        }
+        if (!ganttEditable || (previewStart === it.startDate && previewEnd === it.endDate)) {
+          renderGantt(list); // avbruten/ineffektiv drag (t.ex. ej redigerbart läge) - rita bara om
+          return;
+        }
+        saveItemSchedule(it, previewStart, previewEnd);
+      };
+
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp, { once: true });
+    });
   });
 }
 
@@ -2349,6 +2616,8 @@ function initGanttControls() {
   const rangeApplyBtn = document.getElementById("ganttRangeApply");
   const rangeResetBtn = document.getElementById("ganttRangeReset");
   const rangeStatusEl = document.getElementById("ganttRangeStatus");
+  const editableCheckbox = document.getElementById("ganttEditable");
+  const editableHintEl = document.getElementById("ganttEditableHint");
 
   groupSel.value = ganttGroupBy;
   sortSel.value = ganttSortBy;
@@ -2357,6 +2626,16 @@ function initGanttControls() {
   if (ganttRangeStart) rangeStartInput.value = ganttRangeStart;
   if (ganttRangeEnd) rangeEndInput.value = ganttRangeEnd;
   updateGanttRangeStatus(rangeStatusEl);
+  if (editableCheckbox) {
+    editableCheckbox.checked = ganttEditable;
+    if (editableHintEl) editableHintEl.classList.toggle("hidden", !ganttEditable);
+    editableCheckbox.onchange = () => {
+      ganttEditable = editableCheckbox.checked;
+      saveGanttPrefs();
+      if (editableHintEl) editableHintEl.classList.toggle("hidden", !ganttEditable);
+      renderGantt(getFilteredItems());
+    };
+  }
 
   groupSel.onchange = () => {
     ganttGroupBy = groupSel.value;
@@ -2550,6 +2829,63 @@ function bindRowActions(el, type, opts) {
    slutdatum (baserat på slutdatum, inte bara status, så listan även
    fångar objekt vars status inte hunnit uppdateras manuellt).
    ------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------
+   Beroenden mellan objekt (plan_items.depends_on, satt i 4D-planering) -
+   Victors förfrågan 2026-09-21: "det går inte att säga 'gjutning av Pelare
+   B kan inte börja förrän formning av Pelare A är klar'. Utan det blir
+   schemat en samling isolerade staplar snarare än en riktig tidplan, och
+   det är svårt att räkna ut vad en försening faktiskt får för konsekvenser
+   nedströms." Byggs mot HELA `items` (inte det filtrerade urvalet) så att
+   en kedja alltid är komplett även om ett steg i den råkar vara bortfiltrerat.
+   ------------------------------------------------------------------- */
+function itemsByIdAll() {
+  return new Map(items.map(it => [it.id, it]));
+}
+
+// Alla objekt (direkt eller indirekt, transitivt) vars depends_on-kedja
+// till slut leder till `itemId` - dvs den nedströms-konsekvens en försening
+// av `itemId` skulle få. BFS "baklänges" över depends_on-kanterna.
+function downstreamOf(itemId, byId) {
+  const result = [];
+  const seen = new Set([itemId]);
+  let frontier = [itemId];
+  while (frontier.length) {
+    const next = [];
+    items.forEach(it => {
+      if (seen.has(it.id)) return;
+      if (Array.isArray(it.dependsOn) && it.dependsOn.some(depId => frontier.includes(depId))) {
+        seen.add(it.id);
+        next.push(it.id);
+        result.push(it);
+      }
+    });
+    frontier = next;
+  }
+  return result;
+}
+
+// Objekt vars planerade start riskerar att krocka med ett ofärdigt
+// beroendes (verkliga, annars planerade) slutdatum - samma beräkning som
+// gantt-bar-risk-flaggan i renderGantt, men över HELA projektet (inte bara
+// det som råkar synas i Gantt-schemat just nu) så bevakningsbannern och
+// "Planstabilitet" kan räkna på den oavsett filter/zoom.
+function computeDependencyRisks() {
+  const byId = itemsByIdAll();
+  const risks = [];
+  items.forEach(it => {
+    if (!Array.isArray(it.dependsOn) || it.dependsOn.length === 0) return;
+    const overlapping = it.dependsOn
+      .map(id => byId.get(id))
+      .filter(p => p && p.status !== "klar")
+      .filter(p => {
+        const predEnd = p.actualEndDate || p.endDate;
+        return predEnd && it.startDate && predEnd >= it.startDate;
+      });
+    if (overlapping.length > 0) risks.push({ it, blockers: overlapping, downstreamCount: downstreamOf(it.id, byId).length });
+  });
+  return risks;
+}
+
 function computeDelayedList(list) {
   const today = todayUTC();
 
@@ -2593,6 +2929,157 @@ function renderDelayedList(list) {
     ? `<div class="hint">+ ${delayed.length - DELAYED_LIST_MAX} till</div>`
     : "";
 
+  el.innerHTML = rows + more;
+}
+
+/* ---------------------------------------------------------------------
+   Bevakningsbanner ("Ingen bevakning/notiser" - Victors förfrågan
+   2026-09-21) - en alltid synlig sammanfattning direkt under headern, så
+   man ser om något kräver uppmärksamhet UTAN att behöva bläddra ner till
+   respektive panel. Räknar på HELA projektet (items/milestones), inte det
+   filtrerade urvalet, så bannern inte råkar dölja något bara för att ett
+   filter råkar stå inställt. Det här täcker "titta på dashboarden och se
+   direkt"-delen; den riktiga "ping utan att behöva öppna appen"-delen
+   sköts av det schemalagda GitHub Actions-jobbet i 4D-data-repot (se
+   BEVAKNING_SETUP.md) som skickar ett automatiskt e-postmeddelande
+   (via ett misslyckat jobb, vilket GitHub redan mejlar ägaren om) när
+   samma villkor slår till.
+   ------------------------------------------------------------------- */
+function renderWatchBanner() {
+  const el = document.getElementById("watchBanner");
+  if (!el) return;
+  if (!isBackendConfigured()) {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+
+  const today = todayUTC();
+  const delayed = computeDelayedList(items);
+  const watchDays = Number.isFinite(settings.watchMilestoneDays) ? settings.watchMilestoneDays : 7;
+  const upcomingMilestones = milestones.filter(m => {
+    if (m.is_done) return false;
+    const td = parseDate(m.target_date);
+    if (!td) return false;
+    const daysUntil = Math.round((td - today) / (24 * 60 * 60 * 1000));
+    return daysUntil >= 0 && daysUntil <= watchDays;
+  }).sort((a, b) => (a.target_date || "").localeCompare(b.target_date || ""));
+  const overdueMilestones = milestones.filter(m => {
+    if (m.is_done) return false;
+    const td = parseDate(m.target_date);
+    return td && td < today;
+  });
+  const depRisks = computeDependencyRisks();
+  const downstreamTotal = depRisks.reduce((sum, r) => sum + r.downstreamCount, 0);
+
+  const chips = [];
+  if (overdueMilestones.length > 0) {
+    chips.push({ level: "danger", action: "milestones", text: `⚠ ${overdueMilestones.length} passerad${overdueMilestones.length === 1 ? "" : "e"} milstolpe${overdueMilestones.length === 1 ? "" : "r"}` });
+  }
+  if (delayed.length > 0) {
+    chips.push({ level: "danger", action: "delayed", text: `⚠ ${delayed.length} ${delayed.length === 1 ? "försenat objekt" : "försenade objekt"}` });
+  }
+  if (depRisks.length > 0) {
+    const downstreamNote = downstreamTotal > 0 ? ` (påverkar ${downstreamTotal} objekt nedströms)` : "";
+    chips.push({ level: "danger", action: "gantt", text: `⚠ ${depRisks.length} objekt riskerar försening pga beroenden${downstreamNote}` });
+  }
+  if (upcomingMilestones.length > 0) {
+    const names = upcomingMilestones.slice(0, 3).map(m => m.name).join(", ");
+    chips.push({ level: "warn", action: "milestones", text: `⏰ ${upcomingMilestones.length} milstolpe${upcomingMilestones.length === 1 ? "" : "r"} inom ${watchDays} dagar: ${names}` });
+  }
+
+  if (chips.length === 0) {
+    el.className = "watch-banner watch-ok";
+    el.innerHTML = `<span class="watch-item ok">✓ Inga försenade objekt, passerade milstolpar eller beroenderisker just nu.</span>`;
+    return;
+  }
+
+  el.className = "watch-banner watch-alert";
+  el.innerHTML = chips.map(c => `<button type="button" class="watch-item ${c.level}" data-scroll-to="${c.action}">${escapeHtml(c.text)}</button>`).join("");
+  el.querySelectorAll("[data-scroll-to]").forEach(btn => {
+    btn.onclick = () => {
+      const targetId = { milestones: "milestonesList", delayed: "delayedList", gantt: "ganttChart" }[btn.dataset.scrollTo];
+      const target = targetId && document.getElementById(targetId);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Planstabilitet ("Ingen baseline" - Victors förfrågan 2026-09-21) - visar
+   hur mycket varje objekts start-/slutdatum har flyttats sedan de först
+   sattes, baserat på plan_item_baseline_history (fylls på av 4D-planering
+   vid varje datumändring, se logBaselineHistory där, samt av dashboardens
+   egen dra-och-släpp-omschemaläggning, se saveItemSchedule). Ett objekt
+   utan några ändringar (bara EN historikrad) har aldrig flyttats och visas
+   inte här - panelen är till för att hitta de KRONISKT instabila delarna
+   av projektet, inte för att lista allt.
+   ------------------------------------------------------------------- */
+function computeBaselineDrift() {
+  const byItem = new Map();
+  baselineHistory.forEach(row => {
+    const list = byItem.get(row.plan_item_id) || [];
+    list.push(row);
+    byItem.set(row.plan_item_id, list);
+  });
+  const byId = itemsByIdAll();
+  const drift = [];
+  byItem.forEach((rows, itemId) => {
+    if (rows.length < 2) return; // aldrig ändrat sedan det först sattes
+    const sorted = rows.slice().sort((a, b) => (a.recorded_at || "").localeCompare(b.recorded_at || ""));
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const it = byId.get(itemId);
+    const startDriftDays = (first.start_date && last.start_date) ? daysBetweenIso(first.start_date, last.start_date) : null;
+    const endDriftDays = (first.end_date && last.end_date) ? daysBetweenIso(first.end_date, last.end_date) : null;
+    const maxDrift = Math.max(Math.abs(startDriftDays || 0), Math.abs(endDriftDays || 0));
+    if (maxDrift === 0) return; // datum ändrades tekniskt (ny historikrad) men landade på samma värden
+    drift.push({
+      it,
+      itemId,
+      itemLabelText: it ? itemLabel(it) : "(borttaget objekt)",
+      changeCount: sorted.length - 1,
+      first,
+      last,
+      startDriftDays,
+      endDriftDays,
+      maxDrift
+    });
+  });
+  return drift.sort((a, b) => (b.changeCount - a.changeCount) || (b.maxDrift - a.maxDrift));
+}
+
+function renderStability() {
+  const el = document.getElementById("stabilityList");
+  if (!el) return;
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+  const drift = computeBaselineDrift();
+  if (drift.length === 0) {
+    el.innerHTML = `<div class="hint">Inga objekt har flyttat sina datum ännu (eller så finns ingen historik än sedan den här funktionen infördes 2026-09-21).</div>`;
+    return;
+  }
+  const STABILITY_MAX = 20;
+  const shown = drift.slice(0, STABILITY_MAX);
+  const rows = shown.map(d => {
+    const arrowLabel = (label, from, to) => from === to
+      ? `${escapeHtml(label)}: ${escapeHtml(from || "?")} (oförändrat)`
+      : `${escapeHtml(label)}: ${escapeHtml(from || "?")} → ${escapeHtml(to || "?")}`;
+    return `
+      <div class="stability-row">
+        <div class="stability-head">
+          <span class="stability-label" title="${escapeHtml(d.itemLabelText)}">${escapeHtml(d.itemLabelText)}</span>
+          <span class="stability-count">${d.changeCount} ändring${d.changeCount === 1 ? "" : "ar"}</span>
+        </div>
+        <div class="stability-dates">
+          ${arrowLabel("Start", d.first.start_date, d.last.start_date)} · ${arrowLabel("Slut", d.first.end_date, d.last.end_date)}
+        </div>
+        <div class="hint">Ursprungligen satt ${formatDateSv(d.first.recorded_at)}, senast ändrad ${formatDateSv(d.last.recorded_at)}.</div>
+      </div>`;
+  }).join("");
+  const more = drift.length > STABILITY_MAX ? `<div class="hint">+ ${drift.length - STABILITY_MAX} till</div>` : "";
   el.innerHTML = rows + more;
 }
 

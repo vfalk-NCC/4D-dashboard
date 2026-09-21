@@ -19,6 +19,30 @@ body {
 
 #app { padding: 10px; }
 
+/* Bevakningsbanner (renderWatchBanner) - alltid synlig direkt under
+   headern så en försening/passerad milstolpe/beroenderisk syns utan att
+   behöva scrolla ner till respektive panel. Se Victors förfrågan
+   2026-09-21 om "ingen bevakning/notiser". */
+.watch-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.watch-item {
+  border: none;
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.watch-item.ok { background: #eaf7ee; color: #15803d; cursor: default; }
+.watch-item.warn { background: #fff4e5; color: #b45309; }
+.watch-item.danger { background: #fdecea; color: #b3261e; }
+.watch-item.danger:hover, .watch-item.warn:hover { filter: brightness(0.96); }
+
 header {
   display: flex;
   align-items: center;
@@ -702,6 +726,23 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 }
 .gantt-bar-sub { top: 3px; height: 8px; background: #5c85bf; border-radius: 3px; cursor: pointer; }
 
+/* Beroenden (Victors förfrågan 2026-09-21) - liten märkning i etiketten
+   (🔗/⚠, se rowsHtmlFor) och en varnande streckad ring runt staplar som
+   riskerar försening pga ett ofärdigt beroende. Klick-för-att-visa-kedjan
+   och dra-för-att-schemalägga-om hanteras i bindGanttInteractions. */
+.gantt-dep-badge { margin-left: 4px; font-size: 10px; cursor: help; }
+.gantt-dep-badge.risk { color: #b3261e; }
+.gantt-bar-risk { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px #e5484d; }
+.gantt-bar-draggable { cursor: grab; }
+.gantt-bar-draggable:active, .gantt-bar-dragging { cursor: grabbing; }
+.gantt-bar-dragging { opacity: 0.75; z-index: 2; }
+
+/* Highlightad beroendekedja - övriga rader tonas ned så kedjan (fokus +
+   dess uppströms-/nedströms-objekt) sticker ut. */
+.gantt-row-dim { opacity: 0.25; }
+.gantt-row-chain-focus .gantt-bar { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gantt-row-chain-related .gantt-bar { outline: 2px dashed var(--accent); outline-offset: 1px; }
+
 .gantt-tooltip {
   position: fixed;
   z-index: 1000;
@@ -813,6 +854,30 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Planstabilitet (renderStability) - se Victors förfrågan 2026-09-21 om
+   att se hur planen själv har ändrats över tid, inte bara planerat vs
+   verkligt. */
+.stability-list { display: flex; flex-direction: column; gap: 8px; }
+.stability-row { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.stability-row:last-child { border-bottom: none; padding-bottom: 0; }
+.stability-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.stability-label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stability-count {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  color: #b45309;
+  background: #fff4e5;
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+.stability-dates { font-size: 11px; color: var(--text); margin-top: 2px; }
+
 .delayed-row .delayed-days {
   color: #e5484d;
   font-weight: 700;
