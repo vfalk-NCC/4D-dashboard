@@ -84,55 +84,73 @@
     <!-- ===== Gantt-schema ===== -->
     <section class="panel" data-panel-id="gantt">
       <h2>Gantt-schema</h2>
-      <p class="hint">En rad per objekt (planerat start-slut). Klicka på pilen för att fälla ut objektets
-        delaktiviteter, eller på objektnamnet för att markera det i 3D-modellen (där det går). Hovra (eller
-        tabba till) en stapel för detaljer. Helger är skuggade, dagens datum är markerat med en linje.</p>
+      <p id="ganttHelp" class="hint gantt-help hidden">Staplar: en rad per objekt (planerat start–slut). Klicka på pilen för att fälla ut
+        delaktiviteter, eller på namnet för att markera objektet i 3D-modellen. Hovra en stapel för detaljer.
+        Helger är skuggade och dagens datum är markerat. Tavla: aktiviteterna som post-it-lappar per vecka – en lapp
+        sträcker sig över de veckor aktiviteten pågår, färgad efter entreprenör/område och med statusen i kanten.</p>
 
-      <div class="gantt-toolbar">
-        <label class="gantt-toolbar-field">Gruppera
-          <select id="ganttGroupBy">
-            <option value="">Inget</option>
-            <option value="area">Område</option>
-            <option value="contractor">Entreprenör</option>
-            <option value="activity">Aktivitet</option>
-          </select>
-        </label>
-        <label class="gantt-toolbar-field">Sortera
-          <select id="ganttSortBy">
-            <option value="startDate">Startdatum</option>
-            <option value="contractor">Entreprenör</option>
-            <option value="status">Status</option>
-            <option value="name">Namn</option>
-          </select>
-        </label>
-        <button type="button" id="ganttDensityToggle" class="gantt-toolbar-btn">Kompakt</button>
-        <div class="gantt-zoom-group">
-          <button type="button" id="ganttZoomOut" class="gantt-toolbar-btn" title="Zooma ut">−</button>
-          <button type="button" id="ganttZoomFit" class="gantt-toolbar-btn" title="Anpassa till bredden">Anpassa</button>
-          <button type="button" id="ganttZoomIn" class="gantt-toolbar-btn" title="Zooma in">+</button>
+      <div class="gantt-head">
+        <div class="gantt-head-row">
+          <div class="gantt-seg" role="tablist" aria-label="Visningsläge">
+            <button type="button" class="gantt-seg-btn" data-gantt-view="bars" role="tab">▤ Staplar</button>
+            <button type="button" class="gantt-seg-btn" data-gantt-view="board" role="tab">🗒 Tavla</button>
+          </div>
+          <label class="gantt-toolbar-field">Gruppera
+            <select id="ganttGroupBy">
+              <option value="">Inget</option>
+              <option value="area">Område</option>
+              <option value="contractor">Entreprenör</option>
+              <option value="activity">Aktivitet</option>
+            </select>
+          </label>
+          <label class="gantt-toolbar-field gantt-bars-only">Sortera
+            <select id="ganttSortBy">
+              <option value="startDate">Startdatum</option>
+              <option value="contractor">Entreprenör</option>
+              <option value="status">Status</option>
+              <option value="name">Namn</option>
+            </select>
+          </label>
+          <label class="gantt-toolbar-field gantt-board-only">Färga efter
+            <select id="ganttColorBy">
+              <option value="contractor">Entreprenör</option>
+              <option value="area">Område</option>
+              <option value="activity">Aktivitet</option>
+            </select>
+          </label>
+          <span class="gantt-head-spacer"></span>
+          <button type="button" id="ganttDensityToggle" class="gantt-toolbar-btn gantt-bars-only">Kompakt</button>
+          <div class="gantt-zoom-group gantt-bars-only">
+            <button type="button" id="ganttZoomOut" class="gantt-toolbar-btn" title="Zooma ut">−</button>
+            <button type="button" id="ganttZoomFit" class="gantt-toolbar-btn" title="Anpassa till bredden">Anpassa</button>
+            <button type="button" id="ganttZoomIn" class="gantt-toolbar-btn" title="Zooma in">+</button>
+          </div>
+          <button type="button" id="ganttHelpBtn" class="gantt-toolbar-btn gantt-help-btn" title="Visa/dölj hjälp" aria-expanded="false">?</button>
+        </div>
+
+        <div class="gantt-head-row gantt-head-sub gantt-range-row">
+          <span class="gantt-sub-label">Period</span>
+          <div class="gantt-chips">
+            <button type="button" class="gantt-chip" data-gantt-weeks="2">2 v</button>
+            <button type="button" class="gantt-chip" data-gantt-weeks="4">4 v</button>
+            <button type="button" class="gantt-chip" data-gantt-weeks="13">3 mån</button>
+            <button type="button" id="ganttRangeReset" class="gantt-chip" title="Hela spannet (auto)">Allt</button>
+          </div>
+          <label class="gantt-toolbar-field"><input type="date" id="ganttRangeStart" aria-label="Visa från" /></label>
+          <span class="gantt-sub-dash">–</span>
+          <label class="gantt-toolbar-field"><input type="date" id="ganttRangeEnd" aria-label="Visa till" /></label>
+          <button type="button" id="ganttRangeApply" class="gantt-toolbar-btn">Använd</button>
+          <span id="ganttRangeStatus" class="hint gantt-range-status"></span>
+          <span class="gantt-head-spacer"></span>
+          <label class="gantt-pill gantt-bars-only" title="Visar verkliga start/slut som en streckad stapel under den planerade">
+            <input type="checkbox" id="ganttShowActual" /> Verkligt
+          </label>
+          <label class="gantt-pill gantt-bars-only" title="Dra i en stapel för att flytta den, eller i dess kanter för att ändra start-/slutdatum. Sparas direkt till 4D-data (samma som ett sparat formulär i 4D-planering).">
+            <input type="checkbox" id="ganttEditable" /> Redigerbar
+          </label>
         </div>
       </div>
-      <div class="gantt-toolbar gantt-toggle-row">
-        <label class="gantt-actual-toggle">
-          <input type="checkbox" id="ganttShowActual" /> Visa verkligt (där ifyllt)
-        </label>
-        <label class="gantt-actual-toggle" title="Dra i en stapel för att flytta den, eller i dess kanter för att ändra start-/slutdatum. Sparas direkt till 4D-data (samma som ett sparat formulär i 4D-planering).">
-          <input type="checkbox" id="ganttEditable" /> Redigerbar (dra för att schemalägga om)
-        </label>
-      </div>
       <div id="ganttEditableHint" class="hint hidden">✏️ Redigerbart läge: dra i en stapel för att flytta den, eller i dess vänster-/högerkant för att ändra start- eller slutdatum. Ändringen sparas direkt.</div>
-
-      <div class="gantt-toolbar gantt-range-row">
-        <label class="gantt-toolbar-field">Visa från
-          <input type="date" id="ganttRangeStart" />
-        </label>
-        <label class="gantt-toolbar-field">till
-          <input type="date" id="ganttRangeEnd" />
-        </label>
-        <button type="button" id="ganttRangeApply" class="gantt-toolbar-btn">Använd</button>
-        <button type="button" id="ganttRangeReset" class="gantt-toolbar-btn">Auto (hela spannet)</button>
-        <span id="ganttRangeStatus" class="hint gantt-range-status"></span>
-      </div>
 
       <div id="ganttLegend" class="gantt-legend"></div>
       <div id="ganttNotes" class="hint"></div>

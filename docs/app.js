@@ -33,6 +33,9 @@ let ganttRangeStart = null;        // eget visat datumintervall (annars auto uti
 let ganttRangeEnd = null;
 let ganttTooltipEl = null;         // återanvänd DOM-nod för hover-/fokustooltip, se ensureGanttTooltip()
 const GANTT_PREFS_KEY = "4ddash-gantt-prefs";
+let ganttView = "bars";            // "bars" (klassiska staplar) | "board" (post-it-tavla per vecka)
+let ganttColorBy = "contractor";   // tavlans lappfärg: "contractor" | "area" | "activity"
+let ganttBoardScrolled = false;    // tavlan har scrollats till dagens vecka en gång
 const GANTT_ZOOM_LEVELS = [3, 6, 10, 18, 30, 50]; // px per dag, stigande zoomnivåer
 // Bredden (px) som toggle- och etikettkolumnerna + mellanrummen äter av varje
 // rad (.gantt-row { grid-template-columns: 14px 110px 1fr; gap: 6px; }) -
@@ -1512,21 +1515,42 @@ function computeLookahead(list) {
   return weeks;
 }
 
-function lookaheadCategoryHtml(label, list, extraClass) {
-  const names = [...new Set(list.map(itemLabel))];
-  return `
-    <div class="lookahead-category${extraClass ? " " + extraClass : ""}">
-      <div class="lookahead-category-head">
-        <span class="lookahead-category-label">${escapeHtml(label)}</span>
-        <span class="lookahead-category-count">${names.length}</span>
-      </div>
-      ${names.length === 0
-        ? `<div class="lookahead-empty">–</div>`
-        : `<ul class="lookahead-item-list">
-            ${names.slice(0, LOOKAHEAD_LIST_MAX).map(n => `<li title="${escapeHtml(n)}">${escapeHtml(n)}</li>`).join("")}
-            ${names.length > LOOKAHEAD_LIST_MAX ? `<li class="lookahead-more">+ ${names.length - LOOKAHEAD_LIST_MAX} till</li>` : ""}
-          </ul>`}
-    </div>`;
+/* Kommande veckor som post-it-lappar (Victors synpunkt 2026-09-28: "det
+   står vad som ska göras men inte vilket område"). Varje vecka får en rad
+   med nyckeltal som också fungerar som filter, och aktiviteterna samlas på
+   en lapp per område i en svag, egen färg (samma färg som området har i
+   Gantt-schemats tavla). */
+const LOOKAHEAD_NOTE_MAX = 7;
+const WEEKDAYS_SV = ["sön", "mån", "tis", "ons", "tor", "fre", "lör"];
+const lookaheadFilter = new Map();   // veckoindex -> "active"|"starting"|"done"|"delayed"|"blocked"
+const lookaheadExpanded = new Set(); // "vecka|område" som visar alla rader
+
+function shortDateSv(d) {
+  return `${d.getUTCDate()} ${GANTT_MONTH_NAMES_SV[d.getUTCMonth()]}`;
+}
+function weekdayDateSv(value) {
+  const d = parseDate(value);
+  return d ? `${WEEKDAYS_SV[d.getUTCDay()]} ${d.getUTCDate()}/${d.getUTCMonth() + 1}` : "";
+}
+
+function lookaheadItemHtml(it, w) {
+  const sd = parseDate(it.startDate), ed = parseDate(it.endDate);
+  const starting = sd && sd >= w.start && sd <= w.end;
+  const due = ed && ed >= w.start && ed <= w.end;
+  const tags = [];
+  if (itemHasOpenBlocker(it)) tags.push(`<span class="la-tag la-tag-blocked">⛔ Hinder</span>`);
+  if (it.status === "forsenad") tags.push(`<span class="la-tag la-tag-late">Försenad</span>`);
+  if (starting) tags.push(`<span class="la-tag la-tag-start">Start ${escapeHtml(weekdayDateSv(it.startDate))}</span>`);
+  else if (due && it.status === "klar") tags.push(`<span class="la-tag la-tag-done">✓ Klar</span>`);
+  else if (due) tags.push(`<span class="la-tag">Slut ${escapeHtml(weekdayDateSv(it.endDate))}</span>`);
+  const name = itemLabel(it);
+  const sub = [it.activity && !name.includes(it.activity) ? it.activity : "", it.contractor].filter(Boolean).join(" · ");
+  const canSelect = Boolean(it.modelId && it.objectId);
+  return `<li class="la-item${starting ? " la-item-start" : ""}"${canSelect ? ` data-action="la-select" data-item-id="${escapeHtml(String(it.id))}" title="Klicka för att markera i 3D-modellen"` : ""}>
+      <span class="la-dot" style="background:${STATUS_COLORS[it.status] || STATUS_COLORS.planerad}" title="${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}"></span>
+      <span class="la-text"><span class="la-name">${escapeHtml(name)}</span>${sub ? `<span class="la-sub">${escapeHtml(sub)}</span>` : ""}</span>
+      <span class="la-tags">${tags.join("")}</span>
+    </li>`;
 }
 
 function renderLookahead(list) {
@@ -1538,18 +1562,115 @@ function renderLookahead(list) {
   }
 
   const weeks = computeLookahead(list);
+  const cats = [
+    { key: "active", label: "pågår", cls: "" },
+    { key: "starting", label: "startar", cls: "la-chip-start" },
+    { key: "done", label: "klara", cls: "la-chip-done" },
+    { key: "delayed", label: "försenade", cls: "la-chip-late" },
+    { key: "blocked", label: "med hinder", cls: "la-chip-blocked" }
+  ];
 
-  el.innerHTML = weeks.map(w => `
-    <div class="lookahead-week-card">
-      <div class="lookahead-week-title">${escapeHtml(w.label)}</div>
-      <div class="lookahead-categories">
-        ${lookaheadCategoryHtml("Aktiviteter denna period", w.active)}
-        ${lookaheadCategoryHtml("Planerade starter", w.starting)}
-        ${lookaheadCategoryHtml("Klara aktiviteter", w.done)}
-        ${lookaheadCategoryHtml("Försenade aktiviteter", w.delayed, w.delayed.length ? "has-issues" : "")}
-        ${lookaheadCategoryHtml("Aktiviteter med hinder", w.blocked, w.blocked.length ? "has-issues" : "")}
+  el.innerHTML = weeks.map((w, wi) => {
+    const filter = lookaheadFilter.get(wi) || "active";
+    const shown = w[filter] || [];
+    // En lapp per område, sorterade på områdesnamn.
+    const byArea = new Map();
+    shown.forEach(it => {
+      const key = it.area || NO_AREA_LABEL;
+      if (!byArea.has(key)) byArea.set(key, []);
+      byArea.get(key).push(it);
+    });
+    const areaKeys = [...byArea.keys()].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+    const notes = areaKeys.map(area => {
+      const c = softColor("area", area);
+      const areaItems = [...new Map(byArea.get(area).map(it => [it.id, it])).values()].sort((a, b) => {
+        const sa = parseDate(a.startDate), sb = parseDate(b.startDate);
+        const aStart = sa && sa >= w.start && sa <= w.end, bStart = sb && sb >= w.start && sb <= w.end;
+        if (aStart !== bStart) return aStart ? -1 : 1;
+        return (a.startDate || "").localeCompare(b.startDate || "") || itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true });
+      });
+      const expKey = `${wi}|${area}`;
+      const expanded = lookaheadExpanded.has(expKey);
+      const visibleItems = expanded ? areaItems : areaItems.slice(0, LOOKAHEAD_NOTE_MAX);
+      const rest = areaItems.length - visibleItems.length;
+      return `<div class="la-note" style="--bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink};">
+          <div class="la-note-head"><span class="la-note-title" title="${escapeHtml(area)}">${escapeHtml(area)}</span><span class="la-note-count">${areaItems.length}</span></div>
+          <ul class="la-list">${visibleItems.map(it => lookaheadItemHtml(it, w)).join("")}</ul>
+          ${rest > 0 ? `<button type="button" class="la-more" data-action="la-expand" data-key="${escapeHtml(expKey)}">+ ${rest} till</button>`
+            : (expanded && areaItems.length > LOOKAHEAD_NOTE_MAX ? `<button type="button" class="la-more" data-action="la-expand" data-key="${escapeHtml(expKey)}">Visa färre</button>` : "")}
+        </div>`;
+    }).join("");
+
+    const end = w.end;
+    const chips = cats.map(c => {
+      const n = new Set((w[c.key] || []).map(it => it.id)).size;
+      return `<button type="button" class="la-chip ${c.cls}${filter === c.key ? " active" : ""}${n === 0 ? " zero" : ""}" data-action="la-filter" data-week="${wi}" data-filter="${c.key}"><b>${n}</b> ${c.label}</button>`;
+    }).join("");
+    const emptyText = { active: "Inget pågår den här veckan.", starting: "Inget startar den här veckan.", done: "Inget klarmarkerat den här veckan.", delayed: "Inget försenat den här veckan.", blocked: "Inga hinder den här veckan." }[filter];
+
+    return `
+    <div class="la-week${wi === 0 ? " la-week-current" : ""}">
+      <div class="la-week-head">
+        <div class="la-week-title">
+          <span class="la-week-name">${escapeHtml(w.label)}</span>
+          <span class="la-week-dates">v.${isoWeekNumber(w.start)} · ${escapeHtml(shortDateSv(w.start))} – ${escapeHtml(shortDateSv(end))}</span>
+        </div>
+        <div class="la-chips">${chips}</div>
       </div>
-    </div>`).join("");
+      ${notes ? `<div class="la-notes">${notes}</div>` : `<div class="la-empty">${emptyText}</div>`}
+    </div>`;
+  }).join("");
+
+  el.querySelectorAll('[data-action="la-filter"]').forEach(btn => {
+    btn.onclick = () => { lookaheadFilter.set(Number(btn.dataset.week), btn.dataset.filter); renderLookahead(list); };
+  });
+  el.querySelectorAll('[data-action="la-expand"]').forEach(btn => {
+    btn.onclick = () => {
+      const k = btn.dataset.key;
+      if (lookaheadExpanded.has(k)) lookaheadExpanded.delete(k); else lookaheadExpanded.add(k);
+      renderLookahead(list);
+    };
+  });
+  el.querySelectorAll('[data-action="la-select"]').forEach(li => {
+    li.onclick = () => selectGanttItemInModel(items.find(it => String(it.id) === li.dataset.itemId));
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Svaga "post-it"-färger per område/entreprenör/aktivitet. Tilldelas i
+   bokstavsordning över ALLA inlästa objekt (inte bara filtret), så samma
+   område har samma färg i Kommande veckor och i Gantt-schemat, och
+   färgerna inte hoppar när man filtrerar.
+   ------------------------------------------------------------------- */
+const SOFT_PALETTE = [
+  { bg: "#fff6bf", bd: "#e9cf5b", ink: "#5c4a00" }, // gul
+  { bg: "#dbeafe", bd: "#8fb4ec", ink: "#1e3a70" }, // blå
+  { bg: "#dcf5e6", bd: "#83cda4", ink: "#155a37" }, // mint
+  { bg: "#ffe3cf", bd: "#f0ad7a", ink: "#743a07" }, // persika
+  { bg: "#ece3ff", bd: "#b9a0f0", ink: "#40277a" }, // lila
+  { bg: "#d6f2f3", bd: "#7cc5c8", ink: "#0f5357" }, // turkos
+  { bg: "#ffdfe8", bd: "#ee9ab2", ink: "#761e3b" }, // rosa
+  { bg: "#edf6d2", bd: "#b1d271", ink: "#435710" }, // lime
+  { bg: "#f2e9d8", bd: "#cbb189", ink: "#574222" }, // sand
+  { bg: "#e2f1fd", bd: "#86c2ea", ink: "#0d4a6e" }, // himmel
+  { bg: "#fde4e1", bd: "#e9a39b", ink: "#76261d" }, // korall
+  { bg: "#eceff3", bd: "#b3bcc8", ink: "#37404c" }  // grå
+];
+let softColorMaps = null, softColorItemsRef = null;
+function softColor(kind, key) {
+  if (!softColorMaps || softColorItemsRef !== items) {
+    softColorItemsRef = items;
+    softColorMaps = {};
+    [["area", NO_AREA_LABEL], ["contractor", NO_CONTRACTOR_LABEL], ["activity", NO_ACTIVITY_LABEL]].forEach(([k, none]) => {
+      const keys = [...new Set(items.map(it => it[k] || none))].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+      softColorMaps[k] = new Map(keys.map((v, i) => [v, SOFT_PALETTE[i % SOFT_PALETTE.length]]));
+    });
+  }
+  const map = softColorMaps[kind];
+  if (map && map.has(key)) return map.get(key);
+  let h = 0;
+  for (const ch of String(key || "")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return SOFT_PALETTE[h % SOFT_PALETTE.length];
 }
 
 /* ---------------------------------------------------------------------
@@ -1902,6 +2023,8 @@ function loadGanttPrefs() {
     if (typeof prefs.rangeStart === "string" || prefs.rangeStart === null) ganttRangeStart = prefs.rangeStart;
     if (typeof prefs.rangeEnd === "string" || prefs.rangeEnd === null) ganttRangeEnd = prefs.rangeEnd;
     if (typeof prefs.editable === "boolean") ganttEditable = prefs.editable;
+    if (prefs.view === "bars" || prefs.view === "board") ganttView = prefs.view;
+    if (["contractor", "area", "activity"].includes(prefs.colorBy)) ganttColorBy = prefs.colorBy;
   } catch (e) {
     console.warn("Kunde inte läsa sparade Gantt-inställningar", e);
   }
@@ -1919,7 +2042,9 @@ function saveGanttPrefs() {
       collapsedGroups: [...ganttCollapsedGroups],
       rangeStart: ganttRangeStart,
       rangeEnd: ganttRangeEnd,
-      editable: ganttEditable
+      editable: ganttEditable,
+      view: ganttView,
+      colorBy: ganttColorBy
     }));
   } catch (e) {
     console.warn("Kunde inte spara Gantt-inställningar", e);
@@ -2187,6 +2312,8 @@ function renderGantt(list) {
   // istället för bara en gång vid start - annars hamnar den på fel färger
   // efter att en statusfärg ändrats i Inställningar (se initStatusColorControls).
   renderGanttLegend();
+  applyGanttViewClass();
+  if (ganttView === "board") { renderGanttBoard(list); return; }
   const withDates = list.filter(it => it.startDate && it.endDate);
 
   if (withDates.length === 0) {
@@ -2294,7 +2421,7 @@ function renderGantt(list) {
   const comparator = ganttComparator(ganttSortBy);
   const sorted = visible.slice().sort(comparator);
 
-  function rowsHtmlFor(it) {
+  function rowsHtmlFor(it, groupColor) {
     const itemActivities = (activitiesByItem.get(it.id) || []).filter(a => a.start_date && a.end_date);
     const hasActivities = itemActivities.length > 0;
     const expanded = ganttExpandedIds.has(it.id);
@@ -2356,7 +2483,7 @@ function renderGantt(list) {
     // (Ej planerad/Planerad) nästan försvann helt i den gamla urblekta
     // "meter"-designen.
     const rowHtml = `
-      <div class="${rowClass}">
+      <div class="${rowClass}"${groupColor ? ` style="--grp:${groupColor.bd}; --grp-bg:${groupColor.bg};"` : ""}>
         <span class="gantt-toggle${hasActivities ? "" : " gantt-toggle-empty"}"${hasActivities ? ` data-action="toggle-gantt" data-item-id="${escapeHtml(String(it.id))}"` : ""}>${hasActivities ? (expanded ? "▾" : "▸") : ""}</span>
         <span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}${depBadgeHtml}</span>
         <div class="gantt-track">
@@ -2397,15 +2524,16 @@ function renderGantt(list) {
       const groupItems = groups.get(key);
       const collapseKey = `${ganttGroupBy}:${key}`;
       const collapsed = ganttCollapsedGroups.has(collapseKey);
+      const gc = softColor(ganttGroupBy, key);
       const header = `
-        <div class="gantt-group" data-action="toggle-gantt-group" data-group-key="${escapeHtml(collapseKey)}">
+        <div class="gantt-group gantt-group-colored" style="--grp:${gc.bd}; --grp-bg:${gc.bg}; --grp-ink:${gc.ink};" data-action="toggle-gantt-group" data-group-key="${escapeHtml(collapseKey)}">
           <span class="gantt-group-sticky">
             <span class="gantt-group-arrow">${collapsed ? "▸" : "▾"}</span>
             <span>${escapeHtml(key)}</span>
             <span class="gantt-group-count">(${groupItems.length})</span>
           </span>
         </div>`;
-      const body = collapsed ? "" : groupItems.map(rowsHtmlFor).join("");
+      const body = collapsed ? "" : groupItems.map(it => rowsHtmlFor(it, gc)).join("");
       return header + body;
     }).join("");
   } else {
@@ -2432,6 +2560,158 @@ function renderGantt(list) {
   }
 
   bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays });
+}
+
+
+/* ---------------------------------------------------------------------
+   Gantt som post-it-tavla (Victors förfrågan 2026-09-28) - ett alternativ
+   till staplarna. En kolumn per vecka, en "sim-bana" per grupp (Gruppera),
+   och varje aktivitet som en lapp som sträcker sig över de veckor den
+   pågår. Lappens färg = entreprenör/område/aktivitet (Färga efter), dess
+   vänsterkant = status, och en tunn stapel längst ned = framdrift.
+   ------------------------------------------------------------------- */
+const BOARD_COL_PX = 150;
+const BOARD_LANE_PX = 150;
+
+function applyGanttViewClass() {
+  const panel = document.querySelector('section.panel[data-panel-id="gantt"]');
+  if (panel) panel.classList.toggle("gantt-view-board", ganttView === "board");
+  document.querySelectorAll("[data-gantt-view]").forEach(btn => {
+    const on = btn.dataset.ganttView === ganttView;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  });
+}
+
+function renderGanttBoard(list) {
+  const el = document.getElementById("ganttChart");
+  const notesEl = document.getElementById("ganttNotes");
+  const withDates = list.filter(it => it.startDate && it.endDate);
+  if (withDates.length === 0) {
+    el.className = "gantt-chart gantt-board-chart";
+    el.innerHTML = `<div class="hint">${isBackendConfigured() ? "Inga objekt med både start- och slutdatum att visa ännu." : emptyMessage()}</div>`;
+    if (notesEl) notesEl.innerHTML = "";
+    return;
+  }
+  let domainStart, domainEnd;
+  if (ganttRangeStart && ganttRangeEnd) {
+    domainStart = ganttRangeStart; domainEnd = ganttRangeEnd;
+  } else {
+    const all = withDates.flatMap(it => [it.startDate, it.endDate]).sort();
+    domainStart = all[0]; domainEnd = all[all.length - 1];
+  }
+  const w0 = startOfWeekUTC(parseDate(domainStart));
+  const wEnd = startOfWeekUTC(parseDate(domainEnd));
+  const nWeeks = Math.max(1, Math.round((wEnd - w0) / (7 * 86400000)) + 1);
+  const colOf = iso => Math.round((startOfWeekUTC(parseDate(iso)) - w0) / (7 * 86400000));
+  const todayCol = Math.round((startOfWeekUTC(todayUTC()) - w0) / (7 * 86400000));
+
+  const visible = withDates.filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
+  const skippedNoDate = list.length - withDates.length;
+  const skippedRange = withDates.length - visible.length;
+  const depById = itemsByIdAll();
+  const tooltips = new Map();
+
+  const weeksHtml = Array.from({ length: nWeeks }, (_, i) => {
+    const ws = new Date(w0); ws.setUTCDate(ws.getUTCDate() + i * 7);
+    const we = new Date(ws); we.setUTCDate(we.getUTCDate() + 6);
+    return `<div class="board-week${i === todayCol ? " board-week-today" : ""}"><b>v.${isoWeekNumber(ws)}</b><span>${escapeHtml(shortDateSv(ws))} – ${escapeHtml(shortDateSv(we))}</span></div>`;
+  }).join("");
+
+  const colorKind = ganttColorBy;
+  const noneFor = { area: NO_AREA_LABEL, contractor: NO_CONTRACTOR_LABEL, activity: NO_ACTIVITY_LABEL };
+  const noteHtml = it => {
+    const c0 = Math.max(0, colOf(it.startDate));
+    const c1 = Math.min(nWeeks - 1, colOf(it.endDate));
+    const c = softColor(colorKind, it[colorKind] || noneFor[colorKind]);
+    const st = STATUS_COLORS[it.status] || STATUS_COLORS.planerad;
+    const name = itemLabel(it);
+    const subParts = [];
+    if (it.activity && ganttGroupBy !== "activity" && !name.includes(it.activity)) subParts.push(it.activity);
+    if (it.area && ganttGroupBy !== "area" && !name.includes(it.area)) subParts.push(it.area);
+    if (it.contractor && ganttGroupBy !== "contractor") subParts.push(it.contractor);
+    const prog = Math.max(0, Math.min(100, Number(it.progress) || 0));
+    const key = `b${tooltips.size}`;
+    tooltips.set(key, ganttTooltipHtmlForItem(it, depById));
+    // Liten, stabil lutning per lapp - som riktiga post-it-lappar på en vägg.
+    let h = 0; for (const ch of String(it.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const tilt = ((h % 7) - 3) * 0.25;
+    const late = it.status === "forsenad", blocked = itemHasOpenBlocker(it);
+    return `<div class="pnote${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}" style="grid-column:${c0 + 1} / ${c1 + 2}; --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${tilt}deg;"
+        data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0">
+        <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</div>
+        ${subParts.length ? `<div class="pnote-sub">${escapeHtml(subParts.join(" · "))}</div>` : ""}
+        <div class="pnote-meta"><span class="pnote-status"><i style="background:${st}"></i>${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}</span><span>${escapeHtml(weekdayDateSv(it.startDate))} – ${escapeHtml(weekdayDateSv(it.endDate))}</span></div>
+        <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span></div>
+      </div>`;
+  };
+
+  const sorted = visible.slice().sort((a, b) => (a.startDate || "").localeCompare(b.startDate || "") || itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
+  const lanes = new Map();
+  sorted.forEach(it => {
+    const k = ganttGroupBy ? ganttGroupKeyFor(it) : "Alla aktiviteter";
+    if (!lanes.has(k)) lanes.set(k, []);
+    lanes.get(k).push(it);
+  });
+  const laneKeys = [...lanes.keys()].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+  // Kolumnbredd: minst BOARD_COL_PX, men fyll panelens bredd vid korta perioder.
+  const avail = (el.clientWidth || 0) - BOARD_LANE_PX - 2;
+  const colPx = Math.max(BOARD_COL_PX, Math.floor(avail / nWeeks) || 0);
+  const todayOn = todayCol >= 0 && todayCol < nWeeks;
+  const gridBg = `--cols:${nWeeks}; --col:${colPx}px; --today-left:${todayOn ? todayCol * colPx : -9999}px;`;
+  const lanesHtml = laneKeys.map(k => {
+    const collapseKey = `${ganttGroupBy}:${k}`;
+    const collapsed = ganttGroupBy && ganttCollapsedGroups.has(collapseKey);
+    const lc = ganttGroupBy ? softColor(ganttGroupBy, k) : SOFT_PALETTE[11];
+    const laneItems = lanes.get(k);
+    return `<div class="board-lane${collapsed ? " collapsed" : ""}">
+        <div class="board-lane-head" style="--bg:${lc.bg}; --bd:${lc.bd}; --ink:${lc.ink};"${ganttGroupBy ? ` data-action="toggle-board-lane" data-group-key="${escapeHtml(collapseKey)}" title="Klicka för att fälla ihop/ut"` : ""}>
+          <span class="board-lane-name">${ganttGroupBy ? (collapsed ? "▸ " : "▾ ") : ""}${escapeHtml(k)}</span>
+          <span class="board-lane-count">${laneItems.length} st</span>
+        </div>
+        <div class="board-grid" style="${gridBg}">${collapsed ? "" : laneItems.map(noteHtml).join("")}</div>
+      </div>`;
+  }).join("");
+
+  el.className = "gantt-chart gantt-board-chart";
+  el.innerHTML = `
+    <div class="board" style="width:${BOARD_LANE_PX + nWeeks * colPx}px">
+      <div class="board-head">
+        <div class="board-corner">${ganttGroupBy ? { area: "Område", contractor: "Entreprenör", activity: "Aktivitet" }[ganttGroupBy] : ""}</div>
+        <div class="board-weeks" style="${gridBg}">${weeksHtml}</div>
+      </div>
+      ${lanesHtml}
+    </div>`;
+
+  if (notesEl) {
+    const notes = [];
+    if (skippedNoDate > 0) notes.push(`${skippedNoDate} objekt utan både start- och slutdatum visas inte.`);
+    if (skippedRange > 0) notes.push(`${skippedRange} objekt utanför det valda datumintervallet visas inte.`);
+    notesEl.innerText = notes.join(" ");
+  }
+
+  el.querySelectorAll('[data-action="toggle-board-lane"]').forEach(h => {
+    h.onclick = () => {
+      const k = h.dataset.groupKey;
+      if (ganttCollapsedGroups.has(k)) ganttCollapsedGroups.delete(k); else ganttCollapsedGroups.add(k);
+      saveGanttPrefs();
+      renderGanttBoard(list);
+    };
+  });
+  el.querySelectorAll(".pnote").forEach(n => {
+    n.addEventListener("mouseenter", e => showGanttTooltip(e, tooltips.get(n.dataset.ganttTip)));
+    n.addEventListener("mousemove", positionGanttTooltip);
+    n.addEventListener("mouseleave", hideGanttTooltip);
+    n.addEventListener("focus", () => showGanttTooltipAt(n, tooltips.get(n.dataset.ganttTip)));
+    n.addEventListener("blur", hideGanttTooltip);
+    n.addEventListener("click", () => selectGanttItemInModel(items.find(it => String(it.id) === n.dataset.itemId)));
+  });
+
+  // Första gången (och när perioden är "Allt"): börja vid förra veckan.
+  if (!ganttBoardScrolled && todayCol > 0) {
+    el.scrollLeft = Math.max(0, (todayCol - 1) * colPx);
+    ganttBoardScrolled = true;
+  }
 }
 
 function bindGanttInteractions(el, list, tooltips, geometry) {
@@ -2603,6 +2883,13 @@ function ganttZoomStep(direction) {
   renderGantt(getFilteredItems());
 }
 
+/* Snabbval "2 v/4 v/3 mån": från måndag denna vecka, N veckor framåt. */
+function ganttWeeksRange(weeks) {
+  const s0 = startOfWeekUTC(todayUTC());
+  const e0 = new Date(s0); e0.setUTCDate(e0.getUTCDate() + weeks * 7 - 1);
+  return [s0.toISOString().slice(0, 10), e0.toISOString().slice(0, 10)];
+}
+
 function updateGanttRangeStatus(rangeStatusEl) {
   if (!rangeStatusEl) return;
   rangeStatusEl.classList.remove("error");
@@ -2650,6 +2937,48 @@ function initGanttControls() {
     };
   }
 
+  // Visningsläge (Staplar/Tavla), färg på lapparna, snabbval av period och hjälp.
+  document.querySelectorAll("[data-gantt-view]").forEach(btn => {
+    btn.onclick = () => {
+      ganttView = btn.dataset.ganttView;
+      ganttBoardScrolled = false;
+      saveGanttPrefs();
+      renderGantt(getFilteredItems());
+    };
+  });
+  const colorSel = document.getElementById("ganttColorBy");
+  if (colorSel) {
+    colorSel.value = ganttColorBy;
+    colorSel.onchange = () => { ganttColorBy = colorSel.value; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  const markPeriodChips = () => {
+    document.querySelectorAll("[data-gantt-weeks]").forEach(chip => {
+      const [s0, e0] = ganttWeeksRange(Number(chip.dataset.ganttWeeks));
+      chip.classList.toggle("active", ganttRangeStart === s0 && ganttRangeEnd === e0);
+    });
+    rangeResetBtn.classList.toggle("active", !ganttRangeStart && !ganttRangeEnd);
+  };
+  document.querySelectorAll("[data-gantt-weeks]").forEach(chip => {
+    chip.onclick = () => {
+      const [s0, e0] = ganttWeeksRange(Number(chip.dataset.ganttWeeks));
+      ganttRangeStart = s0; ganttRangeEnd = e0;
+      rangeStartInput.value = s0; rangeEndInput.value = e0;
+      ganttBoardScrolled = false;
+      saveGanttPrefs();
+      updateGanttRangeStatus(rangeStatusEl);
+      markPeriodChips();
+      renderGantt(getFilteredItems());
+    };
+  });
+  const helpBtn = document.getElementById("ganttHelpBtn");
+  if (helpBtn) helpBtn.onclick = () => {
+    const help = document.getElementById("ganttHelp");
+    const open = help.classList.toggle("hidden") === false;
+    helpBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  markPeriodChips();
+  applyGanttViewClass();
+
   groupSel.onchange = () => {
     ganttGroupBy = groupSel.value;
     ganttCollapsedGroups = new Set(); // ny gruppering -> börja utfällt
@@ -2696,6 +3025,7 @@ function initGanttControls() {
     ganttRangeEnd = end;
     saveGanttPrefs();
     updateGanttRangeStatus(rangeStatusEl);
+    markPeriodChips();
     renderGantt(getFilteredItems());
   };
   rangeResetBtn.onclick = () => {
@@ -2703,8 +3033,10 @@ function initGanttControls() {
     ganttRangeEnd = null;
     rangeStartInput.value = "";
     rangeEndInput.value = "";
+    ganttBoardScrolled = false;
     saveGanttPrefs();
     updateGanttRangeStatus(rangeStatusEl);
+    markPeriodChips();
     renderGantt(getFilteredItems());
   };
 }

@@ -63,10 +63,24 @@ function ghContentsUrl(path) {
   return `${GH_API_BASE}/repos/${GH_OWNER}/${GH_REPO}/contents/${path}`;
 }
 
+// Senast kända {data, sha} per fil - från vår egen senaste skrivning eller
+// läsning. Nästa skrivning mot samma fil utgår från den direkt istället för
+// att först läsa om filen från GitHub (halverar antalet anrop per sparning).
+// Har någon annan skrivit emellan svarar GitHub 409 och filen läses om på
+// riktigt, precis som vid en vanlig skrivkrock.
+const ghFileCache = new Map(); // path -> { data, sha }
+
 /** Hämtar en fils metadata + innehåll (avkodat som text). null om filen inte finns. */
 async function ghGetFile(token, path) {
+  // cache: "no-store" - GitHub svarar med Cache-Control: max-age=60, så
+  // utan den här flaggan kan webbläsaren ge tillbaka en upp till en minut
+  // GAMMAL version av filen (med gammal sha) direkt efter en egen
+  // skrivning. Nästa sparning skrev då mot fel sha, fick 409 om och om igen
+  // tills omförsöken tog slut -> "Kunde inte spara" (Victors rapport
+  // 2026-09-28, typiskt när man sparar/kopplar flera saker i följd).
   const res = await fetch(`${ghContentsUrl(path)}?ref=${GH_BRANCH}`, {
     headers: ghHeaders(token),
+    cache: "no-store",
   });
   if (res.status === 404) return { data: null, sha: null };
   if (!res.ok) {
@@ -77,14 +91,29 @@ async function ghGetFile(token, path) {
     // path pekar på en mapp, inte en fil - ska inte hända i vårt bruk
     throw new Error(`GitHub-path ${path} är en mapp, inte en fil`);
   }
-  const text = ghB64ToUtf8(json.content);
-  return { data: JSON.parse(text), sha: json.sha };
+  let text;
+  if (json.content) {
+    text = ghB64ToUtf8(json.content);
+  } else {
+    // Filer över 1 MB: Contents API skickar inget innehåll (encoding
+    // "none"), bara metadata - hämta själva innehållet som rå text.
+    const raw = await fetch(`${ghContentsUrl(path)}?ref=${GH_BRANCH}`, {
+      headers: ghHeaders(token, "application/vnd.github.raw"),
+      cache: "no-store",
+    });
+    if (!raw.ok) throw new Error(`GitHub GET (raw) ${path} misslyckades: ${raw.status}`);
+    text = await raw.text();
+  }
+  const result = { data: text.trim() ? JSON.parse(text) : null, sha: json.sha };
+  ghFileCache.set(path, result);
+  return result;
 }
 
 /** Bara metadata (sha) - används för bilagor där vi inte vill JSON-avkoda innehållet. */
 async function ghGetMeta(token, path) {
   const res = await fetch(`${ghContentsUrl(path)}?ref=${GH_BRANCH}`, {
     headers: ghHeaders(token),
+    cache: "no-store",
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`GitHub GET (meta) ${path} misslyckades: ${res.status}`);
@@ -300,7 +329,11 @@ async function ghWriteJSONAttempt(token, path, mutateFn, message, maxRetries, pr
       await ghAwaitRateLimitGate();
     }
     skipGateWaitOnce = false;
-    const { data, sha } = (attempt === 0 && preFetched) ? preFetched : await ghGetFile(token, path);
+    // Första försöket: utgå från det senast kända läget (vår egen senaste
+    // skrivning/läsning, se ghFileCache) eller anroparens preFetched, utan
+    // en extra läsning. Vid krock (409) läses filen alltid om på riktigt.
+    const known = attempt === 0 ? (ghFileCache.get(path) || preFetched) : null;
+    const { data, sha } = known || await ghGetFile(token, path);
     const current = Array.isArray(data) ? data : [];
     const next = mutateFn(current.slice());
     try {
@@ -315,7 +348,9 @@ async function ghWriteJSONAttempt(token, path, mutateFn, message, maxRetries, pr
       // syfte - filen är inte tänkt att läsas för hand. Bonus: eftersom
       // filen sedan LAGRAS kompakt blir även nästa sparnings inledande
       // läsning av filen mindre, så vinsten byggs på sig själv över tid.
-      await ghPutFile(token, path, ghUtf8ToB64(JSON.stringify(next)), sha, message);
+      const put = await ghPutFile(token, path, ghUtf8ToB64(JSON.stringify(next)), sha, message);
+      if (put && put.content && put.content.sha) ghFileCache.set(path, { data: next, sha: put.content.sha });
+      else ghFileCache.delete(path);
       return next;
     } catch (e) {
       lastErr = e;
@@ -336,6 +371,7 @@ async function ghWriteJSONAttempt(token, path, mutateFn, message, maxRetries, pr
         skipGateWaitOnce = true;
         continue;
       }
+      ghFileCache.delete(path);
       if (!e.conflict) throw e;
       if (attempt >= maxRetries) throw lastErr;
       attempt++;
