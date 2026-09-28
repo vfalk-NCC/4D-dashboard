@@ -794,8 +794,58 @@ function fromRow(row) {
     // vid klick på dess namn - se selectGanttItemInModel().
     modelId: row.model_id ?? null,
     objectId: row.object_id ?? null,
-    dependsOn: Array.isArray(row.depends_on) ? row.depends_on.map(String) : []
+    dependsOn: Array.isArray(row.depends_on) ? row.depends_on.map(String) : [],
+    // Samma aktivitet kopplad till flera 3D-objekt (en rad per objekt i
+    // 4D-planering) - se mergeActivityGroups.
+    activityKey: row.group_id ? `g:${row.group_id}` : (row.source_key ? `s:${row.source_key}` : null)
   };
+}
+
+/* En aktivitet med flera 3D-objekt lagras som en rad per objekt (med egna
+   datum om objekten har olika delaktiviteter). I Kommande veckor och
+   Gantt-tavlan slås de ihop till en post per aktivitet, med tidigaste start
+   och senaste slut, så samma aktivitet inte syns som N likadana lappar. */
+function mergeActivityGroups(list) {
+  const byKey = new Map();
+  list.forEach(it => {
+    if (!it.activityKey) return;
+    if (!byKey.has(it.activityKey)) byKey.set(it.activityKey, []);
+    byKey.get(it.activityKey).push(it);
+  });
+  const out = [];
+  const done = new Set();
+  list.forEach(it => {
+    const members = it.activityKey ? byKey.get(it.activityKey) : null;
+    if (!members || members.length < 2) { out.push(it); return; }
+    if (done.has(it.activityKey)) return;
+    done.add(it.activityKey);
+    const starts = members.map(m => m.startDate).filter(Boolean).sort();
+    const ends = members.map(m => m.endDate).filter(Boolean).sort();
+    const late = members.find(m => m.status === "forsenad");
+    const progress = Math.round(members.reduce((sum, m) => sum + (Number(m.progress) || 0), 0) / members.length);
+    out.push({ ...members[0], startDate: starts[0] || null, endDate: ends[ends.length - 1] || null,
+      status: late ? "forsenad" : members[0].status, progress, members });
+  });
+  return out;
+}
+
+/** Markerar en post (eller alla objekt i en sammanslagen aktivitet) i 3D. */
+async function selectActivityInModel(it) {
+  if (!it) return;
+  const targets = (it.members || [it]).filter(m => m.modelId && m.objectId);
+  if (!targets.length || !API || !API.viewer || typeof API.viewer.convertToObjectRuntimeIds !== "function") return;
+  try {
+    const byModel = {};
+    targets.forEach(m => { (byModel[m.modelId] = byModel[m.modelId] || []).push(m.objectId); });
+    const modelObjectIds = [];
+    for (const modelId of Object.keys(byModel)) {
+      const rids = (await API.viewer.convertToObjectRuntimeIds(modelId, byModel[modelId])).filter(id => id !== undefined && id !== null);
+      if (rids.length) modelObjectIds.push({ modelId, objectRuntimeIds: rids });
+    }
+    if (modelObjectIds.length) await API.viewer.setSelection({ modelObjectIds }, "set");
+  } catch (e) {
+    console.warn("Kunde inte markera i 3D-modellen", e);
+  }
 }
 
 // Hämtar kommentarerna för det här projektet. Med GitHub-lagringen ligger
@@ -1544,8 +1594,8 @@ function lookaheadItemHtml(it, w) {
   else if (due && it.status === "klar") tags.push(`<span class="la-tag la-tag-done">✓ Klar</span>`);
   else if (due) tags.push(`<span class="la-tag">Slut ${escapeHtml(weekdayDateSv(it.endDate))}</span>`);
   const name = itemLabel(it);
-  const sub = [it.activity && !name.includes(it.activity) ? it.activity : "", it.contractor].filter(Boolean).join(" · ");
-  const canSelect = Boolean(it.modelId && it.objectId);
+  const sub = [it.activity && !name.includes(it.activity) ? it.activity : "", it.contractor, it.members ? `⛓ ${it.members.length} objekt` : ""].filter(Boolean).join(" · ");
+  const canSelect = (it.members || [it]).some(m => m.modelId && m.objectId);
   return `<li class="la-item${starting ? " la-item-start" : ""}"${canSelect ? ` data-action="la-select" data-item-id="${escapeHtml(String(it.id))}" title="Klicka för att markera i 3D-modellen"` : ""}>
       <span class="la-dot" style="background:${STATUS_COLORS[it.status] || STATUS_COLORS.planerad}" title="${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}"></span>
       <span class="la-text"><span class="la-name">${escapeHtml(name)}</span>${sub ? `<span class="la-sub">${escapeHtml(sub)}</span>` : ""}</span>
@@ -1561,7 +1611,7 @@ function renderLookahead(list) {
     return;
   }
 
-  const weeks = computeLookahead(list);
+  const weeks = computeLookahead(mergeActivityGroups(list));
   const cats = [
     { key: "active", label: "pågår", cls: "" },
     { key: "starting", label: "startar", cls: "la-chip-start" },
@@ -1631,8 +1681,9 @@ function renderLookahead(list) {
       renderLookahead(list);
     };
   });
+  const merged = new Map(weeks.flatMap(w => w.active.concat(w.starting, w.done, w.delayed, w.blocked)).map(it => [String(it.id), it]));
   el.querySelectorAll('[data-action="la-select"]').forEach(li => {
-    li.onclick = () => selectGanttItemInModel(items.find(it => String(it.id) === li.dataset.itemId));
+    li.onclick = () => selectActivityInModel(merged.get(li.dataset.itemId));
   });
 }
 
@@ -2606,11 +2657,12 @@ function renderGanttBoard(list) {
   const colOf = iso => Math.round((startOfWeekUTC(parseDate(iso)) - w0) / (7 * 86400000));
   const todayCol = Math.round((startOfWeekUTC(todayUTC()) - w0) / (7 * 86400000));
 
-  const visible = withDates.filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
+  const visible = mergeActivityGroups(withDates).filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
   const skippedNoDate = list.length - withDates.length;
-  const skippedRange = withDates.length - visible.length;
+  const skippedRange = withDates.filter(it => !(it.startDate <= domainEnd && it.endDate >= domainStart)).length;
   const depById = itemsByIdAll();
   const tooltips = new Map();
+  const byNoteId = new Map(visible.map(it => [String(it.id), it]));
 
   const weeksHtml = Array.from({ length: nWeeks }, (_, i) => {
     const ws = new Date(w0); ws.setUTCDate(ws.getUTCDate() + i * 7);
@@ -2630,6 +2682,7 @@ function renderGanttBoard(list) {
     if (it.activity && ganttGroupBy !== "activity" && !name.includes(it.activity)) subParts.push(it.activity);
     if (it.area && ganttGroupBy !== "area" && !name.includes(it.area)) subParts.push(it.area);
     if (it.contractor && ganttGroupBy !== "contractor") subParts.push(it.contractor);
+    if (it.members) subParts.push(`⛓ ${it.members.length} objekt`);
     const prog = Math.max(0, Math.min(100, Number(it.progress) || 0));
     const key = `b${tooltips.size}`;
     tooltips.set(key, ganttTooltipHtmlForItem(it, depById));
@@ -2704,7 +2757,7 @@ function renderGanttBoard(list) {
     n.addEventListener("mouseleave", hideGanttTooltip);
     n.addEventListener("focus", () => showGanttTooltipAt(n, tooltips.get(n.dataset.ganttTip)));
     n.addEventListener("blur", hideGanttTooltip);
-    n.addEventListener("click", () => selectGanttItemInModel(items.find(it => String(it.id) === n.dataset.itemId)));
+    n.addEventListener("click", () => selectActivityInModel(byNoteId.get(n.dataset.itemId)));
   });
 
   // Första gången (och när perioden är "Allt"): börja vid förra veckan.
