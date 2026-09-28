@@ -36,6 +36,7 @@ const GANTT_PREFS_KEY = "4ddash-gantt-prefs";
 let ganttView = "bars";            // "bars" (klassiska staplar) | "board" (post-it-tavla per vecka)
 let ganttColorBy = "contractor";   // tavlans lappfärg: "contractor" | "area" | "activity"
 let ganttBoardScrolled = false;    // tavlan har scrollats till dagens vecka en gång
+let ganttBoardSplit = false;       // tavlan: en lapp per 3D-objekt i stället för en per aktivitet
 const GANTT_ZOOM_LEVELS = [3, 6, 10, 18, 30, 50]; // px per dag, stigande zoomnivåer
 // Bredden (px) som toggle- och etikettkolumnerna + mellanrummen äter av varje
 // rad (.gantt-row { grid-template-columns: 14px 110px 1fr; gap: 6px; }) -
@@ -1772,45 +1773,218 @@ async function supaUpdate(table, id, body) {
  * (renderStability) fångar ändringar oavsett vilken app de gjordes i.
  */
 async function saveItemSchedule(it, newStart, newEnd) {
-  const oldStart = it.startDate;
-  const oldEnd = it.endDate;
-  it.startDate = newStart;
-  it.endDate = newEnd;
-  renderGantt(getFilteredItems());
-  renderStability();
+  const plan = emptyPlan();
+  plan.items.set(it.id, { startDate: newStart, endDate: newEnd });
+  await applySchedulePlan(plan, `Ändrade ${itemLabel(it)}`);
+}
 
-  const ok = await supaUpdate("plan_items", it.id, {
-    start_date: newStart,
-    end_date: newEnd,
-    updated_at: new Date().toISOString()
+/* ---------------------------------------------------------------------
+   Omplanering (Gantt-staplar och tavla) med ångra/gör om - Victors
+   förfrågan 2026-09-28. En "plan" är de nya datumen för ett antal objekt
+   (plan_items) och delaktiviteter (plan_item_activities). Allt i en
+   ändring skrivs i en skrivning per fil, loggas i baseline-historiken
+   (Planstabilitet) och läggs på ångra-stacken med de gamla datumen.
+   Helger är tillåtna - datum flyttas i hela kalenderdagar.
+   ------------------------------------------------------------------- */
+const scheduleUndo = [];
+const scheduleRedo = [];
+
+function emptyPlan() { return { items: new Map(), acts: new Map() }; }
+function planSize(plan) { return plan.items.size + plan.acts.size; }
+function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
+function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
+
+/** Alla aktiviteter som (direkt eller indirekt) beror på targetIds - hela aktiviteten (alla objekt) för varje. */
+function downstreamIds(targetIds) {
+  const depById = itemsByIdAll();
+  const result = new Set();
+  let frontier = [...targetIds];
+  while (frontier.length) {
+    const next = new Set();
+    frontier.forEach(id => downstreamOf(id, depById).forEach(d => {
+      if (!targetIds.has(d.id) && !result.has(d.id)) next.add(d.id);
+    }));
+    const keys = new Set([...next].map(id => (depById.get(id) || {}).activityKey).filter(Boolean));
+    items.forEach(it => {
+      if (it.activityKey && keys.has(it.activityKey) && !targetIds.has(it.id) && !result.has(it.id)) next.add(it.id);
+    });
+    next.forEach(id => result.add(id));
+    frontier = [...next];
+  }
+  return result;
+}
+
+/** Flyttar objekten (och deras delaktiviteter) deltaDays dagar. */
+function planShift(ids, deltaDays, plan) {
+  if (!deltaDays) return plan;
+  items.forEach(it => {
+    if (!ids.has(it.id) || !it.startDate || !it.endDate) return;
+    const c = curItemDates(it, plan);
+    plan.items.set(it.id, { startDate: addDaysIso(c.startDate, deltaDays), endDate: addDaysIso(c.endDate, deltaDays) });
   });
-  if (!ok) {
-    // supaUpdate har redan visat ett felmeddelande - återställ lokalt.
-    it.startDate = oldStart;
-    it.endDate = oldEnd;
-    renderGantt(getFilteredItems());
-    return;
-  }
+  activities.forEach(a => {
+    if (!ids.has(a.plan_item_id)) return;
+    const c = curActDates(a, plan);
+    plan.acts.set(a.id, {
+      start_date: c.start_date ? addDaysIso(c.start_date, deltaDays) : c.start_date,
+      end_date: c.end_date ? addDaysIso(c.end_date, deltaDays) : c.end_date
+    });
+  });
+  return plan;
+}
 
-  try {
-    await ghWriteJSON(
-      settings.githubToken,
-      tablePath("plan_item_baseline_history"),
-      (arr) => [...arr, {
-        id: ghNewId(),
-        plan_item_id: it.id,
-        project_id: projectId,
-        start_date: newStart,
-        end_date: newEnd,
-        recorded_at: new Date().toISOString()
-      }],
-      "Logga baseline-historik (omschemaläggning i Gantt-schemat)"
-    );
-    await fetchBaselineHistory();
-    renderStability();
-  } catch (e) {
-    console.error("Kunde inte logga baseline-historik för drag-omschemaläggningen", e);
+function planMove(targetIds, deltaDays, withDeps, plan = emptyPlan()) {
+  planShift(targetIds, deltaDays, plan);
+  if (withDeps) planShift(downstreamIds(targetIds), deltaDays, plan);
+  return plan;
+}
+
+/**
+ * Ändrar start (edge "left") eller slut ("right") för en aktivitet. För en
+ * aktivitet med flera objekt flyttas kanten på de objekt (och
+ * delaktiviteter) som ligger i aktivitetens ytterkant. Förlängs slutet
+ * flyttas beroende aktiviteter med lika mycket.
+ */
+function planResize(targetIds, edge, deltaDays, withDeps, plan = emptyPlan()) {
+  if (!deltaDays) return plan;
+  const members = items.filter(it => targetIds.has(it.id) && it.startDate && it.endDate);
+  if (!members.length) return plan;
+  const cur = members.map(m => ({ m, c: curItemDates(m, plan) }));
+  if (edge === "left") {
+    const g = cur.map(x => x.c.startDate).sort()[0];
+    cur.filter(x => x.c.startDate === g).forEach(({ m, c }) => {
+      let ns = addDaysIso(c.startDate, deltaDays);
+      if (ns > c.endDate) ns = c.endDate;
+      plan.items.set(m.id, { startDate: ns, endDate: c.endDate });
+      activities.filter(a => a.plan_item_id === m.id).forEach(a => {
+        const ac = curActDates(a, plan);
+        if (ac.start_date !== c.startDate) return;
+        let s2 = addDaysIso(ac.start_date, deltaDays);
+        if (ac.end_date && s2 > ac.end_date) s2 = ac.end_date;
+        plan.acts.set(a.id, { start_date: s2, end_date: ac.end_date });
+      });
+    });
+  } else {
+    const ends = cur.map(x => x.c.endDate).sort();
+    const g = ends[ends.length - 1];
+    cur.filter(x => x.c.endDate === g).forEach(({ m, c }) => {
+      let ne = addDaysIso(c.endDate, deltaDays);
+      if (ne < c.startDate) ne = c.startDate;
+      plan.items.set(m.id, { startDate: c.startDate, endDate: ne });
+      activities.filter(a => a.plan_item_id === m.id).forEach(a => {
+        const ac = curActDates(a, plan);
+        if (ac.end_date !== c.endDate) return;
+        let e2 = addDaysIso(ac.end_date, deltaDays);
+        if (ac.start_date && e2 < ac.start_date) e2 = ac.start_date;
+        plan.acts.set(a.id, { start_date: ac.start_date, end_date: e2 });
+      });
+    });
+    if (withDeps) planShift(downstreamIds(targetIds), deltaDays, plan);
   }
+  return plan;
+}
+
+/** Gamla datum för allt som planen ändrar (för ångra). */
+function planBefore(plan) {
+  const before = emptyPlan();
+  plan.items.forEach((_, id) => {
+    const it = items.find(x => x.id === id);
+    if (it) before.items.set(id, { startDate: it.startDate, endDate: it.endDate });
+  });
+  plan.acts.forEach((_, id) => {
+    const a = activities.find(x => x.id === id);
+    if (a) before.acts.set(id, { start_date: a.start_date, end_date: a.end_date });
+  });
+  return before;
+}
+
+function applyPlanLocally(plan) {
+  items.forEach(it => { const d = plan.items.get(it.id); if (d) { it.startDate = d.startDate; it.endDate = d.endDate; } });
+  activities.forEach(a => { const d = plan.acts.get(a.id); if (d) { a.start_date = d.start_date; a.end_date = d.end_date; } });
+}
+
+async function writePlan(plan) {
+  const now = new Date().toISOString();
+  const writes = [];
+  if (plan.items.size) {
+    writes.push(ghWriteJSON(settings.githubToken, tablePath("plan_items"),
+      arr => arr.map(r => { const d = plan.items.get(r.id); return d ? { ...r, start_date: d.startDate, end_date: d.endDate, updated_at: now } : r; }),
+      `Omplanering i Gantt/tavla (${plan.items.size} objekt)`));
+  }
+  if (plan.acts.size) {
+    writes.push(ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"),
+      arr => arr.map(r => { const d = plan.acts.get(r.id); return d ? { ...r, ...d } : r; }),
+      "Omplanering av delaktiviteter i Gantt/tavla"));
+  }
+  await Promise.all(writes);
+  if (plan.items.size) {
+    try {
+      await ghWriteJSON(settings.githubToken, tablePath("plan_item_baseline_history"),
+        arr => [...arr, ...[...plan.items].map(([id, d]) => ({
+          id: ghNewId(), plan_item_id: id, project_id: projectId, start_date: d.startDate, end_date: d.endDate, recorded_at: now
+        }))],
+        "Logga baseline-historik (omplanering i Gantt/tavla)");
+      await fetchBaselineHistory();
+    } catch (e) {
+      console.error("Kunde inte logga baseline-historik för omplaneringen", e);
+    }
+  }
+}
+
+let scheduleStatusTimer = null;
+function setScheduleStatus(text) {
+  const el = document.getElementById("ganttRangeStatus");
+  if (!el) return;
+  clearTimeout(scheduleStatusTimer);
+  el.classList.remove("error");
+  el.innerText = text;
+  scheduleStatusTimer = setTimeout(() => updateGanttRangeStatus(el), 6000);
+}
+
+async function applySchedulePlan(plan, label, opts = {}) {
+  if (!planSize(plan)) return false;
+  const before = opts.before || planBefore(plan);
+  applyPlanLocally(plan);
+  if (opts.record !== false) {
+    scheduleUndo.push({ label, before, after: plan });
+    if (scheduleUndo.length > 50) scheduleUndo.shift();
+    scheduleRedo.length = 0;
+  }
+  updateUndoButtons();
+  renderAll();
+  setScheduleStatus(`${label} – sparar…`);
+  try {
+    await writePlan(plan);
+    setScheduleStatus(`✓ ${label}`);
+    renderStability();
+    return true;
+  } catch (e) {
+    console.error("Kunde inte spara omplaneringen", e);
+    applyPlanLocally(before);
+    if (opts.record !== false) scheduleUndo.pop();
+    updateUndoButtons();
+    renderAll();
+    alert("Kunde inte spara ändringen: " + e.message);
+    return false;
+  }
+}
+
+async function undoSchedule() {
+  const e = scheduleUndo.pop();
+  if (!e) return;
+  scheduleRedo.push(e);
+  await applySchedulePlan(e.before, `Ångrade: ${e.label}`, { record: false, before: e.after });
+}
+async function redoSchedule() {
+  const e = scheduleRedo.pop();
+  if (!e) return;
+  scheduleUndo.push(e);
+  await applySchedulePlan(e.after, `Gjorde om: ${e.label}`, { record: false, before: e.before });
+}
+function updateUndoButtons() {
+  const u = document.getElementById("ganttUndo"), r = document.getElementById("ganttRedo");
+  if (u) { u.disabled = !scheduleUndo.length; u.title = scheduleUndo.length ? `Ångra: ${scheduleUndo[scheduleUndo.length - 1].label} (Ctrl+Z)` : "Inget att ångra"; }
+  if (r) { r.disabled = !scheduleRedo.length; r.title = scheduleRedo.length ? `Gör om: ${scheduleRedo[scheduleRedo.length - 1].label} (Ctrl+Y)` : "Inget att göra om"; }
 }
 
 async function supaDelete(table, id, confirmMsg) {
@@ -2076,6 +2250,7 @@ function loadGanttPrefs() {
     if (typeof prefs.editable === "boolean") ganttEditable = prefs.editable;
     if (prefs.view === "bars" || prefs.view === "board") ganttView = prefs.view;
     if (["contractor", "area", "activity"].includes(prefs.colorBy)) ganttColorBy = prefs.colorBy;
+    if (typeof prefs.boardSplit === "boolean") ganttBoardSplit = prefs.boardSplit;
   } catch (e) {
     console.warn("Kunde inte läsa sparade Gantt-inställningar", e);
   }
@@ -2095,7 +2270,8 @@ function saveGanttPrefs() {
       rangeEnd: ganttRangeEnd,
       editable: ganttEditable,
       view: ganttView,
-      colorBy: ganttColorBy
+      colorBy: ganttColorBy,
+      boardSplit: ganttBoardSplit
     }));
   } catch (e) {
     console.warn("Kunde inte spara Gantt-inställningar", e);
@@ -2614,6 +2790,100 @@ function renderGantt(list) {
 }
 
 
+/* Objekten (plan_item-id:n) som en lapp står för - alla objekt i en
+   sammanslagen aktivitet, annars bara lappens eget. */
+function noteTargetIds(it) {
+  return new Set((it.members || [it]).map(m => m.id));
+}
+
+/** Dra en lapp: mitten flyttar, kanterna ändrar start/slut. Shift = utan beroenden. */
+function onBoardNotePointerDown(evt, noteEl, it, colPx) {
+  if (!ganttEditable || !it || (evt.button !== undefined && evt.button !== 0)) return;
+  const rect = noteEl.getBoundingClientRect();
+  const EDGE = 8;
+  const mode = evt.clientX <= rect.left + EDGE ? "left" : evt.clientX >= rect.right - EDGE ? "right" : "move";
+  const startX = evt.clientX;
+  const pxPerDay = colPx / 7;
+  const targets = noteTargetIds(it);
+  let delta = 0, moved = false;
+  const preview = e => {
+    const withDeps = !e.shiftKey;
+    const plan = mode === "move" ? planMove(targets, delta, withDeps) : planResize(targets, mode, delta, withDeps);
+    const own = [...targets].map(id => plan.items.get(id)).filter(Boolean);
+    const s0 = own.map(d => d.startDate).sort()[0] || it.startDate;
+    const e0 = own.map(d => d.endDate).sort().pop() || it.endDate;
+    const depCount = [...plan.items.keys()].filter(id => !targets.has(id)).length;
+    showGanttTooltip(e, `<div class="gantt-tooltip-title">${escapeHtml(itemLabel(it))}</div>
+      ${ganttTooltipRow(mode === "move" ? "Flyttas till" : mode === "left" ? "Ny start" : "Nytt slut", `${weekdayDateSv(s0)} – ${weekdayDateSv(e0)} (${delta > 0 ? "+" : ""}${delta} d)`)}
+      ${depCount ? ganttTooltipRow("Beroende", `${depCount} objekt flyttas med (Shift = inte)`) : ""}`);
+  };
+  const onMove = e => {
+    const dx = e.clientX - startX;
+    if (!moved && Math.abs(dx) < 4) return;
+    moved = true;
+    delta = Math.round(dx / pxPerDay);
+    noteEl.classList.add("pnote-dragging");
+    if (mode === "move") noteEl.style.transform = `translateX(${dx}px) rotate(0deg)`;
+    else noteEl.style.boxShadow = `0 0 0 2px var(--accent)`;
+    preview(e);
+  };
+  const onUp = e => {
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    noteEl.style.transform = "";
+    noteEl.style.boxShadow = "";
+    noteEl.classList.remove("pnote-dragging");
+    hideGanttTooltip();
+    if (!moved) return;
+    noteEl._justDragged = true;
+    if (!delta) return;
+    const withDeps = !e.shiftKey;
+    const plan = mode === "move" ? planMove(targets, delta, withDeps) : planResize(targets, mode, delta, withDeps);
+    const verb = mode === "move" ? `Flyttade ${itemLabel(it)} ${delta > 0 ? "+" : ""}${delta} d` : `${mode === "left" ? "Ny start" : "Nytt slut"} för ${itemLabel(it)}`;
+    const deps = [...plan.items.keys()].filter(id => !targets.has(id)).length;
+    applySchedulePlan(plan, deps ? `${verb} (+${deps} beroende)` : verb);
+  };
+  document.addEventListener("pointermove", onMove);
+  document.addEventListener("pointerup", onUp);
+}
+
+/** Dubbelklick på en lapp: skriv in start och slut. */
+function openBoardDatePopover(noteEl, it) {
+  if (!it) return;
+  document.querySelectorAll(".board-pop").forEach(p => p.remove());
+  const targets = noteTargetIds(it);
+  const pop = document.createElement("div");
+  pop.className = "board-pop";
+  pop.innerHTML = `
+    <div class="board-pop-title">${escapeHtml(itemLabel(it))}${it.members ? ` <span class="hint">(${it.members.length} objekt)</span>` : ""}</div>
+    <label>Start <input type="date" class="bp-start" value="${escapeHtml(it.startDate || "")}" /></label>
+    <label>Slut <input type="date" class="bp-end" value="${escapeHtml(it.endDate || "")}" /></label>
+    <label class="bp-deps"><input type="checkbox" class="bp-withdeps" checked /> Flytta beroende aktiviteter med</label>
+    <div class="board-pop-actions"><button type="button" class="bp-cancel">Avbryt</button><button type="button" class="bp-save primary">Spara</button></div>`;
+  document.body.appendChild(pop);
+  const r = noteEl.getBoundingClientRect();
+  pop.style.left = `${Math.min(window.innerWidth - pop.offsetWidth - 8, Math.max(8, r.left))}px`;
+  pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 6)}px`;
+  const close = () => { pop.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  pop.querySelector(".bp-cancel").onclick = close;
+  pop.querySelector(".bp-save").onclick = () => {
+    const ns = pop.querySelector(".bp-start").value, ne = pop.querySelector(".bp-end").value;
+    if (!ns || !ne || ns > ne) { alert("Ange ett start- och slutdatum där start är före (eller samma som) slut."); return; }
+    const withDeps = pop.querySelector(".bp-withdeps").checked;
+    const dl = daysBetweenIso(it.startDate, ns), dr = daysBetweenIso(it.endDate, ne);
+    // Flytta först hela aktiviteten så starten hamnar rätt, justera sedan
+    // slutet - och flytta beroende aktiviteter lika mycket som slutet.
+    const plan = planMove(targets, dl, false);
+    planResize(targets, "right", dr - dl, false, plan);
+    if (withDeps && dr) planShift(downstreamIds(targets), dr, plan);
+    close();
+    applySchedulePlan(plan, `Nya datum för ${itemLabel(it)}: ${ns} – ${ne}`);
+  };
+  pop.querySelector(".bp-start").focus();
+}
+
 /* ---------------------------------------------------------------------
    Gantt som post-it-tavla (Victors förfrågan 2026-09-28) - ett alternativ
    till staplarna. En kolumn per vecka, en "sim-bana" per grupp (Gruppera),
@@ -2657,7 +2927,7 @@ function renderGanttBoard(list) {
   const colOf = iso => Math.round((startOfWeekUTC(parseDate(iso)) - w0) / (7 * 86400000));
   const todayCol = Math.round((startOfWeekUTC(todayUTC()) - w0) / (7 * 86400000));
 
-  const visible = mergeActivityGroups(withDates).filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
+  const visible = (ganttBoardSplit ? withDates : mergeActivityGroups(withDates)).filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
   const skippedNoDate = list.length - withDates.length;
   const skippedRange = withDates.filter(it => !(it.startDate <= domainEnd && it.endDate >= domainStart)).length;
   const depById = itemsByIdAll();
@@ -2690,7 +2960,7 @@ function renderGanttBoard(list) {
     let h = 0; for (const ch of String(it.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     const tilt = ((h % 7) - 3) * 0.25;
     const late = it.status === "forsenad", blocked = itemHasOpenBlocker(it);
-    return `<div class="pnote${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}" style="grid-column:${c0 + 1} / ${c1 + 2}; --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${tilt}deg;"
+    return `<div class="pnote${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}" style="grid-column:${c0 + 1} / ${c1 + 2}; --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${tilt}deg;"
         data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0">
         <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</div>
         ${subParts.length ? `<div class="pnote-sub">${escapeHtml(subParts.join(" · "))}</div>` : ""}
@@ -2757,7 +3027,16 @@ function renderGanttBoard(list) {
     n.addEventListener("mouseleave", hideGanttTooltip);
     n.addEventListener("focus", () => showGanttTooltipAt(n, tooltips.get(n.dataset.ganttTip)));
     n.addEventListener("blur", hideGanttTooltip);
-    n.addEventListener("click", () => selectActivityInModel(byNoteId.get(n.dataset.itemId)));
+    n.addEventListener("click", () => {
+      if (n._justDragged) { n._justDragged = false; return; }
+      selectActivityInModel(byNoteId.get(n.dataset.itemId));
+    });
+    n.addEventListener("dblclick", e => { e.preventDefault(); openBoardDatePopover(n, byNoteId.get(n.dataset.itemId)); });
+    n.addEventListener("pointerdown", e => onBoardNotePointerDown(e, n, byNoteId.get(n.dataset.itemId), colPx));
+    if (ganttEditable) n.addEventListener("mousemove", e => {
+      const r = n.getBoundingClientRect();
+      n.style.cursor = (e.clientX <= r.left + 8 || e.clientX >= r.right - 8) ? "ew-resize" : "grab";
+    });
   });
 
   // Första gången (och när perioden är "Allt"): börja vid förra veckan.
@@ -3022,6 +3301,20 @@ function initGanttControls() {
       markPeriodChips();
       renderGantt(getFilteredItems());
     };
+  });
+  const splitCb = document.getElementById("ganttBoardSplit");
+  if (splitCb) {
+    splitCb.checked = ganttBoardSplit;
+    splitCb.onchange = () => { ganttBoardSplit = splitCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  document.getElementById("ganttUndo").onclick = undoSchedule;
+  document.getElementById("ganttRedo").onclick = redoSchedule;
+  updateUndoButtons();
+  document.addEventListener("keydown", e => {
+    if (!(e.ctrlKey || e.metaKey) || /INPUT|SELECT|TEXTAREA/.test((e.target && e.target.tagName) || "")) return;
+    const k = e.key.toLowerCase();
+    if (k === "z" && !e.shiftKey && scheduleUndo.length) { e.preventDefault(); undoSchedule(); }
+    else if ((k === "y" || (k === "z" && e.shiftKey)) && scheduleRedo.length) { e.preventDefault(); redoSchedule(); }
   });
   const helpBtn = document.getElementById("ganttHelpBtn");
   if (helpBtn) helpBtn.onclick = () => {

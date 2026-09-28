@@ -119,6 +119,10 @@
             </select>
           </label>
           <span class="gantt-head-spacer"></span>
+          <div class="gantt-zoom-group" title="Ångra/gör om ändringar av datum (Ctrl+Z / Ctrl+Y)">
+            <button type="button" id="ganttUndo" class="gantt-toolbar-btn" disabled>↶ Ångra</button>
+            <button type="button" id="ganttRedo" class="gantt-toolbar-btn" disabled>↷ Gör om</button>
+          </div>
           <button type="button" id="ganttDensityToggle" class="gantt-toolbar-btn gantt-bars-only">Kompakt</button>
           <div class="gantt-zoom-group gantt-bars-only">
             <button type="button" id="ganttZoomOut" class="gantt-toolbar-btn" title="Zooma ut">−</button>
@@ -145,12 +149,15 @@
           <label class="gantt-pill gantt-bars-only" title="Visar verkliga start/slut som en streckad stapel under den planerade">
             <input type="checkbox" id="ganttShowActual" /> Verkligt
           </label>
-          <label class="gantt-pill gantt-bars-only" title="Dra i en stapel för att flytta den, eller i dess kanter för att ändra start-/slutdatum. Sparas direkt till 4D-data (samma som ett sparat formulär i 4D-planering).">
+          <label class="gantt-pill gantt-board-only" title="Visa varje 3D-objekt som en egen lapp (annars en lapp per aktivitet)">
+            <input type="checkbox" id="ganttBoardSplit" /> En lapp per objekt
+          </label>
+          <label class="gantt-pill" title="Dra i en stapel/lapp för att flytta den, eller i dess kanter för att ändra start-/slutdatum. Sparas direkt till 4D-data (samma som ett sparat formulär i 4D-planering).">
             <input type="checkbox" id="ganttEditable" /> Redigerbar
           </label>
         </div>
       </div>
-      <div id="ganttEditableHint" class="hint hidden">✏️ Redigerbart läge: dra i en stapel för att flytta den, eller i dess vänster-/högerkant för att ändra start- eller slutdatum. Ändringen sparas direkt.</div>
+      <div id="ganttEditableHint" class="hint hidden">✏️ Redigerbart läge: dra i en stapel eller lapp för att flytta den, eller i dess vänster-/högerkant för att ändra start eller slut. På tavlan flyttas aktiviteter som beror på den med – håll <b>Shift</b> för att bara flytta den lappen. Dubbelklicka en lapp för att skriva in datum. Ändringen sparas direkt och kan ångras.</div>
 
       <div id="ganttLegend" class="gantt-legend"></div>
       <div id="ganttNotes" class="hint"></div>
