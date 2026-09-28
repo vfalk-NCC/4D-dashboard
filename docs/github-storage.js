@@ -416,9 +416,21 @@ async function ghUploadBinary(token, path, file, message) {
     binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
   }
   const contentB64 = btoa(binary);
-  const existing = await ghGetMeta(token, path);
-  await ghPutFile(token, path, contentB64, existing ? existing.sha : null, message || `Lägg till bilaga ${path}`);
-  return path;
+  // Skrivkrock (409) kan uppstå även för en NY fil när en annan skrivning
+  // till repot hann före (GitHub uppdaterar grenen för varje fil) - läs om
+  // sha och försök igen med stigande paus, precis som ghWriteJSON gör.
+  for (let attempt = 0; ; attempt++) {
+    await ghAwaitRateLimitGate();
+    const existing = await ghGetMeta(token, path);
+    try {
+      await ghPutFile(token, path, contentB64, existing ? existing.sha : null, message || `Lägg till bilaga ${path}`);
+      return path;
+    } catch (e) {
+      if (e.rateLimited) { await ghExtendRateLimitGate(e.retryAfterMs); continue; }
+      if (!e.conflict || attempt >= 6) throw e;
+      await new Promise(r => setTimeout(r, Math.min(400 * 2 ** attempt, 5000) + Math.random() * 300));
+    }
+  }
 }
 
 /** Hämtar en bilaga och returnerar en blob:-URL som kan användas i <img src>/<a href>. */
