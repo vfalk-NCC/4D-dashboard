@@ -1775,6 +1775,8 @@ async function supaUpdate(table, id, body) {
 async function saveItemSchedule(it, newStart, newEnd) {
   const plan = emptyPlan();
   plan.items.set(it.id, { startDate: newStart, endDate: newEnd });
+  const conflicts = planConflicts(new Set([it.id]), plan);
+  if (conflicts.length && !confirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`)) { renderGantt(getFilteredItems()); return; }
   await applySchedulePlan(plan, `Ändrade ${itemLabel(it)}`);
 }
 
@@ -1793,26 +1795,6 @@ function emptyPlan() { return { items: new Map(), acts: new Map() }; }
 function planSize(plan) { return plan.items.size + plan.acts.size; }
 function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
 function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
-
-/** Alla aktiviteter som (direkt eller indirekt) beror på targetIds - hela aktiviteten (alla objekt) för varje. */
-function downstreamIds(targetIds) {
-  const depById = itemsByIdAll();
-  const result = new Set();
-  let frontier = [...targetIds];
-  while (frontier.length) {
-    const next = new Set();
-    frontier.forEach(id => downstreamOf(id, depById).forEach(d => {
-      if (!targetIds.has(d.id) && !result.has(d.id)) next.add(d.id);
-    }));
-    const keys = new Set([...next].map(id => (depById.get(id) || {}).activityKey).filter(Boolean));
-    items.forEach(it => {
-      if (it.activityKey && keys.has(it.activityKey) && !targetIds.has(it.id) && !result.has(it.id)) next.add(it.id);
-    });
-    next.forEach(id => result.add(id));
-    frontier = [...next];
-  }
-  return result;
-}
 
 /** Flyttar objekten (och deras delaktiviteter) deltaDays dagar. */
 function planShift(ids, deltaDays, plan) {
@@ -1835,8 +1817,73 @@ function planShift(ids, deltaDays, plan) {
 
 function planMove(targetIds, deltaDays, withDeps, plan = emptyPlan()) {
   planShift(targetIds, deltaDays, plan);
-  if (withDeps) planShift(downstreamIds(targetIds), deltaDays, plan);
+  if (withDeps) pushDependents(targetIds, plan);
   return plan;
+}
+
+/**
+ * Skjuter fram aktiviteter som annars skulle krocka med något de väntar på
+ * (Victors val 2026-09-28): en beroende aktivitet flyttas bara om dess
+ * föregångare nu slutar SENARE än förut och på/efter dess start - och då
+ * precis så mycket att den startar dagen efter. Den dras aldrig bakåt.
+ * Överlappade den redan innan behålls samma överlapp. Hela aktiviteten
+ * (alla objekt) flyttas lika mycket, och det fortplantar sig nedåt i kedjan.
+ * Objekten användaren själv flyttar (targetIds) rörs inte.
+ */
+function pushDependents(targetIds, plan) {
+  const byId = itemsByIdAll();
+  const groupOf = it => it.activityKey ? items.filter(x => x.activityKey === it.activityKey) : [it];
+  for (let guard = 0; guard < 500; guard++) {
+    let pushed = false;
+    const done = new Set();
+    for (const it of items) {
+      if (targetIds.has(it.id) || done.has(it.id) || !it.startDate) continue;
+      const members = groupOf(it).filter(m => !targetIds.has(m.id));
+      members.forEach(m => done.add(m.id));
+      let need = 0;
+      members.forEach(m => (m.dependsOn || []).forEach(pid => {
+        const p = byId.get(pid);
+        if (!p || !p.endDate || !plan.items.has(pid)) return;
+        const newEnd = curItemDates(p, plan).endDate, oldEnd = p.endDate;
+        if (newEnd <= oldEnd) return;
+        const curStart = curItemDates(m, plan).startDate;
+        const target = oldEnd >= m.startDate
+          ? addDaysIso(m.startDate, daysBetweenIso(oldEnd, newEnd))  // överlappade redan - behåll överlappet
+          : addDaysIso(newEnd, 1);                                     // starta dagen efter
+        need = Math.max(need, daysBetweenIso(curStart, target));
+      }));
+      if (need > 0) {
+        planShift(new Set(members.map(m => m.id)), need, plan);
+        pushed = true;
+      }
+    }
+    if (!pushed) break;
+  }
+  return plan;
+}
+
+/** Objekt som efter planen startar innan något de väntar på är klart (och inte gjorde det förut). */
+function planConflicts(targetIds, plan) {
+  const byId = itemsByIdAll();
+  const out = [];
+  targetIds.forEach(id => {
+    const m = byId.get(id);
+    if (!m || !m.startDate) return;
+    const ns = curItemDates(m, plan).startDate;
+    (m.dependsOn || []).forEach(pid => {
+      const p = byId.get(pid);
+      if (!p || p.status === "klar" || !p.endDate) return;
+      const pe = curItemDates(p, plan).endDate;
+      if (pe >= ns && !(p.endDate >= m.startDate)) out.push({ m, p, pe });
+    });
+  });
+  // En rad per föregångare räcker (samma aktivitet kan ha flera objekt).
+  const seen = new Set();
+  return out.filter(c => { const k = `${itemLabel(c.m)}|${c.p.id}`; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+function conflictText(conflicts) {
+  return conflicts.slice(0, 4).map(c => `• "${itemLabel(c.m)}" startar innan "${itemLabel(c.p)}" är klar (slutar ${c.pe})`).join("\n") +
+    (conflicts.length > 4 ? `\n… och ${conflicts.length - 4} till` : "");
 }
 
 /**
@@ -1879,7 +1926,7 @@ function planResize(targetIds, edge, deltaDays, withDeps, plan = emptyPlan()) {
         plan.acts.set(a.id, { start_date: ac.start_date, end_date: e2 });
       });
     });
-    if (withDeps) planShift(downstreamIds(targetIds), deltaDays, plan);
+    if (withDeps) pushDependents(targetIds, plan);
   }
   return plan;
 }
@@ -2813,9 +2860,11 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
     const s0 = own.map(d => d.startDate).sort()[0] || it.startDate;
     const e0 = own.map(d => d.endDate).sort().pop() || it.endDate;
     const depCount = [...plan.items.keys()].filter(id => !targets.has(id)).length;
+    const conflicts = planConflicts(targets, plan);
     showGanttTooltip(e, `<div class="gantt-tooltip-title">${escapeHtml(itemLabel(it))}</div>
       ${ganttTooltipRow(mode === "move" ? "Flyttas till" : mode === "left" ? "Ny start" : "Nytt slut", `${weekdayDateSv(s0)} – ${weekdayDateSv(e0)} (${delta > 0 ? "+" : ""}${delta} d)`)}
-      ${depCount ? ganttTooltipRow("Beroende", `${depCount} objekt flyttas med (Shift = inte)`) : ""}`);
+      ${depCount ? ganttTooltipRow("Beroende", `${depCount} objekt skjuts fram (Shift = inte)`) : ""}
+      ${conflicts.length ? `<div class="gantt-tooltip-warn">⚠ Startar innan ${escapeHtml(conflicts.map(c => itemLabel(c.p)).join(", "))} är klar</div>` : ""}`);
   };
   const onMove = e => {
     const dx = e.clientX - startX;
@@ -2839,9 +2888,11 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
     if (!delta) return;
     const withDeps = !e.shiftKey;
     const plan = mode === "move" ? planMove(targets, delta, withDeps) : planResize(targets, mode, delta, withDeps);
+    const conflicts = planConflicts(targets, plan);
+    if (conflicts.length && !confirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`)) { renderGantt(getFilteredItems()); return; }
     const verb = mode === "move" ? `Flyttade ${itemLabel(it)} ${delta > 0 ? "+" : ""}${delta} d` : `${mode === "left" ? "Ny start" : "Nytt slut"} för ${itemLabel(it)}`;
     const deps = [...plan.items.keys()].filter(id => !targets.has(id)).length;
-    applySchedulePlan(plan, deps ? `${verb} (+${deps} beroende)` : verb);
+    applySchedulePlan(plan, deps ? `${verb} (${deps} beroende framskjutna)` : verb);
   };
   document.addEventListener("pointermove", onMove);
   document.addEventListener("pointerup", onUp);
@@ -2858,7 +2909,7 @@ function openBoardDatePopover(noteEl, it) {
     <div class="board-pop-title">${escapeHtml(itemLabel(it))}${it.members ? ` <span class="hint">(${it.members.length} objekt)</span>` : ""}</div>
     <label>Start <input type="date" class="bp-start" value="${escapeHtml(it.startDate || "")}" /></label>
     <label>Slut <input type="date" class="bp-end" value="${escapeHtml(it.endDate || "")}" /></label>
-    <label class="bp-deps"><input type="checkbox" class="bp-withdeps" checked /> Flytta beroende aktiviteter med</label>
+    <label class="bp-deps"><input type="checkbox" class="bp-withdeps" checked /> Skjut fram beroende aktiviteter som annars krockar</label>
     <div class="board-pop-actions"><button type="button" class="bp-cancel">Avbryt</button><button type="button" class="bp-save primary">Spara</button></div>`;
   document.body.appendChild(pop);
   const r = noteEl.getBoundingClientRect();
@@ -2877,7 +2928,9 @@ function openBoardDatePopover(noteEl, it) {
     // slutet - och flytta beroende aktiviteter lika mycket som slutet.
     const plan = planMove(targets, dl, false);
     planResize(targets, "right", dr - dl, false, plan);
-    if (withDeps && dr) planShift(downstreamIds(targets), dr, plan);
+    if (withDeps) pushDependents(targets, plan);
+    const conflicts = planConflicts(targets, plan);
+    if (conflicts.length && !confirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nSpara ändå?`)) return;
     close();
     applySchedulePlan(plan, `Nya datum för ${itemLabel(it)}: ${ns} – ${ne}`);
   };
@@ -2891,7 +2944,7 @@ function openBoardDatePopover(noteEl, it) {
    pågår. Lappens färg = entreprenör/område/aktivitet (Färga efter), dess
    vänsterkant = status, och en tunn stapel längst ned = framdrift.
    ------------------------------------------------------------------- */
-const BOARD_COL_PX = 150;
+const BOARD_COL_PX = 210; // 30 px per dag
 const BOARD_LANE_PX = 150;
 
 function applyGanttViewClass() {
@@ -2925,6 +2978,8 @@ function renderGanttBoard(list) {
   const wEnd = startOfWeekUTC(parseDate(domainEnd));
   const nWeeks = Math.max(1, Math.round((wEnd - w0) / (7 * 86400000)) + 1);
   const colOf = iso => Math.round((startOfWeekUTC(parseDate(iso)) - w0) / (7 * 86400000));
+  const dayOf = iso => Math.round((parseDate(iso) - w0) / 86400000);
+  const nDays = nWeeks * 7;
   const todayCol = Math.round((startOfWeekUTC(todayUTC()) - w0) / (7 * 86400000));
 
   const visible = (ganttBoardSplit ? withDates : mergeActivityGroups(withDates)).filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
@@ -2943,8 +2998,10 @@ function renderGanttBoard(list) {
   const colorKind = ganttColorBy;
   const noneFor = { area: NO_AREA_LABEL, contractor: NO_CONTRACTOR_LABEL, activity: NO_ACTIVITY_LABEL };
   const noteHtml = it => {
-    const c0 = Math.max(0, colOf(it.startDate));
-    const c1 = Math.min(nWeeks - 1, colOf(it.endDate));
+    // Lappen är exakt så lång som aktiviteten pågår (en kolumn per dag).
+    const c0 = Math.max(0, dayOf(it.startDate));
+    const c1 = Math.min(nDays - 1, dayOf(it.endDate));
+    const shortNote = (c1 - c0 + 1) <= 2;
     const c = softColor(colorKind, it[colorKind] || noneFor[colorKind]);
     const st = STATUS_COLORS[it.status] || STATUS_COLORS.planerad;
     const name = itemLabel(it);
@@ -2960,7 +3017,7 @@ function renderGanttBoard(list) {
     let h = 0; for (const ch of String(it.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     const tilt = ((h % 7) - 3) * 0.25;
     const late = it.status === "forsenad", blocked = itemHasOpenBlocker(it);
-    return `<div class="pnote${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}" style="grid-column:${c0 + 1} / ${c1 + 2}; --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${tilt}deg;"
+    return `<div class="pnote${shortNote ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}" style="grid-column:${c0 + 1} / ${c1 + 2}; --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${tilt}deg;"
         data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0">
         <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</div>
         ${subParts.length ? `<div class="pnote-sub">${escapeHtml(subParts.join(" · "))}</div>` : ""}
@@ -2981,7 +3038,8 @@ function renderGanttBoard(list) {
   const avail = (el.clientWidth || 0) - BOARD_LANE_PX - 2;
   const colPx = Math.max(BOARD_COL_PX, Math.floor(avail / nWeeks) || 0);
   const todayOn = todayCol >= 0 && todayCol < nWeeks;
-  const gridBg = `--cols:${nWeeks}; --col:${colPx}px; --today-left:${todayOn ? todayCol * colPx : -9999}px;`;
+  const todayDay = dayOf(todayISO());
+  const gridBg = `--cols:${nWeeks}; --col:${colPx}px; --days:${nDays}; --day:${colPx / 7}px; --today-left:${todayOn ? todayDay * colPx / 7 : -9999}px;`;
   const lanesHtml = laneKeys.map(k => {
     const collapseKey = `${ganttGroupBy}:${k}`;
     const collapsed = ganttGroupBy && ganttCollapsedGroups.has(collapseKey);

@@ -1633,21 +1633,23 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item:nth-last-child(-n
 .board-lane.collapsed .board-grid { min-height: 30px; }
 .board-grid {
   display: grid;
-  grid-template-columns: repeat(var(--cols), var(--col));
+  grid-template-columns: repeat(var(--days), var(--day));
   grid-auto-flow: row dense;
   grid-auto-rows: minmax(64px, auto);
   gap: 8px 0;
   padding: 8px 0;
   align-content: start;
   background-image:
-    linear-gradient(to right, rgba(59,130,246,.09), rgba(59,130,246,.09)),
-    repeating-linear-gradient(to right, transparent 0, transparent calc(var(--col) - 1px), #e4ded2 calc(var(--col) - 1px), #e4ded2 var(--col));
-  background-size: var(--col) 100%, auto;
-  background-position: var(--today-left) 0, 0 0;
-  background-repeat: no-repeat, repeat;
+    linear-gradient(to right, rgba(59,130,246,.16), rgba(59,130,246,.16)),
+    repeating-linear-gradient(to right, transparent 0, transparent calc(var(--col) - 1px), #d9d1c1 calc(var(--col) - 1px), #d9d1c1 var(--col)),
+    repeating-linear-gradient(to right, transparent 0, transparent calc(var(--day) * 5), rgba(0,0,0,.045) calc(var(--day) * 5), rgba(0,0,0,.045) var(--col)),
+    repeating-linear-gradient(to right, transparent 0, transparent calc(var(--day) - 1px), rgba(0,0,0,.04) calc(var(--day) - 1px), rgba(0,0,0,.04) var(--day));
+  background-size: var(--day) 100%, auto, auto, auto;
+  background-position: var(--today-left) 0, 0 0, 0 0, 0 0;
+  background-repeat: no-repeat, repeat, repeat, repeat;
 }
 .pnote {
-  margin: 0 5px;
+  margin: 0 2px;
   background: var(--bg);
   border-left: 5px solid var(--st);
   border-radius: 2px 2px 8px 2px;
@@ -1694,3 +1696,10 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item:nth-last-child(-n
 .board-pop-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
 .board-pop-actions button { font: inherit; padding: 4px 10px; border: 1px solid var(--border); border-radius: 5px; background: white; cursor: pointer; }
 .board-pop-actions button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+
+/* Korta aktiviteter (1–2 dagar): bara namnet, resten i hovringen */
+.pnote-short { padding: 5px 4px 6px 5px; border-left-width: 4px; }
+.pnote-short .pnote-sub, .pnote-short .pnote-meta { display: none; }
+.pnote-short .pnote-title { font-size: 10px; -webkit-line-clamp: 3; word-break: break-all; }
+.pnote-short::after { width: 8px; height: 8px; }
+.gantt-tooltip-warn { margin-top: 4px; color: #fecaca; font-weight: 600; }
