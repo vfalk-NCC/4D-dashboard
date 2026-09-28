@@ -71,6 +71,19 @@ function ghContentsUrl(path) {
 const ghFileCache = new Map(); // path -> { data, sha }
 
 /** Hämtar en fils metadata + innehåll (avkodat som text). null om filen inte finns. */
+/* fetch med två nya försök vid rena nätverksfel ("Failed to fetch" - t.ex.
+   ett tillfälligt avbrott eller en omstart av uppkopplingen), inte vid
+   HTTP-fel som 401/404/409 som ska hanteras av anroparen. */
+async function ghFetchRetry(url, opts) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await fetch(url, opts); }
+    catch (e) {
+      if (attempt >= 2) throw e;
+      await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+    }
+  }
+}
+
 async function ghGetFile(token, path) {
   // cache: "no-store" - GitHub svarar med Cache-Control: max-age=60, så
   // utan den här flaggan kan webbläsaren ge tillbaka en upp till en minut
@@ -78,7 +91,7 @@ async function ghGetFile(token, path) {
   // skrivning. Nästa sparning skrev då mot fel sha, fick 409 om och om igen
   // tills omförsöken tog slut -> "Kunde inte spara" (Victors rapport
   // 2026-09-28, typiskt när man sparar/kopplar flera saker i följd).
-  const res = await fetch(`${ghContentsUrl(path)}?ref=${GH_BRANCH}`, {
+  const res = await ghFetchRetry(`${ghContentsUrl(path)}?ref=${GH_BRANCH}`, {
     headers: ghHeaders(token),
     cache: "no-store",
   });
@@ -97,7 +110,7 @@ async function ghGetFile(token, path) {
   } else {
     // Filer över 1 MB: Contents API skickar inget innehåll (encoding
     // "none"), bara metadata - hämta själva innehållet som rå text.
-    const raw = await fetch(`${ghContentsUrl(path)}?ref=${GH_BRANCH}`, {
+    const raw = await ghFetchRetry(`${ghContentsUrl(path)}?ref=${GH_BRANCH}`, {
       headers: ghHeaders(token, "application/vnd.github.raw"),
       cache: "no-store",
     });
