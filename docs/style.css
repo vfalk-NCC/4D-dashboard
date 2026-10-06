@@ -787,6 +787,25 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .gantt-tooltip-title { font-weight: 700; margin-bottom: 3px; }
 .gantt-tooltip-row { display: flex; justify-content: space-between; gap: 10px; }
 .gantt-tooltip-value { font-weight: 700; }
+/* Tipsrutan för en aktivitet: tydliga rader, baseline och beroenden i egna avsnitt. */
+.gantt-tooltip { max-width: 290px; line-height: 1.35; overflow-wrap: anywhere; }
+.gantt-tooltip-title { font-size: 12px; line-height: 1.3; }
+.gantt-tooltip .gantt-tooltip-row { display: grid; grid-template-columns: 70px 1fr; gap: 0 8px; }
+.gantt-tooltip .gantt-tooltip-value { text-align: left; }
+.gantt-tip-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+.gantt-tip-sec { border-top: 1px solid rgba(255,255,255,.14); margin-top: 6px; padding-top: 5px; display: flex; flex-direction: column; gap: 4px; }
+.gantt-tip-sec-h { color: #b6bac2; font-size: 10px; display: flex; align-items: center; gap: 5px; }
+.gantt-tip-sec-h span { color: #8b9099; }
+.gantt-tip-bar { display: inline-block; width: 12px; height: 4px; border-radius: 2px; flex: 0 0 auto; }
+.gantt-tip-bl > div:last-child { font-weight: 700; }
+.gantt-tip-chip { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.gantt-tip-chip.later { background: #7f1d1d; color: #fecaca; }
+.gantt-tip-chip.earlier { background: #064e3b; color: #a7f3d0; }
+.gantt-tip-chip.same { background: #374151; color: #e5e7eb; }
+.gantt-tip-sec ul { margin: 1px 0 3px 14px; padding: 0; }
+.gantt-tip-sec li { font-weight: 600; }
+.gantt-tip-dim { color: #b6bac2; font-weight: 400; }
+.gantt-tip-more { list-style: none; margin-left: -14px; color: #b6bac2; font-weight: 400 !important; }
 .gantt-tooltip-key { color: #b6bac2; }
 
 /* ---------------------------------------------------------------------

@@ -99,7 +99,7 @@ seed('plan_baseline.json', [{ mode: 'prev', label: 'Import 01/10 2026 (Huvudtidp
   // Tipsrutan.
   await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
   const tip = await page.evaluate(() => (document.querySelector('.gantt-tooltip') || {}).innerText || '');
-  if (!/Baseline/.test(tip) || !/senare 5 d/.test(tip)) fail('Tipsrutan ska visa baseline: ' + tip);
+  if (!/Baseline/.test(tip) || !/5 d senare/.test(tip)) fail('Tipsrutan ska visa baseline: ' + tip);
 
   // Staplar: en grå stapel under den planerade på baseline-datumen; vyn tar med baseline-datumen.
   await page.click('[data-gantt-view="bars"]'); await page.waitForTimeout(250);

@@ -97,6 +97,12 @@ seed('plan_items.json', [
   const menu = await page.evaluate(() => ({ text: document.querySelector('.board-dep-menu').innerText, pred: document.querySelectorAll('.pnote-dep-pred').length, succ: document.querySelectorAll('.pnote-dep-succ').length, mark: !!document.querySelector('.pnote .pnote-dep') }));
   if (!/Väntar på\s*J10/i.test(menu.text) || !/Följs av\s*Gjutning A \(2 objekt\)/i.test(menu.text) || menu.pred !== 1 || menu.succ !== 1 || !menu.mark) fail('Menyn ska visa och markera beroendena: ' + JSON.stringify(menu));
   await page.keyboard.press('Escape');
+  await page.evaluate(() => window.scrollTo(0, 0)); await note('J14').scrollIntoViewIfNeeded(); await page.waitForTimeout(200);
+  { const nb = await note('J14').locator('.pnote-title').boundingBox(); await page.mouse.move(nb.x + 10, nb.y + 5); await page.mouse.move(nb.x + 14, nb.y + 6); } await page.waitForTimeout(300);
+  const tip14 = await page.innerText('.gantt-tooltip');
+  if (!/Väntar på[\s\S]*J10[\s\S]*Blockerar[\s\S]*Gjutning/.test(tip14)) fail('Tipsrutan ska visa beroendena: ' + tip14);
+  { const bb = await page.locator('.gantt-tooltip').boundingBox(); await page.screenshot({ path: path.join(require('os').tmpdir(), 'tooltip_deps.png'), clip: { x: bb.x - 2, y: bb.y - 2, width: bb.width + 4, height: bb.height + 4 } }); }
+  await page.mouse.move(0, 0);
   console.log('OK: Följs av… på en lapp med flera objekt; menyn listar och markerar det som hör ihop');
 
   // 5) Cirkel: J10 kan inte vänta på Gjutning (som väntar på J14 som väntar på J10).

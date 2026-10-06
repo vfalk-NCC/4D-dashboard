@@ -185,7 +185,7 @@ async function run() {
   await barA.hover();
   await page.waitForTimeout(50);
   const tooltipText = await page.locator('.gantt-tooltip').innerText();
-  if (!/Pelare A/.test(tooltipText) || !/Pågående/.test(tooltipText) || !/40%/.test(tooltipText)) {
+  if (!/Pelare A/.test(tooltipText) || !/Pågående/.test(tooltipText) || !/40 ?%/.test(tooltipText)) {
     throw new Error('Förväntade en tooltip med namn, status och framdrift för Pelare A, fick: ' + tooltipText);
   }
   await page.mouse.move(5, 5);

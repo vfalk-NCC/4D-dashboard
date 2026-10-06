@@ -2672,43 +2672,54 @@ function ganttTooltipRow(label, value) {
   return `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${escapeHtml(label)}</span><span class="gantt-tooltip-value">${escapeHtml(value)}</span></div>`;
 }
 
+/* Tipsrutan (Victor 2026-10-06: "popup-fönstret ser inte så bra ut"): datum som "ons 4/11",
+   baseline i ett eget avsnitt med namnet en gång och förskjutningen som en färgad etikett,
+   beroenden som korta listor (högst 3 + "N till"). */
+const tipShort = (t, n = 44) => { t = String(t || ""); return t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t; };
+function tipDate(v) {
+  const d = parseDate(v);
+  if (!d) return "?";
+  return weekdayDateSv(v) + (d.getUTCFullYear() !== todayUTC().getUTCFullYear() ? ` ${d.getUTCFullYear()}` : "");
+}
+const tipRange = (a, b) => (a === b ? tipDate(a) : `${tipDate(a)} – ${tipDate(b)}`);
 function ganttTooltipHtmlForItem(it, depById) {
+  const e = escapeHtml;
+  const row = (k, vHtml) => `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${e(k)}</span><span class="gantt-tooltip-value">${vHtml}</span></div>`;
+  const st = STATUS_COLORS[it.status] || STATUS_COLORS.planerad;
   const rows = [
-    ganttTooltipRow("Status", STATUS_LABELS[it.status] || it.status),
-    ganttTooltipRow("Planerat", `${it.startDate} – ${it.endDate}`),
-    ganttTooltipRow("Framdrift", `${Math.round(Number(it.progress) || 0)}%`)
+    row("Status", `<i class="gantt-tip-dot" style="background:${st}"></i>${e(STATUS_LABELS[it.status] || it.status)}`),
+    row("Planerat", e(tipRange(it.startDate, it.endDate))),
+    row("Framdrift", `${Math.round(Number(it.progress) || 0)} %`)
   ];
-  if (it.contractor) rows.push(ganttTooltipRow("Entreprenör", it.contractor));
-  [ganttBaselineId, ganttShowBaseline ? ganttBaseline2Id : ""].filter(Boolean).forEach((id, i) => {
-    const b = blOf(it, id);
-    if (!b) return;
-    const d = baselineShiftDays(it, id), lbl = baselineLabel(id);
-    rows.push(ganttTooltipRow(i ? baselineName(id) : (id === "main" && !planBaselines.length ? "Baseline" : baselineName(id)), `${b[0]} – ${b[1]}${d ? ` (${d > 0 ? "senare" : "tidigare"} ${Math.abs(d)} d)` : " (oförändrad)"}${lbl && lbl !== baselineName(id) ? ` · ${lbl}` : ""}`));
-  });
-  if (it.actualStartDate || it.actualEndDate) {
-    rows.push(ganttTooltipRow("Verkligt", `${it.actualStartDate || "?"} – ${it.actualEndDate || "?"}`));
+  if (it.actualStartDate || it.actualEndDate) rows.push(row("Verkligt", e(`${it.actualStartDate ? tipDate(it.actualStartDate) : "?"} – ${it.actualEndDate ? tipDate(it.actualEndDate) : "pågår"}`)));
+  if (it.contractor) rows.push(row("Entreprenör", e(it.contractor)));
+  let html = `<div class="gantt-tooltip-title">${e(itemLabel(it))}</div>${rows.join("")}`;
+  // Baseline: namnet (och källan) en gång, datumen, förskjutningen som etikett.
+  const bl = [ganttBaselineId, ganttShowBaseline ? ganttBaseline2Id : ""].filter(Boolean).map(id => ({ id, b: blOf(it, id) })).filter(x => x.b);
+  if (bl.length) {
+    html += `<div class="gantt-tip-sec">${bl.map(({ id, b }) => {
+      const d = baselineShiftDays(it, id), r = planBaselines.find(x => x && x.id === id);
+      const name = id === "main" && !r ? "Baseline" : baselineName(id), src = r && r.source && r.source !== r.name ? r.source : (id === "main" && !r ? baselineLabel(id) : "");
+      const chip = d ? `<span class="gantt-tip-chip ${d > 0 ? "later" : "earlier"}">${Math.abs(d)} d ${d > 0 ? "senare" : "tidigare"}</span>` : `<span class="gantt-tip-chip same">oförändrad</span>`;
+      return `<div class="gantt-tip-bl"><div class="gantt-tip-sec-h"><i class="gantt-tip-bar" style="background:${id === ganttBaselineId ? ganttBaselineColor : ganttBaselineColor2}"></i>${e(tipShort(name, 30))}${src && src !== name ? ` <span>· ${e(tipShort(src, 28))}</span>` : ""}</div><div>${e(tipRange(b[0], b[1]))} ${chip}</div></div>`;
+    }).join("")}</div>`;
   }
-  // Beroendekedjan (Victors förfrågan 2026-09-21) - vad objektet väntar på
-  // och vad som i sin tur väntar på DET, så konsekvensen av en försening
-  // syns direkt i hovertooltipen utan att behöva klicka något.
+  // Beroendekedjan (Victors förfrågan 2026-09-21): vad den väntar på och vad som väntar på den.
+  const list = (arr, fmt) => { const shown = arr.slice(0, 3).map(fmt); return shown.join("") + (arr.length > 3 ? `<li class="gantt-tip-more">+ ${arr.length - 3} till</li>` : ""); };
+  const deps = [];
   if (depById && Array.isArray(it.dependsOn) && it.dependsOn.length > 0) {
-    const names = it.dependsOn.map(id => {
+    deps.push(`<div class="gantt-tip-sec-h">Väntar på</div><ul>${list(it.dependsOn, id => {
       const dep = depById.get(id);
-      if (!dep) return "(borttaget objekt)";
-      const label = dep.objectName || dep.objectId || "?";
-      return dep.status === "klar" ? label : `${label} (${STATUS_LABELS[dep.status] || dep.status})`;
-    });
-    rows.push(ganttTooltipRow("Beroende av", names.join(", ")));
+      if (!dep) return `<li>(borttaget objekt)</li>`;
+      return `<li>${e(tipShort(dep.objectName || dep.objectId || "?"))}${dep.status !== "klar" ? ` <span class="gantt-tip-dim">· ${e(STATUS_LABELS[dep.status] || dep.status)}</span>` : " ✓"}</li>`;
+    })}</ul>`);
   }
   if (depById) {
     const downstream = downstreamOf(it.id, depById);
-    if (downstream.length > 0) {
-      const names = downstream.slice(0, 6).map(d => d.objectName || d.objectId || "?");
-      const more = downstream.length > 6 ? ` + ${downstream.length - 6} till` : "";
-      rows.push(ganttTooltipRow("Blockerar", names.join(", ") + more));
-    }
+    if (downstream.length > 0) deps.push(`<div class="gantt-tip-sec-h">Blockerar</div><ul>${list(downstream, d => `<li>${e(tipShort(d.objectName || d.objectId || "?"))}</li>`)}</ul>`);
   }
-  return `<div class="gantt-tooltip-title">${escapeHtml(itemLabel(it))}</div>${rows.join("")}`;
+  if (deps.length) html += `<div class="gantt-tip-sec">${deps.join("")}</div>`;
+  return html;
 }
 
 function ganttTooltipHtmlForActual(it) {

@@ -75,7 +75,8 @@ seed('plan_baselines.json', [{ id: 'main', name: 'Kontraktstidplan', source: 'Ko
   if (!d3.both || !d3.below || d3.color !== 'rgb(37, 99, 235)' || !/Jämför: Kontraktstidplan/.test(d3.legend)) fail('Två baselines samtidigt: ' + JSON.stringify(d3));
   await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
   const tip = await page.evaluate(() => (document.querySelector('.gantt-tooltip') || {}).innerText || '');
-  if (!/Rev 1 – ÄTA 12[\s\S]*senare 2 d[\s\S]*Kontraktstidplan[\s\S]*senare 5 d/.test(tip)) fail('Tipsrutan ska visa båda: ' + tip);
+  if (!/Rev 1 – ÄTA 12[\s\S]*2 d senare[\s\S]*Kontraktstidplan[\s\S]*5 d senare/.test(tip) || (tip.match(/Kontraktstidplan/g) || []).length !== 1) fail('Tipsrutan ska visa båda (namnet en gång): ' + tip);
+  { const bb = await page.locator('.gantt-tooltip').boundingBox(); await page.screenshot({ path: path.join(require('os').tmpdir(), 'tooltip_baseline.png'), clip: { x: bb.x - 2, y: bb.y - 2, width: bb.width + 4, height: bb.height + 4 } }); }
   await page.mouse.move(0, 0);
   await page.uncheck('#ganttBoardOneLine'); await page.waitForTimeout(150);
   await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'board_two_baselines.png') });
