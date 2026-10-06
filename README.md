@@ -118,6 +118,9 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   verktygsrader – bara färgförklaringen och schemat syns; valet sparas.
 - **Sök** (🔍 i Gantt-schemats verktygsrad): område, aktivitet, namn eller entreprenör; flera
   ord = alla ska finnas, å/ä/ö spelar ingen roll; visar "N av M"; Esc rensar.
+- **Modellen ↔ schemat**: klick på en kopplad aktivitet markerar och zoomar in objekten i TC;
+  markerar man objekt i modellen ramas deras aktiviteter in i schemat (scrollar dit, pulserar,
+  fäller ut hopfällda grupper, "Visa" om de ligger utanför perioden). Bara när schemat syns.
 - **Hovring**: aktiviteten lyfts mjukt, och den närmaste kopplade aktiviteten bakåt
   (föregångaren som slutar senast) och framåt (efterföljaren som startar först) – högst
   en åt varje håll – pulserar diskret med etiketten "◀ Före" / "Efter ▶".

@@ -59,7 +59,7 @@ seed('plan_items.json', [
   await page.click('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(500);
   const calls = await page.evaluate(() => window.__calls || []);
   const sel = calls.find(c => c[0] === 'sel'), cam = calls.find(c => c[0] === 'cam');
-  if (!sel || !cam || JSON.stringify(cam[1].modelObjectIds) !== JSON.stringify([{ modelId: 'm1', objectRuntimeIds: ['101', '102'] }]) || !cam[2] || !cam[2].animationTime) fail('Klick ska markera och zooma in: ' + JSON.stringify(calls));
+  if (!sel || !cam || JSON.stringify(cam[1].modelObjectIds) !== JSON.stringify([{ modelId: 'm1', objectRuntimeIds: ['101', '102'] }]) || cam[2] !== undefined) fail('Klick ska markera och zooma in: ' + JSON.stringify(calls));
   if (!/Markerad och inzoomad i modellen \(2 objekt\)/.test(await page.innerText('#modelToast'))) fail('Bekräftelsen ska visas');
   await page.evaluate(() => { window.__calls = []; });
   await page.click('#ganttChart .pnote[data-item-id="i3"] .pnote-title'); await page.waitForTimeout(400);

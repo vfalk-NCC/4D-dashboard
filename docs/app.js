@@ -328,7 +328,7 @@ async function initApp() {
   loadStatusColorOverrides();
   bindUI();
 
-  API = await TrimbleConnectWorkspace.connect(window.parent, () => {}, 30000);
+  API = await TrimbleConnectWorkspace.connect(window.parent, (event, data) => onTcEvent(event, data), 30000);
 
   const project = await API.project.getProject();
   projectId = project.id;
@@ -934,11 +934,12 @@ async function selectActivityInModel(it) {
       if (rids.length) modelObjectIds.push({ modelId, objectRuntimeIds: rids });
     }
     if (!modelObjectIds.length) { modelToast("Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); return; }
+    ownModelSelectionUntil = Date.now() + 1500; // vår egen markering ska inte studsa tillbaka till schemat
     await API.viewer.setSelection({ modelObjectIds }, "set");
-    // Zooma in på objekten (en mjuk kamerarörelse); äldre API utan animering får en vanlig.
+    // Zooma in: Trimbles egen "zooma till markering" – samma anrop som 4D-planering (setCamera med
+    // bara objekten; med en animeringsinställning ignorerades anropet i TC, Victor 2026-10-06).
     if (typeof API.viewer.setCamera === "function") {
-      try { await API.viewer.setCamera({ modelObjectIds }, { animationTime: 600 }); }
-      catch (e) { try { await API.viewer.setCamera({ modelObjectIds }); } catch (e2) { /* kameran kunde inte flyttas – markeringen finns ändå */ } }
+      try { await API.viewer.setCamera({ modelObjectIds }); } catch (e) { console.warn("Kunde inte zooma in", e); }
     }
     const n = modelObjectIds.reduce((a, m) => a + m.objectRuntimeIds.length, 0);
     modelToast(`Markerad och inzoomad i modellen${n > 1 ? ` (${n} objekt)` : ""}${document.fullscreenElement ? " – stäng helskärmen för att se den" : ""}`);
@@ -946,16 +947,106 @@ async function selectActivityInModel(it) {
     console.warn("Kunde inte markera i 3D-modellen", e);
   }
 }
-/* Kort bekräftelse nere i hörnet. */
+/* Kort bekräftelse nere i hörnet, ev. med en knapp (action: { label, fn }). */
 let modelToastTimer = null;
-function modelToast(text) {
+function modelToast(text, action) {
   let t = document.getElementById("modelToast");
   if (!t) { t = document.createElement("div"); t.id = "modelToast"; t.className = "model-toast"; }
   overlayHost().appendChild(t);
   t.textContent = text;
+  if (action) {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = action.label;
+    b.onclick = () => { t.classList.remove("show"); action.fn(); };
+    t.appendChild(b);
+  }
+  t.classList.toggle("has-action", !!action);
   t.classList.add("show");
   clearTimeout(modelToastTimer);
-  modelToastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  modelToastTimer = setTimeout(() => t.classList.remove("show"), action ? 6000 : 2600);
+}
+
+/* ----- Markering i modellen → Gantt-schemat (Victor 2026-10-06: "tvärtom") -------------------
+   Markerar man objekt i Trimble Connect letar schemat upp deras aktiviteter: scrollar dit, fäller
+   ut hopfällda grupper, pulserar två gånger och behåller en ram så länge objekten är markerade.
+   Reagerar bara när Gantt-schemat syns, och inte på dashboardens egen markering (klick på en lapp). */
+let ownModelSelectionUntil = 0;
+let ganttModelSel = new Set();      // plan_item-id:n som är markerade i modellen
+let modelSelTimer = null;
+function onTcEvent(event) {
+  if (event !== "viewer.onSelectionChanged" && event !== "extension.onSelectionChanged") return;
+  clearTimeout(modelSelTimer);
+  modelSelTimer = setTimeout(syncGanttFromModel, 200);
+}
+function ganttPanelVisible() {
+  const p = document.querySelector('section.panel[data-panel-id="gantt"]');
+  return !!(p && p.offsetParent !== null && !p.classList.contains("collapsed"));
+}
+async function syncGanttFromModel() {
+  if (Date.now() < ownModelSelectionUntil || !ganttPanelVisible()) return;
+  if (!API || !API.viewer || typeof API.viewer.getSelection !== "function") return;
+  let sel;
+  try { sel = await API.viewer.getSelection(); } catch (e) { return; }
+  const ids = new Set();
+  let objects = 0;
+  for (const m of sel || []) {
+    const rids = m.objectRuntimeIds || [];
+    if (!rids.length) continue;
+    objects += rids.length;
+    let ext = [];
+    try { ext = await API.viewer.convertToObjectIds(m.modelId, rids); } catch (e) { continue; }
+    const set = new Set((ext || []).map(String));
+    items.forEach(it => { if (it.modelId === m.modelId && set.has(String(it.objectId))) ids.add(String(it.id)); });
+  }
+  ganttModelSel = ids;
+  if (!ids.size) {
+    applyGanttModelSel(false);
+    if (objects) modelToast(objects === 1 ? "Objektet är inte kopplat till någon aktivitet" : "Objekten är inte kopplade till någon aktivitet");
+    return;
+  }
+  // Hopfällda grupper som innehåller träffarna fälls ut.
+  const hits = items.filter(it => ids.has(String(it.id)));
+  let opened = false;
+  if (ganttGroupBy) hits.forEach(it => { const k = `${ganttGroupBy}:${ganttGroupKeyFor(it)}`; if (ganttCollapsedGroups.has(k)) { ganttCollapsedGroups.delete(k); opened = true; } });
+  if (opened) { saveGanttPrefs(); renderGantt(getFilteredItems()); }
+  const shown = applyGanttModelSel(true);
+  const acts = new Set(hits.map(it => it.activityKey || it.id)).size;
+  if (!shown) {
+    const first = hits.slice().sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")))[0];
+    const hidden = ganttSearch && !hits.some(ganttSearchMatch) ? "döljs av sökningen" : "ligger utanför vald period";
+    modelToast(`${acts === 1 ? "Aktiviteten" : `${acts} aktiviteter`} ${hidden}`, hidden === "döljs av sökningen"
+      ? { label: "Rensa sökningen", fn: () => { const s2 = document.getElementById("ganttSearch"); if (s2) s2.value = ""; ganttSearch = ""; renderGantt(getFilteredItems()); applyGanttModelSel(true); } }
+      : first && first.startDate ? { label: "Visa", fn: () => ganttJumpToDate(first.startDate) } : null);
+  } else if (acts > 1) modelToast(`${acts} aktiviteter markerade från modellen`);
+}
+/* Ramen (och pulsen när pulse=true) på aktiviteterna som är markerade i modellen. Returnerar antal i bild. */
+function applyGanttModelSel(pulse) {
+  const chart = document.getElementById("ganttChart");
+  if (!chart) return 0;
+  chart.querySelectorAll(".model-sel").forEach(x => x.classList.remove("model-sel", "model-sel-pulse"));
+  if (!ganttModelSel.size) return 0;
+  const els = [];
+  chart.querySelectorAll(".pnote[data-item-id]").forEach(n => {
+    const it = items.find(x => String(x.id) === n.dataset.itemId);
+    const ids = it ? [it.id, ...items.filter(x => it.activityKey && x.activityKey === it.activityKey && !ganttBoardSplit).map(x => x.id)] : [n.dataset.itemId];
+    if (ids.some(id => ganttModelSel.has(String(id)))) els.push(n);
+  });
+  chart.querySelectorAll(".gantt-bar[data-item-id]").forEach(b => { if (ganttModelSel.has(b.dataset.itemId)) els.push(b); });
+  els.forEach(x => { x.classList.add("model-sel"); if (pulse) { x.classList.remove("model-sel-pulse"); void x.offsetWidth; x.classList.add("model-sel-pulse"); } });
+  if (pulse && els[0]) els[0].scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  return els.length;
+}
+/* Visa fyra veckor från veckan då aktiviteten startar. */
+function ganttJumpToDate(iso) {
+  const ws = startOfWeekUTC(parseDate(iso)), we = new Date(ws); we.setUTCDate(we.getUTCDate() + 27);
+  ganttRangeStart = ws.toISOString().slice(0, 10); ganttRangeEnd = we.toISOString().slice(0, 10);
+  const a = document.getElementById("ganttRangeStart"), b = document.getElementById("ganttRangeEnd");
+  if (a) a.value = ganttRangeStart; if (b) b.value = ganttRangeEnd;
+  document.querySelectorAll("[data-gantt-weeks], #ganttRangeReset").forEach(c => c.classList.remove("active"));
+  saveGanttPrefs();
+  updateGanttRangeStatus(document.getElementById("ganttRangeStatus"));
+  renderGantt(getFilteredItems());
+  applyGanttModelSel(true);
 }
 
 // Hämtar kommentarerna för det här projektet. Med GitHub-lagringen ligger
@@ -2815,7 +2906,7 @@ function renderGantt(list, target) {
   } else if (!target) { const c = document.getElementById("ganttSearchCount"); if (c) c.textContent = ""; }
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
-  if (ganttView === "board") { renderGanttBoard(list, target); return; }
+  if (ganttView === "board") { renderGanttBoard(list, target); if (!target) applyGanttModelSel(false); return; }
   const withDates = list.filter(it => it.startDate && it.endDate);
 
   if (withDates.length === 0) {
@@ -3071,7 +3162,7 @@ function renderGantt(list, target) {
     notesEl.innerText = notes.join(" ");
   }
 
-  if (!target) bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays });
+  if (!target) { bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays }); applyGanttModelSel(false); }
 }
 
 
