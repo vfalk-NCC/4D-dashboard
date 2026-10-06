@@ -816,11 +816,38 @@ async function fetchActivities() {
   }
 }
 
+/* Status mot dagens datum (Victor 2026-10-06: "det vi måste utgå ifrån är väl dagens datum"):
+   den sparade statusen sattes vid importen eller för hand och blir inaktuell när dagarna går, så
+   den visade statusen räknas fram i dag – samma regler som 4D-planering (liveItemStatus/
+   computeItemPhase): Klar (100 %, verkligt avslut eller klarmarkerad) och Pausad står kvar;
+   annars slutdatum passerat = försenad, framdrift (minst 1 %) = pågående, startdatum passerat
+   utan framdrift = försenad, i övrigt planerad. */
+function liveStatusOfRow(row) {
+  const stored = row.status === "ej_planerad" ? "planerad" : (row.status || "planerad");
+  if (!row.start_date) return stored;
+  const todayStr = todayISO(), today = new Date(todayStr);
+  const start = new Date(row.start_date), plannedEnd = row.end_date ? new Date(row.end_date) : null;
+  const progress = Number(row.progress) || 0;
+  let actualEnd = row.actual_end_date ? new Date(row.actual_end_date) : null;
+  if (!actualEnd && (stored === "klar" || progress >= 100)) actualEnd = plannedEnd || start;
+  if (actualEnd && (stored === "klar" || progress >= 100) && actualEnd > today) actualEnd = today;
+  if (actualEnd && actualEnd <= today) return "klar";
+  if (stored === "pausad") return "pausad";
+  const hasProgress = progress >= 1;
+  let actualStart = hasProgress && row.actual_start_date ? new Date(row.actual_start_date) : null;
+  if (hasProgress && (!actualStart || actualStart > today)) actualStart = start < today ? start : today;
+  const started = actualStart && actualStart <= today;
+  if (today < start && !started) return "planerad";
+  if (plannedEnd && today > plannedEnd) return "forsenad";
+  return started ? "pagaende" : "forsenad";
+}
+
 function fromRow(row) {
   return {
     id: row.id,
     objectName: (row.object_name || "").trim(),
-    status: row.status || "planerad",
+    status: liveStatusOfRow(row),
+    storedStatus: row.status || "planerad",
     progress: Number.isFinite(row.progress) ? row.progress : 0,
     area: (row.area || "").trim(),
     activity: (row.activity || "").trim(),

@@ -97,6 +97,9 @@ async function run() {
     window.localStorage.setItem('4ddash-unlocked', '1');
   });
 
+  // Fixturen har datum i februari 2026; statusen räknas mot dagens datum (liveStatusOfRow), så
+  // klockan står på en dag då "Pågående" fortfarande stämmer.
+  await page.clock.setFixedTime(new Date('2026-02-05T10:00:00Z'));
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
 
