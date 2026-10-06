@@ -110,6 +110,8 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   Namngivna baselines (t.ex. Kontraktstidplan + Rev 1 – ÄTA 12, se
   `plan_baselines.json`): välj vilken som visas och jämför mot en andra
   samtidigt (tunnare linje/stapel i egen färg).
+  "Bara ± dagar" (syns när Baseline är på): bara förskjutningen (+5 d / −2 d) på
+  aktiviteterna, utan baseline-linjerna.
 - **Helskärm** (⛶ i Gantt-schemats verktygsrad): panelen fyller skärmen – webbläsarens
   helskärm om Trimble Connect tillåter det, annars hela tilläggets yta. Esc stänger.
   "☰ Dölj knappar" (uppe till höger i panelen, även utanför helskärm) gömmer alla

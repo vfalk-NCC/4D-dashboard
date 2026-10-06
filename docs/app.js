@@ -34,6 +34,7 @@ let ganttSearch = "";             // sökrutan i Gantt-schemat (Victor 2026-10-0
 // under den planerade. Sätts vid importen i 4D-planering (förra importen, en .ppb-baseline eller
 // Excels "Plan. start/slut"); planBaselineMeta säger varifrån (pp/plan_baseline.json, sista raden).
 let ganttShowBaseline = false;
+let ganttBaselineDaysOnly = false; // "Bara ± dagar": bara förskjutningen (+5 d), inga baseline-linjer (Victor 2026-10-06)
 let ganttBaselineColor = "#f59e0b"; // valbar (Victor 2026-10-06: "otydlig … gult eller välja färg")
 let planBaselineMeta = null;
 // Namngivna baselines (Victor 2026-10-06): huvudbaselinen "main" (baseline_start_date/baseline_end_date,
@@ -993,6 +994,11 @@ async function fetchBaselineMeta() {
 /* Baseline-färgen som CSS-variabel (--bl) på diagrammet, förklaringen och utskriften. */
 function applyBaselineColor(el) {
   [el, document.getElementById("ganttChart"), document.getElementById("ganttLegend")].forEach(x => { if (x) { x.style.setProperty("--bl", ganttBaselineColor); x.style.setProperty("--bl2", ganttBaselineColor2); } });
+}
+/* "Bara ± dagar" syns bara när Baseline är på. */
+function syncBlDaysPill() {
+  const pill = document.getElementById("ganttBaselineDaysPill");
+  if (pill) pill.classList.toggle("hidden", !ganttShowBaseline);
 }
 /* Väljarna för baseline (syns när det finns mer än en). Ett sparat val som inte längre finns faller
    tillbaka på den första. */
@@ -2463,6 +2469,7 @@ function loadGanttPrefs() {
     if (typeof prefs.boardSplit === "boolean") ganttBoardSplit = prefs.boardSplit;
     if (typeof prefs.boardOneLine === "boolean") ganttBoardOneLine = prefs.boardOneLine;
     if (typeof prefs.baseline === "boolean") ganttShowBaseline = prefs.baseline;
+    if (typeof prefs.baselineDaysOnly === "boolean") ganttBaselineDaysOnly = prefs.baselineDaysOnly;
     if (/^#[0-9a-f]{6}$/i.test(prefs.baselineColor || "")) ganttBaselineColor = prefs.baselineColor;
     if (/^#[0-9a-f]{6}$/i.test(prefs.baselineColor2 || "")) ganttBaselineColor2 = prefs.baselineColor2;
     if (typeof prefs.baselineId === "string" && prefs.baselineId) ganttBaselineId = prefs.baselineId;
@@ -2490,6 +2497,7 @@ function saveGanttPrefs() {
       boardSplit: ganttBoardSplit,
       boardOneLine: ganttBoardOneLine,
       baseline: ganttShowBaseline,
+      baselineDaysOnly: ganttBaselineDaysOnly,
       baselineColor: ganttBaselineColor,
       baselineColor2: ganttBaselineColor2,
       baselineId: ganttBaselineId,
@@ -2947,7 +2955,10 @@ function renderGantt(list, target) {
     const barClass = `gantt-bar${isBlockedRisk ? " gantt-bar-risk" : ""}${ganttEditable ? " gantt-bar-draggable" : ""}`;
 
     let actualHtml = "";
-    if (ganttShowBaseline) [[ganttBaselineId, ""], [ganttBaseline2Id, " gantt-bar-baseline2"]].forEach(([id, cls]) => {
+    if (ganttShowBaseline && ganttBaselineDaysOnly) {
+      const d = baselineShiftDays(it);
+      if (d) actualHtml += `<span class="gantt-bl-d${d > 0 ? " later" : ""}" style="left:calc(${left} + ${width} + 4px);" data-gantt-tip="${tipKey}">${shiftText(d)}</span>`;
+    } else if (ganttShowBaseline) [[ganttBaselineId, ""], [ganttBaseline2Id, " gantt-bar-baseline2"]].forEach(([id, cls]) => {
       const b = id && blOf(it, id);
       if (!b) return;
       const bPos = barPos(b[0], b[1]);
@@ -3028,7 +3039,7 @@ function renderGantt(list, target) {
   const innerWidth = isFit ? "100%" : `${domainDays * pxPerDay + GANTT_ROW_PREFIX_PX}px`;
   const innerStyle = `width:${innerWidth}; --gg-image:${gridStyle.image}; --gg-pos:${gridStyle.pos}; --gg-size:${gridStyle.size}; --gg-repeat:${gridStyle.repeat};`;
 
-  el.className = `gantt-chart${ganttDensity === "comfortable" ? " gantt-density-comfortable" : ""}${ganttShowBaseline ? " gantt-show-bl" : ""}${ganttShowBaseline && ganttBaseline2Id ? " gantt-show-bl2" : ""}`;
+  el.className = `gantt-chart${ganttDensity === "comfortable" ? " gantt-density-comfortable" : ""}${ganttShowBaseline && !ganttBaselineDaysOnly ? " gantt-show-bl" : ""}${ganttShowBaseline && ganttBaseline2Id && !ganttBaselineDaysOnly ? " gantt-show-bl2" : ""}`;
   el.innerHTML = `
     <div class="gantt-inner" style="${innerStyle}">
       ${rulerHtml}
@@ -3394,14 +3405,15 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
       const r0 = dayOf(blOf(it)[0]), r1 = dayOf(blOf(it)[1]);
       const b0 = Math.max(0, r0), b1 = Math.min(nDays - 1, r1);
       const px = d => (d - c0) * dayPx;
-      if (b1 >= b0) blHtml = `<span class="pnote-bl${r0 < 0 ? " cut-l" : ""}${r1 > nDays - 1 ? " cut-r" : ""}" style="left:${px(b0)}px; width:${(b1 - b0 + 1) * dayPx}px;" data-gantt-tip="${key}"></span>`;
+      if (b1 >= b0 && !ganttBaselineDaysOnly) blHtml = `<span class="pnote-bl${r0 < 0 ? " cut-l" : ""}${r1 > nDays - 1 ? " cut-r" : ""}" style="left:${px(b0)}px; width:${(b1 - b0 + 1) * dayPx}px;" data-gantt-tip="${key}"></span>`;
       const noteEnd = c1 + 1;
-      if (r1 < c0) { const from = Math.max(0, r1 + 1); blHtml += `<span class="pnote-bl-link${r1 < 0 ? " off-l" : ""}" style="left:${px(from)}px; width:${(c0 - from) * dayPx}px;"></span>`; }
+      if (ganttBaselineDaysOnly) { /* bara etiketten nedan */ }
+      else if (r1 < c0) { const from = Math.max(0, r1 + 1); blHtml += `<span class="pnote-bl-link${r1 < 0 ? " off-l" : ""}" style="left:${px(from)}px; width:${(c0 - from) * dayPx}px;"></span>`; }
       else if (r0 > c1) { const to = Math.min(nDays, r0); blHtml += `<span class="pnote-bl-link${r0 > nDays - 1 ? " off-r" : ""}" style="left:${px(noteEnd)}px; width:${(to - noteEnd) * dayPx}px;"></span>`; }
       if (bShift) blHtml += `<span class="pnote-bl-d${bShift > 0 ? " later" : ""}" title="Mot baseline${baselineLabel() ? ` (${escapeHtml(baselineLabel())})` : ""}">${shiftText(bShift)}</span>`;
     }
     // Jämförelsebaselinen: en tunnare linje under den första (utan länk).
-    const b2 = ganttShowBaseline && ganttBaseline2Id ? blOf(it, ganttBaseline2Id) : null;
+    const b2 = ganttShowBaseline && ganttBaseline2Id && !ganttBaselineDaysOnly ? blOf(it, ganttBaseline2Id) : null;
     if (b2) {
       const r0 = dayOf(b2[0]), r1 = dayOf(b2[1]), b0 = Math.max(0, r0), b1 = Math.min(nDays - 1, r1);
       if (b1 >= b0) blHtml += `<span class="pnote-bl pnote-bl2" style="left:${(b0 - c0) * dayPx}px; width:${(b1 - b0 + 1) * dayPx}px;" data-gantt-tip="${key}"></span>`;
@@ -4200,8 +4212,14 @@ function initGanttControls() {
   const blCb = document.getElementById("ganttShowBaseline");
   if (blCb) {
     blCb.checked = ganttShowBaseline;
-    blCb.onchange = () => { ganttShowBaseline = blCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+    blCb.onchange = () => { ganttShowBaseline = blCb.checked; saveGanttPrefs(); syncBlDaysPill(); renderGantt(getFilteredItems()); };
   }
+  const blDays = document.getElementById("ganttBaselineDays");
+  if (blDays) {
+    blDays.checked = ganttBaselineDaysOnly;
+    blDays.onchange = () => { ganttBaselineDaysOnly = blDays.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  syncBlDaysPill();
   const blColor = document.getElementById("ganttBaselineColor");
   if (blColor) {
     blColor.value = ganttBaselineColor;

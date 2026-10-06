@@ -1956,3 +1956,7 @@ section.panel.gantt-fullscreen > *:not(#ganttChart) { flex-shrink: 0; }
 .gantt-search input { width: 210px; max-width: 40vw; font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; }
 .gantt-search input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
 .gantt-search-count { font-size: 11px; margin: 0; white-space: nowrap; }
+/* "Bara ± dagar" i staplarna: förskjutningen som en liten etikett efter stapeln. */
+.gantt-bl-d { position: absolute; top: 0; font-size: 9.5px; font-weight: 700; line-height: 13px; padding: 0 4px; border-radius: 4px; color: #047857; background: #ecfdf5; white-space: nowrap; cursor: help; }
+.gantt-bl-d.later { color: #b42318; background: #fef3f2; }
+#ganttBaselineDaysPill.hidden { display: none; }

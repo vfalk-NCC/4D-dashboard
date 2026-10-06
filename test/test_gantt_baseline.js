@@ -96,6 +96,20 @@ seed('plan_baseline.json', [{ mode: 'prev', label: 'Import 01/10 2026 (Huvudtidp
   await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'board_baseline.png') });
   console.log('OK: tavlan – grå baseline-linje under lappen, +5 d / -2 d, förklaringen säger varifrån');
 
+  // "Bara ± dagar": bara etiketterna, inga linjer; knappen syns bara när Baseline är på.
+  await page.check('#ganttBaselineDays'); await page.waitForTimeout(200);
+  const only = await page.evaluate(() => ({ lines: document.querySelectorAll('#ganttChart .pnote-bl, #ganttChart .pnote-bl-link').length, chips: [...document.querySelectorAll('#ganttChart .pnote-bl-d')].map(c => c.textContent) }));
+  if (only.lines || JSON.stringify(only.chips.sort()) !== JSON.stringify(['+5 d', '-2 d'].sort())) fail('Bara ± dagar på tavlan: ' + JSON.stringify(only));
+  await page.click('[data-gantt-view="bars"]'); await page.waitForTimeout(250);
+  const onlyBars = await page.evaluate(() => ({ bars: document.querySelectorAll('#ganttChart .gantt-bar-baseline').length, chips: [...document.querySelectorAll('#ganttChart .gantt-bl-d')].map(c => c.textContent) }));
+  if (onlyBars.bars || onlyBars.chips.length !== 2) fail('Bara ± dagar i staplarna: ' + JSON.stringify(onlyBars));
+  await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'bars_days_only.png') });
+  await page.click('[data-gantt-view="board"]'); await page.waitForTimeout(250);
+  await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'board_days_only.png') });
+  await page.uncheck('#ganttBaselineDays'); await page.waitForTimeout(200);
+  if (!(await page.locator('#ganttChart .pnote-bl').count())) fail('Av igen ska linjerna tillbaka');
+  console.log('OK: "Bara ± dagar" – bara förskjutningen (+5 d / -2 d) syns, utan baseline-linjer, på tavlan och i staplarna');
+
   // Tipsrutan.
   await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
   const tip = await page.evaluate(() => (document.querySelector('.gantt-tooltip') || {}).innerText || '');
@@ -111,6 +125,7 @@ seed('plan_baseline.json', [{ mode: 'prev', label: 'Import 01/10 2026 (Huvudtidp
   if (!s.bl || !s.before || !s.below || s.n !== 3) fail('Staplarna ska få en baseline-stapel under: ' + JSON.stringify(s));
   await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'bars_baseline.png') });
   await page.uncheck('#ganttShowBaseline'); await page.waitForTimeout(200);
+  if (await page.isVisible('#ganttBaselineDaysPill')) fail('Bara ± dagar ska bara synas när Baseline är på');
   if (await page.locator('#ganttChart .gantt-bar-baseline').count()) fail('Av ska ta bort baseline-staplarna');
   if (!(await page.evaluate(() => Object.values(localStorage).some(v => /"baseline":false/.test(v))))) fail('Valet ska sparas');
   console.log('OK: staplarna – grå baseline-stapel under den planerade; tipsrutan; valet sparas');
