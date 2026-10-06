@@ -86,6 +86,15 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   objekten som räknats med en riktig verklig start (t.ex. "3 av 5 med
   verklig start"), så du ser direkt hur tillförlitlig siffran är och kan
   avgöra om det är värt att börja fylla i Verklig start mer konsekvent.
+- **Tavlan på en rad och beroenden** (Victors önskemål 2026-10-06): lapparna
+  är kompakta – statusprick, namn, aktivitet/entreprenör och datum i grått på
+  en rad, framdriften som en tunn linje i underkanten ("En rad" kan slås av).
+  Högerklicka en lapp för att se vad den väntar på och vad som följer den,
+  ta bort ett beroende med ✕ eller lägga till ett med "Väntar på…"/"Följs
+  av…" och ett klick på den andra lappen (kräver Redigerbar). Startar lappen
+  innan föregångaren är klar erbjuds en flytt till dagen efter. Cirkulära
+  beroenden stoppas. Sparas som `depends_on` (samma som 4D-planering) och går
+  att ångra.
 - **Skriv ut Gantt-schemat** (🖨 Skriv ut i schemats verktygsrad, Victors
   önskemål 2026-10-06): välj papper (A4/A3) och riktning, sedan skrivs
   schemat ut – eller sparas som PDF – med rubrik (projekt, vy, gruppering,

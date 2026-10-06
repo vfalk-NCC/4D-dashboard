@@ -1771,3 +1771,39 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item:nth-last-child(-n
   body.printing-gantt > *:not(#ganttPrint) { display: none !important; }
   body.printing-gantt #ganttPrint { position: static; left: auto; }
 }
+
+/* ---------------------------------------------------------------------
+   Tavlan: lappar på en rad (Victors önskemål 2026-10-06) – statusprick,
+   namn, aktivitet/entreprenör och datum i grått, framdriften i underkanten.
+   ------------------------------------------------------------------- */
+.board-grid:has(.pnote-one) { grid-auto-rows: 28px; gap: 5px 0; padding: 6px 0; }
+.pnote.pnote-one { display: flex; align-items: center; gap: 7px; height: 28px; box-sizing: border-box; padding: 0 10px 0 9px; white-space: nowrap; overflow: hidden; }
+.pnote-one .pnote-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 0 1.5px rgba(255,255,255,.8); }
+.pnote-one .pnote-title { display: block; -webkit-line-clamp: unset; flex: 0 1 auto; min-width: 0; max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pnote-one .pnote-sub { flex: 1 1 auto; min-width: 0; margin: 0; }
+.pnote-one .pnote-dates { flex: 0 0 auto; margin-left: auto; padding-right: 8px; font-size: 9.5px; color: #6b7280; }
+.pnote-one .pnote-prog { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; margin: 0; border-radius: 0; }
+.pnote-one.pnote-short .pnote-sub, .pnote-one.pnote-short .pnote-dates, .pnote-one.pnote-short .pnote-dep { display: none; }
+.pnote-dep { font-size: 10px; flex: 0 0 auto; opacity: .75; }
+.gantt-print .pnote-one.pnote-cont-r .pnote-dates { padding-right: 16px; }
+.gantt-print .pnote-one.pnote-cont-r::before { top: 50%; transform: translateY(-50%); }
+
+/* Beroenden: högerklicksmenyn, val av lapp och markering av det som hör ihop. */
+.board-dep-menu { width: 280px; max-height: 70vh; overflow-y: auto; gap: 4px; }
+.bdm-sec { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.bdm-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; background: #f8fafc; }
+.bdm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bdm-x { font: inherit; font-size: 11px; border: none; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; }
+.bdm-x:hover { color: #dc2626; }
+.bdm-none { font-size: 11px; color: var(--muted); padding: 0 4px; }
+.bdm-acts { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.bdm-acts button { font: inherit; text-align: left; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: white; cursor: pointer; }
+.bdm-acts button:hover:not(:disabled) { background: #eaf2ff; border-color: #bcd2fb; }
+.bdm-acts button:disabled { opacity: .5; cursor: default; }
+.bdm-acts small { color: var(--muted); }
+.bdm-hint { font-size: 11px; margin: 4px 0 0; }
+.board-linking .pnote { cursor: crosshair !important; }
+.board-linking .pnote:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pnote.pnote-dep-self { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pnote.pnote-dep-pred { outline: 2px dashed #ea580c; outline-offset: 1px; }
+.pnote.pnote-dep-succ { outline: 2px dashed #2563eb; outline-offset: 1px; }
