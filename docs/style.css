@@ -1602,7 +1602,7 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
 .gantt-head .gantt-range-status { font-size: 11px; }
 section.panel.gantt-view-board .gantt-bars-only { display: none !important; }
 section.panel:not(.gantt-view-board) .gantt-board-only { display: none !important; }
-section.panel.gantt-view-board #ganttLegend .gantt-legend-item:nth-last-child(-n+3) { display: none; }
+section.panel.gantt-view-board #ganttLegend .gantt-legend-item.gl-bars-only { display: none; }
 
 /* Svag gruppfärg även i stapelläget */
 .gantt-group.gantt-group-colored { background: var(--grp-bg); box-shadow: inset 4px 0 0 var(--grp); }
@@ -1827,3 +1827,16 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item:nth-last-child(-n
 .pnote-ext .pnote-sub { flex: 0 0 auto; overflow: visible; }
 .pnote-ext .pnote-title { max-width: none; overflow: visible; }
 .pnote-ext .pnote-dot { position: relative; left: -5px; }
+
+/* Baseline (Victors önskemål 2026-10-06): en tidigare version av tidplanen som en grå stapel/linje. */
+.gantt-show-bl .gantt-bar { top: 1px; height: 9px; }
+.gantt-bar-baseline { position: absolute; top: 11px; height: 3px; border-radius: 2px; background: #9ca3af; min-width: 3px; }
+.gantt-chart.gantt-density-comfortable.gantt-show-bl .gantt-bar { top: 1px; height: 12px; }
+.gantt-chart.gantt-density-comfortable .gantt-bar-baseline { top: 14px; height: 4px; }
+.gantt-legend-baseline { background: #9ca3af !important; height: 4px !important; border-radius: 2px; }
+.pnote.pnote-hasbl { overflow: visible; }
+.pnote-bl { position: absolute; bottom: -5px; height: 3px; border-radius: 2px; background: #9ca3af; pointer-events: none; }
+.pnote-bl-d { flex: 0 0 auto; font-size: 9.5px; font-weight: 700; color: #047857; background: #ecfdf5; border-radius: 4px; padding: 0 4px; line-height: 15px; }
+.pnote-bl-d.later { color: #b42318; background: #fef3f2; }
+.pnote:not(.pnote-one) .pnote-bl-d { position: absolute; top: 4px; right: 6px; }
+.gp-leg-baseline { background: #9ca3af !important; height: 4px !important; }

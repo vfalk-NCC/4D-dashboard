@@ -19,7 +19,7 @@ let projectName = "";       // projektets namn (rubrik i utskrifter)
    4-veckorsplaneringen (projects/<id>/), "pp" = Powerproject-tidplanen (projects/<id>/pp/). Bara
    planeringens egna tabeller byts; milstolpar, leveranser, hinder m.m. är gemensamma. */
 let planSource = "excel";
-const PLAN_SOURCE_TABLES = new Set(["plan_items", "plan_item_activities", "plan_item_comments", "plan_item_progress_history", "plan_item_baseline_history"]);
+const PLAN_SOURCE_TABLES = new Set(["plan_items", "plan_item_activities", "plan_item_comments", "plan_item_progress_history", "plan_item_baseline_history", "plan_baseline"]);
 const planSourceKey = () => "4ddash-source-" + projectId;
 let items = [];               // Cache av samtliga planeringsposter (från backend, ofiltrerat)
 let activities = [];           // plan_item_activities (delaktiviteter) - läses read-only, skrivs bara av 4D-planering
@@ -29,6 +29,11 @@ let ganttEditable = false;    // "Redigerbar Gantt" - tillåter dra-för-att-sch
 let ganttDrag = null;          // pågående drag-interaktion i Gantt-schemat (null om ingen), se onGanttBarPointerDown
 let ganttExpandedIds = new Set(); // vilka objekt (plan_item.id) som just nu visar sina delaktiviteter i Gantt-schemat
 let ganttShowActual = false;      // kryssrutan "Visa verkligt" i Gantt-schemat
+// Baseline (Victors önskemål 2026-10-06): baseline_start_date/baseline_end_date som en grå stapel
+// under den planerade. Sätts vid importen i 4D-planering (förra importen, en .ppb-baseline eller
+// Excels "Plan. start/slut"); planBaselineMeta säger varifrån (pp/plan_baseline.json, sista raden).
+let ganttShowBaseline = false;
+let planBaselineMeta = null;
 // Läsbarhetsinställningar för Gantt-schemat (Victors förfrågan 2026-09-17
 // om att göra det tydligare) - sparas i localStorage, se GANTT_PREFS_KEY.
 let ganttGroupBy = "";             // "" | "area" | "contractor" | "activity"
@@ -710,6 +715,7 @@ async function refreshAll() {
     fetchRecentComments(),
     fetchProgressHistory(),
     fetchBaselineHistory(),
+    fetchBaselineMeta(),
     fetchMilestones(),
     fetchStaffing(),
     fetchDeliveries(),
@@ -823,6 +829,8 @@ function fromRow(row) {
     endDate: row.end_date || null,
     actualStartDate: row.actual_start_date || null,
     actualEndDate: row.actual_end_date || null,
+    baselineStartDate: row.baseline_start_date || null,
+    baselineEndDate: row.baseline_end_date || null,
     estimatedHours: Number.isFinite(row.estimated_hours) ? row.estimated_hours : null,
     // Används av Gantt-schemat för att kunna markera objektet i 3D-modellen
     // vid klick på dess namn - se selectGanttItemInModel().
@@ -857,7 +865,9 @@ function mergeActivityGroups(list) {
     const ends = members.map(m => m.endDate).filter(Boolean).sort();
     const late = members.find(m => m.status === "forsenad");
     const progress = Math.round(members.reduce((sum, m) => sum + (Number(m.progress) || 0), 0) / members.length);
+    const bs = members.map(m => m.baselineStartDate).filter(Boolean).sort(), be = members.map(m => m.baselineEndDate).filter(Boolean).sort();
     out.push({ ...members[0], startDate: starts[0] || null, endDate: ends[ends.length - 1] || null,
+      baselineStartDate: bs[0] || null, baselineEndDate: be[be.length - 1] || null,
       status: late ? "forsenad" : members[0].status, progress, members });
   });
   return out;
@@ -928,6 +938,25 @@ async function fetchBaselineHistory() {
     baselineHistory = [];
   }
 }
+
+async function fetchBaselineMeta() {
+  if (!isBackendConfigured()) { planBaselineMeta = null; return; }
+  try {
+    const log = await ghReadJSON(settings.githubToken, tablePath("plan_baseline"));
+    planBaselineMeta = Array.isArray(log) && log.length ? log[log.length - 1] : null;
+  } catch (e) { planBaselineMeta = null; }
+}
+/* Baseline-stapelns text: varifrån den kommer. */
+function baselineLabel() {
+  if (planBaselineMeta && planBaselineMeta.label) return planBaselineMeta.label;
+  return planSource === "pp" ? "" : "Plan. start/slut från Excel";
+}
+/* Hur mycket slutet (annars starten) har flyttats mot baseline, i dagar; null om ingen baseline. */
+function baselineShiftDays(it) {
+  if (!it.baselineStartDate || !it.baselineEndDate || !it.startDate || !it.endDate) return null;
+  return daysBetweenIso(it.baselineEndDate, it.endDate) || daysBetweenIso(it.baselineStartDate, it.startDate);
+}
+const shiftText = d => (d > 0 ? `+${d} d` : `${d} d`);
 
 async function fetchMilestones() {
   if (!isBackendConfigured()) { milestones = []; return; }
@@ -2344,6 +2373,7 @@ function loadGanttPrefs() {
     if (["contractor", "area", "activity"].includes(prefs.colorBy)) ganttColorBy = prefs.colorBy;
     if (typeof prefs.boardSplit === "boolean") ganttBoardSplit = prefs.boardSplit;
     if (typeof prefs.boardOneLine === "boolean") ganttBoardOneLine = prefs.boardOneLine;
+    if (typeof prefs.baseline === "boolean") ganttShowBaseline = prefs.baseline;
   } catch (e) {
     console.warn("Kunde inte läsa sparade Gantt-inställningar", e);
   }
@@ -2365,7 +2395,8 @@ function saveGanttPrefs() {
       view: ganttView,
       colorBy: ganttColorBy,
       boardSplit: ganttBoardSplit,
-      boardOneLine: ganttBoardOneLine
+      boardOneLine: ganttBoardOneLine,
+      baseline: ganttShowBaseline
     }));
   } catch (e) {
     console.warn("Kunde inte spara Gantt-inställningar", e);
@@ -2552,6 +2583,10 @@ function ganttTooltipHtmlForItem(it, depById) {
     ganttTooltipRow("Framdrift", `${Math.round(Number(it.progress) || 0)}%`)
   ];
   if (it.contractor) rows.push(ganttTooltipRow("Entreprenör", it.contractor));
+  if (it.baselineStartDate && it.baselineEndDate) {
+    const d = baselineShiftDays(it), lbl = baselineLabel();
+    rows.push(ganttTooltipRow("Baseline", `${it.baselineStartDate} – ${it.baselineEndDate}${d ? ` (${d > 0 ? "senare" : "tidigare"} ${Math.abs(d)} d)` : " (oförändrad)"}${lbl ? ` · ${lbl}` : ""}`));
+  }
   if (it.actualStartDate || it.actualEndDate) {
     rows.push(ganttTooltipRow("Verkligt", `${it.actualStartDate || "?"} – ${it.actualEndDate || "?"}`));
   }
@@ -2599,9 +2634,10 @@ function renderGanttLegend() {
     `<span class="gantt-legend-item"><span class="gantt-legend-dot" style="background:${STATUS_COLORS[s]}"></span>${escapeHtml(STATUS_LABELS[s])}</span>`
   ).join("");
   el.innerHTML = statusItems + `
-    <span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-actual"></span>Verkligt (där ifyllt)</span>
-    <span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-weekend"></span>Helg</span>
-    <span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-today"></span>Idag</span>
+    <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-actual"></span>Verkligt (där ifyllt)</span>
+    <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-weekend"></span>Helg</span>
+    <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-today"></span>Idag</span>
+    ${ganttShowBaseline ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline"></span>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : ""}
   `;
 }
 
@@ -2658,6 +2694,7 @@ function renderGantt(list, target) {
     if (ganttShowActual) {
       allDates = allDates.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
     }
+    if (ganttShowBaseline) allDates = allDates.concat(withDates.flatMap(it => [it.baselineStartDate, it.baselineEndDate]).filter(Boolean));
     allDates.sort();
     domainStart = allDates[0];
     domainEnd = allDates[allDates.length - 1];
@@ -2791,10 +2828,14 @@ function renderGantt(list, target) {
     const barClass = `gantt-bar${isBlockedRisk ? " gantt-bar-risk" : ""}${ganttEditable ? " gantt-bar-draggable" : ""}`;
 
     let actualHtml = "";
+    if (ganttShowBaseline && it.baselineStartDate && it.baselineEndDate) {
+      const bPos = barPos(it.baselineStartDate, it.baselineEndDate);
+      actualHtml += `<span class="gantt-bar-baseline" style="left:${bPos.left}; width:${bPos.width};" data-gantt-tip="${tipKey}"></span>`;
+    }
     if (hasActual) {
       const actualPos = barPos(it.actualStartDate, it.actualEndDate);
       const actualTipKey = registerTip(ganttTooltipHtmlForActual(it));
-      actualHtml = `<span class="gantt-bar gantt-bar-actual" style="left:${actualPos.left}; width:${actualPos.width}; border-color:${color};" data-gantt-tip="${actualTipKey}" tabindex="0"></span>`;
+      actualHtml += `<span class="gantt-bar gantt-bar-actual" style="left:${actualPos.left}; width:${actualPos.width}; border-color:${color};" data-gantt-tip="${actualTipKey}" tabindex="0"></span>`;
     }
 
     // Stapelns botten är en fast neutral färg (satt i CSS) som alltid syns,
@@ -2866,7 +2907,7 @@ function renderGantt(list, target) {
   const innerWidth = isFit ? "100%" : `${domainDays * pxPerDay + GANTT_ROW_PREFIX_PX}px`;
   const innerStyle = `width:${innerWidth}; --gg-image:${gridStyle.image}; --gg-pos:${gridStyle.pos}; --gg-size:${gridStyle.size}; --gg-repeat:${gridStyle.repeat};`;
 
-  el.className = `gantt-chart${ganttDensity === "comfortable" ? " gantt-density-comfortable" : ""}`;
+  el.className = `gantt-chart${ganttDensity === "comfortable" ? " gantt-density-comfortable" : ""}${ganttShowBaseline ? " gantt-show-bl" : ""}`;
   el.innerHTML = `
     <div class="gantt-inner" style="${innerStyle}">
       ${rulerHtml}
@@ -3221,13 +3262,22 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     // För kort lapp (Victors önskemål 2026-10-06: "ingen aning om vad akt. handlar om"): namnet
     // skrivs ut till höger om lappen på en ljus förlängning, och tavlan reserverar platsen så att
     // inget annat hamnar där. Den färgade delen är fortfarande exakt så lång som aktiviteten.
+    // Baseline: en grå linje under lappen där aktiviteten låg i baseline, och hur mycket den flyttats.
+    const dayPx = colPx / 7;
+    const bShift = ganttShowBaseline ? baselineShiftDays(it) : null;
+    let blHtml = "";
+    if (bShift !== null) {
+      const b0 = Math.max(0, dayOf(it.baselineStartDate)), b1 = Math.min(nDays - 1, dayOf(it.baselineEndDate));
+      if (b1 >= b0) blHtml = `<span class="pnote-bl" style="left:${(b0 - c0) * dayPx}px; width:${(b1 - b0 + 1) * dayPx}px;"></span>`;
+      if (bShift) blHtml += `<span class="pnote-bl-d${bShift > 0 ? " later" : ""}" title="Mot baseline${baselineLabel() ? ` (${escapeHtml(baselineLabel())})` : ""}">${shiftText(bShift)}</span>`;
+    }
     let gEnd = c1, ext = false, realPx = (c1 - c0 + 1) * colPx / 7;
     if (ganttBoardOneLine && !cont.includes("cont-r")) {
       // Namnet och aktiviteten (det som talar om vad lappen handlar om); entreprenör och datum står i tipsrutan.
-      const need = 9 + 8 + 7 + boardTextWidth((blocked ? "⛔ " : "") + name) + 22 + (subParts.length ? 7 + boardTextWidth(subParts.join(" · "), "400 10px") : 0);
+      const need = 9 + 8 + 7 + boardTextWidth((blocked ? "⛔ " : "") + name) + 22 + (subParts.length ? 7 + boardTextWidth(subParts.join(" · "), "400 10px") : 0) + (bShift ? 40 : 0);
       if (realPx < need) { ext = true; gEnd = Math.min(nDays - 1, c0 + Math.ceil(need / (colPx / 7)) - 1); }
     }
-    const cls = `pnote${ganttBoardOneLine ? " pnote-one" : ""}${ext ? " pnote-ext" : ""}${cont}${shortNote && !ext ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}`;
+    const cls = `pnote${ganttBoardOneLine ? " pnote-one" : ""}${ext ? " pnote-ext" : ""}${cont}${shortNote && !ext ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}${blHtml ? " pnote-hasbl" : ""}`;
     const attrs = `style="grid-column:${c0 + 1} / ${gEnd + 2};${ext ? ` --real:${realPx}px;` : ""} --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${ganttBoardOneLine ? 0 : tilt}deg;"
         data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0"`;
     const dates = `${escapeHtml(weekdayDateSv(it.startDate))} – ${escapeHtml(weekdayDateSv(it.endDate))}`;
@@ -3235,13 +3285,13 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     if (ganttBoardOneLine) return `<div class="${cls}" ${attrs}>
         <i class="pnote-dot" style="background:${st}"></i><span class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</span>${depMark}
         ${subParts.length ? `<span class="pnote-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
-        <span class="pnote-dates">${dates}</span>
+        <span class="pnote-dates">${dates}</span>${blHtml}
         <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span></div>
       </div>`;
     return `<div class="${cls}" ${attrs}>
         <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}${depMark}</div>
         ${subParts.length ? `<div class="pnote-sub">${escapeHtml(subParts.join(" · "))}</div>` : ""}
-        <div class="pnote-meta"><span class="pnote-status"><i style="background:${st}"></i>${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}</span><span>${dates}</span></div>
+        <div class="pnote-meta"><span class="pnote-status"><i style="background:${st}"></i>${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}</span><span>${dates}</span></div>${blHtml}
         <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span></div>
       </div>`;
   };
@@ -3560,6 +3610,7 @@ function ganttPrintDomain(list) {
   if (!withDates.length) return null;
   let all = withDates.flatMap(it => [it.startDate, it.endDate]);
   if (ganttView === "bars" && ganttShowActual) all = all.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
+  if (ganttView === "bars" && ganttShowBaseline) all = all.concat(withDates.flatMap(it => [it.baselineStartDate, it.baselineEndDate]).filter(Boolean));
   all.sort();
   return { start: all[0], end: all[all.length - 1] };
 }
@@ -3692,6 +3743,7 @@ function printGantt(opts) {
   const filterParts = [["Område", filters.area], ["Aktivitet", filters.activity], ["Entreprenör", filters.contractor]].filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`);
   const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")
     + (ganttView === "bars" && ganttShowActual ? `<span class="gp-leg"><i class="gp-leg-actual"></i>Verkligt</span>` : "")
+    + (ganttShowBaseline ? `<span class="gp-leg"><i class="gp-leg-baseline"></i>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : "")
     + `<span class="gp-leg"><i class="gp-leg-today"></i>Idag</span>`
     + (ganttView === "board" ? `<span class="gp-leg"><i class="gp-leg-late"></i>Försenad (röd ram)</span>` : `<span class="gp-leg"><i class="gp-leg-weekend"></i>Helg</span>`);
   const today = todayUTC();
@@ -3887,6 +3939,11 @@ function initGanttControls() {
   if (splitCb) {
     splitCb.checked = ganttBoardSplit;
     splitCb.onchange = () => { ganttBoardSplit = splitCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  const blCb = document.getElementById("ganttShowBaseline");
+  if (blCb) {
+    blCb.checked = ganttShowBaseline;
+    blCb.onchange = () => { ganttShowBaseline = blCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
   }
   const oneCb = document.getElementById("ganttBoardOneLine");
   if (oneCb) {

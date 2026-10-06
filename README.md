@@ -98,6 +98,12 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   En lapp som är för kort för sin text (t.ex. en endagsaktivitet) får en ljus
   förlängning till höger med namn och aktivitet; den färgade delen är fortfarande
   exakt aktivitetens längd och tavlan håller platsen fri.
+- **Baseline** (Victors önskemål 2026-10-06): kryssrutan "Baseline" visar
+  baseline-datumen (baseline_start_date/baseline_end_date) som en grå stapel under
+  den planerade, och på tavlan som en grå linje under lappen med hur mycket den
+  flyttats (+5 d / −2 d). Baseline sätts vid importen i 4D-planering (förra
+  importen, en Powerproject-baseline .ppb, eller Excels Plan. start/slut);
+  `plan_baseline.json` säger varifrån och visas i förklaringen.
   Högerklicka en lapp för att se vad den väntar på och vad som följer den,
   ta bort ett beroende med ✕ eller lägga till ett med "Väntar på…"/"Följs
   av…" och ett klick på den andra lappen (kräver Redigerbar). Startar lappen
