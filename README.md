@@ -114,6 +114,9 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   helskärm om Trimble Connect tillåter det, annars hela tilläggets yta. Esc stänger.
   "☰ Dölj knappar" (uppe till höger i panelen, även utanför helskärm) gömmer alla
   verktygsrader – bara färgförklaringen och schemat syns; valet sparas.
+- **Hovring**: aktiviteten lyfts mjukt, och den närmaste kopplade aktiviteten bakåt
+  (föregångaren som slutar senast) och framåt (efterföljaren som startar först) – högst
+  en åt varje håll – pulserar diskret med etiketten "◀ Före" / "Efter ▶".
   Högerklicka en lapp för att se vad den väntar på och vad som följer den,
   ta bort ett beroende med ✕ eller lägga till ett med "Väntar på…"/"Följs
   av…" och ett klick på den andra lappen (kräver Redigerbar). Startar lappen

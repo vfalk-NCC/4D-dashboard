@@ -3478,6 +3478,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
       renderGanttBoard(list);
     };
   });
+  bindNearHighlight(el, ".pnote", n => byNoteId.get(n.dataset.itemId), [...byNoteId.values()], "pnote");
   el.querySelectorAll(".pnote").forEach(n => {
     n.addEventListener("mouseenter", e => showGanttTooltip(e, tooltips.get(n.dataset.ganttTip)));
     n.addEventListener("mousemove", positionGanttTooltip);
@@ -3492,6 +3493,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     n.addEventListener("contextmenu", e => { e.preventDefault(); hideGanttTooltip(); openBoardDepMenu(e, byNoteId.get(n.dataset.itemId), byNoteId); });
     n.addEventListener("dblclick", e => { e.preventDefault(); openBoardDatePopover(n, byNoteId.get(n.dataset.itemId)); });
     n.addEventListener("pointerdown", e => onBoardNotePointerDown(e, n, byNoteId.get(n.dataset.itemId), colPx));
+    n.addEventListener("pointerdown", () => { el.querySelectorAll(".near-tag").forEach(x => x.remove()); });
     if (ganttEditable) n.addEventListener("mousemove", e => {
       const r = n.getBoundingClientRect();
       const rr = noteRealRight(n, r);
@@ -3504,6 +3506,50 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     el.scrollLeft = Math.max(0, (todayCol - 1) * colPx);
     ganttBoardScrolled = true;
   }
+}
+
+/* Närmaste kopplade aktivitet bakåt och framåt (Victor 2026-10-06): högst EN åt varje håll, även om
+   fler är kopplade – den föregångare som slutar senast och den efterföljare som startar först. */
+function nearestLinked(it, list) {
+  const mem = x => x.members || [x];
+  const ids = new Set(mem(it).map(m => String(m.id)));
+  const predIds = new Set(mem(it).flatMap(m => m.dependsOn || []).map(String));
+  const others = list.filter(x => x !== it && !mem(x).some(m => ids.has(String(m.id))));
+  const preds = others.filter(x => mem(x).some(m => predIds.has(String(m.id))));
+  const succs = others.filter(x => mem(x).some(m => (m.dependsOn || []).some(d => ids.has(String(d)))));
+  const pred = preds.sort((a, b) => String(b.endDate || "").localeCompare(String(a.endDate || "")))[0] || null;
+  const succ = succs.sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")))[0] || null;
+  return { pred, succ, nPred: preds.length, nSucc: succs.length };
+}
+/* Hovring: aktiviteten lyfts, närmaste föregångare/efterföljare får en diskret puls och en liten etikett. */
+function bindNearHighlight(root, selector, entryOf, list, cls, tagHost = t => t) {
+  const clear = () => {
+    root.querySelectorAll(`.${cls}-hot, .${cls}-near-pred, .${cls}-near-succ`).forEach(x => x.classList.remove(`${cls}-hot`, `${cls}-near-pred`, `${cls}-near-succ`));
+    root.querySelectorAll(".near-tag").forEach(x => x.remove());
+  };
+  const elOf = x => x && root.querySelector(`${selector}[data-item-id="${CSS.escape(String(x.id))}"]`);
+  root.querySelectorAll(selector).forEach(n => {
+    n.addEventListener("mouseenter", () => {
+      if (boardLinkPick || document.querySelector(".gantt-dragging, .pnote-dragging")) return;
+      clear();
+      const it = entryOf(n);
+      if (!it) return;
+      n.classList.add(`${cls}-hot`);
+      const { pred, succ, nPred, nSucc } = nearestLinked(it, list);
+      [[pred, "pred", nPred, "◀ Före"], [succ, "succ", nSucc, "Efter ▶"]].forEach(([x, kind, n2, txt]) => {
+        const t = elOf(x);
+        if (!t) return;
+        t.classList.add(`${cls}-near-${kind}`);
+        const host = tagHost(t);
+        if (host !== t) host.classList.add(`${cls}-near-${kind}`);
+        const tag = document.createElement("span");
+        tag.className = `near-tag near-${kind}`;
+        tag.textContent = n2 > 1 ? `${txt} (närmast av ${n2})` : txt;
+        host.appendChild(tag);
+      });
+    });
+    n.addEventListener("mouseleave", clear);
+  });
 }
 
 function bindGanttInteractions(el, list, tooltips, geometry) {
@@ -3554,6 +3600,11 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
   // Victors förfrågan 2026-09-21 om att Gantt-schemat är read-only samt om
   // att kunna se en försenings konsekvenser nedströms.
   const CLICK_MOVE_THRESHOLD_PX = 4;
+  {
+    const shown = new Set([...el.querySelectorAll(".gantt-bar[data-item-id]")].map(b => b.dataset.itemId));
+    bindNearHighlight(el, ".gantt-bar[data-item-id]", b => list.find(x => String(x.id) === b.dataset.itemId), list.filter(x => shown.has(String(x.id))), "bar",
+      b => (b.closest(".gantt-row") && b.closest(".gantt-row").querySelector(".gantt-label")) || b);
+  }
   el.querySelectorAll(".gantt-bar[data-item-id]").forEach(barEl => {
     const itemId = barEl.dataset.itemId;
     const it = list.find(x => String(x.id) === itemId) || items.find(x => String(x.id) === itemId);

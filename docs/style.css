@@ -1914,3 +1914,38 @@ section.panel.gantt-fs-clean #ganttEditableHint, section.panel.gantt-fs-clean #g
 section.panel.gantt-fullscreen.gantt-fs-clean #ganttLegend { padding-right: 190px; }
 section.panel.gantt-fullscreen .panel-collapse-btn { display: none !important; }
 @media print { .gantt-fs-bar { display: none !important; } }
+
+/* Hovring (Victor 2026-10-06): aktiviteten lyfts mjukt; närmaste föregångare och efterföljare (en åt
+   varje håll) pulserar diskret och får en liten etikett. */
+.pnote { transition: transform .2s cubic-bezier(.2,.8,.2,1), box-shadow .2s ease; }
+.pnote.pnote-hot { transform: rotate(0) translateY(-3px) scale(1.012); box-shadow: 0 4px 6px rgba(0,0,0,.08), 0 16px 28px -8px rgba(0,0,0,.28); z-index: 4; }
+.pnote.pnote-near-pred, .pnote.pnote-near-succ { z-index: 3; animation: nearPulse 1.8s ease-in-out infinite; }
+.pnote.pnote-near-pred { --near: 37, 99, 235; }
+.pnote.pnote-near-succ { --near: 124, 58, 237; }
+@keyframes nearPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--near), .0), 0 1px 2px rgba(0,0,0,.08); }
+  50% { box-shadow: 0 0 0 4px rgba(var(--near), .28), 0 6px 14px -6px rgba(var(--near), .45); }
+}
+.near-tag { position: absolute; top: 50%; right: 20px; transform: translateY(-50%); z-index: 6; font-size: 9.5px; font-weight: 700; line-height: 15px; padding: 0 6px; border-radius: 8px; color: #fff; white-space: nowrap; pointer-events: none; animation: nearTagIn .22s ease-out both; box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+.near-tag.near-pred { background: rgb(37, 99, 235); }
+.near-tag.near-succ { background: rgb(124, 58, 237); }
+@keyframes nearTagIn { from { opacity: 0; transform: translate(6px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
+/* Staplarna: samma idé. */
+.gantt-bar[data-item-id] { transition: transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease; }
+.gantt-bar.bar-hot { transform: translateY(-1px) scaleY(1.15); box-shadow: 0 0 0 2px var(--panel), 0 4px 10px -2px rgba(0,0,0,.3); z-index: 3; }
+.gantt-bar.bar-near-pred, .gantt-bar.bar-near-succ { overflow: visible; z-index: 2; animation: nearPulse 1.8s ease-in-out infinite; }
+.gantt-bar.bar-near-pred { --near: 37, 99, 235; }
+.gantt-bar.bar-near-succ { --near: 124, 58, 237; }
+.pnote:not(.pnote-one) .near-tag { top: 14px; right: 8px; }
+.gantt-label.bar-near-pred, .gantt-label.bar-near-succ { position: relative; font-weight: 700; }
+.gantt-label.bar-near-pred { color: rgb(37, 99, 235); }
+.gantt-label.bar-near-succ { color: rgb(124, 58, 237); }
+.gantt-label .near-tag { display: none; }
+.gantt-label.bar-near-pred::before { content: "◀ "; }
+.gantt-label.bar-near-succ::before { content: "▶ "; }
+@media (prefers-reduced-motion: reduce) {
+  .pnote, .gantt-bar[data-item-id] { transition: none; }
+  .pnote.pnote-near-pred, .pnote.pnote-near-succ, .gantt-bar.bar-near-pred, .gantt-bar.bar-near-succ { animation: none; box-shadow: 0 0 0 3px rgba(var(--near), .35); }
+  .near-tag { animation: none; }
+}
+@media print { .near-tag { display: none !important; } }
