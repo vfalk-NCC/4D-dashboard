@@ -2896,7 +2896,8 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
   if (!ganttEditable || !it || (evt.button !== undefined && evt.button !== 0)) return;
   const rect = noteEl.getBoundingClientRect();
   const EDGE = 8;
-  const mode = evt.clientX <= rect.left + EDGE ? "left" : evt.clientX >= rect.right - EDGE ? "right" : "move";
+  const realRight = noteRealRight(noteEl, rect);
+  const mode = evt.clientX <= rect.left + EDGE ? "left" : (evt.clientX >= realRight - EDGE && evt.clientX <= realRight + 2) ? "right" : "move";
   const startX = evt.clientX;
   const pxPerDay = colPx / 7;
   const targets = noteTargetIds(it);
@@ -3143,6 +3144,16 @@ function closeBoardDepMenu() {
   document.removeEventListener("keydown", boardDepKey, true);
 }
 
+/* Textbredd (px) för en lapps namn – samma typsnitt som .pnote-title. */
+let boardTextCtx = null;
+function boardTextWidth(t, font = "700 11px") {
+  if (!boardTextCtx) boardTextCtx = document.createElement("canvas").getContext("2d");
+  boardTextCtx.font = `${font} ${getComputedStyle(document.body).fontFamily || "sans-serif"}`;
+  return boardTextCtx.measureText(String(t)).width;
+}
+/* Lappens egentliga högerkant (en förlängd lapp är bredare än aktiviteten). */
+const noteRealRight = (el, rect) => { const w = parseFloat(el.style.getPropertyValue("--real")); return w ? rect.left + w : rect.right; };
+
 function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   const el = target || document.getElementById("ganttChart");
   const notesEl = target ? null : document.getElementById("ganttNotes");
@@ -3207,8 +3218,17 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     // Utskriften delar tavlan i perioder: en lapp som fortsätter före/efter perioden märks.
     const cont = target ? `${dayOf(it.startDate) < 0 ? " pnote-cont-l" : ""}${dayOf(it.endDate) > nDays - 1 ? " pnote-cont-r" : ""}` : "";
     const depMark = (it.members || [it]).some(m => (m.dependsOn || []).length) || (it.members || [it]).some(m => predSet.has(m.id)) ? `<span class="pnote-dep" title="Har beroenden – högerklicka för att se dem">🔗</span>` : "";
-    const cls = `pnote${ganttBoardOneLine ? " pnote-one" : ""}${cont}${shortNote ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}`;
-    const attrs = `style="grid-column:${c0 + 1} / ${c1 + 2}; --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${ganttBoardOneLine ? 0 : tilt}deg;"
+    // För kort lapp (Victors önskemål 2026-10-06: "ingen aning om vad akt. handlar om"): namnet
+    // skrivs ut till höger om lappen på en ljus förlängning, och tavlan reserverar platsen så att
+    // inget annat hamnar där. Den färgade delen är fortfarande exakt så lång som aktiviteten.
+    let gEnd = c1, ext = false, realPx = (c1 - c0 + 1) * colPx / 7;
+    if (ganttBoardOneLine && !cont.includes("cont-r")) {
+      // Namnet och aktiviteten (det som talar om vad lappen handlar om); entreprenör och datum står i tipsrutan.
+      const need = 9 + 8 + 7 + boardTextWidth((blocked ? "⛔ " : "") + name) + 22 + (subParts.length ? 7 + boardTextWidth(subParts.join(" · "), "400 10px") : 0);
+      if (realPx < need) { ext = true; gEnd = Math.min(nDays - 1, c0 + Math.ceil(need / (colPx / 7)) - 1); }
+    }
+    const cls = `pnote${ganttBoardOneLine ? " pnote-one" : ""}${ext ? " pnote-ext" : ""}${cont}${shortNote && !ext ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}`;
+    const attrs = `style="grid-column:${c0 + 1} / ${gEnd + 2};${ext ? ` --real:${realPx}px;` : ""} --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${ganttBoardOneLine ? 0 : tilt}deg;"
         data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0"`;
     const dates = `${escapeHtml(weekdayDateSv(it.startDate))} – ${escapeHtml(weekdayDateSv(it.endDate))}`;
     // En rad: statusprick · namn · aktivitet/entreprenör · datum i grått, framdriften i underkanten.
@@ -3296,7 +3316,8 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     n.addEventListener("pointerdown", e => onBoardNotePointerDown(e, n, byNoteId.get(n.dataset.itemId), colPx));
     if (ganttEditable) n.addEventListener("mousemove", e => {
       const r = n.getBoundingClientRect();
-      n.style.cursor = (e.clientX <= r.left + 8 || e.clientX >= r.right - 8) ? "ew-resize" : "grab";
+      const rr = noteRealRight(n, r);
+      n.style.cursor = (e.clientX <= r.left + 8 || (e.clientX >= rr - 8 && e.clientX <= rr + 2)) ? "ew-resize" : "grab";
     });
   });
 

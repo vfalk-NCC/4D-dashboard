@@ -95,6 +95,9 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
 - **Tavlan på en rad och beroenden** (Victors önskemål 2026-10-06): lapparna
   är kompakta – statusprick, namn, aktivitet/entreprenör och datum i grått på
   en rad, framdriften som en tunn linje i underkanten ("En rad" kan slås av).
+  En lapp som är för kort för sin text (t.ex. en endagsaktivitet) får en ljus
+  förlängning till höger med namn och aktivitet; den färgade delen är fortfarande
+  exakt aktivitetens längd och tavlan håller platsen fri.
   Högerklicka en lapp för att se vad den väntar på och vad som följer den,
   ta bort ett beroende med ✕ eller lägga till ett med "Väntar på…"/"Följs
   av…" och ett klick på den andra lappen (kräver Redigerbar). Startar lappen

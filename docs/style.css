@@ -1815,3 +1815,15 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item:nth-last-child(-n
 .plan-source-seg button { font: inherit; font-size: 12px; padding: 4px 12px; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
 .plan-source-seg button.active { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
 @media print { .plan-source { display: none !important; } }
+
+/* För kort lapp: namnet på en ljus förlängning till höger (den färgade delen = aktivitetens längd). */
+.pnote.pnote-ext { background: linear-gradient(to right, transparent var(--real), rgba(255,255,255,.92) var(--real)); border-left: none; box-shadow: none; padding-left: 14px; overflow: visible; }
+.pnote.pnote-ext::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--real); box-sizing: border-box; background: var(--bg); border-left: 5px solid var(--st); border-radius: 2px 2px 8px 2px; box-shadow: 0 1px 1px rgba(0,0,0,.08), 0 4px 10px -2px rgba(0,0,0,.12); z-index: -1; }
+.pnote.pnote-ext::after { display: none; }
+.pnote.pnote-ext.pnote-late { box-shadow: none; }
+.pnote.pnote-ext.pnote-late::before { box-shadow: 0 0 0 2px #e5484d; }
+.pnote-ext .pnote-prog { right: auto; width: var(--real); }
+.pnote-ext .pnote-dates, .pnote-ext .pnote-dep { display: none; }
+.pnote-ext .pnote-sub { flex: 0 0 auto; overflow: visible; }
+.pnote-ext .pnote-title { max-width: none; overflow: visible; }
+.pnote-ext .pnote-dot { position: relative; left: -5px; }
