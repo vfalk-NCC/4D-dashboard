@@ -918,11 +918,13 @@ function mergeActivityGroups(list) {
   return out;
 }
 
-/** Markerar en post (eller alla objekt i en sammanslagen aktivitet) i 3D. */
+/** Markerar en post (eller alla objekt i en sammanslagen aktivitet) i 3D och zoomar dit
+    (Victor 2026-10-06: "markeras och zoomas det objektet in i TC"). */
 async function selectActivityInModel(it) {
   if (!it) return;
   const targets = (it.members || [it]).filter(m => m.modelId && m.objectId);
-  if (!targets.length || !API || !API.viewer || typeof API.viewer.convertToObjectRuntimeIds !== "function") return;
+  if (!targets.length) { modelToast("Aktiviteten är inte kopplad till något i modellen"); return; }
+  if (!API || !API.viewer || typeof API.viewer.convertToObjectRuntimeIds !== "function") return;
   try {
     const byModel = {};
     targets.forEach(m => { (byModel[m.modelId] = byModel[m.modelId] || []).push(m.objectId); });
@@ -931,10 +933,29 @@ async function selectActivityInModel(it) {
       const rids = (await API.viewer.convertToObjectRuntimeIds(modelId, byModel[modelId])).filter(id => id !== undefined && id !== null);
       if (rids.length) modelObjectIds.push({ modelId, objectRuntimeIds: rids });
     }
-    if (modelObjectIds.length) await API.viewer.setSelection({ modelObjectIds }, "set");
+    if (!modelObjectIds.length) { modelToast("Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); return; }
+    await API.viewer.setSelection({ modelObjectIds }, "set");
+    // Zooma in på objekten (en mjuk kamerarörelse); äldre API utan animering får en vanlig.
+    if (typeof API.viewer.setCamera === "function") {
+      try { await API.viewer.setCamera({ modelObjectIds }, { animationTime: 600 }); }
+      catch (e) { try { await API.viewer.setCamera({ modelObjectIds }); } catch (e2) { /* kameran kunde inte flyttas – markeringen finns ändå */ } }
+    }
+    const n = modelObjectIds.reduce((a, m) => a + m.objectRuntimeIds.length, 0);
+    modelToast(`Markerad och inzoomad i modellen${n > 1 ? ` (${n} objekt)` : ""}${document.fullscreenElement ? " – stäng helskärmen för att se den" : ""}`);
   } catch (e) {
     console.warn("Kunde inte markera i 3D-modellen", e);
   }
+}
+/* Kort bekräftelse nere i hörnet. */
+let modelToastTimer = null;
+function modelToast(text) {
+  let t = document.getElementById("modelToast");
+  if (!t) { t = document.createElement("div"); t.id = "modelToast"; t.className = "model-toast"; }
+  overlayHost().appendChild(t);
+  t.textContent = text;
+  t.classList.add("show");
+  clearTimeout(modelToastTimer);
+  modelToastTimer = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
 // Hämtar kommentarerna för det här projektet. Med GitHub-lagringen ligger
@@ -2774,16 +2795,7 @@ function renderGanttLegend() {
 // kanske inte i den just nu inlästa modellversionen) - det här är en
 // bekvämlighetsfunktion, inte kritisk för Gantt-schemats huvudsyfte.
 async function selectGanttItemInModel(it) {
-  if (!it || !it.modelId || !it.objectId) return;
-  if (!API || !API.viewer || typeof API.viewer.convertToObjectRuntimeIds !== "function") return;
-  try {
-    const runtimeIds = await API.viewer.convertToObjectRuntimeIds(it.modelId, [it.objectId]);
-    const valid = (runtimeIds || []).filter(id => id !== undefined && id !== null);
-    if (valid.length === 0) return;
-    await API.viewer.setSelection({ modelObjectIds: [{ modelId: it.modelId, objectRuntimeIds: valid }] }, "set");
-  } catch (e) {
-    console.warn("Kunde inte markera Gantt-objektet i 3D-modellen", e);
-  }
+  return selectActivityInModel(it);
 }
 
 function renderGantt(list, target) {
