@@ -61,6 +61,12 @@ seed('plan_items.json', [
   const on = await size();
   if (!on.fs || Math.abs(on.top) > 1 || on.pw < 1390 || on.ph < 990 || on.ch <= before.ch || !/Stäng helskärm/.test(on.btn)) fail('Helskärm ska fylla skärmen: ' + JSON.stringify({ before, on }));
   await page.locator('section[data-panel-id="gantt"]').screenshot({ path: path.join(require('os').tmpdir(), 'gantt_fullscreen.png') });
+  // Tipsrutan ska synas i helskärm (i webbläsarens helskärm syns bara panelen).
+  await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
+  const tipFs = await page.evaluate(() => { const t = document.querySelector('.gantt-tooltip'); return { fs: !!document.fullscreenElement, inside: !document.fullscreenElement || document.fullscreenElement.contains(t), shown: !t.classList.contains('hidden') && t.getBoundingClientRect().width > 0 }; });
+  console.log('fullscreen i testet:', tipFs.fs);
+  if (!tipFs.inside || !tipFs.shown) fail('Tipsrutan ska synas i helskärm: ' + JSON.stringify(tipFs));
+  await page.mouse.move(0, 0);
   // Dölj knapparna: bara färgförklaringen och schemat; valet sparas.
   await page.click('#ganttFsTools'); await page.waitForTimeout(300);
   const clean = await page.evaluate(() => ({ head: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display, h2: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] > h2')).display, legend: document.getElementById('ganttLegend').getBoundingClientRect().height, ch: document.getElementById('ganttChart').getBoundingClientRect().height, btn: document.getElementById('ganttFsTools').textContent }));

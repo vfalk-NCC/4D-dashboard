@@ -2630,12 +2630,17 @@ function buildGanttTimeline(domainStart, domainEnd, domainDays, isFit, pxPerDay)
    samma mönster som resten av appen), nyckeltat via data-gantt-tip så vi
    slipper HTML-i-attribut-eskapering.
    ------------------------------------------------------------------- */
+/* Var tipsrutor och menyer läggs: i webbläsarens helskärm syns bara helskärmselementet (Gantt-
+   panelen) – allt utanför den (t.ex. tipsrutan i body) blir osynligt (Victor 2026-10-06). */
+const overlayHost = () => document.fullscreenElement || document.body;
+document.addEventListener("fullscreenchange", () => { if (ganttTooltipEl) overlayHost().appendChild(ganttTooltipEl); });
+
 function ensureGanttTooltip() {
   if (ganttTooltipEl) return ganttTooltipEl;
   const el = document.createElement("div");
   el.className = "gantt-tooltip hidden";
   el.setAttribute("role", "tooltip");
-  document.body.appendChild(el);
+  overlayHost().appendChild(el);
   ganttTooltipEl = el;
   return el;
 }
@@ -3134,7 +3139,7 @@ function openBoardDatePopover(noteEl, it) {
     <label>Slut <input type="date" class="bp-end" value="${escapeHtml(it.endDate || "")}" /></label>
     <label class="bp-deps"><input type="checkbox" class="bp-withdeps" checked /> Skjut fram beroende aktiviteter som annars krockar</label>
     <div class="board-pop-actions"><button type="button" class="bp-cancel">Avbryt</button><button type="button" class="bp-save primary">Spara</button></div>`;
-  document.body.appendChild(pop);
+  overlayHost().appendChild(pop);
   const r = noteEl.getBoundingClientRect();
   pop.style.left = `${Math.min(window.innerWidth - pop.offsetWidth - 8, Math.max(8, r.left))}px`;
   pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 6)}px`;
@@ -3287,7 +3292,7 @@ function openBoardDepMenu(evt, it, byNoteId) {
       <button type="button" data-add="succ"${ed ? "" : " disabled"}>＋ Följs av… <small>klicka på en lapp</small></button>
     </div>
     ${ed ? "" : `<div class="hint bdm-hint">Slå på <b>Redigerbar</b> för att ändra beroenden.</div>`}`;
-  document.body.appendChild(pop);
+  overlayHost().appendChild(pop);
   const r = pop.getBoundingClientRect();
   pop.style.left = `${Math.max(8, Math.min(window.innerWidth - r.width - 8, evt.clientX))}px`;
   pop.style.top = `${Math.max(8, Math.min(window.innerHeight - r.height - 8, evt.clientY))}px`;
@@ -4082,7 +4087,7 @@ function openGanttPrintDialog(btn) {
     <label class="gpp-check"><input type="checkbox" id="gppExpand" /> Ta med hopfällda grupper</label>
     <div class="gpp-info hint"></div>
     <div class="board-pop-actions"><button type="button" data-act="cancel">Avbryt</button><button type="button" class="primary" data-act="print">Skriv ut</button></div>`;
-  document.body.appendChild(pop);
+  overlayHost().appendChild(pop);
   const r = btn.getBoundingClientRect();
   pop.style.top = `${Math.min(window.innerHeight - 10, r.bottom + 6)}px`;
   pop.style.left = `${Math.max(8, Math.min(window.innerWidth - 270, r.right - 260))}px`;
