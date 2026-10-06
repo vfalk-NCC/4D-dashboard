@@ -15,6 +15,12 @@
 let API = null;              // Workspace API-instans
 let projectId = null;        // Aktuellt Trimble Connect-projekt
 let projectName = "";       // projektets namn (rubrik i utskrifter)
+/* Planeringskälla (Victors önskemål 2026-10-06, samma växel som i 4D-planering): "excel" =
+   4-veckorsplaneringen (projects/<id>/), "pp" = Powerproject-tidplanen (projects/<id>/pp/). Bara
+   planeringens egna tabeller byts; milstolpar, leveranser, hinder m.m. är gemensamma. */
+let planSource = "excel";
+const PLAN_SOURCE_TABLES = new Set(["plan_items", "plan_item_activities", "plan_item_comments", "plan_item_progress_history", "plan_item_baseline_history"]);
+const planSourceKey = () => "4ddash-source-" + projectId;
 let items = [];               // Cache av samtliga planeringsposter (från backend, ofiltrerat)
 let activities = [];           // plan_item_activities (delaktiviteter) - läses read-only, skrivs bara av 4D-planering
 let baselineHistory = [];      // plan_item_baseline_history - historik över start_date/end_date-ändringar, se logBaselineHistory i 4D-planering + saveItemSchedule här
@@ -314,6 +320,9 @@ async function initApp() {
   const project = await API.project.getProject();
   projectId = project.id;
   projectName = project.name || "";
+  try { planSource = localStorage.getItem(planSourceKey()) === "pp" ? "pp" : "excel"; } catch (e) { planSource = "excel"; }
+  renderPlanSourceUi();
+  document.querySelectorAll("#planSourceBar [data-src]").forEach(b => { b.onclick = () => setPlanSource(b.dataset.src); });
 
   await refreshAll();
 }
@@ -748,7 +757,28 @@ function renderAll() {
 // Byggar sökvägen till en tabells JSON-fil i det privata datarepot
 // (vfalk-NCC/4D-data), en mapp per Trimble-projekt. Se github-storage.js.
 function tablePath(table) {
-  return `projects/${encodeURIComponent(projectId)}/${table}.json`;
+  const sub = planSource === "pp" && PLAN_SOURCE_TABLES.has(table) ? "pp/" : "";
+  return `projects/${encodeURIComponent(projectId)}/${sub}${table}.json`;
+}
+function renderPlanSourceUi() {
+  document.body.classList.toggle("src-pp", planSource === "pp");
+  document.querySelectorAll("#planSourceBar [data-src]").forEach(b => {
+    const on = b.dataset.src === planSource;
+    b.classList.toggle("active", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+async function setPlanSource(src) {
+  src = src === "pp" ? "pp" : "excel";
+  if (src === planSource) return;
+  planSource = src;
+  try { localStorage.setItem(planSourceKey(), src); } catch (e) {}
+  renderPlanSourceUi();
+  // Filtren och ångra-stacken hör till den förra planeringen.
+  filters = { area: "", activity: "", contractor: "" };
+  ["filterArea", "filterActivity", "filterContractor"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  if (typeof scheduleUndo !== "undefined") { scheduleUndo.length = 0; scheduleRedo.length = 0; updateUndoButtons(); }
+  ganttBoardScrolled = false;
+  await refreshAll();
 }
 
 async function fetchItems() {
@@ -3636,7 +3666,7 @@ function printGantt(opts) {
   const viewText = ganttView === "board" ? "Tavla" : "Staplar";
   const groupText = { area: "område", contractor: "entreprenör", activity: "aktivitet" }[ganttGroupBy];
   const colorText = { area: "område", contractor: "entreprenör", activity: "aktivitet" }[ganttColorBy];
-  const sub = [viewText + (groupText ? `, grupperat på ${groupText}` : "") + (ganttView === "board" ? `, färg efter ${colorText}` : ""),
+  const sub = [(planSource === "pp" ? "Powerproject · " : "") + viewText + (groupText ? `, grupperat på ${groupText}` : "") + (ganttView === "board" ? `, färg efter ${colorText}` : ""),
     ganttPrintPeriodText(domain.start, domain.end)];
   const filterParts = [["Område", filters.area], ["Aktivitet", filters.activity], ["Entreprenör", filters.contractor]].filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`);
   const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")

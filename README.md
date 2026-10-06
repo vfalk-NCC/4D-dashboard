@@ -86,6 +86,12 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   objekten som räknats med en riktig verklig start (t.ex. "3 av 5 med
   verklig start"), så du ser direkt hur tillförlitlig siffran är och kan
   avgöra om det är värt att börja fylla i Verklig start mer konsekvent.
+- **Excel / Powerproject** (Victors önskemål 2026-10-06): växeln överst visar
+  antingen 4-veckorsplaneringen från Excel eller tidplanen från Powerproject
+  (importeras i 4D-planering → Import & verktyg, sparas i `projects/<id>/pp/`).
+  Bara planeringens egna tabeller (aktiviteter, delaktiviteter, kommentarer,
+  historik) byts – milstolpar, leveranser, hinder m.m. är gemensamma. Valet
+  sparas i webbläsaren.
 - **Tavlan på en rad och beroenden** (Victors önskemål 2026-10-06): lapparna
   är kompakta – statusprick, namn, aktivitet/entreprenör och datum i grått på
   en rad, framdriften som en tunn linje i underkanten ("En rad" kan slås av).

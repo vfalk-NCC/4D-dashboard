@@ -1807,3 +1807,11 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item:nth-last-child(-n
 .pnote.pnote-dep-self { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pnote.pnote-dep-pred { outline: 2px dashed #ea580c; outline-offset: 1px; }
 .pnote.pnote-dep-succ { outline: 2px dashed #2563eb; outline-offset: 1px; }
+
+/* Planeringskälla (Victors önskemål 2026-10-06): Excel-import eller Powerproject (samma som i 4D-planering). */
+.plan-source { display: flex; align-items: center; gap: 8px; padding: 6px 2px 8px; }
+.plan-source-l { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.plan-source-seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); border-radius: 8px; background: #eef0f3; }
+.plan-source-seg button { font: inherit; font-size: 12px; padding: 4px 12px; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.plan-source-seg button.active { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+@media print { .plan-source { display: none !important; } }
