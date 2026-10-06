@@ -29,6 +29,7 @@ let ganttEditable = false;    // "Redigerbar Gantt" - tillåter dra-för-att-sch
 let ganttDrag = null;          // pågående drag-interaktion i Gantt-schemat (null om ingen), se onGanttBarPointerDown
 let ganttExpandedIds = new Set(); // vilka objekt (plan_item.id) som just nu visar sina delaktiviteter i Gantt-schemat
 let ganttShowActual = false;      // kryssrutan "Visa verkligt" i Gantt-schemat
+let ganttSearch = "";             // sökrutan i Gantt-schemat (Victor 2026-10-06)
 // Baseline (Victors önskemål 2026-10-06): baseline_start_date/baseline_end_date som en grå stapel
 // under den planerade. Sätts vid importen i 4D-planering (förra importen, en .ppb-baseline eller
 // Excels "Plan. start/slut"); planBaselineMeta säger varifrån (pp/plan_baseline.json, sista raden).
@@ -2781,6 +2782,12 @@ function renderGantt(list, target) {
   // efter att en statusfärg ändrats i Inställningar (se initStatusColorControls).
   renderGanttLegend();
   applyGanttViewClass();
+  // Sökning: område, aktivitet, namn eller entreprenör; flera ord = alla ska finnas.
+  if (ganttSearch) {
+    const before = list.length;
+    list = list.filter(ganttSearchMatch);
+    if (!target) { const c = document.getElementById("ganttSearchCount"); if (c) c.textContent = `${list.length} av ${before}`; }
+  } else if (!target) { const c = document.getElementById("ganttSearchCount"); if (c) c.textContent = ""; }
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
   if (ganttView === "board") { renderGanttBoard(list, target); return; }
@@ -3508,6 +3515,12 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   }
 }
 
+const searchNorm = t => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function ganttSearchMatch(it) {
+  const hay = searchNorm([it.area, it.activity, it.objectName, it.contractor].join(" "));
+  return searchNorm(ganttSearch).split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+}
+
 /* Närmaste kopplade aktivitet bakåt och framåt (Victor 2026-10-06): högst EN åt varje håll, även om
    fler är kopplade – den föregångare som slutar senast och den efterföljare som startar först. */
 function nearestLinked(it, list) {
@@ -3826,7 +3839,7 @@ document.addEventListener("fullscreenchange", () => {
   if (!document.fullscreenElement && panel && panel.classList.contains("gantt-fullscreen")) setGanttFullscreen(false);
 });
 document.addEventListener("keydown", e => {
-  if (e.key !== "Escape") return;
+  if (e.key !== "Escape" || (e.target && e.target.id === "ganttSearch" && e.target.value)) return;
   const panel = ganttFullscreenPanel();
   if (panel && panel.classList.contains("gantt-fullscreen") && !document.querySelector(".dialog:not(.hidden), .board-dep-menu")) setGanttFullscreen(false);
 });
@@ -4112,6 +4125,13 @@ function initGanttControls() {
   const editableHintEl = document.getElementById("ganttEditableHint");
   const printBtn = document.getElementById("ganttPrintBtn");
   if (printBtn) printBtn.onclick = () => openGanttPrintDialog(printBtn);
+  const searchEl = document.getElementById("ganttSearch");
+  if (searchEl) {
+    let tmr = null;
+    searchEl.value = ganttSearch;
+    searchEl.oninput = () => { clearTimeout(tmr); tmr = setTimeout(() => { ganttSearch = searchEl.value.trim(); renderGantt(getFilteredItems()); }, 150); };
+    searchEl.onkeydown = e => { if (e.key === "Escape" && searchEl.value) { e.stopPropagation(); searchEl.value = ""; ganttSearch = ""; renderGantt(getFilteredItems()); } };
+  }
   const fullBtn = document.getElementById("ganttFullBtn");
   if (fullBtn) fullBtn.onclick = toggleGanttFullscreen;
   const fsTools = document.getElementById("ganttFsTools"), fsClose = document.getElementById("ganttFsClose");

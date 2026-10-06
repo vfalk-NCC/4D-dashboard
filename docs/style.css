@@ -1893,7 +1893,7 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item.gl-bars-only { di
 /* Helskärm: Gantt-panelen fyller skärmen (eller tilläggets yta); diagrammet tar all höjd som blir över. */
 section.panel.gantt-fullscreen { position: fixed; inset: 0; z-index: 900; margin: 0; border-radius: 0; overflow: auto; display: flex; flex-direction: column; background: var(--panel, #fff); }
 section.panel.gantt-fullscreen:fullscreen { width: 100vw; height: 100vh; }
-section.panel.gantt-fullscreen #ganttChart { flex: 1 1 auto; max-height: none; min-height: 0; }
+section.panel.gantt-fullscreen #ganttChart { flex: 1 1 0; max-height: none; min-height: 0; }
 body.gantt-fullscreen-on { overflow: hidden; }
 #ganttFullBtn.active { background: #1f2937; color: #fff; border-color: #1f2937; }
 @media print { #ganttFullBtn { display: none !important; } }
@@ -1949,3 +1949,10 @@ section.panel.gantt-fullscreen .panel-collapse-btn { display: none !important; }
   .near-tag { animation: none; }
 }
 @media print { .near-tag { display: none !important; } }
+/* Helskärm: verktygsraderna får aldrig tryckas ihop av ett stort schema (.gantt-head har overflow:hidden
+   och krympte i flex-kolumnen, så andra raden klipptes bort); schemat tar bara det som blir över. */
+section.panel.gantt-fullscreen > *:not(#ganttChart) { flex-shrink: 0; }
+/* Sökrutan i Gantt-schemat. */
+.gantt-search input { width: 210px; max-width: 40vw; font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.gantt-search input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.gantt-search-count { font-size: 11px; margin: 0; white-space: nowrap; }

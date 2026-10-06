@@ -114,6 +114,8 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   helskärm om Trimble Connect tillåter det, annars hela tilläggets yta. Esc stänger.
   "☰ Dölj knappar" (uppe till höger i panelen, även utanför helskärm) gömmer alla
   verktygsrader – bara färgförklaringen och schemat syns; valet sparas.
+- **Sök** (🔍 i Gantt-schemats verktygsrad): område, aktivitet, namn eller entreprenör; flera
+  ord = alla ska finnas, å/ä/ö spelar ingen roll; visar "N av M"; Esc rensar.
 - **Hovring**: aktiviteten lyfts mjukt, och den närmaste kopplade aktiviteten bakåt
   (föregångaren som slutar senast) och framåt (efterföljaren som startar först) – högst
   en åt varje håll – pulserar diskret med etiketten "◀ Före" / "Efter ▶".

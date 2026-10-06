@@ -130,6 +130,10 @@
               <option value="activity">Aktivitet</option>
             </select>
           </label>
+          <label class="gantt-toolbar-field gantt-search" title="Sök på område, aktivitet, namn eller entreprenör – flera ord = alla ska finnas. Esc rensar.">
+            <input type="search" id="ganttSearch" placeholder="🔍 Sök område eller aktivitet…" autocomplete="off" aria-label="Sök i Gantt-schemat" />
+          </label>
+          <span id="ganttSearchCount" class="hint gantt-search-count"></span>
           <span class="gantt-head-spacer"></span>
           <div class="gantt-zoom-group" title="Ångra/gör om ändringar av datum (Ctrl+Z / Ctrl+Y)">
             <button type="button" id="ganttUndo" class="gantt-toolbar-btn" disabled>↶ Ångra</button>
