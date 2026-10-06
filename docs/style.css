@@ -1856,3 +1856,17 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item.gl-bars-only { di
 .gantt-bl-color::-webkit-color-swatch { border: none; border-radius: 3px; }
 /* Peka på en baseline-linje: lappen den hör till får en ram i baseline-färgen. */
 .pnote:has(.pnote-bl:hover) { outline: 2px solid var(--bl, #f59e0b); outline-offset: 2px; }
+/* Två baselines: den andra (jämförelsen) som en tunnare linje under den första. */
+.gantt-bl-pick { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.gantt-bl-pick.hidden { display: none; }
+.gantt-bl-pick select { font: inherit; font-size: 12px; padding: 2px 4px; max-width: 170px; }
+.gantt-show-bl2 .gantt-bar { top: 0; height: 8px; }
+.gantt-show-bl2 .gantt-bar-baseline { top: 9px; height: 2.5px; }
+.gantt-show-bl2 .gantt-bar-baseline.gantt-bar-baseline2 { top: 12px; background: var(--bl2, #2563eb); }
+.gantt-chart.gantt-density-comfortable.gantt-show-bl2 .gantt-bar { top: 0; height: 11px; }
+.gantt-chart.gantt-density-comfortable.gantt-show-bl2 .gantt-bar-baseline { top: 12px; height: 3px; }
+.gantt-chart.gantt-density-comfortable.gantt-show-bl2 .gantt-bar-baseline.gantt-bar-baseline2 { top: 15.5px; }
+.gantt-legend-baseline2 { background: var(--bl2, #2563eb) !important; height: 4px !important; border-radius: 2px; }
+.pnote-bl.pnote-bl2 { bottom: -12px; height: 3px; background: var(--bl2, #2563eb); }
+.pnote:hover .pnote-bl.pnote-bl2 { height: 4px; bottom: -13px; }
+.board-grid:has(.pnote-bl2) { row-gap: 14px; padding-bottom: 14px; }

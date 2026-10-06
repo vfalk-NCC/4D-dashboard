@@ -19,7 +19,7 @@ let projectName = "";       // projektets namn (rubrik i utskrifter)
    4-veckorsplaneringen (projects/<id>/), "pp" = Powerproject-tidplanen (projects/<id>/pp/). Bara
    planeringens egna tabeller byts; milstolpar, leveranser, hinder m.m. är gemensamma. */
 let planSource = "excel";
-const PLAN_SOURCE_TABLES = new Set(["plan_items", "plan_item_activities", "plan_item_comments", "plan_item_progress_history", "plan_item_baseline_history", "plan_baseline"]);
+const PLAN_SOURCE_TABLES = new Set(["plan_items", "plan_item_activities", "plan_item_comments", "plan_item_progress_history", "plan_item_baseline_history", "plan_baseline", "plan_baselines"]);
 const planSourceKey = () => "4ddash-source-" + projectId;
 let items = [];               // Cache av samtliga planeringsposter (från backend, ofiltrerat)
 let activities = [];           // plan_item_activities (delaktiviteter) - läses read-only, skrivs bara av 4D-planering
@@ -35,6 +35,11 @@ let ganttShowActual = false;      // kryssrutan "Visa verkligt" i Gantt-schemat
 let ganttShowBaseline = false;
 let ganttBaselineColor = "#f59e0b"; // valbar (Victor 2026-10-06: "otydlig … gult eller välja färg")
 let planBaselineMeta = null;
+// Namngivna baselines (Victor 2026-10-06): huvudbaselinen "main" (baseline_start_date/baseline_end_date,
+// t.ex. Kontraktstidplan) och revisioner (baselines[id] på raderna). planBaselines = registret
+// (plan_baselines.json: id, name, source …). Visa en, eller jämför mot två samtidigt.
+let planBaselines = [];
+let ganttBaselineId = "main", ganttBaseline2Id = "", ganttBaselineColor2 = "#2563eb";
 // Läsbarhetsinställningar för Gantt-schemat (Victors förfrågan 2026-09-17
 // om att göra det tydligare) - sparas i localStorage, se GANTT_PREFS_KEY.
 let ganttGroupBy = "";             // "" | "area" | "contractor" | "activity"
@@ -717,6 +722,7 @@ async function refreshAll() {
     fetchProgressHistory(),
     fetchBaselineHistory(),
     fetchBaselineMeta(),
+    fetchBaselineRegistry(),
     fetchMilestones(),
     fetchStaffing(),
     fetchDeliveries(),
@@ -859,6 +865,7 @@ function fromRow(row) {
     actualEndDate: row.actual_end_date || null,
     baselineStartDate: row.baseline_start_date || null,
     baselineEndDate: row.baseline_end_date || null,
+    baselines: row.baselines && typeof row.baselines === "object" && !Array.isArray(row.baselines) ? row.baselines : null,
     estimatedHours: Number.isFinite(row.estimated_hours) ? row.estimated_hours : null,
     // Används av Gantt-schemat för att kunna markera objektet i 3D-modellen
     // vid klick på dess namn - se selectGanttItemInModel().
@@ -896,6 +903,14 @@ function mergeActivityGroups(list) {
     const bs = members.map(m => m.baselineStartDate).filter(Boolean).sort(), be = members.map(m => m.baselineEndDate).filter(Boolean).sort();
     out.push({ ...members[0], startDate: starts[0] || null, endDate: ends[ends.length - 1] || null,
       baselineStartDate: bs[0] || null, baselineEndDate: be[be.length - 1] || null,
+      baselines: (() => {
+        const out = {};
+        members.forEach(m => Object.entries(m.baselines || {}).forEach(([id, v]) => {
+          if (!Array.isArray(v) || !v[0] || !v[1]) return;
+          out[id] = out[id] ? [v[0] < out[id][0] ? v[0] : out[id][0], v[1] > out[id][1] ? v[1] : out[id][1]] : [v[0], v[1]];
+        }));
+        return Object.keys(out).length ? out : null;
+      })(),
       status: late ? "forsenad" : members[0].status, progress, members });
   });
   return out;
@@ -976,17 +991,58 @@ async function fetchBaselineMeta() {
 }
 /* Baseline-färgen som CSS-variabel (--bl) på diagrammet, förklaringen och utskriften. */
 function applyBaselineColor(el) {
-  [el, document.getElementById("ganttChart"), document.getElementById("ganttLegend")].forEach(x => { if (x) x.style.setProperty("--bl", ganttBaselineColor); });
+  [el, document.getElementById("ganttChart"), document.getElementById("ganttLegend")].forEach(x => { if (x) { x.style.setProperty("--bl", ganttBaselineColor); x.style.setProperty("--bl2", ganttBaselineColor2); } });
 }
-/* Baseline-stapelns text: varifrån den kommer. */
-function baselineLabel() {
+/* Väljarna för baseline (syns när det finns mer än en). Ett sparat val som inte längre finns faller
+   tillbaka på den första. */
+function syncBaselinePicker() {
+  const box = document.getElementById("ganttBlPick"), s1 = document.getElementById("ganttBaselineSel"), s2 = document.getElementById("ganttBaseline2Sel");
+  const list = availableBaselines();
+  if (list.length && !list.some(b => b.id === ganttBaselineId)) ganttBaselineId = list[0].id;
+  if (ganttBaseline2Id && (!list.some(b => b.id === ganttBaseline2Id) || ganttBaseline2Id === ganttBaselineId)) ganttBaseline2Id = "";
+  if (!box || !s1 || !s2) return;
+  box.classList.toggle("hidden", !ganttShowBaseline || list.length < 2);
+  const opt = (b, sel) => `<option value="${escapeHtml(b.id)}"${b.id === sel ? " selected" : ""}>${escapeHtml(b.name)}</option>`;
+  s1.innerHTML = list.map(b => opt(b, ganttBaselineId)).join("");
+  s2.innerHTML = `<option value="">– jämför inte –</option>` + list.filter(b => b.id !== ganttBaselineId).map(b => opt(b, ganttBaseline2Id)).join("");
+}
+async function fetchBaselineRegistry() {
+  if (!isBackendConfigured()) { planBaselines = []; return; }
+  try { planBaselines = await ghReadJSON(settings.githubToken, tablePath("plan_baselines")); }
+  catch (e) { planBaselines = []; }
+}
+/* En aktivitets datum i baseline id: [start, slut] eller null. */
+function blOf(it, id = ganttBaselineId) {
+  if (!it || !id) return null;
+  if (id === "main") return it.baselineStartDate && it.baselineEndDate ? [it.baselineStartDate, it.baselineEndDate] : null;
+  const v = it.baselines && it.baselines[id];
+  return Array.isArray(v) && v[0] && v[1] ? v : null;
+}
+/* Baselines som finns: registret, plus det som finns på raderna utan registerpost. */
+function availableBaselines() {
+  const ids = new Set();
+  if (items.some(it => blOf(it, "main"))) ids.add("main");
+  planBaselines.forEach(b => { if (b && b.id && (b.id === "main" ? ids.has("main") : items.some(it => blOf(it, b.id)))) ids.add(b.id); });
+  items.forEach(it => Object.keys(it.baselines || {}).forEach(id => ids.add(id)));
+  return [...ids].map(id => ({ id, name: baselineName(id) }));
+}
+function baselineName(id) {
+  const r = planBaselines.find(b => b && b.id === id);
+  return (r && r.name) || (id === "main" ? "Baseline" : id);
+}
+/* Baseline-stapelns text: namn och varifrån den kommer. */
+function baselineLabel(id = ganttBaselineId) {
+  const r = planBaselines.find(b => b && b.id === id);
+  if (r) return [r.name, r.source && r.source !== r.name ? r.source : ""].filter(Boolean).join(" · ");
+  if (id !== "main") return id;
   if (planBaselineMeta && planBaselineMeta.label) return planBaselineMeta.label;
   return planSource === "pp" ? "" : "Plan. start/slut från Excel";
 }
 /* Hur mycket slutet (annars starten) har flyttats mot baseline, i dagar; null om ingen baseline. */
-function baselineShiftDays(it) {
-  if (!it.baselineStartDate || !it.baselineEndDate || !it.startDate || !it.endDate) return null;
-  return daysBetweenIso(it.baselineEndDate, it.endDate) || daysBetweenIso(it.baselineStartDate, it.startDate);
+function baselineShiftDays(it, id = ganttBaselineId) {
+  const b = blOf(it, id);
+  if (!b || !it.startDate || !it.endDate) return null;
+  return daysBetweenIso(b[1], it.endDate) || daysBetweenIso(b[0], it.startDate);
 }
 const shiftText = d => (d > 0 ? `+${d} d` : `${d} d`);
 
@@ -2407,6 +2463,9 @@ function loadGanttPrefs() {
     if (typeof prefs.boardOneLine === "boolean") ganttBoardOneLine = prefs.boardOneLine;
     if (typeof prefs.baseline === "boolean") ganttShowBaseline = prefs.baseline;
     if (/^#[0-9a-f]{6}$/i.test(prefs.baselineColor || "")) ganttBaselineColor = prefs.baselineColor;
+    if (/^#[0-9a-f]{6}$/i.test(prefs.baselineColor2 || "")) ganttBaselineColor2 = prefs.baselineColor2;
+    if (typeof prefs.baselineId === "string" && prefs.baselineId) ganttBaselineId = prefs.baselineId;
+    if (typeof prefs.baseline2Id === "string") ganttBaseline2Id = prefs.baseline2Id;
   } catch (e) {
     console.warn("Kunde inte läsa sparade Gantt-inställningar", e);
   }
@@ -2430,7 +2489,10 @@ function saveGanttPrefs() {
       boardSplit: ganttBoardSplit,
       boardOneLine: ganttBoardOneLine,
       baseline: ganttShowBaseline,
-      baselineColor: ganttBaselineColor
+      baselineColor: ganttBaselineColor,
+      baselineColor2: ganttBaselineColor2,
+      baselineId: ganttBaselineId,
+      baseline2Id: ganttBaseline2Id
     }));
   } catch (e) {
     console.warn("Kunde inte spara Gantt-inställningar", e);
@@ -2617,10 +2679,12 @@ function ganttTooltipHtmlForItem(it, depById) {
     ganttTooltipRow("Framdrift", `${Math.round(Number(it.progress) || 0)}%`)
   ];
   if (it.contractor) rows.push(ganttTooltipRow("Entreprenör", it.contractor));
-  if (it.baselineStartDate && it.baselineEndDate) {
-    const d = baselineShiftDays(it), lbl = baselineLabel();
-    rows.push(ganttTooltipRow("Baseline", `${it.baselineStartDate} – ${it.baselineEndDate}${d ? ` (${d > 0 ? "senare" : "tidigare"} ${Math.abs(d)} d)` : " (oförändrad)"}${lbl ? ` · ${lbl}` : ""}`));
-  }
+  [ganttBaselineId, ganttShowBaseline ? ganttBaseline2Id : ""].filter(Boolean).forEach((id, i) => {
+    const b = blOf(it, id);
+    if (!b) return;
+    const d = baselineShiftDays(it, id), lbl = baselineLabel(id);
+    rows.push(ganttTooltipRow(i ? baselineName(id) : (id === "main" && !planBaselines.length ? "Baseline" : baselineName(id)), `${b[0]} – ${b[1]}${d ? ` (${d > 0 ? "senare" : "tidigare"} ${Math.abs(d)} d)` : " (oförändrad)"}${lbl && lbl !== baselineName(id) ? ` · ${lbl}` : ""}`));
+  });
   if (it.actualStartDate || it.actualEndDate) {
     rows.push(ganttTooltipRow("Verkligt", `${it.actualStartDate || "?"} – ${it.actualEndDate || "?"}`));
   }
@@ -2672,6 +2736,7 @@ function renderGanttLegend() {
     <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-weekend"></span>Helg</span>
     <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-today"></span>Idag</span>
     ${ganttShowBaseline ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline"></span>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : ""}
+    ${ganttShowBaseline && ganttBaseline2Id ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline2"></span>Jämför: ${escapeHtml(baselineLabel(ganttBaseline2Id))}</span>` : ""}
   `;
 }
 
@@ -2706,6 +2771,7 @@ function renderGantt(list, target) {
   renderGanttLegend();
   applyGanttViewClass();
   applyBaselineColor(el);
+  if (!target) syncBaselinePicker();
   if (ganttView === "board") { renderGanttBoard(list, target); return; }
   const withDates = list.filter(it => it.startDate && it.endDate);
 
@@ -2729,7 +2795,7 @@ function renderGantt(list, target) {
     if (ganttShowActual) {
       allDates = allDates.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
     }
-    if (ganttShowBaseline) allDates = allDates.concat(withDates.flatMap(it => [it.baselineStartDate, it.baselineEndDate]).filter(Boolean));
+    if (ganttShowBaseline) allDates = allDates.concat(withDates.flatMap(it => [...(blOf(it) || []), ...(blOf(it, ganttBaseline2Id) || [])]));
     allDates.sort();
     domainStart = allDates[0];
     domainEnd = allDates[allDates.length - 1];
@@ -2863,10 +2929,12 @@ function renderGantt(list, target) {
     const barClass = `gantt-bar${isBlockedRisk ? " gantt-bar-risk" : ""}${ganttEditable ? " gantt-bar-draggable" : ""}`;
 
     let actualHtml = "";
-    if (ganttShowBaseline && it.baselineStartDate && it.baselineEndDate) {
-      const bPos = barPos(it.baselineStartDate, it.baselineEndDate);
-      actualHtml += `<span class="gantt-bar-baseline" style="left:${bPos.left}; width:${bPos.width};" data-gantt-tip="${tipKey}"></span>`;
-    }
+    if (ganttShowBaseline) [[ganttBaselineId, ""], [ganttBaseline2Id, " gantt-bar-baseline2"]].forEach(([id, cls]) => {
+      const b = id && blOf(it, id);
+      if (!b) return;
+      const bPos = barPos(b[0], b[1]);
+      actualHtml += `<span class="gantt-bar-baseline${cls}" style="left:${bPos.left}; width:${bPos.width};" data-gantt-tip="${tipKey}"></span>`;
+    });
     if (hasActual) {
       const actualPos = barPos(it.actualStartDate, it.actualEndDate);
       const actualTipKey = registerTip(ganttTooltipHtmlForActual(it));
@@ -2942,7 +3010,7 @@ function renderGantt(list, target) {
   const innerWidth = isFit ? "100%" : `${domainDays * pxPerDay + GANTT_ROW_PREFIX_PX}px`;
   const innerStyle = `width:${innerWidth}; --gg-image:${gridStyle.image}; --gg-pos:${gridStyle.pos}; --gg-size:${gridStyle.size}; --gg-repeat:${gridStyle.repeat};`;
 
-  el.className = `gantt-chart${ganttDensity === "comfortable" ? " gantt-density-comfortable" : ""}${ganttShowBaseline ? " gantt-show-bl" : ""}`;
+  el.className = `gantt-chart${ganttDensity === "comfortable" ? " gantt-density-comfortable" : ""}${ganttShowBaseline ? " gantt-show-bl" : ""}${ganttShowBaseline && ganttBaseline2Id ? " gantt-show-bl2" : ""}`;
   el.innerHTML = `
     <div class="gantt-inner" style="${innerStyle}">
       ${rulerHtml}
@@ -3305,7 +3373,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     if (bShift !== null) {
       // Linjen där aktiviteten låg i baseline, och en streckad länk från den till lappen så att det
       // syns vilken lapp den hör till (Victor 2026-10-06: "lättare att se vart den är kopplad").
-      const r0 = dayOf(it.baselineStartDate), r1 = dayOf(it.baselineEndDate);
+      const r0 = dayOf(blOf(it)[0]), r1 = dayOf(blOf(it)[1]);
       const b0 = Math.max(0, r0), b1 = Math.min(nDays - 1, r1);
       const px = d => (d - c0) * dayPx;
       if (b1 >= b0) blHtml = `<span class="pnote-bl${r0 < 0 ? " cut-l" : ""}${r1 > nDays - 1 ? " cut-r" : ""}" style="left:${px(b0)}px; width:${(b1 - b0 + 1) * dayPx}px;" data-gantt-tip="${key}"></span>`;
@@ -3313,6 +3381,12 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
       if (r1 < c0) { const from = Math.max(0, r1 + 1); blHtml += `<span class="pnote-bl-link${r1 < 0 ? " off-l" : ""}" style="left:${px(from)}px; width:${(c0 - from) * dayPx}px;"></span>`; }
       else if (r0 > c1) { const to = Math.min(nDays, r0); blHtml += `<span class="pnote-bl-link${r0 > nDays - 1 ? " off-r" : ""}" style="left:${px(noteEnd)}px; width:${(to - noteEnd) * dayPx}px;"></span>`; }
       if (bShift) blHtml += `<span class="pnote-bl-d${bShift > 0 ? " later" : ""}" title="Mot baseline${baselineLabel() ? ` (${escapeHtml(baselineLabel())})` : ""}">${shiftText(bShift)}</span>`;
+    }
+    // Jämförelsebaselinen: en tunnare linje under den första (utan länk).
+    const b2 = ganttShowBaseline && ganttBaseline2Id ? blOf(it, ganttBaseline2Id) : null;
+    if (b2) {
+      const r0 = dayOf(b2[0]), r1 = dayOf(b2[1]), b0 = Math.max(0, r0), b1 = Math.min(nDays - 1, r1);
+      if (b1 >= b0) blHtml += `<span class="pnote-bl pnote-bl2" style="left:${(b0 - c0) * dayPx}px; width:${(b1 - b0 + 1) * dayPx}px;" data-gantt-tip="${key}"></span>`;
     }
     let gEnd = c1, ext = false, realPx = (c1 - c0 + 1) * colPx / 7;
     if (ganttBoardOneLine && !cont.includes("cont-r")) {
@@ -3653,7 +3727,7 @@ function ganttPrintDomain(list) {
   if (!withDates.length) return null;
   let all = withDates.flatMap(it => [it.startDate, it.endDate]);
   if (ganttView === "bars" && ganttShowActual) all = all.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
-  if (ganttView === "bars" && ganttShowBaseline) all = all.concat(withDates.flatMap(it => [it.baselineStartDate, it.baselineEndDate]).filter(Boolean));
+  if (ganttView === "bars" && ganttShowBaseline) all = all.concat(withDates.flatMap(it => [...(blOf(it) || []), ...(blOf(it, ganttBaseline2Id) || [])]));
   all.sort();
   return { start: all[0], end: all[all.length - 1] };
 }
@@ -3787,6 +3861,7 @@ function printGantt(opts) {
   const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")
     + (ganttView === "bars" && ganttShowActual ? `<span class="gp-leg"><i class="gp-leg-actual"></i>Verkligt</span>` : "")
     + (ganttShowBaseline ? `<span class="gp-leg"><i class="gp-leg-baseline" style="background:${ganttBaselineColor} !important"></i>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : "")
+    + (ganttShowBaseline && ganttBaseline2Id ? `<span class="gp-leg"><i class="gp-leg-baseline" style="background:${ganttBaselineColor2} !important"></i>Jämför: ${escapeHtml(baselineLabel(ganttBaseline2Id))}</span>` : "")
     + `<span class="gp-leg"><i class="gp-leg-today"></i>Idag</span>`
     + (ganttView === "board" ? `<span class="gp-leg"><i class="gp-leg-late"></i>Försenad (röd ram)</span>` : `<span class="gp-leg"><i class="gp-leg-weekend"></i>Helg</span>`);
   const today = todayUTC();
@@ -3993,6 +4068,14 @@ function initGanttControls() {
     blColor.value = ganttBaselineColor;
     blColor.oninput = () => { ganttBaselineColor = blColor.value; applyBaselineColor(); };
     blColor.onchange = () => { ganttBaselineColor = blColor.value; saveGanttPrefs(); };
+  }
+  const bl1Sel = document.getElementById("ganttBaselineSel"), bl2Sel = document.getElementById("ganttBaseline2Sel"), bl2Color = document.getElementById("ganttBaselineColor2");
+  if (bl1Sel) bl1Sel.onchange = () => { ganttBaselineId = bl1Sel.value; if (ganttBaseline2Id === ganttBaselineId) ganttBaseline2Id = ""; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  if (bl2Sel) bl2Sel.onchange = () => { ganttBaseline2Id = bl2Sel.value; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  if (bl2Color) {
+    bl2Color.value = ganttBaselineColor2;
+    bl2Color.oninput = () => { ganttBaselineColor2 = bl2Color.value; applyBaselineColor(); };
+    bl2Color.onchange = () => { ganttBaselineColor2 = bl2Color.value; saveGanttPrefs(); renderGanttLegend(); };
   }
   const oneCb = document.getElementById("ganttBoardOneLine");
   if (oneCb) {

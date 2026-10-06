@@ -107,6 +107,9 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   Färgen är valbar (förvalt gul). På tavlan går en streckad länk från
   baseline-linjen till lappen; pekar man på en lapp lyfts dess baseline fram och
   de andra tonas ned, pekar man på en linje får lappen en ram.
+  Namngivna baselines (t.ex. Kontraktstidplan + Rev 1 – ÄTA 12, se
+  `plan_baselines.json`): välj vilken som visas och jämför mot en andra
+  samtidigt (tunnare linje/stapel i egen färg).
   Högerklicka en lapp för att se vad den väntar på och vad som följer den,
   ta bort ett beroende med ✕ eller lägga till ett med "Väntar på…"/"Följs
   av…" och ett klick på den andra lappen (kräver Redigerbar). Startar lappen
