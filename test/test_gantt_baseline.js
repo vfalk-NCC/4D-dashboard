@@ -74,6 +74,25 @@ seed('plan_baseline.json', [{ mode: 'prev', label: 'Import 01/10 2026 (Huvudtidp
   if (b.i3.d !== '-2 d' || b.i3.later) fail('Schakt: 2 dagar tidigare: ' + JSON.stringify(b.i3));
   if (b.i4.bl || b.i4.d) fail('Ny: ingen baseline');
   if (!/Baseline: Import 01\/10 2026 \(Huvudtidplan\.pp\)/.test(b.legend)) fail('Förklaringen ska säga varifrån baseline kommer: ' + b.legend);
+  // Färg (förvald gul, valbar) och länken mellan baseline och lappen.
+  const look = await page.evaluate(() => {
+    const n = document.querySelector('#ganttChart .pnote[data-item-id="i1"]'), l = n.querySelector('.pnote-bl'), k = n.querySelector('.pnote-bl-link');
+    const lr = l.getBoundingClientRect(), kr = k && k.getBoundingClientRect(), nr = n.getBoundingClientRect();
+    return { color: getComputedStyle(l).backgroundColor, link: !!k, joins: k ? Math.abs(kr.left - lr.right) < 1.5 && Math.abs(kr.right - nr.left) < 1.5 : false, i2link: !!document.querySelector('.pnote[data-item-id="i2"] .pnote-bl-link') };
+  });
+  if (look.color !== 'rgb(245, 158, 11)' || !look.link || !look.joins || look.i2link) fail('Baseline gul och med en länk till lappen: ' + JSON.stringify(look));
+  await page.locator('#ganttBaselineColor').evaluate(el => { el.value = '#2563eb'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(100);
+  if (await page.evaluate(() => getComputedStyle(document.querySelector('.pnote-bl')).backgroundColor) !== 'rgb(37, 99, 235)') fail('Färgen ska gå att välja');
+  await page.locator('#ganttBaselineColor').evaluate(el => { el.value = '#f59e0b'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(150);
+  const hov = await page.evaluate(() => ({ mine: parseFloat(getComputedStyle(document.querySelector('.pnote[data-item-id="i1"] .pnote-bl')).height), other: getComputedStyle(document.querySelector('.pnote[data-item-id="i3"] .pnote-bl')).opacity }));
+  if (hov.mine < 5.5 || Number(hov.other) > 0.3) fail('Pekar man på en lapp ska dess baseline lyftas fram: ' + JSON.stringify(hov));
+  console.log('OK: baseline gul (valbar färg), streckad länk till lappen, lyfts fram när man pekar på lappen');
+  await page.uncheck('#ganttBoardOneLine'); await page.waitForTimeout(150);
+  await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(150);
+  await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'board_baseline_big.png') });
+  await page.check('#ganttBoardOneLine'); await page.mouse.move(0, 0); await page.waitForTimeout(150);
   await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'board_baseline.png') });
   console.log('OK: tavlan – grå baseline-linje under lappen, +5 d / -2 d, förklaringen säger varifrån');
 

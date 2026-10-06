@@ -33,6 +33,7 @@ let ganttShowActual = false;      // kryssrutan "Visa verkligt" i Gantt-schemat
 // under den planerade. Sätts vid importen i 4D-planering (förra importen, en .ppb-baseline eller
 // Excels "Plan. start/slut"); planBaselineMeta säger varifrån (pp/plan_baseline.json, sista raden).
 let ganttShowBaseline = false;
+let ganttBaselineColor = "#f59e0b"; // valbar (Victor 2026-10-06: "otydlig … gult eller välja färg")
 let planBaselineMeta = null;
 // Läsbarhetsinställningar för Gantt-schemat (Victors förfrågan 2026-09-17
 // om att göra det tydligare) - sparas i localStorage, se GANTT_PREFS_KEY.
@@ -972,6 +973,10 @@ async function fetchBaselineMeta() {
     const log = await ghReadJSON(settings.githubToken, tablePath("plan_baseline"));
     planBaselineMeta = Array.isArray(log) && log.length ? log[log.length - 1] : null;
   } catch (e) { planBaselineMeta = null; }
+}
+/* Baseline-färgen som CSS-variabel (--bl) på diagrammet, förklaringen och utskriften. */
+function applyBaselineColor(el) {
+  [el, document.getElementById("ganttChart"), document.getElementById("ganttLegend")].forEach(x => { if (x) x.style.setProperty("--bl", ganttBaselineColor); });
 }
 /* Baseline-stapelns text: varifrån den kommer. */
 function baselineLabel() {
@@ -2401,6 +2406,7 @@ function loadGanttPrefs() {
     if (typeof prefs.boardSplit === "boolean") ganttBoardSplit = prefs.boardSplit;
     if (typeof prefs.boardOneLine === "boolean") ganttBoardOneLine = prefs.boardOneLine;
     if (typeof prefs.baseline === "boolean") ganttShowBaseline = prefs.baseline;
+    if (/^#[0-9a-f]{6}$/i.test(prefs.baselineColor || "")) ganttBaselineColor = prefs.baselineColor;
   } catch (e) {
     console.warn("Kunde inte läsa sparade Gantt-inställningar", e);
   }
@@ -2423,7 +2429,8 @@ function saveGanttPrefs() {
       colorBy: ganttColorBy,
       boardSplit: ganttBoardSplit,
       boardOneLine: ganttBoardOneLine,
-      baseline: ganttShowBaseline
+      baseline: ganttShowBaseline,
+      baselineColor: ganttBaselineColor
     }));
   } catch (e) {
     console.warn("Kunde inte spara Gantt-inställningar", e);
@@ -2698,6 +2705,7 @@ function renderGantt(list, target) {
   // efter att en statusfärg ändrats i Inställningar (se initStatusColorControls).
   renderGanttLegend();
   applyGanttViewClass();
+  applyBaselineColor(el);
   if (ganttView === "board") { renderGanttBoard(list, target); return; }
   const withDates = list.filter(it => it.startDate && it.endDate);
 
@@ -2962,6 +2970,7 @@ function noteTargetIds(it) {
 /** Dra en lapp: mitten flyttar, kanterna ändrar start/slut. Shift = utan beroenden. */
 function onBoardNotePointerDown(evt, noteEl, it, colPx) {
   if (!ganttEditable || !it || (evt.button !== undefined && evt.button !== 0)) return;
+  if (evt.target && evt.target.closest && evt.target.closest(".pnote-bl")) return; // baseline-linjen: bara tipsrutan
   const rect = noteEl.getBoundingClientRect();
   const EDGE = 8;
   const realRight = noteRealRight(noteEl, rect);
@@ -3294,8 +3303,15 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     const bShift = ganttShowBaseline ? baselineShiftDays(it) : null;
     let blHtml = "";
     if (bShift !== null) {
-      const b0 = Math.max(0, dayOf(it.baselineStartDate)), b1 = Math.min(nDays - 1, dayOf(it.baselineEndDate));
-      if (b1 >= b0) blHtml = `<span class="pnote-bl" style="left:${(b0 - c0) * dayPx}px; width:${(b1 - b0 + 1) * dayPx}px;"></span>`;
+      // Linjen där aktiviteten låg i baseline, och en streckad länk från den till lappen så att det
+      // syns vilken lapp den hör till (Victor 2026-10-06: "lättare att se vart den är kopplad").
+      const r0 = dayOf(it.baselineStartDate), r1 = dayOf(it.baselineEndDate);
+      const b0 = Math.max(0, r0), b1 = Math.min(nDays - 1, r1);
+      const px = d => (d - c0) * dayPx;
+      if (b1 >= b0) blHtml = `<span class="pnote-bl${r0 < 0 ? " cut-l" : ""}${r1 > nDays - 1 ? " cut-r" : ""}" style="left:${px(b0)}px; width:${(b1 - b0 + 1) * dayPx}px;" data-gantt-tip="${key}"></span>`;
+      const noteEnd = c1 + 1;
+      if (r1 < c0) { const from = Math.max(0, r1 + 1); blHtml += `<span class="pnote-bl-link${r1 < 0 ? " off-l" : ""}" style="left:${px(from)}px; width:${(c0 - from) * dayPx}px;"></span>`; }
+      else if (r0 > c1) { const to = Math.min(nDays, r0); blHtml += `<span class="pnote-bl-link${r0 > nDays - 1 ? " off-r" : ""}" style="left:${px(noteEnd)}px; width:${(to - noteEnd) * dayPx}px;"></span>`; }
       if (bShift) blHtml += `<span class="pnote-bl-d${bShift > 0 ? " later" : ""}" title="Mot baseline${baselineLabel() ? ` (${escapeHtml(baselineLabel())})` : ""}">${shiftText(bShift)}</span>`;
     }
     let gEnd = c1, ext = false, realPx = (c1 - c0 + 1) * colPx / 7;
@@ -3770,7 +3786,7 @@ function printGantt(opts) {
   const filterParts = [["Område", filters.area], ["Aktivitet", filters.activity], ["Entreprenör", filters.contractor]].filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`);
   const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")
     + (ganttView === "bars" && ganttShowActual ? `<span class="gp-leg"><i class="gp-leg-actual"></i>Verkligt</span>` : "")
-    + (ganttShowBaseline ? `<span class="gp-leg"><i class="gp-leg-baseline"></i>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : "")
+    + (ganttShowBaseline ? `<span class="gp-leg"><i class="gp-leg-baseline" style="background:${ganttBaselineColor} !important"></i>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : "")
     + `<span class="gp-leg"><i class="gp-leg-today"></i>Idag</span>`
     + (ganttView === "board" ? `<span class="gp-leg"><i class="gp-leg-late"></i>Försenad (röd ram)</span>` : `<span class="gp-leg"><i class="gp-leg-weekend"></i>Helg</span>`);
   const today = todayUTC();
@@ -3971,6 +3987,12 @@ function initGanttControls() {
   if (blCb) {
     blCb.checked = ganttShowBaseline;
     blCb.onchange = () => { ganttShowBaseline = blCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  const blColor = document.getElementById("ganttBaselineColor");
+  if (blColor) {
+    blColor.value = ganttBaselineColor;
+    blColor.oninput = () => { ganttBaselineColor = blColor.value; applyBaselineColor(); };
+    blColor.onchange = () => { ganttBaselineColor = blColor.value; saveGanttPrefs(); };
   }
   const oneCb = document.getElementById("ganttBoardOneLine");
   if (oneCb) {

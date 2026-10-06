@@ -104,6 +104,9 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   flyttats (+5 d / −2 d). Baseline sätts vid importen i 4D-planering (förra
   importen, en Powerproject-baseline .ppb, eller Excels Plan. start/slut);
   `plan_baseline.json` säger varifrån och visas i förklaringen.
+  Färgen är valbar (förvalt gul). På tavlan går en streckad länk från
+  baseline-linjen till lappen; pekar man på en lapp lyfts dess baseline fram och
+  de andra tonas ned, pekar man på en linje får lappen en ram.
   Högerklicka en lapp för att se vad den väntar på och vad som följer den,
   ta bort ett beroende med ✕ eller lägga till ett med "Väntar på…"/"Följs
   av…" och ett klick på den andra lappen (kräver Redigerbar). Startar lappen

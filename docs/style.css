@@ -1830,13 +1830,29 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item.gl-bars-only { di
 
 /* Baseline (Victors önskemål 2026-10-06): en tidigare version av tidplanen som en grå stapel/linje. */
 .gantt-show-bl .gantt-bar { top: 1px; height: 9px; }
-.gantt-bar-baseline { position: absolute; top: 11px; height: 3px; border-radius: 2px; background: #9ca3af; min-width: 3px; }
+.gantt-bar-baseline { position: absolute; top: 11px; height: 3px; border-radius: 2px; background: var(--bl, #f59e0b); min-width: 3px; }
 .gantt-chart.gantt-density-comfortable.gantt-show-bl .gantt-bar { top: 1px; height: 12px; }
 .gantt-chart.gantt-density-comfortable .gantt-bar-baseline { top: 14px; height: 4px; }
-.gantt-legend-baseline { background: #9ca3af !important; height: 4px !important; border-radius: 2px; }
+.gantt-legend-baseline { background: var(--bl, #f59e0b) !important; height: 4px !important; border-radius: 2px; }
 .pnote.pnote-hasbl { overflow: visible; }
-.pnote-bl { position: absolute; bottom: -5px; height: 3px; border-radius: 2px; background: #9ca3af; pointer-events: none; }
+.pnote-bl { position: absolute; bottom: -6px; height: 4px; border-radius: 2px; background: var(--bl, #f59e0b); box-shadow: 0 0 0 1px rgba(255,255,255,.9); min-width: 4px; cursor: help; transition: height .1s, opacity .1s; }
+.pnote-bl.cut-l { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.pnote-bl.cut-r { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+/* Streckad länk mellan baseline-linjen och lappen. */
+.pnote-bl-link { position: absolute; bottom: -4px; height: 0; border-top: 1.5px dashed var(--bl, #f59e0b); opacity: .75; pointer-events: none; transition: opacity .1s; }
+.pnote-bl-link.off-l::before, .pnote-bl-link.off-r::after { content: ""; position: absolute; top: -5.5px; border: 4.5px solid transparent; }
+.pnote-bl-link.off-l::before { left: -2px; border-right-color: var(--bl, #f59e0b); border-left: 0; }
+.pnote-bl-link.off-r::after { right: -2px; border-left-color: var(--bl, #f59e0b); border-right: 0; }
+/* Peka på en lapp: dess baseline lyfts fram, de andra tonas ned. */
+.pnote:hover .pnote-bl { height: 6px; bottom: -7px; }
+.pnote:hover .pnote-bl-link { opacity: 1; border-top-width: 2px; }
+.board-grid:has(.pnote:hover) .pnote:not(:hover) .pnote-bl, .board-grid:has(.pnote:hover) .pnote:not(:hover) .pnote-bl-link { opacity: .2; }
 .pnote-bl-d { flex: 0 0 auto; font-size: 9.5px; font-weight: 700; color: #047857; background: #ecfdf5; border-radius: 4px; padding: 0 4px; line-height: 15px; }
 .pnote-bl-d.later { color: #b42318; background: #fef3f2; }
 .pnote:not(.pnote-one) .pnote-bl-d { position: absolute; top: 4px; right: 6px; }
-.gp-leg-baseline { background: #9ca3af !important; height: 4px !important; }
+.gp-leg-baseline { background: var(--bl, #f59e0b) !important; height: 4px !important; }
+.gantt-bl-color { width: 18px; height: 18px; padding: 0; border: 1px solid #d1d5db; border-radius: 4px; background: none; cursor: pointer; margin-left: 2px; }
+.gantt-bl-color::-webkit-color-swatch-wrapper { padding: 0; }
+.gantt-bl-color::-webkit-color-swatch { border: none; border-radius: 3px; }
+/* Peka på en baseline-linje: lappen den hör till får en ram i baseline-färgen. */
+.pnote:has(.pnote-bl:hover) { outline: 2px solid var(--bl, #f59e0b); outline-offset: 2px; }
