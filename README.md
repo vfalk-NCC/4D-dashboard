@@ -86,6 +86,14 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   objekten som räknats med en riktig verklig start (t.ex. "3 av 5 med
   verklig start"), så du ser direkt hur tillförlitlig siffran är och kan
   avgöra om det är värt att börja fylla i Verklig start mer konsekvent.
+- **Skriv ut Gantt-schemat** (🖨 Skriv ut i schemats verktygsrad, Victors
+  önskemål 2026-10-06): välj papper (A4/A3) och riktning, sedan skrivs
+  schemat ut – eller sparas som PDF – med rubrik (projekt, vy, gruppering,
+  period, filter), statusförklaring, tidshuvudet överst på varje sida och
+  sidnummer. Staplarna anpassas till sidbredden; tavlan delas i perioder om
+  några veckor så att lapparna går att läsa, och en lapp som fortsätter i
+  nästa period märks med ◂/▸. Hopfällda grupper kan tas med. Skärmens
+  inställningar (zoom, period, redigerbart läge) påverkas inte.
 - **Gantt-schema**: en rad per objekt (planerat start- till slutdatum),
   läsbarhetsuppdaterat 2026-09-17 (och en gång till samma dag efter
   feedback om att det fortfarande var svårläst). Tidsaxeln visar månads-

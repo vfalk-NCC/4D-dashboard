@@ -14,6 +14,7 @@
 
 let API = null;              // Workspace API-instans
 let projectId = null;        // Aktuellt Trimble Connect-projekt
+let projectName = "";       // projektets namn (rubrik i utskrifter)
 let items = [];               // Cache av samtliga planeringsposter (från backend, ofiltrerat)
 let activities = [];           // plan_item_activities (delaktiviteter) - läses read-only, skrivs bara av 4D-planering
 let baselineHistory = [];      // plan_item_baseline_history - historik över start_date/end_date-ändringar, se logBaselineHistory i 4D-planering + saveItemSchedule här
@@ -311,6 +312,7 @@ async function initApp() {
 
   const project = await API.project.getProject();
   projectId = project.id;
+  projectName = project.name || "";
 
   await refreshAll();
 }
@@ -2579,15 +2581,16 @@ async function selectGanttItemInModel(it) {
   }
 }
 
-function renderGantt(list) {
-  const el = document.getElementById("ganttChart");
-  const notesEl = document.getElementById("ganttNotes");
+function renderGantt(list, target) {
+  // target: ritar i ett annat element (utskriften, se printGantt) - utan anteckningar och interaktion.
+  const el = target || document.getElementById("ganttChart");
+  const notesEl = target ? null : document.getElementById("ganttNotes");
   // Ritas om varje gång (billigt, beror bara på STATUS_COLORS/STATUS_ORDER)
   // istället för bara en gång vid start - annars hamnar den på fel färger
   // efter att en statusfärg ändrats i Inställningar (se initStatusColorControls).
   renderGanttLegend();
   applyGanttViewClass();
-  if (ganttView === "board") { renderGanttBoard(list); return; }
+  if (ganttView === "board") { renderGanttBoard(list, target); return; }
   const withDates = list.filter(it => it.startDate && it.endDate);
 
   if (withDates.length === 0) {
@@ -2802,7 +2805,7 @@ function renderGantt(list) {
       const header = `
         <div class="gantt-group gantt-group-colored" style="--grp:${gc.bd}; --grp-bg:${gc.bg}; --grp-ink:${gc.ink};" data-action="toggle-gantt-group" data-group-key="${escapeHtml(collapseKey)}">
           <span class="gantt-group-sticky">
-            <span class="gantt-group-arrow">${collapsed ? "▸" : "▾"}</span>
+            ${target ? "" : `<span class="gantt-group-arrow">${collapsed ? "▸" : "▾"}</span>`}
             <span>${escapeHtml(key)}</span>
             <span class="gantt-group-count">(${groupItems.length})</span>
           </span>
@@ -2833,7 +2836,7 @@ function renderGantt(list) {
     notesEl.innerText = notes.join(" ");
   }
 
-  bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays });
+  if (!target) bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays });
 }
 
 
@@ -2957,9 +2960,9 @@ function applyGanttViewClass() {
   });
 }
 
-function renderGanttBoard(list) {
-  const el = document.getElementById("ganttChart");
-  const notesEl = document.getElementById("ganttNotes");
+function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
+  const el = target || document.getElementById("ganttChart");
+  const notesEl = target ? null : document.getElementById("ganttNotes");
   const withDates = list.filter(it => it.startDate && it.endDate);
   if (withDates.length === 0) {
     el.className = "gantt-chart gantt-board-chart";
@@ -3017,7 +3020,9 @@ function renderGanttBoard(list) {
     let h = 0; for (const ch of String(it.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     const tilt = ((h % 7) - 3) * 0.25;
     const late = it.status === "forsenad", blocked = itemHasOpenBlocker(it);
-    return `<div class="pnote${shortNote ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}" style="grid-column:${c0 + 1} / ${c1 + 2}; --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${tilt}deg;"
+    // Utskriften delar tavlan i perioder: en lapp som fortsätter före/efter perioden märks.
+    const cont = target ? `${dayOf(it.startDate) < 0 ? " pnote-cont-l" : ""}${dayOf(it.endDate) > nDays - 1 ? " pnote-cont-r" : ""}` : "";
+    return `<div class="pnote${cont}${shortNote ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}" style="grid-column:${c0 + 1} / ${c1 + 2}; --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${tilt}deg;"
         data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0">
         <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</div>
         ${subParts.length ? `<div class="pnote-sub">${escapeHtml(subParts.join(" · "))}</div>` : ""}
@@ -3036,7 +3041,7 @@ function renderGanttBoard(list) {
   const laneKeys = [...lanes.keys()].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
   // Kolumnbredd: minst BOARD_COL_PX, men fyll panelens bredd vid korta perioder.
   const avail = (el.clientWidth || 0) - BOARD_LANE_PX - 2;
-  const colPx = Math.max(BOARD_COL_PX, Math.floor(avail / nWeeks) || 0);
+  const colPx = Math.max(minColPx, Math.floor(avail / nWeeks) || 0);
   const todayOn = todayCol >= 0 && todayCol < nWeeks;
   const todayDay = dayOf(todayISO());
   const gridBg = `--cols:${nWeeks}; --col:${colPx}px; --days:${nDays}; --day:${colPx / 7}px; --today-left:${todayOn ? todayDay * colPx / 7 : -9999}px;`;
@@ -3047,7 +3052,7 @@ function renderGanttBoard(list) {
     const laneItems = lanes.get(k);
     return `<div class="board-lane${collapsed ? " collapsed" : ""}">
         <div class="board-lane-head" style="--bg:${lc.bg}; --bd:${lc.bd}; --ink:${lc.ink};"${ganttGroupBy ? ` data-action="toggle-board-lane" data-group-key="${escapeHtml(collapseKey)}" title="Klicka för att fälla ihop/ut"` : ""}>
-          <span class="board-lane-name">${ganttGroupBy ? (collapsed ? "▸ " : "▾ ") : ""}${escapeHtml(k)}</span>
+          <span class="board-lane-name">${ganttGroupBy && !target ? (collapsed ? "▸ " : "▾ ") : ""}${escapeHtml(k)}</span>
           <span class="board-lane-count">${laneItems.length} st</span>
         </div>
         <div class="board-grid" style="${gridBg}">${collapsed ? "" : laneItems.map(noteHtml).join("")}</div>
@@ -3071,6 +3076,7 @@ function renderGanttBoard(list) {
     notesEl.innerText = notes.join(" ");
   }
 
+  if (target) return;
   el.querySelectorAll('[data-action="toggle-board-lane"]').forEach(h => {
     h.onclick = () => {
       const k = h.dataset.groupKey;
@@ -3290,6 +3296,303 @@ function updateGanttRangeStatus(rangeStatusEl) {
 // densitet, zoom, "Visa verkligt" samt det egna datumintervallet) - anropas
 // en gång från bindUI(). Läser sparade inställningar först (loadGanttPrefs)
 // så kontrollerna visar rätt värden direkt vid sidladdning.
+/* ---------------------------------------------------------------------
+   Utskrift av Gantt-schemat (Victors önskemål 2026-10-06: "en knapp för
+   att skriva ut ganttschemat, snyggt och bra"). Ritar schemat på nytt i
+   en egen utskriftsvy (#ganttPrint) i exakt sidbredd för valt papper,
+   med rubrik (projekt, vy, period, filter), statusförklaring och
+   tidshuvudet upprepat överst på varje sida (tabell-thead). Staplarna
+   anpassas till sidbredden; tavlan delas upp i perioder om några veckor
+   så att lapparna går att läsa (en lapp som fortsätter i nästa period
+   märks med ◂/▸). Allt i samma flik via window.print(), så det fungerar
+   inuti Trimble Connect och kan sparas som PDF.
+   ------------------------------------------------------------------- */
+const GANTT_PRINT_PREFS_KEY = "4ddash-gantt-print";
+const GANTT_PRINT_PAPER = { A4: [297, 210], A3: [420, 297] }; // mm, liggande
+const GANTT_PRINT_MARGIN_MM = 10;
+const BOARD_PRINT_MIN_COL_PX = 150; // minsta veckobredd på tavlan i utskrift
+const BOARD_PRINT_LANE_PX = BOARD_LANE_PX;
+
+function loadGanttPrintPrefs() {
+  const d = { paper: "A4", orient: "landscape", expandAll: true };
+  try {
+    const p = JSON.parse(window.localStorage.getItem(GANTT_PRINT_PREFS_KEY) || "{}") || {};
+    if (p.paper in GANTT_PRINT_PAPER) d.paper = p.paper;
+    if (p.orient === "landscape" || p.orient === "portrait") d.orient = p.orient;
+    if (typeof p.expandAll === "boolean") d.expandAll = p.expandAll;
+  } catch (e) { /* standardval */ }
+  return d;
+}
+function saveGanttPrintPrefs(p) {
+  try { window.localStorage.setItem(GANTT_PRINT_PREFS_KEY, JSON.stringify(p)); } catch (e) { /* bara bekvämlighet */ }
+}
+
+/* Sidans skrivbara bredd/höjd i CSS-pixlar (96 px/tum). */
+function ganttPrintPageSize(paper, orient) {
+  const [w, h] = GANTT_PRINT_PAPER[paper] || GANTT_PRINT_PAPER.A4;
+  const [pw, ph] = orient === "portrait" ? [h, w] : [w, h];
+  const px = mm => Math.floor((mm - 2 * GANTT_PRINT_MARGIN_MM) / 25.4 * 96);
+  return { width: px(pw), height: px(ph), cssSize: `${paper} ${orient}` };
+}
+
+/* Det visade intervallet: valt i "Period", annars hela spannet för objekten med datum. */
+function ganttPrintDomain(list) {
+  if (ganttRangeStart && ganttRangeEnd) return { start: ganttRangeStart, end: ganttRangeEnd };
+  const withDates = list.filter(it => it.startDate && it.endDate);
+  if (!withDates.length) return null;
+  let all = withDates.flatMap(it => [it.startDate, it.endDate]);
+  if (ganttView === "bars" && ganttShowActual) all = all.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
+  all.sort();
+  return { start: all[0], end: all[all.length - 1] };
+}
+
+/* Perioderna som skrivs ut: staplarna i ett svep (anpassat till bredden), tavlan
+   i bitar om så många veckor som får plats med minst BOARD_PRINT_MIN_COL_PX per vecka. */
+function ganttPrintSections(domain, pageWidth) {
+  if (ganttView !== "board") return [{ start: domain.start, end: domain.end }];
+  const perPage = Math.max(1, Math.floor((pageWidth - BOARD_PRINT_LANE_PX - 2) / BOARD_PRINT_MIN_COL_PX));
+  const w0 = startOfWeekUTC(parseDate(domain.start)), wEnd = startOfWeekUTC(parseDate(domain.end));
+  const nWeeks = Math.max(1, Math.round((wEnd - w0) / (7 * 86400000)) + 1);
+  const iso = d => d.toISOString().slice(0, 10);
+  const out = [];
+  for (let i = 0; i < nWeeks; i += perPage) {
+    const s = new Date(w0); s.setUTCDate(s.getUTCDate() + i * 7);
+    const e = new Date(s); e.setUTCDate(e.getUTCDate() + Math.min(perPage, nWeeks - i) * 7 - 1);
+    out.push({ start: iso(s) < domain.start ? domain.start : iso(s), end: iso(e) > domain.end ? domain.end : iso(e) });
+  }
+  return out;
+}
+
+function ganttPrintPeriodText(start, end) {
+  const s = parseDate(start), e = parseDate(end);
+  const ws = isoWeekNumber(startOfWeekUTC(s)), we = isoWeekNumber(startOfWeekUTC(e));
+  const year = d => d.getUTCFullYear();
+  const dates = `${shortDateSv(s)}${year(s) !== year(e) ? " " + year(s) : ""} – ${shortDateSv(e)} ${year(e)}`;
+  return `${ws === we ? `v.${ws}` : `v.${ws}–${we}`} · ${dates}`;
+}
+
+/* Gör om en renderad vy till en tabell så att tidshuvudet upprepas på varje sida
+   och rader/sim-banor inte delas i onödan. */
+function ganttPrintTableize(chartEl) {
+  const mkTable = (headEl, rowEls) => {
+    const table = document.createElement("table");
+    table.className = "gp-table";
+    const thead = table.createTHead().insertRow().insertCell();
+    thead.appendChild(headEl);
+    const tbody = table.createTBody();
+    rowEls.forEach(r => {
+      const tr = tbody.insertRow();
+      if (r.classList.contains("gantt-group")) tr.className = "gp-keep-next";
+      tr.insertCell().appendChild(r);
+    });
+    return table;
+  };
+  const board = chartEl.querySelector(".board");
+  if (board) {
+    const head = board.querySelector(".board-head");
+    const lanes = [...board.querySelectorAll(":scope > .board-lane")];
+    board.appendChild(mkTable(head, lanes));
+    return;
+  }
+  const inner = chartEl.querySelector(".gantt-inner");
+  if (!inner) return;
+  const ruler = inner.querySelector(".gantt-ruler-row");
+  const wrap = inner.querySelector(".gantt-rows-wrap");
+  if (!ruler || !wrap) return;
+  const rows = [...wrap.children];
+  wrap.remove();
+  // Varje rad i en egen tabellrad; underrader följer sitt objekt.
+  inner.appendChild(mkTable(ruler, rows));
+}
+
+/* Skarpt rutnät för papper (CSS-gradienterna på skärmen blir randiga i PDF): en SVG som
+   sträcks över spåret, en enhet per dag från startDate. Veckolinjer på måndagar, helger
+   skuggade och dagens datum markerat när det finns plats; månadsskiften för staplarna. */
+function ganttPrintGridSvg(startIso, nDays, pxPerDay, kind) {
+  const start = parseDate(startIso);
+  const parts = [];
+  const weekend = pxPerDay >= 5, dayLines = kind === "board" && pxPerDay >= 14;
+  for (let d = 0; d < nDays; d++) {
+    const dt = new Date(start.getTime() + d * 86400000), dow = dt.getUTCDay();
+    if (weekend && dow === 6) parts.push(`<rect x="${d}" y="0" width="2" height="1" fill="${kind === "board" ? "#000" : "#e3e6ec"}" fill-opacity="${kind === "board" ? 0.045 : 1}"/>`);
+    if (dayLines && dow !== 1) parts.push(`<line x1="${d}" x2="${d}" y1="0" y2="1" stroke="#000" stroke-opacity=".06"/>`);
+    if (dow === 1 && d > 0 && pxPerDay * 7 >= 10) parts.push(`<line x1="${d}" x2="${d}" y1="0" y2="1" stroke="${kind === "board" ? "#d9d1c1" : "#d5d9df"}"/>`);
+    if (kind === "bars" && dt.getUTCDate() === 1 && d > 0) parts.push(`<line x1="${d}" x2="${d}" y1="0" y2="1" stroke="#aeb4bd"/>`);
+  }
+  const t = daysBetweenIso(startIso, todayISO());
+  if (t !== null && t >= 0 && t <= nDays) {
+    parts.push(kind === "board"
+      ? `<rect x="${t}" y="0" width="1" height="1" fill="#3b82f6" fill-opacity=".16"/>`
+      : `<line x1="${t}" x2="${t}" y1="0" y2="1" stroke="${getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0b5fff"}" stroke-width="2"/>`);
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.max(1, nDays)} 1" preserveAspectRatio="none">${parts.join("").replace(/<line /g, '<line vector-effect="non-scaling-stroke" ')}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+function ganttPrintApplyGrid(chartEl, sec) {
+  const board = chartEl.querySelector(".board");
+  if (board) {
+    const grid = board.querySelector(".board-grid");
+    if (!grid) return;
+    const nDays = Number(getComputedStyle(grid).getPropertyValue("--days")) || 7;
+    const dayPx = parseFloat(getComputedStyle(grid).getPropertyValue("--day")) || 30;
+    const w0 = startOfWeekUTC(parseDate(sec.start)).toISOString().slice(0, 10);
+    const img = ganttPrintGridSvg(w0, nDays, dayPx, "board");
+    board.querySelectorAll(".board-grid").forEach(g => { g.style.backgroundImage = img; g.style.backgroundSize = "100% 100%"; g.style.backgroundRepeat = "no-repeat"; g.style.backgroundPosition = "0 0"; });
+    return;
+  }
+  const inner = chartEl.querySelector(".gantt-inner"), track = chartEl.querySelector(".gantt-rows-wrap .gantt-track");
+  if (!inner || !track) return;
+  const nDays = Math.max(1, daysBetweenIso(sec.start, sec.end));
+  inner.style.setProperty("--gg-image", ganttPrintGridSvg(sec.start, nDays, track.getBoundingClientRect().width / nDays, "bars"));
+  inner.style.setProperty("--gg-size", "100% 100%");
+  inner.style.setProperty("--gg-repeat", "no-repeat");
+  inner.style.setProperty("--gg-pos", "0 0");
+}
+
+function printGantt(opts) {
+  const list = getFilteredItems();
+  const domain = ganttPrintDomain(list);
+  if (!domain) { alert("Det finns inga aktiviteter med start- och slutdatum att skriva ut."); return; }
+  const page = ganttPrintPageSize(opts.paper, opts.orient);
+  const sections = ganttPrintSections(domain, page.width);
+
+  // Utskriften ritas med samma inställningar som på skärmen, men utan redigering,
+  // markerad beroendekedja och zoom (staplarna fyller sidbredden).
+  const saved = { ganttRangeStart, ganttRangeEnd, ganttZoomPxPerDay, ganttEditable, ganttHighlightChainId, ganttCollapsedGroups };
+  document.getElementById("ganttPrint")?.remove();
+  const root = document.createElement("div");
+  root.id = "ganttPrint";
+  root.className = `gantt-print gantt-print-${ganttView}`;
+  root.style.width = `${page.width}px`;
+  document.body.appendChild(root);
+
+  const viewText = ganttView === "board" ? "Tavla" : "Staplar";
+  const groupText = { area: "område", contractor: "entreprenör", activity: "aktivitet" }[ganttGroupBy];
+  const colorText = { area: "område", contractor: "entreprenör", activity: "aktivitet" }[ganttColorBy];
+  const sub = [viewText + (groupText ? `, grupperat på ${groupText}` : "") + (ganttView === "board" ? `, färg efter ${colorText}` : ""),
+    ganttPrintPeriodText(domain.start, domain.end)];
+  const filterParts = [["Område", filters.area], ["Aktivitet", filters.activity], ["Entreprenör", filters.contractor]].filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`);
+  const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")
+    + (ganttView === "bars" && ganttShowActual ? `<span class="gp-leg"><i class="gp-leg-actual"></i>Verkligt</span>` : "")
+    + `<span class="gp-leg"><i class="gp-leg-today"></i>Idag</span>`
+    + (ganttView === "board" ? `<span class="gp-leg"><i class="gp-leg-late"></i>Försenad (röd ram)</span>` : `<span class="gp-leg"><i class="gp-leg-weekend"></i>Helg</span>`);
+  const today = todayUTC();
+  root.innerHTML = `
+    <header class="gp-header">
+      <div class="gp-brand">
+        <span class="ncc-mark">NCC</span>
+        <div>
+          <h1>Gantt-schema${projectName ? ` – ${escapeHtml(projectName)}` : ""}</h1>
+          <div class="gp-sub">${sub.map(escapeHtml).join(" · ")}</div>
+          ${filterParts.length ? `<div class="gp-filter">Filter: ${escapeHtml(filterParts.join(" · "))}</div>` : ""}
+        </div>
+      </div>
+      <div class="gp-meta">
+        <div>Utskrivet ${escapeHtml(`${today.getUTCDate()} ${GANTT_MONTH_NAMES_SV[today.getUTCMonth()]} ${today.getUTCFullYear()}`)}</div>
+        <div>Status per idag (v.${isoWeekNumber(today)})</div>
+      </div>
+    </header>
+    <div class="gp-legend">${legend}</div>`;
+
+  try {
+    ganttEditable = false;
+    ganttHighlightChainId = null;
+    ganttZoomPxPerDay = null;
+    if (opts.expandAll) ganttCollapsedGroups = new Set();
+    let total = 0;
+    sections.forEach((sec, i) => {
+      const box = document.createElement("section");
+      box.className = "gp-section";
+      if (sections.length > 1) box.innerHTML = `<h2 class="gp-section-title">${escapeHtml(ganttPrintPeriodText(sec.start, sec.end))}<span>Del ${i + 1} av ${sections.length}</span></h2>`;
+      const chart = document.createElement("div");
+      chart.style.width = `${page.width}px`;
+      box.appendChild(chart);
+      root.appendChild(box);
+      ganttRangeStart = sec.start;
+      ganttRangeEnd = sec.end;
+      if (ganttView === "board") renderGanttBoard(list, chart, BOARD_PRINT_MIN_COL_PX);
+      else renderGantt(list, chart);
+      chart.classList.add("gp-chart");
+      ganttPrintApplyGrid(chart, sec);
+      total += chart.querySelectorAll(".pnote, .gantt-row:not(.gantt-ruler-row):not(.gantt-subrow)").length;
+      ganttPrintTableize(chart);
+      if (!chart.querySelector(".pnote, .gantt-bar")) box.classList.add("gp-empty");
+    });
+    if (!total) { root.remove(); alert("Inga aktiviteter inom perioden att skriva ut."); return; }
+  } finally {
+    ({ ganttRangeStart, ganttRangeEnd, ganttZoomPxPerDay, ganttEditable, ganttHighlightChainId, ganttCollapsedGroups } = saved);
+  }
+
+  // Pappersformat och sidfot (sidnummer där webbläsaren stöder det).
+  let pageStyle = document.getElementById("ganttPrintPageStyle");
+  if (!pageStyle) { pageStyle = document.createElement("style"); pageStyle.id = "ganttPrintPageStyle"; document.head.appendChild(pageStyle); }
+  const footer = `4D-dashboard · Gantt-schema${projectName ? " · " + projectName : ""}`.replace(/["\\]/g, "");
+  pageStyle.textContent = `@media print { @page { size: ${page.cssSize}; margin: ${GANTT_PRINT_MARGIN_MM}mm;
+    @bottom-left { content: "${footer}"; font: 8px system-ui, sans-serif; color: #6b7280; }
+    @bottom-right { content: "Sida " counter(page) " av " counter(pages); font: 8px system-ui, sans-serif; color: #6b7280; } } }`;
+
+  document.body.classList.add("printing-gantt");
+  const cleanup = () => {
+    document.body.classList.remove("printing-gantt");
+    document.getElementById("ganttPrint")?.remove();
+    document.getElementById("ganttPrintPageStyle")?.remove();
+  };
+  window.addEventListener("afterprint", cleanup, { once: true });
+  // Låt webbläsaren lägga ut sidan först.
+  requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+}
+
+/* Liten dialog vid knappen: papper, orientering, hopfällda grupper. */
+function openGanttPrintDialog(btn) {
+  document.querySelector(".gantt-print-pop")?.remove();
+  const prefs = loadGanttPrintPrefs();
+  const pop = document.createElement("div");
+  pop.className = "board-pop gantt-print-pop";
+  pop.setAttribute("role", "dialog");
+  pop.innerHTML = `
+    <div class="board-pop-title">🖨 Skriv ut Gantt-schemat</div>
+    <div class="gpp-row"><span>Papper</span><div class="gantt-seg">
+      ${Object.keys(GANTT_PRINT_PAPER).map(k => `<button type="button" class="gantt-seg-btn" data-paper="${k}">${k}</button>`).join("")}</div></div>
+    <div class="gpp-row"><span>Riktning</span><div class="gantt-seg">
+      <button type="button" class="gantt-seg-btn" data-orient="landscape">Liggande</button><button type="button" class="gantt-seg-btn" data-orient="portrait">Stående</button></div></div>
+    <label class="gpp-check"><input type="checkbox" id="gppExpand" /> Ta med hopfällda grupper</label>
+    <div class="gpp-info hint"></div>
+    <div class="board-pop-actions"><button type="button" data-act="cancel">Avbryt</button><button type="button" class="primary" data-act="print">Skriv ut</button></div>`;
+  document.body.appendChild(pop);
+  const r = btn.getBoundingClientRect();
+  pop.style.top = `${Math.min(window.innerHeight - 10, r.bottom + 6)}px`;
+  pop.style.left = `${Math.max(8, Math.min(window.innerWidth - 270, r.right - 260))}px`;
+  const expand = pop.querySelector("#gppExpand");
+  expand.checked = prefs.expandAll;
+  const refresh = () => {
+    pop.querySelectorAll("[data-paper]").forEach(b => b.classList.toggle("active", b.dataset.paper === prefs.paper));
+    pop.querySelectorAll("[data-orient]").forEach(b => b.classList.toggle("active", b.dataset.orient === prefs.orient));
+    const domain = ganttPrintDomain(getFilteredItems());
+    const info = pop.querySelector(".gpp-info");
+    if (!domain) { info.textContent = "Inga aktiviteter med datum."; return; }
+    const n = ganttPrintSections(domain, ganttPrintPageSize(prefs.paper, prefs.orient).width).length;
+    info.textContent = ganttView === "board"
+      ? `Tavlan ${ganttPrintPeriodText(domain.start, domain.end)}${n > 1 ? ` delas i ${n} perioder så att lapparna går att läsa.` : " – får plats i sidbredden."} Tips: välj Spara som PDF i utskriftsrutan.`
+      : `Staplarna ${ganttPrintPeriodText(domain.start, domain.end)} anpassas till sidbredden. Tips: välj Spara som PDF i utskriftsrutan.`;
+  };
+  refresh();
+  pop.querySelectorAll("[data-paper]").forEach(b => b.onclick = () => { prefs.paper = b.dataset.paper; refresh(); });
+  pop.querySelectorAll("[data-orient]").forEach(b => b.onclick = () => { prefs.orient = b.dataset.orient; refresh(); });
+  const close = () => { pop.remove(); document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", onKey, true); };
+  const outside = e => { if (!pop.contains(e.target) && e.target !== btn) close(); };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  document.addEventListener("pointerdown", outside, true);
+  document.addEventListener("keydown", onKey, true);
+  pop.querySelector('[data-act="cancel"]').onclick = close;
+  pop.querySelector('[data-act="print"]').onclick = () => {
+    prefs.expandAll = expand.checked;
+    saveGanttPrintPrefs(prefs);
+    close();
+    printGantt(prefs);
+  };
+  pop.querySelector('[data-act="print"]').focus();
+}
+
 function initGanttControls() {
   loadGanttPrefs();
   renderGanttLegend();
@@ -3308,6 +3611,8 @@ function initGanttControls() {
   const rangeStatusEl = document.getElementById("ganttRangeStatus");
   const editableCheckbox = document.getElementById("ganttEditable");
   const editableHintEl = document.getElementById("ganttEditableHint");
+  const printBtn = document.getElementById("ganttPrintBtn");
+  if (printBtn) printBtn.onclick = () => openGanttPrintDialog(printBtn);
 
   groupSel.value = ganttGroupBy;
   sortSel.value = ganttSortBy;

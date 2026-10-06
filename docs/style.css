@@ -1703,3 +1703,71 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item:nth-last-child(-n
 .pnote-short .pnote-title { font-size: 10px; -webkit-line-clamp: 3; word-break: break-all; }
 .pnote-short::after { width: 8px; height: 8px; }
 .gantt-tooltip-warn { margin-top: 4px; color: #fecaca; font-weight: 600; }
+
+/* ---------------------------------------------------------------------
+   Utskrift av Gantt-schemat (🖨 Skriv ut, se printGantt i app.js): en
+   egen vy i exakt sidbredd som ritas utanför skärmen och är det enda som
+   skrivs ut. Tidshuvudet ligger i tabellens thead och upprepas på varje
+   sida; rader och banor delas inte i onödan.
+   ------------------------------------------------------------------- */
+#ganttPrint { position: absolute; left: -30000px; top: 0; background: #fff; }
+.gantt-print, .gantt-print * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.gantt-print { color: var(--text); font-size: 11px; }
+.gp-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 2px solid #1f2328; }
+.gp-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.gp-header h1 { font-size: 18px; line-height: 1.2; margin: 0; }
+.gp-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.gp-filter { font-size: 10px; color: #b45309; font-weight: 600; margin-top: 2px; }
+.gp-meta { font-size: 10px; color: var(--muted); text-align: right; white-space: nowrap; line-height: 1.5; }
+.gp-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 10px; color: #374151; margin: 0 0 10px; }
+.gp-leg { display: inline-flex; align-items: center; gap: 5px; }
+.gp-leg i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.gp-leg i.gp-leg-today { width: 2px; height: 11px; border-radius: 0; background: var(--accent); }
+.gp-leg i.gp-leg-late { box-sizing: border-box; border: 2px solid #e5484d; background: #fff; }
+.gp-leg i.gp-leg-weekend { background: #e3e6ec; }
+.gp-leg i.gp-leg-actual { height: 4px; background-image: repeating-linear-gradient(135deg, #1f2328 0 2px, #4b5563 2px 4px); }
+.gp-section + .gp-section { margin-top: 18px; }
+.gp-section-title { break-after: avoid; page-break-after: avoid; }
+.gantt-print .gantt-today-label { display: none; }
+.gp-section-title { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin: 0 0 6px; }
+.gp-section-title span { font-size: 10px; font-weight: 400; color: var(--muted); }
+.gp-section.gp-empty .gp-chart::after { content: "Inga aktiviteter i den här perioden."; display: block; padding: 10px; color: var(--muted); }
+.gp-table { border-collapse: collapse; width: 100%; }
+.gp-table td { padding: 0; vertical-align: top; }
+.gp-table tbody tr { break-inside: avoid; page-break-inside: avoid; }
+.gp-table tr.gp-keep-next { break-after: avoid; page-break-after: avoid; }
+.gantt-print .gp-chart { max-height: none !important; overflow: visible !important; border-radius: 0; }
+.gantt-print .gantt-toggle, .gantt-print .gantt-label, .gantt-print .gantt-group-sticky, .gantt-print .gantt-ruler-row,
+.gantt-print .board-head, .gantt-print .board-corner, .gantt-print .board-lane-head { position: static !important; }
+/* Staplar: bredare namnkolumn, namnen får radbrytas (högst två rader). */
+.gantt-print .gantt-row { grid-template-columns: 6px 210px 1fr; }
+.gantt-print .gantt-toggle { visibility: hidden; }
+.gantt-print .gantt-group-arrow { display: none; }
+.gantt-print .gantt-label { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.2; text-decoration: none; }
+.gantt-print .gantt-rows-wrap { gap: 0; }
+.gantt-print-bars .gp-table tbody td { padding: 1.5px 0; }
+.gantt-print-bars .gp-table thead td { border-bottom: 1px solid #c7ccd3; background: #fff; }
+.gantt-print .gantt-bar { box-shadow: none; }
+/* Tavlan: raka lappar med tunn kant (skuggor och lutning blir suddiga på papper). */
+.gantt-print .gantt-board-chart { border: 1px solid #ddd6c8; }
+.gantt-print .pnote { transform: none; box-shadow: 0 0 0 1px rgba(0,0,0,.12); break-inside: avoid; }
+.gantt-print .pnote-late { box-shadow: 0 0 0 2px #e5484d; }
+.gantt-print .pnote-done { opacity: .8; }
+.gantt-print .pnote-cont-l .pnote-title::before { content: "◂ "; color: var(--bd); }
+.gantt-print .pnote-cont-r { border-radius: 2px 0 0 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.12), inset -3px 0 0 var(--bd); }
+.gantt-print .pnote-cont-r.pnote-late { box-shadow: 0 0 0 2px #e5484d, inset -3px 0 0 var(--bd); }
+.gantt-print .pnote-cont-r::before { content: "▸"; position: absolute; right: 6px; top: 5px; font-size: 10px; color: var(--ink); }
+.gantt-print .board-lane-head { border-right-width: 4px; }
+
+/* Utskriftsdialogen vid knappen. */
+.gantt-print-pop { width: 260px; }
+.gpp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gantt-print-pop .gpp-check { justify-content: flex-start; }
+.gpp-check { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.gpp-info { font-size: 11px; line-height: 1.4; margin: 0; }
+
+@media print {
+  body.printing-gantt { background: #fff; margin: 0; padding: 0; }
+  body.printing-gantt > *:not(#ganttPrint) { display: none !important; }
+  body.printing-gantt #ganttPrint { position: static; left: auto; }
+}
