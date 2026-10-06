@@ -61,13 +61,31 @@ seed('plan_items.json', [
   const on = await size();
   if (!on.fs || Math.abs(on.top) > 1 || on.pw < 1390 || on.ph < 990 || on.ch <= before.ch || !/Stäng helskärm/.test(on.btn)) fail('Helskärm ska fylla skärmen: ' + JSON.stringify({ before, on }));
   await page.locator('section[data-panel-id="gantt"]').screenshot({ path: path.join(require('os').tmpdir(), 'gantt_fullscreen.png') });
+  // Dölj knapparna: bara färgförklaringen och schemat; valet sparas.
+  await page.click('#ganttFsTools'); await page.waitForTimeout(300);
+  const clean = await page.evaluate(() => ({ head: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display, h2: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] > h2')).display, legend: document.getElementById('ganttLegend').getBoundingClientRect().height, ch: document.getElementById('ganttChart').getBoundingClientRect().height, btn: document.getElementById('ganttFsTools').textContent }));
+  if (clean.head !== 'none' || clean.h2 !== 'none' || clean.legend < 10 || clean.ch <= on.ch || !/Visa knappar/.test(clean.btn)) fail('Dölj knappar: ' + JSON.stringify({ clean, on }));
+  await page.locator('section[data-panel-id="gantt"]').screenshot({ path: path.join(require('os').tmpdir(), 'gantt_fullscreen_clean.png') });
+  await page.click('#ganttFsClose'); await page.waitForTimeout(300);
+  if ((await size()).fs) fail('✕ ska stänga helskärmen');
+  // Även utanför helskärm (Victor 2026-10-06): knapparna förblir dolda, rubriken och ☰ syns, ✕ inte.
+  const outside = await page.evaluate(() => ({ head: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display, h2: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] > h2')).display, tools: document.getElementById('ganttFsTools').textContent, toolsShown: getComputedStyle(document.getElementById('ganttFsTools')).display !== 'none', close: getComputedStyle(document.getElementById('ganttFsClose')).display }));
+  if (outside.head !== 'none' || outside.h2 === 'none' || !/Visa knappar/.test(outside.tools) || !outside.toolsShown || outside.close !== 'none') fail('Dölj knappar utanför helskärm: ' + JSON.stringify(outside));
+  await page.locator('section[data-panel-id="gantt"]').screenshot({ path: path.join(require('os').tmpdir(), 'gantt_clean_normal.png') });
+  await page.click('#ganttFsTools'); await page.waitForTimeout(300);
+  if (await page.evaluate(() => getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display) === 'none') fail('Visa knappar utanför helskärm');
+  await page.click('#ganttFsTools'); await page.waitForTimeout(300);
+  await page.click('#ganttFsEnter'); await page.waitForTimeout(300);
+  if (await page.evaluate(() => getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display) !== 'none') fail('Valet att dölja knapparna ska sparas');
+  await page.click('#ganttFsTools'); await page.waitForTimeout(300);
+  if (await page.evaluate(() => getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display) === 'none') fail('Visa knappar igen');
   await page.keyboard.press('Escape'); await page.waitForTimeout(400);
   const off = await size();
   if (off.fs || !/Helskärm/.test(off.btn) || /Stäng/.test(off.btn)) fail('Esc ska stänga helskärmen: ' + JSON.stringify(off));
   await page.click('#ganttFullBtn'); await page.waitForTimeout(300);
   await page.click('#ganttFullBtn'); await page.waitForTimeout(300);
   if ((await size()).fs) fail('Knappen ska stänga helskärmen');
-  console.log('OK: Helskärm – Gantt-panelen fyller skärmen, diagrammet blir högre; Esc och knappen stänger');
+  console.log('OK: Helskärm – fyller skärmen; knapparna kan döljas (färgförklaringen kvar, valet sparas); Esc, ✕ och knappen stänger');
   if (errors.length) fail('Fel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
   await browser.close(); server.close();

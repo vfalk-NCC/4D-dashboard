@@ -3734,10 +3734,24 @@ function ganttPrintPageSize(paper, orient) {
 /* Helskärm (Victor 2026-10-06): Gantt-panelen fyller skärmen. Webbläsarens riktiga helskärm om
    Trimble Connect tillåter det, annars fyller panelen hela tilläggets yta. Esc/knappen stänger. */
 function ganttFullscreenPanel() { return document.querySelector('section.panel[data-panel-id="gantt"]'); }
+/* I helskärm kan alla knappar döljas – bara färgförklaringen och schemat syns (Victor 2026-10-06).
+   Valet sparas till nästa gång. */
+let ganttFsClean = (() => { try { return localStorage.getItem("4ddash-gantt-fs-clean") === "1"; } catch (e) { return false; } })();
+function setGanttFsClean(on) {
+  ganttFsClean = on;
+  try { localStorage.setItem("4ddash-gantt-fs-clean", on ? "1" : "0"); } catch (e) {}
+  const panel = ganttFullscreenPanel(), b = document.getElementById("ganttFsTools");
+  // Gäller både i och utanför helskärm (Victor 2026-10-06).
+  if (panel) panel.classList.toggle("gantt-fs-clean", on);
+  if (b) b.textContent = on ? "☰ Visa knappar" : "☰ Dölj knappar";
+  if (panel) renderGantt(getFilteredItems());
+}
 function setGanttFullscreen(on) {
   const panel = ganttFullscreenPanel(), btn = document.getElementById("ganttFullBtn");
   if (!panel) return;
   panel.classList.toggle("gantt-fullscreen", on);
+  const fsTools = document.getElementById("ganttFsTools");
+  if (fsTools) fsTools.textContent = ganttFsClean ? "☰ Visa knappar" : "☰ Dölj knappar";
   document.body.classList.toggle("gantt-fullscreen-on", on);
   if (btn) { btn.textContent = on ? "✕ Stäng helskärm" : "⛶ Helskärm"; btn.classList.toggle("active", on); }
   renderGantt(getFilteredItems()); // kolumnbredden följer den nya ytan
@@ -4049,6 +4063,12 @@ function initGanttControls() {
   if (printBtn) printBtn.onclick = () => openGanttPrintDialog(printBtn);
   const fullBtn = document.getElementById("ganttFullBtn");
   if (fullBtn) fullBtn.onclick = toggleGanttFullscreen;
+  const fsTools = document.getElementById("ganttFsTools"), fsClose = document.getElementById("ganttFsClose");
+  if (fsTools) fsTools.onclick = () => setGanttFsClean(!ganttFsClean);
+  if (fsClose) fsClose.onclick = toggleGanttFullscreen;
+  const fsEnter = document.getElementById("ganttFsEnter");
+  if (fsEnter) fsEnter.onclick = toggleGanttFullscreen;
+  { const panel = ganttFullscreenPanel(); if (panel) panel.classList.toggle("gantt-fs-clean", ganttFsClean); if (fsTools) fsTools.textContent = ganttFsClean ? "☰ Visa knappar" : "☰ Dölj knappar"; }
 
   groupSel.value = ganttGroupBy;
   sortSel.value = ganttSortBy;

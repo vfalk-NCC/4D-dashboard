@@ -112,6 +112,8 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   samtidigt (tunnare linje/stapel i egen färg).
 - **Helskärm** (⛶ i Gantt-schemats verktygsrad): panelen fyller skärmen – webbläsarens
   helskärm om Trimble Connect tillåter det, annars hela tilläggets yta. Esc stänger.
+  "☰ Dölj knappar" (uppe till höger i panelen, även utanför helskärm) gömmer alla
+  verktygsrader – bara färgförklaringen och schemat syns; valet sparas.
   Högerklicka en lapp för att se vad den väntar på och vad som följer den,
   ta bort ett beroende med ✕ eller lägga till ett med "Väntar på…"/"Följs
   av…" och ett klick på den andra lappen (kräver Redigerbar). Startar lappen

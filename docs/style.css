@@ -1897,3 +1897,20 @@ section.panel.gantt-fullscreen #ganttChart { flex: 1 1 auto; max-height: none; m
 body.gantt-fullscreen-on { overflow: hidden; }
 #ganttFullBtn.active { background: #1f2937; color: #fff; border-color: #1f2937; }
 @media print { #ganttFullBtn { display: none !important; } }
+/* Helskärmens hörnknappar (dölj/visa knappar, stäng) – syns bara i helskärm. */
+section.panel[data-panel-id="gantt"] { position: relative; }
+.gantt-fs-bar { display: flex; gap: 4px; position: absolute; top: 8px; right: 38px; z-index: 5; }
+section.panel.gantt-fullscreen .gantt-fs-bar { right: 10px; }
+#ganttFsClose { display: none; }
+section.panel.gantt-fullscreen #ganttFsClose { display: inline-block; }
+section.panel.gantt-fullscreen #ganttFsEnter { display: none; }
+section.panel.collapsed .gantt-fs-bar { display: none; }
+section.panel.gantt-fullscreen { position: fixed; }
+.gantt-fs-bar button { font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid #d1d5db; background: rgba(255,255,255,.92); cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.12); width: auto; }
+.gantt-fs-bar button:hover { background: #fff; border-color: #9ca3af; }
+/* Utan knappar: rubrik, verktygsrader, tips och panelknappar döljs – färgförklaringen ligger kvar. */
+section.panel.gantt-fullscreen.gantt-fs-clean > h2, section.panel.gantt-fs-clean .gantt-head, section.panel.gantt-fs-clean #ganttHelp,
+section.panel.gantt-fs-clean #ganttEditableHint, section.panel.gantt-fs-clean #ganttNotes { display: none !important; }
+section.panel.gantt-fullscreen.gantt-fs-clean #ganttLegend { padding-right: 190px; }
+section.panel.gantt-fullscreen .panel-collapse-btn { display: none !important; }
+@media print { .gantt-fs-bar { display: none !important; } }
