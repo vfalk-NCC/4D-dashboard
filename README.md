@@ -110,6 +110,8 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
   Namngivna baselines (t.ex. Kontraktstidplan + Rev 1 – ÄTA 12, se
   `plan_baselines.json`): välj vilken som visas och jämför mot en andra
   samtidigt (tunnare linje/stapel i egen färg).
+- **Helskärm** (⛶ i Gantt-schemats verktygsrad): panelen fyller skärmen – webbläsarens
+  helskärm om Trimble Connect tillåter det, annars hela tilläggets yta. Esc stänger.
   Högerklicka en lapp för att se vad den väntar på och vad som följer den,
   ta bort ett beroende med ✕ eller lägga till ett med "Väntar på…"/"Följs
   av…" och ett klick på den andra lappen (kräver Redigerbar). Startar lappen

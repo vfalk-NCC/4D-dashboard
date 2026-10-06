@@ -1889,3 +1889,11 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item.gl-bars-only { di
 .pnote-bl.pnote-bl2 { bottom: -12px; height: 3px; background: var(--bl2, #2563eb); }
 .pnote:hover .pnote-bl.pnote-bl2 { height: 4px; bottom: -13px; }
 .board-grid:has(.pnote-bl2) { row-gap: 14px; padding-bottom: 14px; }
+
+/* Helskärm: Gantt-panelen fyller skärmen (eller tilläggets yta); diagrammet tar all höjd som blir över. */
+section.panel.gantt-fullscreen { position: fixed; inset: 0; z-index: 900; margin: 0; border-radius: 0; overflow: auto; display: flex; flex-direction: column; background: var(--panel, #fff); }
+section.panel.gantt-fullscreen:fullscreen { width: 100vw; height: 100vh; }
+section.panel.gantt-fullscreen #ganttChart { flex: 1 1 auto; max-height: none; min-height: 0; }
+body.gantt-fullscreen-on { overflow: hidden; }
+#ganttFullBtn.active { background: #1f2937; color: #fff; border-color: #1f2937; }
+@media print { #ganttFullBtn { display: none !important; } }

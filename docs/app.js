@@ -3731,6 +3731,41 @@ function ganttPrintPageSize(paper, orient) {
   return { width: px(pw), height: px(ph), cssSize: `${paper} ${orient}` };
 }
 
+/* Helskärm (Victor 2026-10-06): Gantt-panelen fyller skärmen. Webbläsarens riktiga helskärm om
+   Trimble Connect tillåter det, annars fyller panelen hela tilläggets yta. Esc/knappen stänger. */
+function ganttFullscreenPanel() { return document.querySelector('section.panel[data-panel-id="gantt"]'); }
+function setGanttFullscreen(on) {
+  const panel = ganttFullscreenPanel(), btn = document.getElementById("ganttFullBtn");
+  if (!panel) return;
+  panel.classList.toggle("gantt-fullscreen", on);
+  document.body.classList.toggle("gantt-fullscreen-on", on);
+  if (btn) { btn.textContent = on ? "✕ Stäng helskärm" : "⛶ Helskärm"; btn.classList.toggle("active", on); }
+  renderGantt(getFilteredItems()); // kolumnbredden följer den nya ytan
+}
+async function toggleGanttFullscreen() {
+  const panel = ganttFullscreenPanel();
+  if (!panel) return;
+  const on = !panel.classList.contains("gantt-fullscreen");
+  if (!on) {
+    if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch (e) {} }
+    setGanttFullscreen(false);
+    return;
+  }
+  setGanttFullscreen(true);
+  if (document.fullscreenEnabled && panel.requestFullscreen) {
+    try { await panel.requestFullscreen(); } catch (e) { /* inte tillåtet i ramen – panelen fyller ytan ändå */ }
+  }
+}
+document.addEventListener("fullscreenchange", () => {
+  const panel = ganttFullscreenPanel();
+  if (!document.fullscreenElement && panel && panel.classList.contains("gantt-fullscreen")) setGanttFullscreen(false);
+});
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  const panel = ganttFullscreenPanel();
+  if (panel && panel.classList.contains("gantt-fullscreen") && !document.querySelector(".dialog:not(.hidden), .board-dep-menu")) setGanttFullscreen(false);
+});
+
 /* Det visade intervallet: valt i "Period", annars hela spannet för objekten med datum. */
 function ganttPrintDomain(list) {
   if (ganttRangeStart && ganttRangeEnd) return { start: ganttRangeStart, end: ganttRangeEnd };
@@ -4012,6 +4047,8 @@ function initGanttControls() {
   const editableHintEl = document.getElementById("ganttEditableHint");
   const printBtn = document.getElementById("ganttPrintBtn");
   if (printBtn) printBtn.onclick = () => openGanttPrintDialog(printBtn);
+  const fullBtn = document.getElementById("ganttFullBtn");
+  if (fullBtn) fullBtn.onclick = toggleGanttFullscreen;
 
   groupSel.value = ganttGroupBy;
   sortSel.value = ganttSortBy;
