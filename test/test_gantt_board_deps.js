@@ -100,7 +100,7 @@ seed('plan_items.json', [
   await page.evaluate(() => window.scrollTo(0, 0)); await note('J14').scrollIntoViewIfNeeded(); await page.waitForTimeout(200);
   await note('J14').locator('.pnote-title').click(); await page.waitForTimeout(300);
   const tip14 = await page.innerText('.gantt-tooltip');
-  if (!/Väntar på[\s\S]*J10[\s\S]*Blockerar[\s\S]*Gjutning/.test(tip14)) fail('Tipsrutan ska visa beroendena: ' + tip14);
+  if (!/Väntar på[\s\S]*J10[\s\S]*Efterföljande[\s\S]*Gjutning/.test(tip14) || (tip14.match(/Gjutning/g) || []).length !== 1) fail('Tipsrutan ska visa beroendena (Efterföljande, en rad per aktivitet): ' + tip14);
   { const bb = await page.locator('.gantt-tooltip').boundingBox(); await page.screenshot({ path: path.join(require('os').tmpdir(), 'tooltip_deps.png'), clip: { x: bb.x - 2, y: bb.y - 2, width: bb.width + 4, height: bb.height + 4 } }); }
   await page.mouse.move(0, 0);
   console.log('OK: Följs av… på en lapp med flera objekt; menyn listar och markerar det som hör ihop');

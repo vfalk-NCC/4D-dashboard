@@ -2030,3 +2030,5 @@ svg.gantt-arrows.has-hot path.ga.ga-late.hot { stroke: #e5484d; }
 .gantt-chart.focus-mode .gantt-bar[data-item-id]:not(.focus-linked) { opacity: .3; }
 .gantt-chart.focus-mode .gantt-row:not(:has(.focus-linked)) .gantt-label { opacity: .45; }
 @media (prefers-reduced-motion: reduce) { .pnote, .gantt-bar[data-item-id] { transition: none; } }
+.gantt-tip-chain { color: #b6bac2; font-size: 10px; margin-top: 1px; }
+.gantt-tip-chain b { color: #fff; }

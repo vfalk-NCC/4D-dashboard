@@ -82,6 +82,8 @@ seed('plan_items.json', [
   await page.click('#ganttChart .pnote[data-item-id="i3"] .pnote-title'); await page.waitForTimeout(300);
   await page.mouse.move(0, 0); await page.waitForTimeout(400);
   if (!(await focus()).mode) fail('Klick ska låsa fokus');
+  await page.evaluate(() => { window.scrollBy(0, 40); document.getElementById('ganttChart').scrollLeft += 30; document.dispatchEvent(new Event('scroll')); }); await page.waitForTimeout(300);
+  if (!(await focus()).mode || await page.evaluate(() => document.querySelector('.gantt-tooltip').classList.contains('hidden'))) fail('Fokus och tipsrutan ska ligga kvar när man scrollar');
   await page.mouse.click(1300, 20); await page.waitForTimeout(400);
   if ((await focus()).mode) fail('Klick utanför ska släppa fokus');
   console.log('OK: fokus – det okopplade tonas ut när man pekar (efter en kort stund), låses vid klick, släpps vid klick utanför');

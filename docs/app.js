@@ -2796,7 +2796,7 @@ function showGanttTooltipAt(targetEl, html) {
 
 function hideGanttTooltip() {
   if (ganttTooltipPinnedEl) clearGanttFocus(document.getElementById("ganttChart"));
-  if (ganttTooltipEl) { ganttTooltipEl.classList.add("hidden"); ganttTooltipEl.classList.remove("pinned"); }
+  if (ganttTooltipEl) { ganttTooltipEl.classList.add("hidden"); ganttTooltipEl.classList.remove("pinned"); ganttTooltipEl.style.visibility = ""; }
   ganttTooltipPinnedEl = null;
 }
 /* Tipsrutan visas bara när man klickar på en aktivitet (Victor 2026-10-06: annars hamnar den i vägen
@@ -2823,7 +2823,19 @@ document.addEventListener("pointerdown", e => {
   hideGanttTooltip();
 }, true);
 document.addEventListener("keydown", e => { if (e.key === "Escape" && ganttTooltipPinnedEl) hideGanttTooltip(); });
-document.addEventListener("scroll", () => { if (ganttTooltipPinnedEl && Date.now() - ganttTooltipPinnedAt > 300) hideGanttTooltip(); }, true);
+// Scroll: fokus och tipsrutan står kvar – rutan följer aktiviteten (döljs tillfälligt om den hamnar
+// utanför bild). Bara klick utanför eller Esc släpper (Victor 2026-10-06).
+document.addEventListener("scroll", () => {
+  const t = ganttTooltipPinnedEl, el = ganttTooltipEl;
+  if (!t || !el || el.classList.contains("hidden")) return;
+  if (!t.isConnected) { hideGanttTooltip(); return; }
+  const r = t.getBoundingClientRect(), h = el.offsetHeight, w = el.offsetWidth;
+  const visible = r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth;
+  el.style.visibility = visible ? "" : "hidden";
+  const below = r.bottom + 8, above = r.top - h - 8;
+  el.style.left = `${Math.min(window.innerWidth - w - 6, Math.max(6, r.left))}px`;
+  el.style.top = `${below + h <= window.innerHeight - 6 || above < 6 ? below : above}px`;
+}, true);
 
 function ganttTooltipRow(label, value) {
   return `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${escapeHtml(label)}</span><span class="gantt-tooltip-value">${escapeHtml(value)}</span></div>`;
@@ -2864,17 +2876,22 @@ function ganttTooltipHtmlForItem(it, depById) {
   }
   // Beroendekedjan (Victors förfrågan 2026-09-21): vad den väntar på och vad som väntar på den.
   const list = (arr, fmt) => { const shown = arr.slice(0, 3).map(fmt); return shown.join("") + (arr.length > 3 ? `<li class="gantt-tip-more">+ ${arr.length - 3} till</li>` : ""); };
+  // Väntar på (direkta föregångare) och Efterföljande (direkta efterföljare) – en rad per aktivitet,
+  // även när den har flera objekt; hela kedjan framåt som en egen rad (Victor 2026-10-06).
   const deps = [];
-  if (depById && Array.isArray(it.dependsOn) && it.dependsOn.length > 0) {
-    deps.push(`<div class="gantt-tip-sec-h">Väntar på</div><ul>${list(it.dependsOn, id => {
-      const dep = depById.get(id);
-      if (!dep) return `<li>(borttaget objekt)</li>`;
-      return `<li>${e(tipShort(dep.objectName || dep.objectId || "?"))}${dep.status !== "klar" ? ` <span class="gantt-tip-dim">· ${e(STATUS_LABELS[dep.status] || dep.status)}</span>` : " ✓"}</li>`;
-    })}</ul>`);
-  }
   if (depById) {
-    const downstream = downstreamOf(it.id, depById);
-    if (downstream.length > 0) deps.push(`<div class="gantt-tip-sec-h">Blockerar</div><ul>${list(downstream, d => `<li>${e(tipShort(d.objectName || d.objectId || "?"))}</li>`)}</ul>`);
+    const mem = it.members || [it];
+    const own = new Set(mem.map(m => String(m.id)));
+    const actKey = x => x.activityKey || `id:${x.id}`;
+    const uniq = arr => { const seen = new Set(); return arr.filter(x => { const k = actKey(x); if (seen.has(k)) return false; seen.add(k); return true; }); };
+    const statusTxt = x => x.status !== "klar" ? ` <span class="gantt-tip-dim">· ${e(STATUS_LABELS[x.status] || x.status)}</span>` : " ✓";
+    const preds = uniq([...new Set(mem.flatMap(m => m.dependsOn || []).map(String))].filter(id => !own.has(id)).map(id => depById.get(id)).filter(Boolean));
+    const succs = uniq(items.filter(x => !own.has(String(x.id)) && (x.dependsOn || []).some(d => own.has(String(d)))))
+      .sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")));
+    if (preds.length) deps.push(`<div class="gantt-tip-sec-h">Väntar på</div><ul>${list(preds, x => `<li>${e(tipShort(x.objectName || x.objectId || "?"))}${statusTxt(x)}</li>`)}</ul>`);
+    if (succs.length) deps.push(`<div class="gantt-tip-sec-h">Efterföljande</div><ul>${list(succs, x => `<li>${e(tipShort(x.objectName || x.objectId || "?"))}${x.startDate ? ` <span class="gantt-tip-dim">· ${e(tipDate(x.startDate))}</span>` : ""}</li>`)}</ul>`);
+    const chain = uniq(downstreamOf(it.id, depById).filter(x => !own.has(String(x.id))));
+    if (chain.length > succs.length) deps.push(`<div class="gantt-tip-chain">Påverkar totalt <b>${chain.length}</b> aktiviteter längre fram i kedjan</div>`);
   }
   if (deps.length) html += `<div class="gantt-tip-sec">${deps.join("")}</div>`;
   return html;
