@@ -71,6 +71,20 @@ seed('plan_items.json', [
   st = await state();
   if (Object.values(st).some(v => v[0] || v[1])) fail('Markeringen ska försvinna: ' + JSON.stringify(st));
   console.log('OK: tavlan – hovrad lapp lyfts, närmaste föregångare (slutar senast) och efterföljare (startar först) pulserar med etikett');
+  // Fokus: det som inte är kopplat tonas ut när man pekar (efter en kort stund) och låses vid klick.
+  const focus = () => page.evaluate(() => ({ mode: document.getElementById('ganttChart').classList.contains('focus-mode'), linked: [...document.querySelectorAll('#ganttChart .pnote.focus-linked')].map(n => n.dataset.itemId).sort(), dimOp: Number(getComputedStyle(document.querySelector('#ganttChart .pnote[data-item-id="i6"]')).opacity) }));
+  await page.hover('#ganttChart .pnote[data-item-id="i3"] .pnote-title'); await page.waitForTimeout(600);
+  let f = await focus();
+  if (!f.mode || JSON.stringify(f.linked) !== JSON.stringify(['i1', 'i2', 'i3', 'i4', 'i5']) || f.dimOp > 0.5) fail('Pekar man ska det okopplade tonas ut: ' + JSON.stringify(f));
+  await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'board_focus.png') });
+  await page.mouse.move(0, 0); await page.waitForTimeout(400);
+  if ((await focus()).mode) fail('Fokus ska släppa när man pekar bort');
+  await page.click('#ganttChart .pnote[data-item-id="i3"] .pnote-title'); await page.waitForTimeout(300);
+  await page.mouse.move(0, 0); await page.waitForTimeout(400);
+  if (!(await focus()).mode) fail('Klick ska låsa fokus');
+  await page.mouse.click(1300, 20); await page.waitForTimeout(400);
+  if ((await focus()).mode) fail('Klick utanför ska släppa fokus');
+  console.log('OK: fokus – det okopplade tonas ut när man pekar (efter en kort stund), låses vid klick, släpps vid klick utanför');
   // Staplar.
   await page.click('[data-gantt-view="bars"]'); await page.waitForTimeout(250);
   await page.hover('#ganttChart .gantt-bar[data-item-id="i3"]'); await page.waitForTimeout(300);

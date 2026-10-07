@@ -2795,6 +2795,7 @@ function showGanttTooltipAt(targetEl, html) {
 }
 
 function hideGanttTooltip() {
+  if (ganttTooltipPinnedEl) clearGanttFocus(document.getElementById("ganttChart"));
   if (ganttTooltipEl) { ganttTooltipEl.classList.add("hidden"); ganttTooltipEl.classList.remove("pinned"); }
   ganttTooltipPinnedEl = null;
 }
@@ -3960,6 +3961,30 @@ function nearestLinked(it, list) {
   const succ = succs.sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")))[0] || null;
   return { pred, succ, nPred: preds.length, nSucc: succs.length };
 }
+/* Fokus (Victor 2026-10-06): när man pekar på (eller klickar på) en aktivitet tonas allt som inte är
+   direkt kopplat till den ut, så att man ser just dess kedja. Pekar: efter en kort fördröjning (så att
+   tavlan inte blinkar när man drar musen över den). Klick: låst tills tipsrutan stängs. */
+function directlyLinked(it, list) {
+  const mem = x => x.members || [x];
+  const ids = new Set(mem(it).map(m => String(m.id)));
+  const predIds = new Set(mem(it).flatMap(m => m.dependsOn || []).map(String));
+  return list.filter(x => x !== it && mem(x).some(m => predIds.has(String(m.id)) || (m.dependsOn || []).some(d => ids.has(String(d)))));
+}
+function setGanttFocus(root, el, it, list, selector) {
+  clearGanttFocus(root);
+  if (!el || !it) return;
+  const linked = directlyLinked(it, list);
+  if (!linked.length) return; // inget kopplat – inget att tona ut
+  root.classList.add("focus-mode");
+  el.classList.add("focus-linked");
+  linked.forEach(x => { const t = root.querySelector(`${selector}[data-item-id="${CSS.escape(String(x.id))}"]`); if (t) t.classList.add("focus-linked"); });
+}
+function clearGanttFocus(root) {
+  if (!root) return;
+  root.classList.remove("focus-mode");
+  root.querySelectorAll(".focus-linked").forEach(x => x.classList.remove("focus-linked"));
+}
+
 /* Hovring: aktiviteten lyfts, närmaste föregångare/efterföljare får en diskret puls och en liten etikett. */
 function bindNearHighlight(root, selector, entryOf, list, cls, tagHost = t => t) {
   const clear = () => {
@@ -3971,6 +3996,8 @@ function bindNearHighlight(root, selector, entryOf, list, cls, tagHost = t => t)
     n.addEventListener("mouseenter", () => {
       if (boardLinkPick || document.querySelector(".gantt-dragging, .pnote-dragging")) return;
       clear();
+      clearTimeout(root._focusTimer);
+      root._focusTimer = setTimeout(() => setGanttFocus(root, n, entryOf(n), list, selector), 220);
       const it = entryOf(n);
       if (!it) return;
       n.classList.add(`${cls}-hot`);
@@ -3987,7 +4014,14 @@ function bindNearHighlight(root, selector, entryOf, list, cls, tagHost = t => t)
         host.appendChild(tag);
       });
     });
-    n.addEventListener("mouseleave", clear);
+    n.addEventListener("mouseleave", () => {
+      clear();
+      clearTimeout(root._focusTimer);
+      // Låst fokus (klickad aktivitet med tipsrutan öppen) står kvar, annars tonas allt tillbaka.
+      const locked = ganttTooltipPinnedEl && root.contains(ganttTooltipPinnedEl) && ganttTooltipPinnedEl.matches(selector) ? ganttTooltipPinnedEl : null;
+      if (locked) setGanttFocus(root, locked, entryOf(locked), list, selector); else clearGanttFocus(root);
+    });
+    n.addEventListener("click", () => { clearTimeout(root._focusTimer); setGanttFocus(root, n, entryOf(n), list, selector); });
   });
 }
 

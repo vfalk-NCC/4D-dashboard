@@ -2024,3 +2024,9 @@ svg.gantt-arrows.has-hot path.ga.ga-late.hot { stroke: #e5484d; }
 .gantt-row:hover .gantt-row-trash { opacity: .85; }
 .gantt-row-trash:hover { opacity: 1 !important; background: #fee2e2; }
 @media print { .pnote-trash, .gantt-row-trash { display: none !important; } }
+/* Fokus: det som inte är kopplat till aktiviteten man pekar/klickar på tonas ut. */
+.pnote, .gantt-bar[data-item-id] { transition: opacity .25s ease, filter .25s ease, transform .2s cubic-bezier(.2,.8,.2,1), box-shadow .2s ease; }
+.gantt-chart.focus-mode .pnote:not(.focus-linked) { opacity: .32; filter: saturate(.5); }
+.gantt-chart.focus-mode .gantt-bar[data-item-id]:not(.focus-linked) { opacity: .3; }
+.gantt-chart.focus-mode .gantt-row:not(:has(.focus-linked)) .gantt-label { opacity: .45; }
+@media (prefers-reduced-motion: reduce) { .pnote, .gantt-bar[data-item-id] { transition: none; } }
