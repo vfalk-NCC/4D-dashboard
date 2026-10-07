@@ -82,10 +82,13 @@ seed('plan_items.json', [
   await page.click('#ganttChart .pnote[data-item-id="i3"] .pnote-title'); await page.waitForTimeout(300);
   await page.mouse.move(0, 0); await page.waitForTimeout(400);
   if (!(await focus()).mode) fail('Klick ska låsa fokus');
+  const hotPinned = await page.evaluate(() => [...document.querySelectorAll('#ganttChart svg.gantt-arrows path.ga.hot')].map(p => p.dataset.a + '>' + p.dataset.b).sort());
+  if (JSON.stringify(hotPinned) !== JSON.stringify(['i1>i3', 'i2>i3', 'i3>i4', 'i3>i5'])) fail('Pilarna ska vara tända för den klickade aktiviteten: ' + JSON.stringify(hotPinned));
   await page.evaluate(() => { window.scrollBy(0, 40); document.getElementById('ganttChart').scrollLeft += 30; document.dispatchEvent(new Event('scroll')); }); await page.waitForTimeout(300);
   if (!(await focus()).mode || await page.evaluate(() => document.querySelector('.gantt-tooltip').classList.contains('hidden'))) fail('Fokus och tipsrutan ska ligga kvar när man scrollar');
   await page.mouse.click(1300, 20); await page.waitForTimeout(400);
   if ((await focus()).mode) fail('Klick utanför ska släppa fokus');
+  if (await page.evaluate(() => document.querySelectorAll('#ganttChart svg.gantt-arrows path.ga.hot').length)) fail('Pilarna ska släckas när fokus släpps');
   console.log('OK: fokus – det okopplade tonas ut när man pekar (efter en kort stund), låses vid klick, släpps vid klick utanför');
   // Staplar.
   await page.click('[data-gantt-view="bars"]'); await page.waitForTimeout(250);
@@ -93,6 +96,10 @@ seed('plan_items.json', [
   const bars = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#ganttChart .gantt-bar[data-item-id]')].map(b => [b.dataset.itemId, b.className.match(/bar-(hot|near-pred|near-succ)/)?.[1] || ''])));
   if (bars.i3 !== 'hot' || bars.i2 !== 'near-pred' || bars.i5 !== 'near-succ' || bars.i1 || bars.i4) fail('Staplarna: ' + JSON.stringify(bars));
   await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'bars_near.png') });
+  await page.click('#ganttChart .gantt-bar[data-item-id="i3"]'); await page.waitForTimeout(400);
+  await page.mouse.move(0, 0); await page.waitForTimeout(300);
+  const fb = await page.evaluate(() => ({ mode: document.getElementById('ganttChart').classList.contains('focus-mode'), tip: !document.querySelector('.gantt-tooltip').classList.contains('hidden'), hot: document.querySelectorAll('#ganttChart svg.gantt-arrows path.ga.hot').length }));
+  if (!fb.mode || !fb.tip || fb.hot !== 4) fail('Staplarna: klick ger tipsruta, toning och tända pilar: ' + JSON.stringify(fb));
   console.log('OK: staplarna – samma markering');
   if (errors.length) fail('Fel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');

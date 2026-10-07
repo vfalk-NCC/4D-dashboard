@@ -2798,6 +2798,7 @@ function hideGanttTooltip() {
   if (ganttTooltipPinnedEl) clearGanttFocus(document.getElementById("ganttChart"));
   if (ganttTooltipEl) { ganttTooltipEl.classList.add("hidden"); ganttTooltipEl.classList.remove("pinned"); ganttTooltipEl.style.visibility = ""; }
   ganttTooltipPinnedEl = null;
+  applyArrowHot(document.getElementById("ganttChart"), null);
 }
 /* Tipsrutan visas bara när man klickar på en aktivitet (Victor 2026-10-06: annars hamnar den i vägen
    för pilarna när man pekar). Den läggs bredvid aktiviteten – under, eller över om det inte får plats –
@@ -2816,6 +2817,7 @@ function pinGanttTooltip(targetEl, html) {
   el.style.top = `${below + h <= window.innerHeight - 6 || above < 6 ? below : above}px`;
   ganttTooltipPinnedEl = targetEl;
   ganttTooltipPinnedAt = Date.now();
+  applyArrowHot(document.getElementById("ganttChart"), null);
 }
 document.addEventListener("pointerdown", e => {
   if (!ganttTooltipPinnedEl || !ganttTooltipEl || ganttTooltipEl.classList.contains("hidden")) return;
@@ -3901,21 +3903,25 @@ function drawGanttArrows(el) {
     });
   });
   svg.querySelector("g").innerHTML = paths.join("");
+  applyArrowHot(el, null);
   if (!el._arrowHoverBound) {
     el._arrowHoverBound = true;
     el.addEventListener("mouseover", e => {
       const t = e.target.closest && e.target.closest("[data-item-id]");
-      const sv = el.querySelector(":scope > svg.gantt-arrows");
-      if (!sv) return;
       const k = t && (t.classList.contains("pnote") || t.classList.contains("gantt-bar")) ? t.dataset.itemId : null;
-      sv.classList.toggle("has-hot", !!k);
-      sv.querySelectorAll("path.ga").forEach(pa => pa.classList.toggle("hot", !!k && (pa.dataset.a === k || pa.dataset.b === k)));
+      applyArrowHot(el, k);
     });
-    el.addEventListener("mouseleave", () => {
-      const sv = el.querySelector(":scope > svg.gantt-arrows");
-      if (sv) { sv.classList.remove("has-hot"); sv.querySelectorAll("path.hot").forEach(pa => pa.classList.remove("hot")); }
-    });
+    el.addEventListener("mouseleave", () => applyArrowHot(el, null));
   }
+}
+/* Tända pilar för aktiviteten man pekar på – annars för den man klickat på (låst, som toningen). */
+function applyArrowHot(el, key) {
+  const sv = el && el.querySelector(":scope > svg.gantt-arrows");
+  if (!sv) return;
+  const pinned = ganttTooltipPinnedEl && el.contains(ganttTooltipPinnedEl) && (ganttTooltipPinnedEl.classList.contains("pnote") || ganttTooltipPinnedEl.classList.contains("gantt-bar")) ? ganttTooltipPinnedEl.dataset.itemId : null;
+  const k = key || pinned;
+  sv.classList.toggle("has-hot", !!k);
+  sv.querySelectorAll("path.ga").forEach(pa => pa.classList.toggle("hot", !!k && (pa.dataset.a === k || pa.dataset.b === k)));
 }
 /* Pilens väg (Victor 2026-10-06: "ta ut svängen mer så att det syns vart de pekar"): alltid en rak bit
    ut från föregångarens slut och en rak bit in mot efterföljarens start, så pilspetsen pekar rakt in
@@ -4199,7 +4205,11 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
             ganttHighlightChainId = (ganttHighlightChainId === itemId) ? null : itemId;
             renderGantt(list);
             const nb = el.querySelector(`.gantt-bar[data-item-id="${CSS.escape(itemId)}"]`);
-            if (nb) pinGanttTooltip(nb, tooltips.get(nb.dataset.ganttTip) || "");
+            if (nb) {
+              pinGanttTooltip(nb, tooltips.get(nb.dataset.ganttTip) || "");
+              const shown = new Set([...el.querySelectorAll(".gantt-bar[data-item-id]")].map(b => b.dataset.itemId));
+              setGanttFocus(el, nb, it, list.filter(x => shown.has(String(x.id))), ".gantt-bar[data-item-id]");
+            }
           }
           return;
         }
