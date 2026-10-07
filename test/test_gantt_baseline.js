@@ -108,6 +108,17 @@ seed('plan_baseline.json', [{ mode: 'prev', label: 'Import 01/10 2026 (Huvudtidp
   await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'board_days_only.png') });
   await page.uncheck('#ganttBaselineDays'); await page.waitForTimeout(200);
   if (!(await page.locator('#ganttChart .pnote-bl').count())) fail('Av igen ska linjerna tillbaka');
+  // Redigerbar: soptunnan och baseline-etiketten får inte överlappa (stora lappar och en rad).
+  await page.uncheck('#ganttBaselineDays'); await page.check('#ganttEditable'); await page.waitForTimeout(200);
+  for (const one of [true, false]) {
+    if (one) await page.check('#ganttBoardOneLine'); else await page.uncheck('#ganttBoardOneLine');
+    await page.waitForTimeout(250);
+    await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
+    const ov = await page.evaluate(() => { const n = document.querySelector('#ganttChart .pnote[data-item-id="i1"]'); const a = n.querySelector('.pnote-trash').getBoundingClientRect(), b = n.querySelector('.pnote-bl-d').getBoundingClientRect(); return !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top); });
+    if (ov) fail('Soptunnan krockar med baseline-etiketten (' + (one ? 'en rad' : 'stora lappar') + ')');
+    if (!one) await page.locator('#ganttChart .pnote[data-item-id="i1"]').screenshot({ path: require('path').join(require('os').tmpdir(), 'note_trash_bl.png') });
+  }
+  await page.check('#ganttBoardOneLine'); await page.uncheck('#ganttEditable'); await page.mouse.move(0, 0); await page.waitForTimeout(200);
   console.log('OK: "Bara ± dagar" – bara förskjutningen (+5 d / -2 d) syns, utan baseline-linjer, på tavlan och i staplarna');
 
   // Tipsrutan.
