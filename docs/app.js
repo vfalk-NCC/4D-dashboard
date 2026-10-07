@@ -875,6 +875,8 @@ function fromRow(row) {
     modelId: row.model_id ?? null,
     objectId: row.object_id ?? null,
     dependsOn: Array.isArray(row.depends_on) ? row.depends_on.map(String) : [],
+    // Glapp per koppling (Victor 2026-10-07): { föregångarens id: dagar } – + = väntetid, − = överlapp.
+    depLags: row.dep_lags && typeof row.dep_lags === "object" && !Array.isArray(row.dep_lags) ? row.dep_lags : {},
     // Samma aktivitet kopplad till flera 3D-objekt (en rad per objekt i
     // 4D-planering) - se mergeActivityGroups.
     activityKey: row.group_id ? `g:${row.group_id}` : (row.source_key ? `s:${row.source_key}` : null),
@@ -968,6 +970,123 @@ function modelToast(text, action) {
   modelToastTimer = setTimeout(() => t.classList.remove("show"), action ? 6000 : 2600);
 }
 
+/* ----- Koppla en lapp till 3D-objekt (Victor 2026-10-07: "koppla objekt direkt från ganttschemat").
+   Högerklick → "Koppla i 3D-modellen": en list överst visar hur många objekt som är markerade i
+   modellen; Koppla sparar dem på aktiviteten. Samma uppbyggnad som 4D-planering: en rad per objekt
+   (kopior av raden med samma group_id); en okopplad rad får det första objektet. Går att ångra. */
+let coupleState = null; // { it, members, sel: [{ modelId, objectId }] }
+async function readModelSelectionIds() {
+  if (!API || !API.viewer || typeof API.viewer.getSelection !== "function") return null;
+  const out = [];
+  let sel = [];
+  try { sel = await API.viewer.getSelection(); } catch (e) { return null; }
+  for (const m of sel || []) {
+    const rids = m.objectRuntimeIds || [];
+    if (!rids.length) continue;
+    let ext = [];
+    try { ext = await API.viewer.convertToObjectIds(m.modelId, rids); } catch (e) { continue; }
+    (ext || []).forEach(id => { if (id !== undefined && id !== null && id !== "") out.push({ modelId: m.modelId, objectId: String(id) }); });
+  }
+  const seen = new Set();
+  return out.filter(o => { const k = `${o.modelId}|${o.objectId}`; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+function startCoupleMode(it) {
+  if (!it) return;
+  if (!ganttEditable) {
+    modelToast("Slå på Redigerbar för att koppla till 3D-modellen", { label: "Slå på", fn: () => { const cb = document.getElementById("ganttEditable"); if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } startCoupleMode(it); } });
+    return;
+  }
+  stopCoupleMode();
+  hideGanttTooltip();
+  // Modellen syns inte i helskärm – gå ur den så att man kan markera.
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  // Hela aktiviteten (alla dess rader), även när tavlan visar en lapp per objekt.
+  coupleState = { it, members: it.activityKey ? items.filter(x => x.activityKey === it.activityKey) : (it.members || [it]).slice(), sel: [] };
+  const bar = document.createElement("div");
+  bar.className = "couple-bar";
+  bar.innerHTML = `<span class="couple-ico">🧊</span><span class="couple-txt">Koppla <b>${escapeHtml(tipShort(itemLabel(it), 50))}</b> – markera objekten i modellen</span>
+    <span class="couple-n">0 markerade</span><button type="button" class="couple-go primary" disabled>Koppla</button><button type="button" class="couple-cancel">Avbryt</button>`;
+  document.body.appendChild(bar);
+  bar.querySelector(".couple-cancel").onclick = stopCoupleMode;
+  bar.querySelector(".couple-go").onclick = () => commitCouple();
+  document.addEventListener("keydown", coupleKey, true);
+  const n = document.querySelector(`#ganttChart [data-item-id="${CSS.escape(String(it.id))}"]`);
+  if (n) n.classList.add("couple-target");
+  updateCoupleBar();
+}
+function coupleKey(e) { if (e.key === "Escape" && coupleState) { e.stopPropagation(); stopCoupleMode(); } }
+function stopCoupleMode() {
+  coupleState = null;
+  document.querySelectorAll(".couple-bar").forEach(b => b.remove());
+  document.querySelectorAll(".couple-target").forEach(n => n.classList.remove("couple-target"));
+  document.removeEventListener("keydown", coupleKey, true);
+}
+async function updateCoupleBar() {
+  if (!coupleState) return;
+  const st = coupleState, sel = await readModelSelectionIds();
+  if (st !== coupleState) return;
+  const bar = document.querySelector(".couple-bar");
+  if (!bar) return;
+  if (sel === null) { bar.querySelector(".couple-n").textContent = "Modellen är inte ansluten"; return; }
+  const have = new Set(st.members.filter(m => m.modelId && m.objectId).map(m => `${m.modelId}|${m.objectId}`));
+  st.sel = sel.filter(o => !have.has(`${o.modelId}|${o.objectId}`));
+  const already = sel.length - st.sel.length;
+  bar.querySelector(".couple-n").textContent = `${st.sel.length} markerade${already ? ` · ${already} redan kopplade` : ""}`;
+  bar.querySelector(".couple-go").disabled = !st.sel.length;
+  bar.querySelector(".couple-go").textContent = st.sel.length ? `Koppla ${st.sel.length} objekt` : "Koppla";
+}
+async function commitCouple() {
+  const st = coupleState;
+  if (!st) return;
+  await updateCoupleBar();
+  if (!st.sel.length) return;
+  const objs = st.sel.slice(), name = itemLabel(st.it);
+  // Objekt som redan hör till andra aktiviteter: fråga först (de blir kopplade till båda).
+  const others = objs.filter(o => items.some(x => x.modelId === o.modelId && String(x.objectId) === o.objectId));
+  if (others.length && !confirm(`${others.length} av objekten är redan kopplade till andra aktiviteter.\n\nKoppla dem till "${name}" också?`)) return;
+  stopCoupleMode();
+  const memberIds = new Set(st.members.map(m => String(m.id)));
+  const nowIso = new Date().toISOString();
+  let before = [], added = [], subsAdded = [], finalRows = [];
+  try {
+    await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => {
+      const mine = arr.filter(r => memberIds.has(String(r.id)));
+      if (!mine.length) throw new Error("Aktiviteten finns inte längre i filen – ladda om sidan.");
+      before = mine.map(r => ({ ...r }));
+      const groupId = mine.find(r => r.group_id)?.group_id || ghNewId();
+      const free = mine.find(r => !r.model_id); // okopplad rad (t.ex. från Powerproject) får första objektet
+      const base = mine[0];
+      added = [];
+      const upd = new Map(mine.map(r => [r.id, { ...r, group_id: groupId, updated_at: nowIso }]));
+      objs.forEach((o, i) => {
+        if (i === 0 && free) { upd.set(free.id, { ...upd.get(free.id), model_id: o.modelId, object_id: o.objectId }); return; }
+        added.push({ ...base, id: ghNewId(), model_id: o.modelId, object_id: o.objectId, group_id: groupId, created_at: nowIso, updated_at: nowIso });
+      });
+      finalRows = [...upd.values(), ...added];
+      return [...arr.map(r => upd.get(r.id) || r), ...added];
+    }, objs.length === 1 ? `Koppla ${name} till 3D-objekt` : `Koppla ${name} till ${objs.length} 3D-objekt`);
+    // Kopiorna får samma delaktiviteter som den första raden (som i 4D-planering).
+    const src = activities.filter(a => String(a.plan_item_id) === String(before[0].id));
+    if (src.length && added.length) {
+      subsAdded = added.flatMap(r => src.map(a => ({ ...a, id: ghNewId(), plan_item_id: r.id })));
+      try { await ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"), arr => [...arr, ...subsAdded], `Delaktiviteter för nya 3D-objekt: ${name}`); }
+      catch (e) { console.warn("Kunde inte kopiera delaktiviteterna", e); subsAdded = []; }
+    }
+  } catch (e) { alert("Kunde inte koppla: " + e.message); return; }
+  items = items.filter(x => !memberIds.has(String(x.id))).concat(finalRows.map(fromRow));
+  activities = activities.concat(subsAdded);
+  renderAll();
+  modelToast(`"${tipShort(name, 36)}" kopplad till ${objs.length} objekt i modellen`, { label: "Ångra", fn: async () => {
+    try {
+      const addedIds = new Set(added.map(r => r.id)), prev = new Map(before.map(r => [r.id, r]));
+      await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => arr.filter(r => !addedIds.has(r.id)).map(r => prev.get(r.id) || r), `Ångra 3D-koppling: ${name}`);
+      if (subsAdded.length) { const sIds = new Set(subsAdded.map(a => a.id)); await ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"), arr => arr.filter(a => !sIds.has(a.id)), `Ångra 3D-koppling: ${name}`); activities = activities.filter(a => !sIds.has(a.id)); }
+      items = items.filter(x => !addedIds.has(x.id) && !prev.has(x.id)).concat(before.map(fromRow));
+      renderAll();
+    } catch (e) { alert("Kunde inte ångra: " + e.message); }
+  } });
+}
+
 /* ----- Markering i modellen → Gantt-schemat (Victor 2026-10-06: "tvärtom") -------------------
    Markerar man objekt i Trimble Connect letar schemat upp deras aktiviteter: scrollar dit, fäller
    ut hopfällda grupper, pulserar två gånger och behåller en ram så länge objekten är markerade.
@@ -977,6 +1096,7 @@ let ganttModelSel = new Set();      // plan_item-id:n som är markerade i modell
 let modelSelTimer = null;
 function onTcEvent(event) {
   if (event !== "viewer.onSelectionChanged" && event !== "extension.onSelectionChanged") return;
+  if (coupleState) { clearTimeout(modelSelTimer); modelSelTimer = setTimeout(updateCoupleBar, 200); return; }
   clearTimeout(modelSelTimer);
   modelSelTimer = setTimeout(syncGanttFromModel, 200);
 }
@@ -2062,8 +2182,12 @@ async function saveItemSchedule(it, newStart, newEnd) {
 const scheduleUndo = [];
 const scheduleRedo = [];
 
-function emptyPlan() { return { items: new Map(), acts: new Map(), deps: new Map() }; }
-function planSize(plan) { return plan.items.size + plan.acts.size + (plan.deps ? plan.deps.size : 0); }
+function emptyPlan() { return { items: new Map(), acts: new Map(), deps: new Map(), lags: new Map(), fields: new Map() }; }
+function planSize(plan) { return plan.items.size + plan.acts.size + (plan.deps ? plan.deps.size : 0) + (plan.lags ? plan.lags.size : 0) + (plan.fields ? plan.fields.size : 0); }
+/* Glappet (dagar) på kopplingen pred -> succ, eller undefined om inget glapp är satt. */
+const lagLabel = lag => `${lag > 0 ? "+" : lag < 0 ? "−" : "±"}${Math.abs(lag)} d`;
+function lagOf(succ, predId) { const v = succ && succ.depLags ? succ.depLags[String(predId)] : undefined; return Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : undefined; }
+const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress" };
 function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
 function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
 
@@ -2111,19 +2235,32 @@ function pushDependents(targetIds, plan) {
       if (targetIds.has(it.id) || done.has(it.id) || !it.startDate) continue;
       const members = groupOf(it).filter(m => !targetIds.has(m.id));
       members.forEach(m => done.add(m.id));
-      let need = 0;
+      let need = 0, lagNeed = null, plainMoved = false, floor = -Infinity;
       members.forEach(m => (m.dependsOn || []).forEach(pid => {
         const p = byId.get(pid);
-        if (!p || !p.endDate || !plan.items.has(pid)) return;
+        if (!p || !p.endDate) return;
+        const inPlan = plan.items.has(pid);
         const newEnd = curItemDates(p, plan).endDate, oldEnd = p.endDate;
-        if (newEnd <= oldEnd) return;
         const curStart = curItemDates(m, plan).startDate;
+        const lag = lagOf(m, pid);
+        if (lag !== undefined) {
+          // Konstant glapp (Victor 2026-10-07): start = föregångarens slut + 1 + glapp – åt båda hållen.
+          if (!inPlan || newEnd === oldEnd) return;
+          const d = daysBetweenIso(curStart, addDaysIso(newEnd, 1 + lag));
+          lagNeed = lagNeed === null ? d : Math.max(lagNeed, d);
+          return;
+        }
+        if (oldEnd < m.startDate) floor = Math.max(floor, daysBetweenIso(curStart, addDaysIso(newEnd, 1)));
+        if (!inPlan || newEnd <= oldEnd) return;
         const target = oldEnd >= m.startDate
           ? addDaysIso(m.startDate, daysBetweenIso(oldEnd, newEnd))  // överlappade redan - behåll överlappet
           : addDaysIso(newEnd, 1);                                     // starta dagen efter
         need = Math.max(need, daysBetweenIso(curStart, target));
+        plainMoved = true;
       }));
-      if (need > 0) {
+      // Ett glapp får dra tillbaka aktiviteten – men aldrig före det en koppling utan glapp kräver.
+      if (lagNeed !== null) need = Math.max(plainMoved ? need : -Infinity, lagNeed, floor);
+      if (need !== 0) {
         planShift(new Set(members.map(m => m.id)), need, plan);
         pushed = true;
       }
@@ -2143,7 +2280,7 @@ function planConflicts(targetIds, plan) {
     const ns = curItemDates(m, plan).startDate;
     (m.dependsOn || []).forEach(pid => {
       const p = byId.get(pid);
-      if (!p || p.status === "klar" || !p.endDate) return;
+      if (!p || p.status === "klar" || !p.endDate || lagOf(m, pid) !== undefined) return; // glapp: hålls automatiskt
       const pe = curItemDates(p, plan).endDate;
       if (pe >= ns && !(p.endDate >= m.startDate)) out.push({ m, p, pe });
     });
@@ -2217,6 +2354,15 @@ function planBefore(plan) {
     const it = items.find(x => x.id === id);
     if (it) before.deps.set(id, (it.dependsOn || []).slice());
   });
+  // Glappen sparas även när bara kopplingarna ändras – en borttagen koppling tar med sig sitt glapp.
+  new Set([...(plan.lags ? plan.lags.keys() : []), ...(plan.deps ? plan.deps.keys() : [])]).forEach(id => {
+    const it = items.find(x => x.id === id);
+    if (it) before.lags.set(id, { ...(it.depLags || {}) });
+  });
+  if (plan.fields) plan.fields.forEach((f, id) => {
+    const it = items.find(x => x.id === id);
+    if (it) before.fields.set(id, Object.fromEntries(Object.keys(f).map(k => [k, it[k] ?? null])));
+  });
   return before;
 }
 
@@ -2224,6 +2370,11 @@ function applyPlanLocally(plan) {
   items.forEach(it => {
     const d = plan.items.get(it.id); if (d) { it.startDate = d.startDate; it.endDate = d.endDate; }
     const dep = plan.deps && plan.deps.get(it.id); if (dep) it.dependsOn = dep.slice();
+    const lg = plan.lags && plan.lags.get(it.id); if (lg) it.depLags = { ...lg };
+    if (dep && it.depLags) it.depLags = Object.fromEntries(Object.entries(it.depLags).filter(([k]) => dep.includes(k)));
+    const f = plan.fields && plan.fields.get(it.id); if (f) Object.assign(it, f);
+    // Status räknas mot dagens datum – nya datum eller ny framdrift kan ändra den.
+    if (d || (f && "progress" in f)) it.status = liveStatusOfRow({ status: it.storedStatus, start_date: it.startDate, end_date: it.endDate, actual_start_date: it.actualStartDate, actual_end_date: it.actualEndDate, progress: it.progress });
   });
   activities.forEach(a => { const d = plan.acts.get(a.id); if (d) { a.start_date = d.start_date; a.end_date = d.end_date; } });
 }
@@ -2231,15 +2382,20 @@ function applyPlanLocally(plan) {
 async function writePlan(plan) {
   const now = new Date().toISOString();
   const writes = [];
-  const deps = plan.deps || new Map();
-  if (plan.items.size || deps.size) {
+  const deps = plan.deps || new Map(), lags = plan.lags || new Map(), fields = plan.fields || new Map();
+  if (plan.items.size || deps.size || lags.size || fields.size) {
     writes.push(ghWriteJSON(settings.githubToken, tablePath("plan_items"),
       arr => arr.map(r => {
-        const d = plan.items.get(r.id), dep = deps.get(r.id);
-        if (!d && !dep) return r;
-        return { ...r, ...(d ? { start_date: d.startDate, end_date: d.endDate } : {}), ...(dep ? { depends_on: dep.slice() } : {}), updated_at: now };
+        const d = plan.items.get(r.id), dep = deps.get(r.id), lg = lags.get(r.id), f = fields.get(r.id);
+        if (!d && !dep && !lg && !f) return r;
+        const out = { ...r, ...(d ? { start_date: d.startDate, end_date: d.endDate } : {}), ...(dep ? { depends_on: dep.slice() } : {}), updated_at: now };
+        if (lg) out.dep_lags = { ...lg };
+        if (dep && out.dep_lags) out.dep_lags = Object.fromEntries(Object.entries(out.dep_lags).filter(([k]) => dep.includes(k)));
+        if (out.dep_lags && !Object.keys(out.dep_lags).length) delete out.dep_lags;
+        if (f) Object.entries(f).forEach(([k, v]) => { if (FIELD_COLS[k]) out[FIELD_COLS[k]] = v; });
+        return out;
       }),
-      plan.items.size ? `Omplanering i Gantt/tavla (${plan.items.size} objekt)` : `Beroenden på tavlan (${deps.size} objekt)`));
+      fields.size ? `Ändrade aktivitet i Gantt/tavla (${fields.size} objekt)` : plan.items.size ? `Omplanering i Gantt/tavla (${plan.items.size} objekt)` : `Beroenden på tavlan (${deps.size || lags.size} objekt)`));
   }
   if (plan.acts.size) {
     writes.push(ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"),
@@ -2890,7 +3046,8 @@ function ganttTooltipHtmlForItem(it, depById) {
     const preds = uniq([...new Set(mem.flatMap(m => m.dependsOn || []).map(String))].filter(id => !own.has(id)).map(id => depById.get(id)).filter(Boolean));
     const succs = uniq(items.filter(x => !own.has(String(x.id)) && (x.dependsOn || []).some(d => own.has(String(d)))))
       .sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")));
-    if (preds.length) deps.push(`<div class="gantt-tip-sec-h">Väntar på</div><ul>${list(preds, x => `<li>${e(tipShort(x.objectName || x.objectId || "?"))}${statusTxt(x)}</li>`)}</ul>`);
+    const lagTip = x => { const l = mem.map(m => lagOf(m, x.id)).find(v => v !== undefined); return l === undefined ? "" : ` <span class="gantt-tip-lag">glapp ${e(lagLabel(l))}</span>`; };
+    if (preds.length) deps.push(`<div class="gantt-tip-sec-h">Väntar på</div><ul>${list(preds, x => `<li>${e(tipShort(x.objectName || x.objectId || "?"))}${statusTxt(x)}${lagTip(x)}</li>`)}</ul>`);
     if (succs.length) deps.push(`<div class="gantt-tip-sec-h">Efterföljande</div><ul>${list(succs, x => `<li>${e(tipShort(x.objectName || x.objectId || "?"))}${x.startDate ? ` <span class="gantt-tip-dim">· ${e(tipDate(x.startDate))}</span>` : ""}</li>`)}</ul>`);
     const chain = uniq(downstreamOf(it.id, depById).filter(x => !own.has(String(x.id))));
     if (chain.length > succs.length) deps.push(`<div class="gantt-tip-chain">Påverkar totalt <b>${chain.length}</b> aktiviteter längre fram i kedjan</div>`);
@@ -3311,45 +3468,6 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
   document.addEventListener("pointerup", onUp);
 }
 
-/** Dubbelklick på en lapp: skriv in start och slut. */
-function openBoardDatePopover(noteEl, it) {
-  if (!it) return;
-  document.querySelectorAll(".board-pop").forEach(p => p.remove());
-  const targets = noteTargetIds(it);
-  const pop = document.createElement("div");
-  pop.className = "board-pop";
-  pop.innerHTML = `
-    <div class="board-pop-title">${escapeHtml(itemLabel(it))}${it.members ? ` <span class="hint">(${it.members.length} objekt)</span>` : ""}</div>
-    <label>Start <input type="date" class="bp-start" value="${escapeHtml(it.startDate || "")}" /></label>
-    <label>Slut <input type="date" class="bp-end" value="${escapeHtml(it.endDate || "")}" /></label>
-    <label class="bp-deps"><input type="checkbox" class="bp-withdeps" checked /> Skjut fram beroende aktiviteter som annars krockar</label>
-    <div class="board-pop-actions"><button type="button" class="bp-cancel">Avbryt</button><button type="button" class="bp-save primary">Spara</button></div>`;
-  overlayHost().appendChild(pop);
-  const r = noteEl.getBoundingClientRect();
-  pop.style.left = `${Math.min(window.innerWidth - pop.offsetWidth - 8, Math.max(8, r.left))}px`;
-  pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 6)}px`;
-  const close = () => { pop.remove(); document.removeEventListener("keydown", onKey); };
-  const onKey = e => { if (e.key === "Escape") close(); };
-  document.addEventListener("keydown", onKey);
-  pop.querySelector(".bp-cancel").onclick = close;
-  pop.querySelector(".bp-save").onclick = () => {
-    const ns = pop.querySelector(".bp-start").value, ne = pop.querySelector(".bp-end").value;
-    if (!ns || !ne || ns > ne) { alert("Ange ett start- och slutdatum där start är före (eller samma som) slut."); return; }
-    const withDeps = pop.querySelector(".bp-withdeps").checked;
-    const dl = daysBetweenIso(it.startDate, ns), dr = daysBetweenIso(it.endDate, ne);
-    // Flytta först hela aktiviteten så starten hamnar rätt, justera sedan
-    // slutet - och flytta beroende aktiviteter lika mycket som slutet.
-    const plan = planMove(targets, dl, false);
-    planResize(targets, "right", dr - dl, false, plan);
-    if (withDeps) pushDependents(targets, plan);
-    const conflicts = planConflicts(targets, plan);
-    if (conflicts.length && !confirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nSpara ändå?`)) return;
-    close();
-    applySchedulePlan(plan, `Nya datum för ${itemLabel(it)}: ${ns} – ${ne}`);
-  };
-  pop.querySelector(".bp-start").focus();
-}
-
 /* ---------------------------------------------------------------------
    Gantt som post-it-tavla (Victors förfrågan 2026-09-28) - ett alternativ
    till staplarna. En kolumn per vecka, en "sim-bana" per grupp (Gruppera),
@@ -3438,6 +3556,28 @@ async function setNoteDependency(succIds, predIds, add) {
   }
   return applySchedulePlan(plan, add ? `Beroende: ${sName} väntar på ${pName}` : `Tog bort beroende: ${sName} väntar på ${pName}`);
 }
+/* Fast glapp (dagar) på kopplingen predIds -> succIds; undefined tar bort glappet. Med glapp flyttas
+   efterföljaren direkt så att den startar föregångarens slut + 1 + glapp (och det som följer den med). */
+async function setNoteLag(succIds, predIds, lag) {
+  if (!ganttEditable) { modelToast("Slå på Redigerbar för att ändra glapp"); return false; }
+  const byId = itemsByIdAll(), preds = predIds.map(id => byId.get(String(id))).filter(Boolean);
+  const succ = succIds.map(id => byId.get(String(id))).filter(Boolean);
+  if (!succ.length || !preds.length) return false;
+  const plan = emptyPlan();
+  succ.forEach(m => {
+    const next = { ...(m.depLags || {}) };
+    preds.forEach(p => { if (!(m.dependsOn || []).map(String).includes(String(p.id))) return; if (lag === undefined) delete next[String(p.id)]; else next[String(p.id)] = lag; });
+    plan.lags.set(m.id, next);
+  });
+  const predEnd = preds.map(p => p.endDate).filter(Boolean).sort().pop();
+  const succStart = succ.map(m => m.startDate).filter(Boolean).sort()[0];
+  if (lag !== undefined && predEnd && succStart) {
+    const shift = daysBetweenIso(succStart, addDaysIso(predEnd, 1 + lag));
+    if (shift) { const ids = new Set(succ.map(m => m.id)); planShift(ids, shift, plan); pushDependents(ids, plan); }
+  }
+  const sName = itemLabel(succ[0]), pName = itemLabel(preds[0]);
+  return applySchedulePlan(plan, lag === undefined ? `Tog bort glappet: ${sName} efter ${pName}` : `Glapp ${lagLabel(lag)}: ${sName} efter ${pName}`);
+}
 function boardLinkStop() {
   boardLinkPick = null;
   document.getElementById("ganttChart")?.classList.remove("board-linking");
@@ -3464,7 +3604,15 @@ function openBoardDepMenu(evt, it, byNoteId) {
   if (!it) return;
   closeBoardDepMenu();
   const preds = notePredGroups(it), succs = noteSuccGroups(it), ed = ganttEditable;
-  const row = (g, kind) => `<div class="bdm-row"><span class="bdm-name" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>${ed ? `<button type="button" class="bdm-x" data-kind="${kind}" data-key="${escapeHtml(g.key)}" title="Ta bort beroendet">✕</button>` : ""}</div>`;
+  const ownIds = noteMembersOf(it).map(m => String(m.id)), byIdM = itemsByIdAll();
+  const lagFor = (g, kind) => {
+    const [succIds, predIds] = kind === "pred" ? [ownIds, g.ids] : [g.ids, ownIds];
+    return succIds.map(id => predIds.map(pid => lagOf(byIdM.get(String(id)), pid)).find(v => v !== undefined)).find(v => v !== undefined);
+  };
+  const row = (g, kind) => { const l = lagFor(g, kind); return `<div class="bdm-row"><span class="bdm-name" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>`
+    + (ed ? `<input type="number" step="1" class="bdm-lag" data-kind="${kind}" data-key="${escapeHtml(g.key)}" value="${l === undefined ? "" : l}" placeholder="glapp" title="Fast glapp i dagar (+ väntar, − överlappar). Tomt = inget fast glapp. Enter sparar." />`
+      : (l !== undefined ? `<span class="bdm-lag-ro">${escapeHtml(lagLabel(l))}</span>` : ""))
+    + (ed ? `<button type="button" class="bdm-x" data-kind="${kind}" data-key="${escapeHtml(g.key)}" title="Ta bort beroendet">✕</button>` : "") + `</div>`; };
   const pop = document.createElement("div");
   pop.className = "board-pop board-dep-menu";
   pop.setAttribute("role", "menu");
@@ -3473,8 +3621,10 @@ function openBoardDepMenu(evt, it, byNoteId) {
     <div class="bdm-sec">Väntar på</div>${preds.map(g => row(g, "pred")).join("") || `<div class="bdm-none">Inget</div>`}
     <div class="bdm-sec">Följs av</div>${succs.map(g => row(g, "succ")).join("") || `<div class="bdm-none">Inget</div>`}
     <div class="bdm-acts">
+      <button type="button" data-edit="1"${ed ? "" : " disabled"}>✎ Redigera… <small>eller dubbelklicka</small></button>
       <button type="button" data-add="pred"${ed ? "" : " disabled"}>＋ Väntar på… <small>klicka på en lapp</small></button>
       <button type="button" data-add="succ"${ed ? "" : " disabled"}>＋ Följs av… <small>klicka på en lapp</small></button>
+      <button type="button" data-couple="1"${ed ? "" : " disabled"}>🧊 Koppla i 3D-modellen… <small>${(() => { const c = noteMembersOf(it).filter(m => m.modelId).length; return c ? `${c} kopplade` : "inte kopplad än"; })()}</small></button>
       <button type="button" data-new-after="1"${ed ? "" : " disabled"}>＋ Ny aktivitet efter den här</button>
       <button type="button" data-delete="1" class="bdm-danger"${ed ? "" : " disabled"}>🗑 Ta bort lappen</button>
     </div>
@@ -3495,7 +3645,20 @@ function openBoardDepMenu(evt, it, byNoteId) {
     const own = noteMembersOf(it).map(m => m.id);
     await (b.dataset.kind === "pred" ? setNoteDependency(own, g.ids, false) : setNoteDependency(g.ids, own, false));
   });
+  pop.querySelectorAll(".bdm-lag").forEach(inp => inp.addEventListener("change", async () => {
+    const g = (inp.dataset.kind === "pred" ? preds : succs).find(x => x.key === inp.dataset.key);
+    if (!g) return;
+    const raw = inp.value.trim(), lag = raw === "" ? undefined : Math.round(Number(raw));
+    if (raw !== "" && !Number.isFinite(lag)) return;
+    if (lag === lagFor(g, inp.dataset.kind)) return;
+    closeBoardDepMenu();
+    await (inp.dataset.kind === "pred" ? setNoteLag(ownIds, g.ids, lag) : setNoteLag(g.ids, ownIds, lag));
+  }));
   pop.querySelectorAll("[data-add]").forEach(b => b.onclick = () => { closeBoardDepMenu(); boardLinkStart(it, b.dataset.add); });
+  const eb = pop.querySelector("[data-edit]");
+  if (eb) eb.onclick = () => { closeBoardDepMenu(); openEditActivityDialog(it); };
+  const cb3 = pop.querySelector("[data-couple]");
+  if (cb3) cb3.onclick = () => { closeBoardDepMenu(); startCoupleMode(it); };
   const nb = pop.querySelector("[data-new-after]");
   if (nb) nb.onclick = () => { closeBoardDepMenu(); openNewActivityDialog(it); };
   const db = pop.querySelector("[data-delete]");
@@ -3714,7 +3877,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
       trash.addEventListener("pointerdown", e => e.stopPropagation());
       trash.addEventListener("click", e => { e.stopPropagation(); deleteActivity(byNoteId.get(n.dataset.itemId)); });
     }
-    n.addEventListener("dblclick", e => { e.preventDefault(); openBoardDatePopover(n, byNoteId.get(n.dataset.itemId)); });
+    n.addEventListener("dblclick", e => { e.preventDefault(); openEditActivityDialog(byNoteId.get(n.dataset.itemId)); });
     n.addEventListener("pointerdown", e => onBoardNotePointerDown(e, n, byNoteId.get(n.dataset.itemId), colPx));
     n.addEventListener("pointerdown", () => { el.querySelectorAll(".near-tag").forEach(x => x.remove()); });
     if (ganttEditable) n.addEventListener("mousemove", e => {
@@ -3737,68 +3900,310 @@ function ganttSearchMatch(it) {
   return searchNorm(ganttSearch).split(/\s+/).filter(Boolean).every(w => hay.includes(w));
 }
 
-/* ----- Ny aktivitet (Victor 2026-10-06: "lägga till aktiviteter … samma uppbyggnad som Powerproject")
+/* ----- Förslagslista (Victor 2026-10-07: "snyggare dropdown … som hämtar info från övriga akt.")
+   Kopplas på ett textfält: listan filtreras medan man skriver (alla ord ska finnas, utan hänsyn till
+   å/ä/ö-accenter), pilar + Enter väljer, Esc stänger listan. Det man skriver får ändå vara ett nytt
+   värde. source() -> [{ value, label, sub?, count? }]. onPick(o) tar över valet (t.ex. Väntar på). */
+function attachCombo(input, source, { onPick, empty = "Inga träffar – det du skriver blir ett nytt värde", max = 80 } = {}) {
+  const host = input.closest(".board-pop") || document.body;
+  const list = document.createElement("div");
+  list.className = "cb-list";
+  list.hidden = true;
+  list.setAttribute("role", "listbox");
+  host.appendChild(list);
+  input.setAttribute("autocomplete", "off");
+  input.classList.add("cb-input");
+  let shown = [], idx = -1;
+  const mark = (txt, words) => {
+    let h = escapeHtml(txt);
+    words.forEach(w => { if (w.length < 2) return; const i = h.toLowerCase().indexOf(escapeHtml(w).toLowerCase()); if (i >= 0) h = `${h.slice(0, i)}<mark>${h.slice(i, i + escapeHtml(w).length)}</mark>${h.slice(i + escapeHtml(w).length)}`; });
+    return h;
+  };
+  const place = () => {
+    const hr = host.getBoundingClientRect(), r = input.getBoundingClientRect();
+    list.style.left = `${r.left - hr.left - host.clientLeft}px`;
+    list.style.top = `${r.bottom - hr.top - host.clientTop + 3}px`;
+    list.style.width = `${Math.max(r.width, 220)}px`;
+  };
+  const setIdx = i => {
+    idx = i;
+    list.querySelectorAll(".cb-opt").forEach((o, k) => o.classList.toggle("on", k === idx));
+    const on = list.querySelector(".cb-opt.on");
+    if (on) on.scrollIntoView({ block: "nearest" });
+  };
+  const render = () => {
+    const raw = input.value.trim(), words = raw.split(/\s+/).filter(Boolean), q = words.map(searchNorm);
+    const all = source();
+    const exact = all.length === 1 || all.some(o => o.value === raw);
+    shown = all.filter(o => { const hay = searchNorm(`${o.label} ${o.sub || ""}`); return q.every(w => hay.includes(w)); });
+    // Står exakt ett befintligt värde i fältet: visa alla förslag, så man ser vad man kan byta till.
+    if (!onPick && raw && shown.length === 1 && shown[0].value === raw && exact) shown = all;
+    if (!shown.length && !onPick && all.length) { hide(); return; } // fritt nytt värde – ingen lista i vägen
+    const more = shown.length - max;
+    shown = shown.slice(0, max);
+    idx = -1;
+    list.innerHTML = shown.length
+      ? shown.map((o, i) => `<div class="cb-opt" role="option" data-i="${i}"><span class="cb-l">${mark(o.label, words)}</span>${o.sub ? `<span class="cb-s">${mark(o.sub, words)}</span>` : ""}${o.count ? `<span class="cb-n">${escapeHtml(String(o.count))}</span>` : ""}</div>`).join("") + (more > 0 ? `<div class="cb-more">+ ${more} till – skriv för att söka</div>` : "")
+      : `<div class="cb-empty">${escapeHtml(all.length ? empty : "Inga förslag än")}</div>`;
+    place();
+    host.querySelectorAll(".cb-list").forEach(l => { if (l !== list) l.hidden = true; });
+    list.hidden = false;
+  };
+  const hide = () => { list.hidden = true; idx = -1; };
+  const pick = i => {
+    const o = shown[i];
+    if (!o) return;
+    hide();
+    if (onPick) onPick(o);
+    else { input.value = o.value; input.dispatchEvent(new Event("change", { bubbles: true })); }
+  };
+  input.addEventListener("focus", render);
+  input.addEventListener("click", () => { if (list.hidden) render(); });
+  input.addEventListener("input", render);
+  input.addEventListener("blur", () => setTimeout(hide, 120));
+  input.addEventListener("keydown", e => {
+    if (e.key === "ArrowDown") { e.preventDefault(); if (list.hidden) render(); setIdx(Math.min(shown.length - 1, idx + 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setIdx(Math.max(0, idx - 1)); }
+    else if (e.key === "Enter" && !list.hidden && (idx >= 0 || (onPick && shown.length))) { e.preventDefault(); pick(idx >= 0 ? idx : 0); }
+    else if (e.key === "Tab") hide();
+  });
+  list.addEventListener("mousedown", e => {
+    e.preventDefault(); // behåll fokus i fältet
+    const o = e.target.closest(".cb-opt");
+    if (o) pick(Number(o.dataset.i));
+  });
+  return { hide, render, list };
+}
+
+/* ----- Ny aktivitet / redigera aktivitet (Victor 2026-10-06/07)
    Samma fält som de importerade raderna: område, aktivitet, namn, entreprenör, start/slut, framdrift
-   och vad den väntar på. Märks origin "manuell" – den finns bara i 4D, nästa Powerproject-import rör
-   den inte (varken uppdateras eller tas bort). after = aktiviteten den nya ska komma efter. */
-function openNewActivityDialog(after) {
+   och vad den väntar på – med ett valfritt glapp per koppling (+ = väntetid, − = överlapp) som sedan
+   hålls konstant när föregångaren flyttas. Ny aktivitet märks origin "manuell" – den finns bara i 4D,
+   nästa Powerproject-import rör den inte. after = aktiviteten den nya ska komma efter.
+   Dubbelklick på en lapp/stapel öppnar samma dialog i redigeringsläge (edit = aktiviteten); allt
+   sparas i en omplanering som går att ångra (Ctrl+Z). */
+function openNewActivityDialog(after) { openActivityDialog({ after }); }
+function openEditActivityDialog(it) { if (it) openActivityDialog({ edit: it }); }
+function openActivityDialog({ after = null, edit = null } = {}) {
   if (!ganttEditable) {
-    modelToast("Slå på Redigerbar för att lägga till aktiviteter", { label: "Slå på", fn: () => { const cb = document.getElementById("ganttEditable"); if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } openNewActivityDialog(after); } });
+    modelToast(edit ? "Slå på Redigerbar för att ändra aktiviteter" : "Slå på Redigerbar för att lägga till aktiviteter", { label: "Slå på", fn: () => { const cb = document.getElementById("ganttEditable"); if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } openActivityDialog({ after, edit }); } });
     return;
   }
-  document.querySelectorAll(".new-act-pop").forEach(p => p.remove());
-  const uniq = f => [...new Set(items.map(f).filter(Boolean))].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
-  const opts = list => list.map(v => `<option value="${escapeHtml(v)}"></option>`).join("");
-  const start = after && after.endDate ? addDaysIso(after.endDate, 1) : todayISO();
-  const dur = after && after.startDate && after.endDate ? Math.max(0, daysBetweenIso(after.startDate, after.endDate)) : 4;
-  const acts = mergeActivityGroups(items.filter(it => it.startDate)).sort((a, b) => itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
+  document.querySelectorAll(".new-act-pop, .board-pop:not(.board-dep-menu)").forEach(p => p.remove());
+  hideGanttTooltip();
+  const pp = planSource === "pp";
+  const members = edit ? (edit.members || [edit]) : [];
+  const own = new Set(members.map(m => String(m.id)));
+  const imported = members.some(m => m.origin !== "manuell");
+  // Alla aktiviteter (sammanslagna) – underlag för förslagen och för Väntar på.
+  const acts = mergeActivityGroups(items.slice()).sort((a, b) => itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
+  const entryOf = a => ({ key: String(a.id), label: itemLabel(a), area: a.area || "", ids: (a.members || [a]).map(m => String(m.id)), end: a.endDate || null, start: a.startDate || null, status: a.status });
+  const entries = acts.map(entryOf);
+  const entryForId = id => entries.find(en => en.ids.includes(String(id)));
+  const counted = f => {
+    const m = new Map();
+    acts.forEach(a => { const v = (f(a) || "").trim(); if (v) m.set(v, (m.get(v) || 0) + 1); });
+    return [...m].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([v, n]) => ({ value: v, label: v, count: `${n} akt.` }));
+  };
+  // Startvärden.
+  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0;
+  const preds = []; // { entry, lag: "" | tal }
+  if (edit) {
+    name0 = itemLabel(edit) === "Okänt objekt" ? "" : (edit.objectName || "");
+    area0 = edit.area || ""; act0 = edit.activity || ""; contr0 = edit.contractor || "";
+    prog0 = Math.round(members.reduce((s, m) => s + (Number(m.progress) || 0), 0) / Math.max(1, members.length));
+    start0 = edit.startDate || todayISO(); end0 = edit.endDate || start0;
+    const seen = new Set();
+    members.flatMap(m => m.dependsOn || []).map(String).filter(id => !own.has(id)).forEach(id => {
+      const en = entryForId(id);
+      if (!en || seen.has(en.key)) return;
+      seen.add(en.key);
+      const lag = members.map(m => en.ids.map(pid => lagOf(m, pid)).find(v => v !== undefined)).find(v => v !== undefined);
+      preds.push({ entry: en, lag: lag === undefined ? "" : lag });
+    });
+  } else {
+    area0 = after ? after.area || "" : ""; act0 = after ? after.activity || "" : ""; contr0 = after ? after.contractor || "" : "";
+    start0 = after && after.endDate ? addDaysIso(after.endDate, 1) : todayISO();
+    end0 = addDaysIso(start0, after && after.startDate && after.endDate ? Math.max(0, daysBetweenIso(after.startDate, after.endDate)) : 4);
+    if (after) { const en = entryForId(after.id); if (en) preds.push({ entry: en, lag: "" }); }
+  }
+  const initKeys = new Set(preds.map(p => p.entry.key));
+  const title = edit
+    ? `✎ Redigera aktivitet${members.length > 1 ? ` <span class="hint">(${members.length} objekt)</span>` : ""}`
+    : `＋ Ny aktivitet${after ? ` <span class="hint">efter ${escapeHtml(tipShort(itemLabel(after), 40))}</span>` : ""}`;
   const pop = document.createElement("div");
-  pop.className = "board-pop new-act-pop";
+  pop.className = `board-pop new-act-pop${edit ? " edit-act-pop" : ""}`;
   pop.innerHTML = `
-    <div class="board-pop-title">＋ Ny aktivitet${after ? ` <span class="hint">efter ${escapeHtml(tipShort(itemLabel(after), 40))}</span>` : ""}</div>
-    <label>${planSource === "pp" ? "Namn/Aktivitet" : "Namn"} <input type="text" class="na-name" placeholder="t.ex. Grovbetong för fundament linje E31-40" /></label>
-    <label>Område <input type="text" class="na-area" list="naAreas" value="${escapeHtml(after ? after.area || "" : "")}" placeholder="t.ex. PRODUKTION / 744 Fläkthuset" /></label>
-    ${planSource === "pp"
+    <div class="board-pop-title">${title}</div>
+    <label>${pp ? "Namn/Aktivitet" : "Namn"} <input type="text" class="na-name" value="${escapeHtml(name0)}" placeholder="t.ex. Grovbetong för fundament linje E31-40" /></label>
+    <label>Område <input type="text" class="na-area" value="${escapeHtml(area0)}" placeholder="t.ex. PRODUKTION / 744 Fläkthuset" /></label>
+    ${pp
       ? `<div class="hint na-act-auto">Sammanfattningsrad (grupp och färg): <b class="na-act-show"></b> – sista delen av området, som i Powerproject</div>`
-      : `<label>Aktivitet <input type="text" class="na-act" list="naActs" value="${escapeHtml(after ? after.activity || "" : "")}" /></label>`}
-    <label>Entreprenör <input type="text" class="na-contr" list="naContrs" value="${escapeHtml(after ? after.contractor || "" : "")}" /></label>
-    <div class="na-row"><label>Start <input type="date" class="na-start" value="${start}" /></label><label>Slut <input type="date" class="na-end" value="${addDaysIso(start, dur)}" /></label><label>Framdrift <input type="number" class="na-prog" min="0" max="100" step="5" value="0" /></label></div>
-    <label>Väntar på <select class="na-pred"><option value="">– ingen –</option>${acts.map(a => `<option value="${escapeHtml(String(a.id))}"${after && a.id === after.id ? " selected" : ""}>${escapeHtml(tipShort(itemLabel(a), 60))}${a.area ? ` · ${escapeHtml(tipShort(a.area, 30))}` : ""}</option>`).join("")}</select></label>
-    <p class="hint">Finns bara i 4D (märks <b>Egen</b>) – nästa Powerproject-import rör den inte.</p>
-    <datalist id="naAreas">${opts(uniq(i => i.area))}</datalist><datalist id="naActs">${opts(uniq(i => i.activity))}</datalist><datalist id="naContrs">${opts(uniq(i => i.contractor))}</datalist>
-    <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">Lägg till</button></div>`;
+      : `<label>Aktivitet <input type="text" class="na-act" value="${escapeHtml(act0)}" /></label>`}
+    <label>Entreprenör <input type="text" class="na-contr" value="${escapeHtml(contr0)}" /></label>
+    <div class="na-row"><label>Start <input type="date" class="na-start" value="${start0}" /></label><label>Slut <input type="date" class="na-end" value="${end0}" /></label><label>Framdrift <input type="number" class="na-prog" min="0" max="100" step="5" value="${prog0}" /></label></div>
+    <div class="na-dep">
+      <div class="na-dep-h">Väntar på <span class="hint">· glapp i dagar: + väntar, − överlappar · tomt = inget fast glapp</span></div>
+      <div class="na-preds"></div>
+      <input type="text" class="na-pred-search" placeholder="＋ Sök aktivitet att vänta på…" />
+      <input type="hidden" class="na-pred" />
+    </div>
+    ${edit ? `<label class="na-withdeps-l"><input type="checkbox" class="na-withdeps" checked /> Flytta med det som väntar på den här</label>` : ""}
+    <p class="hint na-foot">${edit
+      ? (imported ? `⚠ Kommer från ${pp ? "Powerproject" : "Excel"} – namn, område, datum och kopplingar kan skrivas över vid nästa import. Glappen behålls så länge kopplingen finns kvar.` : "Egen aktivitet – finns bara i 4D. Ändringen går att ångra (Ctrl+Z).")
+      : `Finns bara i 4D (märks <b>Egen</b>) – nästa ${pp ? "Powerproject-" : ""}import rör den inte.`}</p>
+    <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">${edit ? "Spara" : "Lägg till"}</button></div>`;
   overlayHost().appendChild(pop);
-  pop.style.left = `${Math.max(8, (window.innerWidth - pop.offsetWidth) / 2)}px`;
-  pop.style.top = `${Math.max(8, Math.min(120, (window.innerHeight - pop.offsetHeight) / 2))}px`;
+  const q = c => pop.querySelector(c);
+  const place = () => {
+    pop.style.left = `${Math.max(8, (window.innerWidth - pop.offsetWidth) / 2)}px`;
+    pop.style.top = `${Math.max(8, Math.min(100, (window.innerHeight - pop.offsetHeight) / 2))}px`;
+  };
+  place();
   const close = () => { pop.remove(); document.removeEventListener("keydown", onKey, true); };
-  const onKey = e => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const onKey = e => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    const open = [...pop.querySelectorAll(".cb-list")].find(l => !l.hidden);
+    if (open) { open.hidden = true; return; } // först stängs förslagslistan, sedan dialogen
+    close();
+  };
   document.addEventListener("keydown", onKey, true);
-  pop.querySelector(".na-cancel").onclick = close;
-  pop.querySelector(".na-name").focus();
+  q(".na-cancel").onclick = close;
+
   // Powerproject: aktiviteten är sammanfattningsraden ovanför = sista delen av området (Victor 2026-10-07).
   const actFromArea = a => { const parts = String(a || "").split(" / ").map(x => x.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : ""; };
-  const actShow = pop.querySelector(".na-act-show");
+  const actShow = q(".na-act-show");
   if (actShow) {
-    const upd = () => { actShow.textContent = actFromArea(pop.querySelector(".na-area").value) || "–"; };
-    pop.querySelector(".na-area").addEventListener("input", upd);
+    const upd = () => { actShow.textContent = actFromArea(q(".na-area").value) || "–"; };
+    q(".na-area").addEventListener("input", upd);
+    q(".na-area").addEventListener("change", upd);
     upd();
   }
-  pop.querySelector(".na-save").onclick = async () => {
-    const v = c => pop.querySelector(c).value.trim();
+  // Förslag från övriga aktiviteter.
+  attachCombo(q(".na-name"), () => acts.filter(a => !own.has(String(a.id)) && a.objectName).map(a => ({ value: a.objectName, label: a.objectName, sub: a.area || "" }))
+    .filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i));
+  attachCombo(q(".na-area"), () => counted(a => a.area));
+  if (q(".na-act")) attachCombo(q(".na-act"), () => counted(a => a.activity));
+  attachCombo(q(".na-contr"), () => counted(a => a.contractor));
+
+  // Datum: kom ihåg längden, så att en ny start (t.ex. från glappet) flyttar hela aktiviteten.
+  const flash = el => { el.classList.remove("na-flash"); void el.offsetWidth; el.classList.add("na-flash"); };
+  let dur = Math.max(0, daysBetweenIso(start0, end0));
+  q(".na-start").addEventListener("change", () => { const s = q(".na-start").value; if (s) { q(".na-end").value = addDaysIso(s, dur); } });
+  q(".na-end").addEventListener("change", () => { const s = q(".na-start").value, e = q(".na-end").value; if (s && e && e >= s) dur = daysBetweenIso(s, e); });
+  const setStart = s => {
+    if (!s || s === q(".na-start").value) return;
+    q(".na-start").value = s; q(".na-end").value = addDaysIso(s, dur);
+    flash(q(".na-start")); flash(q(".na-end"));
+  };
+  // Start enligt glappen: senaste av (föregångarens slut + 1 + glapp) för kopplingar med glapp.
+  const snapToLags = () => {
+    const c = preds.filter(p => p.lag !== "" && p.entry.end).map(p => addDaysIso(p.entry.end, 1 + Number(p.lag))).sort();
+    if (c.length) setStart(c[c.length - 1]);
+  };
+  let progDirty = false;
+  q(".na-prog").addEventListener("input", () => { progDirty = true; });
+
+  const lagTxt = v => v === "" ? "" : `${Number(v) > 0 ? "+" : Number(v) < 0 ? "−" : "±"}${Math.abs(Number(v))} d`;
+  const renderPreds = () => {
+    q(".na-preds").innerHTML = preds.length ? preds.map((p, i) => `
+      <div class="na-pred-row" data-i="${i}">
+        <span class="na-pred-name" title="${escapeHtml(p.entry.label)}${p.entry.area ? ` · ${escapeHtml(p.entry.area)}` : ""}">${escapeHtml(tipShort(p.entry.label, 46))}${p.entry.end ? `<small>slutar ${escapeHtml(tipDate(p.entry.end))}</small>` : ""}</span>
+        <span class="na-lag-w" title="Glapp i dagar efter att den är klar (+ väntar, − överlappar). Tomt = inget fast glapp.">
+          <button type="button" class="na-lag-step" data-step="-1" tabindex="-1" aria-label="Ett glapp-dag mindre">−</button><input type="number" class="na-lag" step="1" value="${p.lag === "" ? "" : p.lag}" placeholder="glapp" aria-label="Glapp i dagar" /><button type="button" class="na-lag-step" data-step="1" tabindex="-1" aria-label="En glapp-dag mer">+</button><i>d</i>
+        </span>
+        <button type="button" class="na-pred-x" title="Ta bort kopplingen" aria-label="Ta bort kopplingen">✕</button>
+      </div>`).join("") : `<div class="na-pred-none">Ingen – startar fritt</div>`;
+    q(".na-pred").value = preds.map(p => p.entry.key).join(",");
+    q(".na-preds").querySelectorAll(".na-pred-row").forEach(r => {
+      const p = preds[Number(r.dataset.i)], inp = r.querySelector(".na-lag");
+      const setLag = v => { p.lag = v === "" || !Number.isFinite(Number(v)) ? "" : Math.round(Number(v)); inp.title = lagTxt(p.lag); snapToLags(); };
+      inp.addEventListener("input", () => setLag(inp.value.trim()));
+      r.querySelectorAll(".na-lag-step").forEach(b => b.onclick = () => { const v = (p.lag === "" ? 0 : Number(p.lag)) + Number(b.dataset.step); inp.value = v; setLag(String(v)); });
+      r.querySelector(".na-pred-x").onclick = () => { preds.splice(Number(r.dataset.i), 1); renderPreds(); };
+    });
+  };
+  renderPreds();
+  attachCombo(q(".na-pred-search"), () => {
+    const chosen = new Set(preds.map(p => p.entry.key));
+    return entries.filter(en => !chosen.has(en.key) && !en.ids.some(id => own.has(id)))
+      .map(en => ({ value: en.key, label: en.label, sub: [en.area, en.start && en.end ? tipRange(en.start, en.end) : ""].filter(Boolean).join(" · "), entry: en }));
+  }, { empty: "Ingen aktivitet matchar", onPick: o => {
+    preds.push({ entry: o.entry, lag: "" });
+    q(".na-pred-search").value = "";
+    renderPreds();
+    // Utan glapp: börjar den innan föregångaren är klar flyttas starten till dagen efter.
+    if (o.entry.end && o.entry.status !== "klar" && q(".na-start").value <= o.entry.end) setStart(addDaysIso(o.entry.end, 1));
+    q(".na-pred-search").focus();
+  } });
+  q(".na-name").focus();
+
+  const v = c => (q(c) ? q(c).value.trim() : "");
+  q(".na-save").onclick = async () => {
     const name = v(".na-name"), s0 = v(".na-start"), e0 = v(".na-end");
-    if (!name) { alert("Ge aktiviteten ett namn."); return; }
+    if (!name && !edit) { alert("Ge aktiviteten ett namn."); return; }
     if (!s0 || !e0 || s0 > e0) { alert("Ange start och slut (start före eller samma dag som slut)."); return; }
-    const predEntry = acts.find(a => String(a.id) === v(".na-pred"));
-    const predIds = predEntry ? (predEntry.members || [predEntry]).map(m => m.id) : [];
+    const area = v(".na-area"), contractor = v(".na-contr");
+    const activity = pp ? actFromArea(area) : v(".na-act");
+    const progress = Math.max(0, Math.min(100, Number(v(".na-prog")) || 0));
+    const predIds = [...new Set(preds.flatMap(p => p.entry.ids))];
+    const lagMap = {};
+    preds.forEach(p => { if (p.lag !== "") p.entry.ids.forEach(id => { lagMap[id] = Number(p.lag); }); });
+    // Startar den innan något utan glapp är klart? (med glapp hålls avståndet automatiskt)
+    const early = preds.filter(p => p.lag === "" && p.entry.end && p.entry.status !== "klar" && p.entry.end >= s0);
+    if (early.length && !confirm(`"${tipShort(name || itemLabel(edit), 50)}" startar ${s0}, innan ${early.map(p => `"${tipShort(p.entry.label, 40)}" (slutar ${p.entry.end})`).join(", ")} är klar.\n\nSpara ändå?`)) return;
+
+    if (edit) {
+      const ids = [...own];
+      // Kedjekontroll: en ny koppling får inte gå runt i en ring.
+      const added = predIds.filter(id => !members.some(m => (m.dependsOn || []).map(String).includes(id)));
+      if (added.length) {
+        const up = predecessorsDeep(added);
+        if (ids.some(id => up.has(id) || added.includes(id))) { alert("Det går inte: någon av aktiviteterna du väntar på väntar redan (direkt eller via andra) på den här."); return; }
+      }
+      const plan = emptyPlan();
+      const initIds = new Set(entries.filter(en => initKeys.has(en.key)).flatMap(en => en.ids));
+      members.forEach(m => {
+        const f = {};
+        if (name !== name0 && name) f.objectName = name;
+        if (area !== area0) { f.area = area || null; if (pp) f.activity = activity || null; }
+        if (!pp && activity !== act0) f.activity = activity || null;
+        if (contractor !== contr0) f.contractor = contractor || null;
+        if (progDirty && progress !== (Number(m.progress) || 0)) f.progress = progress;
+        if (Object.keys(f).length) plan.fields.set(m.id, f);
+        const curDeps = (m.dependsOn || []).map(String);
+        const nextDeps = [...new Set([...curDeps.filter(id => !initIds.has(id)), ...predIds])];
+        if (nextDeps.length !== curDeps.length || nextDeps.some(id => !curDeps.includes(id))) plan.deps.set(m.id, nextDeps);
+        const curLags = { ...(m.depLags || {}) };
+        const nextLags = Object.fromEntries(Object.entries(curLags).filter(([k]) => nextDeps.includes(k) && !predIds.includes(k)));
+        Object.assign(nextLags, lagMap);
+        const same = Object.keys(nextLags).length === Object.keys(curLags).length && Object.entries(nextLags).every(([k, x]) => Number(curLags[k]) === x && curLags[k] !== "" && curLags[k] !== null);
+        if (!same) plan.lags.set(m.id, nextLags);
+      });
+      const targets = new Set(members.filter(m => m.startDate && m.endDate).map(m => m.id));
+      const dl = daysBetweenIso(edit.startDate || s0, s0), dr = daysBetweenIso(edit.endDate || e0, e0);
+      if (dl || dr) {
+        planMove(targets, dl, false, plan);
+        planResize(targets, "right", dr - dl, false, plan);
+        if (q(".na-withdeps") && q(".na-withdeps").checked) pushDependents(targets, plan);
+      }
+      if (!planSize(plan)) { close(); setScheduleStatus("Inga ändringar"); return; }
+      close();
+      const shown = name || itemLabel(edit);
+      await applySchedulePlan(plan, `Ändrade ${tipShort(shown, 40)}`);
+      return;
+    }
+
     const id = ghNewId(), now = new Date().toISOString();
     // Är huvudbaselinen satt får en ny aktivitet sitt första datum som baseline (som vid importen).
     const mainSet = planBaselines.some(b => b && b.id === "main" && b.set_at && b.mode !== "none");
     const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
-      area: v(".na-area") || null, activity: (planSource === "pp" ? actFromArea(v(".na-area")) : v(".na-act")) || null, contractor: v(".na-contr") || null, status: "planerad",
-      start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress: Math.max(0, Math.min(100, Number(v(".na-prog")) || 0)),
-      estimated_hours: null, depends_on: predIds, source_key: null, origin: "manuell", group_id: null,
+      area: area || null, activity: activity || null, contractor: contractor || null, status: "planerad",
+      start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress,
+      estimated_hours: null, depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
       baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };
-    const btn = pop.querySelector(".na-save");
+    const btn = q(".na-save");
     btn.disabled = true;
     try {
       await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => [...arr, row], `Ny aktivitet: ${name}`);
@@ -3908,8 +4313,12 @@ function drawGanttArrows(el) {
       const p = byId.get(String(pid));
       const a = box(predEl), b = box(succEl);
       const d = ganttArrowPath(a.r, a.y, b.l - 1, b.y, Math.max(a.h, b.h));
-      const late = p && s && p.status !== "klar" && p.endDate && s.startDate && p.endDate >= s.startDate;
-      paths.push(`<path d="${d}" class="ga${late ? " ga-late" : ""}" data-a="${escapeHtml(predEl.dataset.itemId)}" data-b="${escapeHtml(succEl.dataset.itemId)}" marker-end="url(#gaHead)"/>`);
+      const lag = lagOf(s, pid);
+      // Med glapp: sen om den startar innan föregångarens slut + glapp; utan: innan föregångaren är klar.
+      const late = p && s && p.status !== "klar" && p.endDate && s.startDate && (lag !== undefined ? addDaysIso(p.endDate, 1 + lag) > s.startDate : p.endDate >= s.startDate);
+      const ab = `data-a="${escapeHtml(predEl.dataset.itemId)}" data-b="${escapeHtml(succEl.dataset.itemId)}"`;
+      paths.push(`<path d="${d}" class="ga${late ? " ga-late" : ""}${lag !== undefined ? " ga-lag" : ""}" ${ab} marker-end="url(#gaHead)"/>`);
+      if (lag !== undefined) paths.push(`<text class="ga-lag-t${late ? " ga-late" : ""}" ${ab} x="${(b.l - 16).toFixed(1)}" y="${(b.y - 6).toFixed(1)}" text-anchor="end">${lagLabel(lag)}</text>`);
     });
   });
   svg.querySelector("g").innerHTML = paths.join("");
@@ -3931,7 +4340,7 @@ function applyArrowHot(el, key) {
   const pinned = ganttTooltipPinnedEl && el.contains(ganttTooltipPinnedEl) && (ganttTooltipPinnedEl.classList.contains("pnote") || ganttTooltipPinnedEl.classList.contains("gantt-bar")) ? ganttTooltipPinnedEl.dataset.itemId : null;
   const k = key || pinned;
   sv.classList.toggle("has-hot", !!k);
-  sv.querySelectorAll("path.ga").forEach(pa => pa.classList.toggle("hot", !!k && (pa.dataset.a === k || pa.dataset.b === k)));
+  sv.querySelectorAll("path.ga, text.ga-lag-t").forEach(pa => pa.classList.toggle("hot", !!k && (pa.dataset.a === k || pa.dataset.b === k)));
 }
 /* Pilens väg (Victor 2026-10-06: "ta ut svängen mer så att det syns vart de pekar"): alltid en rak bit
    ut från föregångarens slut och en rak bit in mot efterföljarens start, så pilspetsen pekar rakt in
@@ -4058,6 +4467,7 @@ function bindNearHighlight(root, selector, entryOf, list, cls, tagHost = t => t)
   });
 }
 
+const lastBarClick = { id: null, t: 0 };
 function bindGanttInteractions(el, list, tooltips, geometry) {
   el.querySelectorAll('[data-action="toggle-gantt"]').forEach(toggleEl => {
     toggleEl.onclick = () => {
@@ -4208,6 +4618,11 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
         drawGanttArrows(el);
 
         if (!moved) {
+          // Två klick i rad på samma aktivitet = dubbelklick (staplarna ritas om vid klick, så
+          // webbläsarens dblclick hinner inte komma fram) -> redigera.
+          const nowT = Date.now();
+          if (lastBarClick.id === itemId && nowT - lastBarClick.t < 450) { lastBarClick.id = null; openEditActivityDialog(it); return; }
+          lastBarClick.id = itemId; lastBarClick.t = nowT;
           // Ett riktigt klick (ingen nämnvärd rörelse) - visa/dölj
           // beroendekedjan om objektet har några beroenden eller är någon
           // annans beroende.

@@ -2039,3 +2039,61 @@ svg.gantt-arrows.has-hot path.ga.ga-late.hot { stroke: #e5484d; }
 .pnote-one.pnote-editable { padding-right: 28px; }
 .pnote-one.pnote-editable .pnote-trash { right: 5px; }
 .new-act-pop .na-act-auto { margin: -2px 0 8px; font-size: 11.5px; }
+/* Baseline-dagarna (±N d) ligger absolut uppe till höger: reservera plats i rubriken så att "Egen" och namnet inte hamnar under. */
+.pnote:not(.pnote-one):has(> .pnote-bl-d) .pnote-title { padding-right: 38px; }
+.pnote.pnote-editable:not(.pnote-one):has(> .pnote-bl-d) .pnote-title { padding-right: 64px; }
+.pnote.pnote-editable:not(.pnote-one):not(:has(> .pnote-bl-d)) .pnote-title { padding-right: 22px; }
+
+/* ----- Aktivitetsdialogen: förslagslistor, Väntar på med glapp, redigering (Victor 2026-10-07) ----- */
+.new-act-pop { width: 460px; max-height: calc(100vh - 16px); overflow: visible; }
+.new-act-pop .cb-input { padding-right: 22px !important; background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239ca3af' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 8px center; border: 1px solid var(--border); border-radius: 6px; transition: border-color .12s, box-shadow .12s; }
+.new-act-pop input[type="text"], .new-act-pop input[type="number"], .new-act-pop input[type="date"] { border: 1px solid var(--border); border-radius: 6px; }
+.new-act-pop input:focus { outline: none; border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37,99,235,.14); }
+.cb-list { position: absolute; z-index: 5; max-height: 232px; overflow-y: auto; background: white; border: 1px solid #d6dbe3; border-radius: 8px; box-shadow: 0 10px 28px rgba(15,23,42,.16), 0 2px 6px rgba(15,23,42,.08); padding: 4px; animation: cbIn .12s ease-out; }
+@keyframes cbIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.cb-opt { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; border-radius: 5px; cursor: pointer; font-size: 12.5px; line-height: 1.3; }
+.cb-opt:hover, .cb-opt.on { background: #eaf2ff; }
+.cb-opt.on { box-shadow: inset 2px 0 0 var(--accent, #2563eb); }
+.cb-l { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #111827; }
+.cb-s { flex: 0 1 45%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #6b7280; }
+.cb-n { flex: 0 0 auto; font-size: 10.5px; color: #6b7280; background: #f1f5f9; border-radius: 9px; padding: 0 6px; line-height: 16px; }
+.cb-opt mark { background: #fef08a; color: inherit; border-radius: 2px; padding: 0 1px; }
+.cb-empty, .cb-more { padding: 6px 8px; font-size: 11.5px; color: #6b7280; font-style: italic; }
+.new-act-pop .na-dep { margin: 2px 0 8px; }
+.new-act-pop .na-dep-h { font-size: 12px; font-weight: 600; color: #4b5563; margin-bottom: 4px; }
+.new-act-pop .na-dep-h .hint { font-weight: 400; font-size: 10.5px; }
+.new-act-pop .na-preds { display: flex; flex-direction: column; gap: 4px; margin-bottom: 5px; }
+.na-pred-row { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 8px; background: #f8fafc; border: 1px solid #e5e7eb; border-left: 3px solid #2563eb; border-radius: 6px; animation: cbIn .14s ease-out; }
+.na-pred-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.na-pred-name small { margin-left: 6px; font-size: 10.5px; color: #6b7280; }
+.na-lag-w { flex: 0 0 auto; display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; background: white; overflow: hidden; }
+.na-lag-w i { font-style: normal; font-size: 11px; color: #6b7280; padding: 0 6px 0 2px; }
+.new-act-pop .na-lag { width: 48px !important; border: none !important; border-radius: 0 !important; text-align: center; padding: 3px 2px !important; box-shadow: none !important; -moz-appearance: textfield; }
+.new-act-pop .na-lag::-webkit-outer-spin-button, .new-act-pop .na-lag::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.na-lag-step { border: none; background: #f1f5f9; color: #374151; width: 20px; height: 24px; cursor: pointer; font: inherit; font-size: 13px; line-height: 1; padding: 0; }
+.na-lag-step:hover { background: #e0e7ff; }
+.na-pred-x { flex: 0 0 auto; border: none; background: none; color: #9ca3af; cursor: pointer; font-size: 12px; padding: 2px 5px; border-radius: 4px; }
+.na-pred-x:hover { color: #dc2626; background: #fee2e2; }
+.na-pred-none { font-size: 11.5px; color: #9ca3af; font-style: italic; padding: 2px 2px 0; }
+.new-act-pop .na-withdeps-l { flex-direction: row !important; align-items: center !important; gap: 6px !important; font-weight: 400 !important; font-size: 11.5px !important; }
+.new-act-pop .na-withdeps-l input { width: auto !important; }
+.new-act-pop .na-foot { margin: 0 0 4px; font-size: 11px; }
+.na-flash { animation: naFlash .9s ease-out; }
+@keyframes naFlash { 0% { background: #fef3c7; box-shadow: 0 0 0 3px rgba(245,158,11,.35); } 100% { background: white; } }
+/* Glapp i högerklicksmenyn och på pilarna. */
+.bdm-lag { width: 54px; font: inherit; font-size: 11px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; text-align: center; }
+.bdm-lag-ro, .gantt-tip-lag { font-size: 10px; font-weight: 700; color: #1d4ed8; background: #eff6ff; border-radius: 4px; padding: 0 4px; }
+svg.gantt-arrows text.ga-lag-t { font: 700 10px system-ui, sans-serif; fill: #1d4ed8; paint-order: stroke; stroke: white; stroke-width: 3px; opacity: .55; transition: opacity .12s; }
+svg.gantt-arrows text.ga-lag-t.ga-late { fill: #b42318; }
+svg.gantt-arrows.has-hot text.ga-lag-t { opacity: .15; }
+svg.gantt-arrows.has-hot text.ga-lag-t.hot { opacity: 1; }
+
+/* Koppla i 3D-modellen: list överst medan man markerar i modellen. */
+.couple-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1300; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 24px); padding: 8px 10px 8px 14px; background: #0f172a; color: white; border-radius: 10px; box-shadow: 0 10px 30px rgba(15,23,42,.35); font-size: 12.5px; animation: cbIn .15s ease-out; }
+.couple-bar .couple-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.couple-bar .couple-n { flex: 0 0 auto; font-size: 11.5px; color: #93c5fd; background: rgba(147,197,253,.14); border-radius: 10px; padding: 1px 8px; }
+.couple-bar button { flex: 0 0 auto; font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); background: transparent; color: white; cursor: pointer; }
+.couple-bar button.primary { background: #2563eb; border-color: #2563eb; font-weight: 600; }
+.couple-bar button:disabled { opacity: .45; cursor: default; }
+.couple-target { outline: 2px dashed #2563eb !important; outline-offset: 2px; animation: coupleGlow 1.4s ease-in-out infinite; }
+@keyframes coupleGlow { 50% { outline-color: rgba(37,99,235,.35); } }
