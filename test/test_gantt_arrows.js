@@ -15,12 +15,13 @@ const base = { project_id: PID, model_id: null, actual_start_date: null, actual_
 let k = 0;
 const it = (name, area, activity, s, e, extra = {}) => ({ ...base, id: 'i' + (++k), object_id: 'x' + k, object_name: name, area, activity, contractor: 'NCC', start_date: day(s), end_date: day(e), status: 'planerad', progress: 0, ...extra });
 seed('plan_items.json', [
-  it('Schakt', 'Linje J', 'Mark', 0, 5),                                   // i1
+  it('Schakt', 'Linje J', 'Mark', 0, 5, { progress: 40 }),                                   // i1
   it('Bergförstärkning', 'Linje J', 'Berg', 0, 8),                         // i2 – slutar senare
   it('Gjutning', 'Linje J', 'Betong', 10, 12, { depends_on: ['i1', 'i2'] }), // i3
   it('Montage', 'Linje J', 'Stomme', 15, 17, { depends_on: ['i3'] }),     // i4
   it('Återfyllning', 'Linje J', 'Mark', 13, 15, { depends_on: ['i3'] }),  // i5 – startar först
-  it('Övrigt', 'Linje K', 'Mark', 2, 6),                                   // i6
+  it('Övrigt', 'Linje K', 'Mark', 2, 6, { progress: 75 }),
+  it('Stödmur', 'Linje K', 'Betong', 4, 9, { depends_on: ['i6'] }),            // i7 – startar innan i6 är klar                                   // i6
 ]);
 ['plan_item_activities.json', 'plan_milestones.json', 'plan_deliveries.json', 'plan_item_baseline_history.json'].forEach(f => seed(f, []));
 
@@ -62,7 +63,7 @@ seed('plan_items.json', [
   const paths = () => page.evaluate(() => [...document.querySelectorAll('#ganttChart svg.gantt-arrows path.ga')].map(p => `${p.dataset.a}>${p.dataset.b}${p.classList.contains('hot') ? '*' : ''}`).sort());
   await page.waitForTimeout(300);
   let p = await paths();
-  if (JSON.stringify(p) !== JSON.stringify(['i1>i3', 'i2>i3', 'i3>i4', 'i3>i5'])) fail('Pilar på tavlan: ' + JSON.stringify(p));
+  if (JSON.stringify(p) !== JSON.stringify(['i1>i3', 'i2>i3', 'i3>i4', 'i3>i5', 'i6>i7'])) fail('Pilar på tavlan: ' + JSON.stringify(p));
   await page.hover('#ganttChart .pnote[data-item-id="i4"] .pnote-title'); await page.waitForTimeout(200);
   p = await paths();
   if (!p.includes('i3>i4*') || p.filter(x => x.endsWith('*')).length !== 1) fail('Pekar man på Montage ska bara dess pil lysa: ' + JSON.stringify(p));
@@ -71,7 +72,16 @@ seed('plan_items.json', [
   await page.uncheck('#ganttShowArrows'); await page.waitForTimeout(200);
   if (await page.locator('#ganttChart svg.gantt-arrows').count()) fail('Pilar av ska ta bort dem');
   await page.check('#ganttShowArrows'); await page.waitForTimeout(300);
-  if ((await paths()).length !== 4) fail('Pilar på igen');
+  if ((await paths()).length !== 5) fail('Pilar på igen');
+  // Framdriften i procent på linjen.
+  const pct = await page.evaluate(() => [...document.querySelectorAll('#ganttChart .pnote-pct')].map(b => b.textContent).sort());
+  if (JSON.stringify(pct) !== JSON.stringify(['40 %', '75 %'])) fail('Procenten på framdriftslinjen: ' + JSON.stringify(pct));
+  // Pilen in mot efterföljaren slutar med en rak bit från vänster (pilspetsen pekar rakt in).
+  const ends = await page.evaluate(() => [...document.querySelectorAll('#ganttChart svg.gantt-arrows path.ga')].map(p => /H[\d.]+$/.test(p.getAttribute('d'))));
+  if (ends.some(x => !x)) fail('Varje pil ska sluta med en rak bit in');
+  await page.uncheck('#ganttBoardOneLine'); await page.waitForTimeout(300);
+  await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'board_arrows_big.png') });
+  await page.check('#ganttBoardOneLine'); await page.waitForTimeout(300);
   console.log('OK: pilar för kopplingarna på tavlan – den hovrade aktivitetens pilar lyser, kan släckas');
 
   // Dra Gjutning (i3) +3 dagar: Återfyllning och Montage glider med medan man drar.
@@ -91,7 +101,7 @@ seed('plan_items.json', [
 
   // Staplar: pilar och knuff.
   await page.click('[data-gantt-view="bars"]'); await page.waitForTimeout(300);
-  if ((await paths()).length !== 4) fail('Pilar i staplarna: ' + JSON.stringify(await paths()));
+  if ((await paths()).length !== 5) fail('Pilar i staplarna: ' + JSON.stringify(await paths()));
   await page.locator('#ganttChart').screenshot({ path: path.join(require('os').tmpdir(), 'bars_arrows.png') });
   b = await page.locator('#ganttChart .gantt-bar[data-item-id="i2"]').boundingBox();
   const pxd = await page.evaluate(() => { const t = document.querySelector('#ganttChart .gantt-bar[data-item-id="i2"]'); return t.getBoundingClientRect().width / 9; });

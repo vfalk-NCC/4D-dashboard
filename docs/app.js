@@ -3558,13 +3558,13 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
         <i class="pnote-dot" style="background:${st}"></i><span class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</span>${ownTag}${depMark}
         ${subParts.length ? `<span class="pnote-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
         <span class="pnote-dates">${dates}</span>${blHtml}
-        <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span></div>
+        <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span>${prog > 0 ? `<b class="pnote-pct" style="left:clamp(14px, ${prog}%, calc(100% - 18px))">${prog} %</b>` : ""}</div>
       </div>`;
     return `<div class="${cls}" ${attrs}>
         <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}${ownTag}${depMark}</div>
         ${subParts.length ? `<div class="pnote-sub">${escapeHtml(subParts.join(" · "))}</div>` : ""}
         <div class="pnote-meta"><span class="pnote-status"><i style="background:${st}"></i>${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}</span><span>${dates}</span></div>${blHtml}
-        <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span></div>
+        <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span>${prog > 0 ? `<b class="pnote-pct" style="left:clamp(14px, ${prog}%, calc(100% - 18px))">${prog} %</b>` : ""}</div>
       </div>`;
   };
 
@@ -3764,10 +3764,7 @@ function drawGanttArrows(el) {
       seen.add(key);
       const p = byId.get(String(pid));
       const a = box(predEl), b = box(succEl);
-      const x1 = a.r, y1 = a.y, x2 = b.l - 1, y2 = b.y;
-      const dx = x2 - x1;
-      const k = dx >= 16 ? Math.max(14, dx / 2) : 34;
-      const d = `M${x1.toFixed(1)},${y1.toFixed(1)} C${(x1 + k).toFixed(1)},${y1.toFixed(1)} ${(x2 - k).toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`;
+      const d = ganttArrowPath(a.r, a.y, b.l - 1, b.y, Math.max(a.h, b.h));
       const late = p && s && p.status !== "klar" && p.endDate && s.startDate && p.endDate >= s.startDate;
       paths.push(`<path d="${d}" class="ga${late ? " ga-late" : ""}" data-a="${escapeHtml(predEl.dataset.itemId)}" data-b="${escapeHtml(succEl.dataset.itemId)}" marker-end="url(#gaHead)"/>`);
     });
@@ -3789,6 +3786,29 @@ function drawGanttArrows(el) {
     });
   }
 }
+/* Pilens väg (Victor 2026-10-06: "ta ut svängen mer så att det syns vart de pekar"): alltid en rak bit
+   ut från föregångarens slut och en rak bit in mot efterföljarens start, så pilspetsen pekar rakt in
+   från vänster. Finns det plats framåt: en mjuk S-kurva. Annars (efterföljaren börjar före/tätt inpå
+   slutet): ut åt höger, ner/upp mellan raderna, tillbaka åt vänster och in – en tydlig sväng. */
+function ganttArrowPath(x1, y1, x2, y2, h) {
+  const f = n => n.toFixed(1);
+  const OUT = 10, IN = 14, R = 14;
+  const dy = y2 - y1, dir = dy >= 0 ? 1 : -1;
+  // Samma rad och efterföljaren börjar direkt efter: en kort rak pil.
+  if (Math.abs(dy) < 4 && x2 - x1 >= -2) return `M${f(x1)},${f(y1)} H${f(x2)}`;
+  if (x2 - x1 >= OUT + IN + 6) {
+    const xa = x1 + OUT, xb = x2 - IN, k = Math.max(R, (xb - xa) / 2);
+    return `M${f(x1)},${f(y1)} H${f(xa)} C${f(xa + k)},${f(y1)} ${f(xb - k)},${f(y2)} ${f(xb)},${f(y2)} H${f(x2)}`;
+  }
+  // Mellan raderna: halvvägs mellan dem, eller strax under lappen om de ligger på samma rad.
+  const ym = Math.abs(dy) > h ? y1 + dy / 2 : y1 + dir * (h / 2 + 7);
+  const xa = x1 + OUT, xb = x2 - IN;
+  const r1 = Math.min(R, Math.abs(ym - y1) / 2), r2 = Math.min(R, Math.abs(y2 - ym) / 2);
+  const s1 = ym >= y1 ? 1 : -1, s2 = y2 >= ym ? 1 : -1;
+  return `M${f(x1)},${f(y1)} H${f(xa)} Q${f(xa + r1)},${f(y1)} ${f(xa + r1)},${f(y1 + s1 * r1)} V${f(ym - s1 * r1)} Q${f(xa + r1)},${f(ym)} ${f(xa)},${f(ym)}`
+    + ` H${f(xb - r2)} Q${f(xb - 2 * r2)},${f(ym)} ${f(xb - 2 * r2)},${f(ym + s2 * r2)} V${f(y2 - s2 * r2)} Q${f(xb - 2 * r2)},${f(y2)} ${f(xb - r2)},${f(y2)} H${f(x2)}`;
+}
+
 /* Under en dragning: aktiviteter som knuffas glider med (och pilarna följer) – plan = planMove/planResize. */
 function animatePush(el, plan, targets, pxPerDay) {
   if (!el || !el._arrowMap) return;

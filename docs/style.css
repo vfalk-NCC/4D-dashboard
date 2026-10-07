@@ -1997,3 +1997,9 @@ svg.gantt-arrows.has-hot path.ga.ga-late.hot { stroke: #e5484d; }
 .new-act-pop .board-pop-title { text-align: left; margin-bottom: 8px; }
 .new-act-pop .na-row { display: flex; gap: 8px; }
 .new-act-pop .na-row label { flex: 1; }
+/* Framdriften i procent, svagt på framdriftslinjen (vid fyllningens slut). */
+.pnote .pnote-prog { position: relative; overflow: visible; }
+.pnote-one .pnote-prog { position: absolute; }
+.pnote-prog > span:first-child { border-radius: inherit; }
+.pnote-pct { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 8.5px; font-weight: 700; line-height: 11px; padding: 0 3px; border-radius: 6px; color: rgba(17, 24, 39, .5); background: var(--bg, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,.06); white-space: nowrap; pointer-events: none; }
+.pnote-ext .pnote-pct { background: #fff; }
