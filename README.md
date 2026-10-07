@@ -121,6 +121,12 @@ gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
 - **Modellen ↔ schemat**: klick på en kopplad aktivitet markerar och zoomar in objekten i TC;
   markerar man objekt i modellen ramas deras aktiviteter in i schemat (scrollar dit, pulserar,
   fäller ut hopfällda grupper, "Visa" om de ligger utanför perioden). Bara när schemat syns.
+- **Pilar** (kan släckas): kopplingarna som mjuka kurvor i staplar och tavla; den hovrade
+  aktivitetens pilar lyser, röd streckad = efterföljaren startar innan föregångaren är klar.
+  När man drar (Redigerbar) glider beroende aktiviteter med och pilarna följer – Shift = utan.
+- **＋ Aktivitet** / högerklick "Ny aktivitet efter den här": egen aktivitet med samma uppbyggnad
+  som de importerade (område, aktivitet, entreprenör, datum, framdrift, väntar på). Märks
+  "Egen" (origin manuell) – Powerproject-importen rör den inte. Ångra direkt efteråt.
 - **Hovring**: aktiviteten lyfts mjukt, och den närmaste kopplade aktiviteten bakåt
   (föregångaren som slutar senast) och framåt (efterföljaren som startar först) – högst
   en åt varje håll – pulserar diskret med etiketten "◀ Före" / "Efter ▶".

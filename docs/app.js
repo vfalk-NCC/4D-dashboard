@@ -30,6 +30,7 @@ let ganttDrag = null;          // pågående drag-interaktion i Gantt-schemat (n
 let ganttExpandedIds = new Set(); // vilka objekt (plan_item.id) som just nu visar sina delaktiviteter i Gantt-schemat
 let ganttShowActual = false;      // kryssrutan "Visa verkligt" i Gantt-schemat
 let ganttSearch = "";             // sökrutan i Gantt-schemat (Victor 2026-10-06)
+let ganttShowArrows = true;       // pilar för kopplingarna + animerad knuff vid dragning (går att släcka)
 // Baseline (Victors önskemål 2026-10-06): baseline_start_date/baseline_end_date som en grå stapel
 // under den planerade. Sätts vid importen i 4D-planering (förra importen, en .ppb-baseline eller
 // Excels "Plan. start/slut"); planBaselineMeta säger varifrån (pp/plan_baseline.json, sista raden).
@@ -876,7 +877,8 @@ function fromRow(row) {
     dependsOn: Array.isArray(row.depends_on) ? row.depends_on.map(String) : [],
     // Samma aktivitet kopplad till flera 3D-objekt (en rad per objekt i
     // 4D-planering) - se mergeActivityGroups.
-    activityKey: row.group_id ? `g:${row.group_id}` : (row.source_key ? `s:${row.source_key}` : null)
+    activityKey: row.group_id ? `g:${row.group_id}` : (row.source_key ? `s:${row.source_key}` : null),
+    origin: row.origin || null
   };
 }
 
@@ -2582,6 +2584,7 @@ function loadGanttPrefs() {
     if (typeof prefs.boardOneLine === "boolean") ganttBoardOneLine = prefs.boardOneLine;
     if (typeof prefs.baseline === "boolean") ganttShowBaseline = prefs.baseline;
     if (typeof prefs.baselineDaysOnly === "boolean") ganttBaselineDaysOnly = prefs.baselineDaysOnly;
+    if (typeof prefs.arrows === "boolean") ganttShowArrows = prefs.arrows;
     if (/^#[0-9a-f]{6}$/i.test(prefs.baselineColor || "")) ganttBaselineColor = prefs.baselineColor;
     if (/^#[0-9a-f]{6}$/i.test(prefs.baselineColor2 || "")) ganttBaselineColor2 = prefs.baselineColor2;
     if (typeof prefs.baselineId === "string" && prefs.baselineId) ganttBaselineId = prefs.baselineId;
@@ -2610,6 +2613,7 @@ function saveGanttPrefs() {
       boardOneLine: ganttBoardOneLine,
       baseline: ganttShowBaseline,
       baselineDaysOnly: ganttBaselineDaysOnly,
+      arrows: ganttShowArrows,
       baselineColor: ganttBaselineColor,
       baselineColor2: ganttBaselineColor2,
       baselineId: ganttBaselineId,
@@ -2819,6 +2823,7 @@ function ganttTooltipHtmlForItem(it, depById) {
   ];
   if (it.actualStartDate || it.actualEndDate) rows.push(row("Verkligt", e(`${it.actualStartDate ? tipDate(it.actualStartDate) : "?"} – ${it.actualEndDate ? tipDate(it.actualEndDate) : "pågår"}`)));
   if (it.contractor) rows.push(row("Entreprenör", e(it.contractor)));
+  if (it.origin === "manuell") rows.push(row("Källa", "Egen aktivitet <span class=\"gantt-tip-dim\">· finns inte i Powerproject</span>"));
   let html = `<div class="gantt-tooltip-title">${e(itemLabel(it))}</div>${rows.join("")}`;
   // Baseline: namnet (och källan) en gång, datumen, förskjutningen som etikett.
   const bl = [ganttBaselineId, ganttShowBaseline ? ganttBaseline2Id : ""].filter(Boolean).map(id => ({ id, b: blOf(it, id) })).filter(x => x.b);
@@ -3162,7 +3167,12 @@ function renderGantt(list, target) {
     notesEl.innerText = notes.join(" ");
   }
 
-  if (!target) { bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays }); applyGanttModelSel(false); }
+  if (!target) {
+    bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays });
+    applyGanttModelSel(false);
+    el._arrowMap = new Map([...el.querySelectorAll(".gantt-bar[data-item-id]")].map(b => [String(b.dataset.itemId), b]));
+    requestAnimationFrame(() => drawGanttArrows(el));
+  }
 }
 
 
@@ -3192,6 +3202,7 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
     const e0 = own.map(d => d.endDate).sort().pop() || it.endDate;
     const depCount = [...plan.items.keys()].filter(id => !targets.has(id)).length;
     const conflicts = planConflicts(targets, plan);
+    animatePush(noteEl.closest(".gantt-chart"), plan, targets, pxPerDay);
     showGanttTooltip(e, `<div class="gantt-tooltip-title">${escapeHtml(itemLabel(it))}</div>
       ${ganttTooltipRow(mode === "move" ? "Flyttas till" : mode === "left" ? "Ny start" : "Nytt slut", `${weekdayDateSv(s0)} – ${weekdayDateSv(e0)} (${delta > 0 ? "+" : ""}${delta} d)`)}
       ${depCount ? ganttTooltipRow("Beroende", `${depCount} objekt skjuts fram (Shift = inte)`) : ""}
@@ -3204,6 +3215,7 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
     delta = Math.round(dx / pxPerDay);
     noteEl.classList.add("pnote-dragging");
     if (mode === "move") noteEl.style.transform = `translateX(${dx}px) rotate(0deg)`;
+    if (ganttShowArrows) arrowsFollow(noteEl.closest(".gantt-chart"));
     else noteEl.style.boxShadow = `0 0 0 2px var(--accent)`;
     preview(e);
   };
@@ -3213,6 +3225,7 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
     noteEl.style.transform = "";
     noteEl.style.boxShadow = "";
     noteEl.classList.remove("pnote-dragging");
+    { const ch = noteEl.closest(".gantt-chart"); if (ch) { ch.querySelectorAll(".ga-pushed").forEach(n => { n.style.transform = ""; n.classList.remove("ga-pushed"); }); drawGanttArrows(ch); } }
     hideGanttTooltip();
     if (!moved) return;
     noteEl._justDragged = true;
@@ -3393,6 +3406,7 @@ function openBoardDepMenu(evt, it, byNoteId) {
     <div class="bdm-acts">
       <button type="button" data-add="pred"${ed ? "" : " disabled"}>＋ Väntar på… <small>klicka på en lapp</small></button>
       <button type="button" data-add="succ"${ed ? "" : " disabled"}>＋ Följs av… <small>klicka på en lapp</small></button>
+      <button type="button" data-new-after="1"${ed ? "" : " disabled"}>＋ Ny aktivitet efter den här</button>
     </div>
     ${ed ? "" : `<div class="hint bdm-hint">Slå på <b>Redigerbar</b> för att ändra beroenden.</div>`}`;
   overlayHost().appendChild(pop);
@@ -3412,6 +3426,8 @@ function openBoardDepMenu(evt, it, byNoteId) {
     await (b.dataset.kind === "pred" ? setNoteDependency(own, g.ids, false) : setNoteDependency(g.ids, own, false));
   });
   pop.querySelectorAll("[data-add]").forEach(b => b.onclick = () => { closeBoardDepMenu(); boardLinkStart(it, b.dataset.add); });
+  const nb = pop.querySelector("[data-new-after]");
+  if (nb) nb.onclick = () => { closeBoardDepMenu(); openNewActivityDialog(it); };
   setTimeout(() => {
     document.addEventListener("pointerdown", boardDepOutside, true);
     document.addEventListener("keydown", boardDepKey, true);
@@ -3537,14 +3553,15 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
         data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0"`;
     const dates = `${escapeHtml(weekdayDateSv(it.startDate))} – ${escapeHtml(weekdayDateSv(it.endDate))}`;
     // En rad: statusprick · namn · aktivitet/entreprenör · datum i grått, framdriften i underkanten.
+    const ownTag = it.origin === "manuell" ? `<span class="pnote-own" title="Egen aktivitet – finns bara i 4D, inte i Powerproject">Egen</span>` : "";
     if (ganttBoardOneLine) return `<div class="${cls}" ${attrs}>
-        <i class="pnote-dot" style="background:${st}"></i><span class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</span>${depMark}
+        <i class="pnote-dot" style="background:${st}"></i><span class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</span>${ownTag}${depMark}
         ${subParts.length ? `<span class="pnote-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
         <span class="pnote-dates">${dates}</span>${blHtml}
         <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span></div>
       </div>`;
     return `<div class="${cls}" ${attrs}>
-        <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}${depMark}</div>
+        <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}${ownTag}${depMark}</div>
         ${subParts.length ? `<div class="pnote-sub">${escapeHtml(subParts.join(" · "))}</div>` : ""}
         <div class="pnote-meta"><span class="pnote-status"><i style="background:${st}"></i>${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}</span><span>${dates}</span></div>${blHtml}
         <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span></div>
@@ -3606,6 +3623,9 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     };
   });
   bindNearHighlight(el, ".pnote", n => byNoteId.get(n.dataset.itemId), [...byNoteId.values()], "pnote");
+  el._arrowMap = new Map();
+  el.querySelectorAll(".pnote[data-item-id]").forEach(n => { const e2 = byNoteId.get(n.dataset.itemId); (e2 && e2.members ? e2.members : [e2 || { id: n.dataset.itemId }]).forEach(m => el._arrowMap.set(String(m.id), n)); });
+  requestAnimationFrame(() => drawGanttArrows(el));
   el.querySelectorAll(".pnote").forEach(n => {
     n.addEventListener("mouseenter", e => showGanttTooltip(e, tooltips.get(n.dataset.ganttTip)));
     n.addEventListener("mousemove", positionGanttTooltip);
@@ -3640,6 +3660,159 @@ function ganttSearchMatch(it) {
   const hay = searchNorm([it.area, it.activity, it.objectName, it.contractor].join(" "));
   return searchNorm(ganttSearch).split(/\s+/).filter(Boolean).every(w => hay.includes(w));
 }
+
+/* ----- Ny aktivitet (Victor 2026-10-06: "lägga till aktiviteter … samma uppbyggnad som Powerproject")
+   Samma fält som de importerade raderna: område, aktivitet, namn, entreprenör, start/slut, framdrift
+   och vad den väntar på. Märks origin "manuell" – den finns bara i 4D, nästa Powerproject-import rör
+   den inte (varken uppdateras eller tas bort). after = aktiviteten den nya ska komma efter. */
+function openNewActivityDialog(after) {
+  if (!ganttEditable) {
+    modelToast("Slå på Redigerbar för att lägga till aktiviteter", { label: "Slå på", fn: () => { const cb = document.getElementById("ganttEditable"); if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } openNewActivityDialog(after); } });
+    return;
+  }
+  document.querySelectorAll(".new-act-pop").forEach(p => p.remove());
+  const uniq = f => [...new Set(items.map(f).filter(Boolean))].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+  const opts = list => list.map(v => `<option value="${escapeHtml(v)}"></option>`).join("");
+  const start = after && after.endDate ? addDaysIso(after.endDate, 1) : todayISO();
+  const dur = after && after.startDate && after.endDate ? Math.max(0, daysBetweenIso(after.startDate, after.endDate)) : 4;
+  const acts = mergeActivityGroups(items.filter(it => it.startDate)).sort((a, b) => itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
+  const pop = document.createElement("div");
+  pop.className = "board-pop new-act-pop";
+  pop.innerHTML = `
+    <div class="board-pop-title">＋ Ny aktivitet${after ? ` <span class="hint">efter ${escapeHtml(tipShort(itemLabel(after), 40))}</span>` : ""}</div>
+    <label>Namn <input type="text" class="na-name" placeholder="t.ex. Grovbetong för fundament linje E31-40" /></label>
+    <label>Område <input type="text" class="na-area" list="naAreas" value="${escapeHtml(after ? after.area || "" : "")}" placeholder="t.ex. PRODUKTION / 744 Fläkthuset" /></label>
+    <label>Aktivitet <input type="text" class="na-act" list="naActs" value="${escapeHtml(after ? after.activity || "" : "")}" /></label>
+    <label>Entreprenör <input type="text" class="na-contr" list="naContrs" value="${escapeHtml(after ? after.contractor || "" : "")}" /></label>
+    <div class="na-row"><label>Start <input type="date" class="na-start" value="${start}" /></label><label>Slut <input type="date" class="na-end" value="${addDaysIso(start, dur)}" /></label><label>Framdrift <input type="number" class="na-prog" min="0" max="100" step="5" value="0" /></label></div>
+    <label>Väntar på <select class="na-pred"><option value="">– ingen –</option>${acts.map(a => `<option value="${escapeHtml(String(a.id))}"${after && a.id === after.id ? " selected" : ""}>${escapeHtml(tipShort(itemLabel(a), 60))}${a.area ? ` · ${escapeHtml(tipShort(a.area, 30))}` : ""}</option>`).join("")}</select></label>
+    <p class="hint">Finns bara i 4D (märks <b>Egen</b>) – nästa Powerproject-import rör den inte.</p>
+    <datalist id="naAreas">${opts(uniq(i => i.area))}</datalist><datalist id="naActs">${opts(uniq(i => i.activity))}</datalist><datalist id="naContrs">${opts(uniq(i => i.contractor))}</datalist>
+    <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">Lägg till</button></div>`;
+  overlayHost().appendChild(pop);
+  pop.style.left = `${Math.max(8, (window.innerWidth - pop.offsetWidth) / 2)}px`;
+  pop.style.top = `${Math.max(8, Math.min(120, (window.innerHeight - pop.offsetHeight) / 2))}px`;
+  const close = () => { pop.remove(); document.removeEventListener("keydown", onKey, true); };
+  const onKey = e => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", onKey, true);
+  pop.querySelector(".na-cancel").onclick = close;
+  pop.querySelector(".na-name").focus();
+  pop.querySelector(".na-save").onclick = async () => {
+    const v = c => pop.querySelector(c).value.trim();
+    const name = v(".na-name"), s0 = v(".na-start"), e0 = v(".na-end");
+    if (!name) { alert("Ge aktiviteten ett namn."); return; }
+    if (!s0 || !e0 || s0 > e0) { alert("Ange start och slut (start före eller samma dag som slut)."); return; }
+    const predEntry = acts.find(a => String(a.id) === v(".na-pred"));
+    const predIds = predEntry ? (predEntry.members || [predEntry]).map(m => m.id) : [];
+    const id = ghNewId(), now = new Date().toISOString();
+    // Är huvudbaselinen satt får en ny aktivitet sitt första datum som baseline (som vid importen).
+    const mainSet = planBaselines.some(b => b && b.id === "main" && b.set_at && b.mode !== "none");
+    const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
+      area: v(".na-area") || null, activity: v(".na-act") || null, contractor: v(".na-contr") || null, status: "planerad",
+      start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress: Math.max(0, Math.min(100, Number(v(".na-prog")) || 0)),
+      estimated_hours: null, depends_on: predIds, source_key: null, origin: "manuell", group_id: null,
+      baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };
+    const btn = pop.querySelector(".na-save");
+    btn.disabled = true;
+    try {
+      await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => [...arr, row], `Ny aktivitet: ${name}`);
+    } catch (e) { btn.disabled = false; alert("Kunde inte spara: " + e.message); return; }
+    close();
+    items.push(fromRow(row));
+    renderAll();
+    modelToast(`"${tipShort(name, 40)}" är tillagd`, { label: "Ångra", fn: async () => {
+      try {
+        await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => arr.filter(r => r.id !== id).map(r => Array.isArray(r.depends_on) && r.depends_on.includes(id) ? { ...r, depends_on: r.depends_on.filter(x => x !== id) } : r), `Ångra ny aktivitet: ${name}`);
+        items = items.filter(x => x.id !== id);
+        renderAll();
+      } catch (e) { alert("Kunde inte ångra: " + e.message); }
+    } });
+  };
+}
+
+/* ----- Pilar för kopplingarna (Victor 2026-10-06) ----------------------------------------------
+   Mjuka kurvor från en aktivitets slut till nästa start, ritade i ett SVG-lager ovanpå schemat
+   (klick går igenom). Diskreta i vila; pekar man på en aktivitet blir dess
+   pilar tydliga och de andra tonas ned. En koppling där efterföljaren startar innan föregångaren är
+   klar blir röd. el._arrowMap: plan_item-id -> elementet (lapp/stapel) som visar det. */
+function drawGanttArrows(el) {
+  if (!el) return;
+  let svg = el.querySelector(":scope > svg.gantt-arrows");
+  if (!ganttShowArrows || !el._arrowMap) { if (svg) svg.remove(); return; }
+  if (!svg) {
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "gantt-arrows");
+    svg.innerHTML = `<defs><marker id="gaHead" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0.6 L7.4,4 L0,7.4 z" fill="context-stroke"/></marker></defs><g></g>`;
+    el.appendChild(svg);
+  }
+  const map = el._arrowMap, er = el.getBoundingClientRect();
+  svg.setAttribute("width", el.scrollWidth); svg.setAttribute("height", el.scrollHeight);
+  const byId = itemsByIdAll(), seen = new Set(), paths = [];
+  const box = n => {
+    const r = n.getBoundingClientRect();
+    const right = n.classList.contains("pnote") ? noteRealRight(n, r) : r.right;
+    return { l: r.left - er.left + el.scrollLeft, r: right - er.left + el.scrollLeft, y: r.top - er.top + el.scrollTop + r.height / 2, h: r.height };
+  };
+  map.forEach((succEl, sid) => {
+    const s = byId.get(sid);
+    if (!s || !s.dependsOn || !s.dependsOn.length || !succEl.isConnected) return;
+    s.dependsOn.forEach(pid => {
+      const predEl = map.get(String(pid));
+      if (!predEl || predEl === succEl || !predEl.isConnected) return;
+      const key = `${predEl.dataset.itemId}>${succEl.dataset.itemId}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const p = byId.get(String(pid));
+      const a = box(predEl), b = box(succEl);
+      const x1 = a.r, y1 = a.y, x2 = b.l - 1, y2 = b.y;
+      const dx = x2 - x1;
+      const k = dx >= 16 ? Math.max(14, dx / 2) : 34;
+      const d = `M${x1.toFixed(1)},${y1.toFixed(1)} C${(x1 + k).toFixed(1)},${y1.toFixed(1)} ${(x2 - k).toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`;
+      const late = p && s && p.status !== "klar" && p.endDate && s.startDate && p.endDate >= s.startDate;
+      paths.push(`<path d="${d}" class="ga${late ? " ga-late" : ""}" data-a="${escapeHtml(predEl.dataset.itemId)}" data-b="${escapeHtml(succEl.dataset.itemId)}" marker-end="url(#gaHead)"/>`);
+    });
+  });
+  svg.querySelector("g").innerHTML = paths.join("");
+  if (!el._arrowHoverBound) {
+    el._arrowHoverBound = true;
+    el.addEventListener("mouseover", e => {
+      const t = e.target.closest && e.target.closest("[data-item-id]");
+      const sv = el.querySelector(":scope > svg.gantt-arrows");
+      if (!sv) return;
+      const k = t && (t.classList.contains("pnote") || t.classList.contains("gantt-bar")) ? t.dataset.itemId : null;
+      sv.classList.toggle("has-hot", !!k);
+      sv.querySelectorAll("path.ga").forEach(pa => pa.classList.toggle("hot", !!k && (pa.dataset.a === k || pa.dataset.b === k)));
+    });
+    el.addEventListener("mouseleave", () => {
+      const sv = el.querySelector(":scope > svg.gantt-arrows");
+      if (sv) { sv.classList.remove("has-hot"); sv.querySelectorAll("path.hot").forEach(pa => pa.classList.remove("hot")); }
+    });
+  }
+}
+/* Under en dragning: aktiviteter som knuffas glider med (och pilarna följer) – plan = planMove/planResize. */
+function animatePush(el, plan, targets, pxPerDay) {
+  if (!el || !el._arrowMap) return;
+  const moved = new Map();
+  if (ganttShowArrows) plan.items.forEach((d, id) => {
+    if (targets.has(id)) return;
+    const it = items.find(x => x.id === id), n = el._arrowMap.get(String(id));
+    if (!it || !n || !it.startDate) return;
+    const sh = daysBetweenIso(it.startDate, d.startDate);
+    if (sh) moved.set(n, Math.max(moved.get(n) || 0, sh));
+  });
+  el.querySelectorAll(".ga-pushed").forEach(n => { if (!moved.has(n)) { n.style.transform = ""; n.classList.remove("ga-pushed"); } });
+  moved.forEach((sh, n) => { n.classList.add("ga-pushed"); n.style.transform = `translateX(${sh * pxPerDay}px)${n.classList.contains("pnote") ? " rotate(0deg)" : ""}`; });
+  if (ganttShowArrows) arrowsFollow(el);
+}
+/* Pilarna följer med medan något glider (en kort stund efter varje ändring). */
+function arrowsFollow(el) {
+  el._arrowsUntil = Date.now() + 260;
+  if (el._arrowsRaf) return;
+  const tick = () => { drawGanttArrows(el); el._arrowsRaf = Date.now() < el._arrowsUntil ? requestAnimationFrame(tick) : null; };
+  el._arrowsRaf = requestAnimationFrame(tick);
+}
+let ganttArrowResizeTimer = null;
+window.addEventListener("resize", () => { clearTimeout(ganttArrowResizeTimer); ganttArrowResizeTimer = setTimeout(() => drawGanttArrows(document.getElementById("ganttChart")), 150); });
 
 /* Närmaste kopplade aktivitet bakåt och framåt (Victor 2026-10-06): högst EN åt varje håll, även om
    fler är kopplade – den föregångare som slutar senast och den efterföljare som startar först. */
@@ -3782,12 +3955,18 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
       let moved = false;
       let previewStart = it.startDate;
       let previewEnd = it.endDate;
+      let lastDelta = 0, lastShift = false;
+      const targets = new Set([it.id]);
+      const barPlan = (dd, withDeps) => mode === "move" ? planMove(targets, dd, withDeps) : planResize(targets, mode === "resize-left" ? "left" : "right", dd, withDeps);
 
       const onMove = (moveEvt) => {
         const deltaPx = moveEvt.clientX - startX;
         if (Math.abs(deltaPx) >= CLICK_MOVE_THRESHOLD_PX) moved = true;
         if (!ganttEditable || !moved || !effectivePxPerDay) return;
         const deltaDays = Math.round(deltaPx / effectivePxPerDay);
+        lastDelta = deltaDays; lastShift = moveEvt.shiftKey;
+        // Beroende aktiviteter glider med medan man drar (Shift = utan), pilarna följer.
+        animatePush(el, barPlan(deltaDays, !moveEvt.shiftKey), targets, effectivePxPerDay);
         if (mode === "move") {
           previewStart = addDaysIso(it.startDate, deltaDays);
           previewEnd = addDaysIso(it.endDate, deltaDays);
@@ -3802,6 +3981,7 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
         }
         barEl.classList.add("gantt-bar-dragging");
         barEl.style.transform = `translateX(${deltaPx}px)`;
+        if (ganttShowArrows) arrowsFollow(el);
       };
 
       const onUp = () => {
@@ -3809,6 +3989,8 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
         document.removeEventListener("pointerup", onUp);
         barEl.style.transform = "";
         barEl.classList.remove("gantt-bar-dragging");
+        el.querySelectorAll(".ga-pushed").forEach(n => { n.style.transform = ""; n.classList.remove("ga-pushed"); });
+        drawGanttArrows(el);
 
         if (!moved) {
           // Ett riktigt klick (ingen nämnvärd rörelse) - visa/dölj
@@ -3824,7 +4006,13 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
           renderGantt(list); // avbruten/ineffektiv drag (t.ex. ej redigerbart läge) - rita bara om
           return;
         }
-        saveItemSchedule(it, previewStart, previewEnd);
+        // Som på tavlan: beroende aktiviteter skjuts fram (Shift = inte).
+        const plan = barPlan(lastDelta, !lastShift);
+        const conflicts = planConflicts(targets, plan);
+        if (conflicts.length && !confirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`)) { renderGantt(getFilteredItems()); return; }
+        const deps = [...plan.items.keys()].filter(id => !targets.has(id)).length;
+        const verb = mode === "move" ? `Flyttade ${itemLabel(it)} ${lastDelta > 0 ? "+" : ""}${lastDelta} d` : `${mode === "resize-left" ? "Ny start" : "Nytt slut"} för ${itemLabel(it)}`;
+        applySchedulePlan(plan, deps ? `${verb} (${deps} beroende framskjutna)` : verb);
       };
 
       document.addEventListener("pointermove", onMove);
@@ -4322,6 +4510,13 @@ function initGanttControls() {
     blCb.checked = ganttShowBaseline;
     blCb.onchange = () => { ganttShowBaseline = blCb.checked; saveGanttPrefs(); syncBlDaysPill(); renderGantt(getFilteredItems()); };
   }
+  const arrCb = document.getElementById("ganttShowArrows");
+  if (arrCb) {
+    arrCb.checked = ganttShowArrows;
+    arrCb.onchange = () => { ganttShowArrows = arrCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  const addBtn = document.getElementById("ganttAddBtn");
+  if (addBtn) addBtn.onclick = () => openNewActivityDialog();
   const blDays = document.getElementById("ganttBaselineDays");
   if (blDays) {
     blDays.checked = ganttBaselineDaysOnly;

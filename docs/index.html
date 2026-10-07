@@ -135,6 +135,7 @@
           </label>
           <span id="ganttSearchCount" class="hint gantt-search-count"></span>
           <span class="gantt-head-spacer"></span>
+          <button type="button" id="ganttAddBtn" class="gantt-toolbar-btn" title="Lägg till en egen aktivitet (samma uppbyggnad som de importerade) – högerklick på en lapp: Ny aktivitet efter den här">＋ Aktivitet</button>
           <div class="gantt-zoom-group" title="Ångra/gör om ändringar av datum (Ctrl+Z / Ctrl+Y)">
             <button type="button" id="ganttUndo" class="gantt-toolbar-btn" disabled>↶ Ångra</button>
             <button type="button" id="ganttRedo" class="gantt-toolbar-btn" disabled>↷ Gör om</button>
@@ -182,6 +183,9 @@
           </span>
           <label class="gantt-pill gantt-board-only" title="Lapparna på en rad (namn, aktivitet och datum) – av: större lappar på flera rader">
             <input type="checkbox" id="ganttBoardOneLine" /> En rad
+          </label>
+          <label class="gantt-pill" title="Pilar för kopplingarna, och att beroende aktiviteter glider med när du drar">
+            <input type="checkbox" id="ganttShowArrows" /> Pilar
           </label>
           <label class="gantt-pill gantt-board-only" title="Visa varje 3D-objekt som en egen lapp (annars en lapp per aktivitet)">
             <input type="checkbox" id="ganttBoardSplit" /> En lapp per objekt
