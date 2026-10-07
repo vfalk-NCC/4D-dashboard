@@ -3119,7 +3119,7 @@ function renderGantt(list, target) {
     const rowHtml = `
       <div class="${rowClass}"${groupColor ? ` style="--grp:${groupColor.bd}; --grp-bg:${groupColor.bg};"` : ""}>
         <span class="gantt-toggle${hasActivities ? "" : " gantt-toggle-empty"}"${hasActivities ? ` data-action="toggle-gantt" data-item-id="${escapeHtml(String(it.id))}"` : ""}>${hasActivities ? (expanded ? "▾" : "▸") : ""}</span>
-        <span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}${depBadgeHtml}</span>
+        ${ganttEditable ? `<button type="button" class="gantt-row-trash" data-trash-id="${escapeHtml(String(it.id))}" title="Ta bort" aria-label="Ta bort">🗑</button>` : ""}<span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}${depBadgeHtml}</span>
         <div class="gantt-track">
           <span class="${barClass}" style="left:${left}; width:${width}; border-color:${color};" data-gantt-tip="${tipKey}" data-item-id="${escapeHtml(String(it.id))}"${hasDeps ? ` data-has-deps="1"` : ""} tabindex="0"${draggableAttrs}>
             <span class="gantt-bar-fill" style="width:${progressPct}%; background:${color};"></span>
@@ -3456,6 +3456,7 @@ function openBoardDepMenu(evt, it, byNoteId) {
       <button type="button" data-add="pred"${ed ? "" : " disabled"}>＋ Väntar på… <small>klicka på en lapp</small></button>
       <button type="button" data-add="succ"${ed ? "" : " disabled"}>＋ Följs av… <small>klicka på en lapp</small></button>
       <button type="button" data-new-after="1"${ed ? "" : " disabled"}>＋ Ny aktivitet efter den här</button>
+      <button type="button" data-delete="1" class="bdm-danger"${ed ? "" : " disabled"}>🗑 Ta bort lappen</button>
     </div>
     ${ed ? "" : `<div class="hint bdm-hint">Slå på <b>Redigerbar</b> för att ändra beroenden.</div>`}`;
   overlayHost().appendChild(pop);
@@ -3477,6 +3478,8 @@ function openBoardDepMenu(evt, it, byNoteId) {
   pop.querySelectorAll("[data-add]").forEach(b => b.onclick = () => { closeBoardDepMenu(); boardLinkStart(it, b.dataset.add); });
   const nb = pop.querySelector("[data-new-after]");
   if (nb) nb.onclick = () => { closeBoardDepMenu(); openNewActivityDialog(it); };
+  const db = pop.querySelector("[data-delete]");
+  if (db) db.onclick = () => { closeBoardDepMenu(); deleteActivity(it); };
   setTimeout(() => {
     document.addEventListener("pointerdown", boardDepOutside, true);
     document.addEventListener("keydown", boardDepKey, true);
@@ -3602,7 +3605,8 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
         data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0"`;
     const dates = `${escapeHtml(weekdayDateSv(it.startDate))} – ${escapeHtml(weekdayDateSv(it.endDate))}`;
     // En rad: statusprick · namn · aktivitet/entreprenör · datum i grått, framdriften i underkanten.
-    const ownTag = it.origin === "manuell" ? `<span class="pnote-own" title="Egen aktivitet – finns bara i 4D, inte i Powerproject">Egen</span>` : "";
+    const ownTag = (it.origin === "manuell" ? `<span class="pnote-own" title="Egen aktivitet – finns bara i 4D, inte i Powerproject">Egen</span>` : "")
+      + (ganttEditable && !target ? `<button type="button" class="pnote-trash" title="Ta bort lappen" aria-label="Ta bort lappen">🗑</button>` : "");
     if (ganttBoardOneLine) return `<div class="${cls}" ${attrs}>
         <i class="pnote-dot" style="background:${st}"></i><span class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</span>${ownTag}${depMark}
         ${subParts.length ? `<span class="pnote-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
@@ -3684,6 +3688,12 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
       selectActivityInModel(byNoteId.get(n.dataset.itemId));
     });
     n.addEventListener("contextmenu", e => { e.preventDefault(); hideGanttTooltip(); openBoardDepMenu(e, byNoteId.get(n.dataset.itemId), byNoteId); });
+    n.addEventListener("keydown", e => { if ((e.key === "Delete" || e.key === "Backspace") && ganttEditable && e.target === n) { e.preventDefault(); deleteActivity(byNoteId.get(n.dataset.itemId)); } });
+    const trash = n.querySelector(".pnote-trash");
+    if (trash) {
+      trash.addEventListener("pointerdown", e => e.stopPropagation());
+      trash.addEventListener("click", e => { e.stopPropagation(); deleteActivity(byNoteId.get(n.dataset.itemId)); });
+    }
     n.addEventListener("dblclick", e => { e.preventDefault(); openBoardDatePopover(n, byNoteId.get(n.dataset.itemId)); });
     n.addEventListener("pointerdown", e => onBoardNotePointerDown(e, n, byNoteId.get(n.dataset.itemId), colPx));
     n.addEventListener("pointerdown", () => { el.querySelectorAll(".near-tag").forEach(x => x.remove()); });
@@ -3774,6 +3784,63 @@ function openNewActivityDialog(after) {
       } catch (e) { alert("Kunde inte ångra: " + e.message); }
     } });
   };
+}
+
+/* ----- Ta bort en lapp (Victor 2026-10-06) ---------------------------------------------------------
+   Hela aktiviteten (alla dess objekt), dess delaktiviteter och kopplingarna till den tas bort. En egen
+   aktivitet efter en vanlig fråga; en importerad med en tydlig varning – den finns kvar i Powerproject-/
+   Excel-filen och kommer tillbaka vid nästa import, och 3D-kopplingen försvinner. Ångra direkt efteråt. */
+async function deleteActivity(it) {
+  if (!it) return;
+  if (!ganttEditable) { modelToast("Slå på Redigerbar för att ta bort lappar"); return; }
+  const members = it.members || [it];
+  const ids = new Set(members.map(m => String(m.id)));
+  const own = members.every(m => m.origin === "manuell");
+  const coupled = members.filter(m => m.modelId).length;
+  const name = itemLabel(it);
+  const msg = own
+    ? `Ta bort "${name}"?`
+    : `Ta bort "${name}"${members.length > 1 ? ` (${members.length} objekt)` : ""}?\n\n` +
+      `⚠ Den kommer från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen och kommer tillbaka vid nästa import – ta bort den där för att bli av med den för gott.` +
+      (coupled ? `\n⚠ ${coupled} 3D-koppling${coupled === 1 ? "" : "ar"} försvinner.` : "");
+  if (!confirm(msg)) return;
+  hideGanttTooltip();
+  const nowIso = new Date().toISOString();
+  let removed = [], depBefore = new Map(), actsRemoved = [];
+  try {
+    await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => {
+      removed = arr.filter(r => ids.has(String(r.id)));
+      depBefore = new Map();
+      return arr.filter(r => !ids.has(String(r.id))).map(r => {
+        if (!Array.isArray(r.depends_on) || !r.depends_on.some(d => ids.has(String(d)))) return r;
+        depBefore.set(r.id, r.depends_on.slice());
+        return { ...r, depends_on: r.depends_on.filter(d => !ids.has(String(d))), updated_at: nowIso };
+      });
+    }, `Ta bort aktivitet: ${name}`);
+    try {
+      await ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"), arr => {
+        actsRemoved = arr.filter(a => ids.has(String(a.plan_item_id)));
+        return actsRemoved.length ? arr.filter(a => !ids.has(String(a.plan_item_id))) : arr;
+      }, `Ta bort delaktiviteter: ${name}`);
+    } catch (e) { console.warn("Kunde inte ta bort delaktiviteterna", e); }
+  } catch (e) { alert("Kunde inte ta bort: " + e.message); return; }
+  items = items.filter(x => !ids.has(String(x.id)));
+  items.forEach(x => { if (depBefore.has(x.id)) x.dependsOn = (x.dependsOn || []).filter(d => !ids.has(String(d))); });
+  activities = activities.filter(a => !ids.has(String(a.plan_item_id)));
+  renderAll();
+  modelToast(`"${tipShort(name, 40)}" är borttagen`, { label: "Ångra", fn: async () => {
+    try {
+      await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => [
+        ...arr.map(r => depBefore.has(r.id) ? { ...r, depends_on: depBefore.get(r.id) } : r),
+        ...removed.filter(r => !arr.some(x => x.id === r.id))
+      ], `Ångra borttagning: ${name}`);
+      if (actsRemoved.length) await ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"), arr => [...arr, ...actsRemoved.filter(a => !arr.some(x => x.id === a.id))], `Ångra borttagning: ${name}`);
+      removed.forEach(r => items.push(fromRow(r)));
+      items.forEach(x => { if (depBefore.has(x.id)) x.dependsOn = depBefore.get(x.id).map(String); });
+      activities = activities.concat(actsRemoved);
+      renderAll();
+    } catch (e) { alert("Kunde inte ångra: " + e.message); }
+  } });
 }
 
 /* ----- Pilar för kopplingarna (Victor 2026-10-06) ----------------------------------------------
@@ -3933,6 +4000,9 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
     };
   });
 
+  el.querySelectorAll(".gantt-row-trash[data-trash-id]").forEach(b => {
+    b.onclick = e => { e.stopPropagation(); deleteActivity(items.find(x => String(x.id) === b.dataset.trashId)); };
+  });
   el.querySelectorAll('[data-action="toggle-gantt-group"]').forEach(headerEl => {
     headerEl.onclick = () => {
       const key = headerEl.dataset.groupKey;
@@ -3979,6 +4049,8 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
     const it = list.find(x => String(x.id) === itemId) || items.find(x => String(x.id) === itemId);
     if (!it) return;
 
+    barEl.addEventListener("keydown", e => { if ((e.key === "Delete" || e.key === "Backspace") && ganttEditable) { e.preventDefault(); deleteActivity(it); } });
+    barEl.addEventListener("contextmenu", e => { if (!ganttEditable) return; e.preventDefault(); deleteActivity(it); });
     barEl.addEventListener("pointerdown", (evt) => {
       if (evt.button !== undefined && evt.button !== 0) return; // bara vänsterklick/primär pekare
       const startX = evt.clientX;

@@ -148,6 +148,40 @@ seed('plan_items.json', [
   await page.click('.na-save'); await page.waitForTimeout(900);
   if (!get('plan_items.json').some(r => r.object_name === 'Egen stödmur' && r.area === 'Linje K' && r.origin === 'manuell')) fail('＋ Aktivitet');
   console.log('OK: ny aktivitet (knappen och "Ny aktivitet efter den här") – samma uppbyggnad, märkt Egen, pil från föregångaren, Ångra');
+
+  // Ta bort lappar: egen (vanlig fråga) och importerad (varning), kopplingar städas, Ångra.
+  const dlg = [];
+  page.on('dialog', d => dlg.push(d.message()));
+  await page.waitForTimeout(300);
+  const own = get('plan_items.json').find(r => r.object_name === 'Egen stödmur');
+  await page.click(`#ganttChart .pnote[data-item-id="${own.id}"] .pnote-title`, { button: 'right' });
+  await page.click('.board-dep-menu [data-delete]'); await page.waitForTimeout(900);
+  if (get('plan_items.json').some(r => r.id === own.id) || /kommer tillbaka/.test(dlg[dlg.length - 1] || '')) fail('Egen lapp ska tas bort efter en vanlig fråga: ' + JSON.stringify(dlg));
+  await page.click('#ganttChart .pnote[data-item-id="i6"] .pnote-title', { button: 'right' });
+  await page.click('.board-dep-menu [data-delete]'); await page.waitForTimeout(900);
+  let rowsD = get('plan_items.json');
+  if (rowsD.some(r => r.id === 'i6') || JSON.stringify(rowsD.find(r => r.id === 'i7').depends_on) !== '[]' || !/kommer tillbaka vid nästa import/.test(dlg[dlg.length - 1])) fail('Importerad lapp: varning, borttagen, kopplingen städad: ' + JSON.stringify(dlg));
+  if ((await paths()).some(x => x.startsWith('i6>'))) fail('Pilen ska försvinna');
+  await page.click('#modelToast button'); await page.waitForTimeout(900);
+  rowsD = get('plan_items.json');
+  if (!rowsD.some(r => r.id === 'i6') || JSON.stringify(rowsD.find(r => r.id === 'i7').depends_on) !== '["i6"]') fail('Ångra ska lägga tillbaka lappen och kopplingen');
+  await page.waitForTimeout(300);
+  if (!(await paths()).includes('i6>i7')) fail('Pilen ska komma tillbaka');
+  // Soptunnan på lappen (syns när man pekar).
+  await page.hover('#ganttChart .pnote[data-item-id="i4"] .pnote-title'); await page.waitForTimeout(250);
+  if (Number(await page.evaluate(() => getComputedStyle(document.querySelector('#ganttChart .pnote[data-item-id="i4"] .pnote-trash')).opacity)) < 0.5) fail('Soptunnan ska synas när man pekar');
+  await page.locator('#ganttChart .pnote[data-item-id="i4"]').screenshot({ path: path.join(require('os').tmpdir(), 'note_trash.png') });
+  await page.click('#ganttChart .pnote[data-item-id="i4"] .pnote-trash'); await page.waitForTimeout(900);
+  if (get('plan_items.json').some(r => r.id === 'i4')) fail('Soptunnan ska ta bort lappen');
+  await page.click('#modelToast button'); await page.waitForTimeout(900);
+  // Staplarna: soptunna på raden.
+  await page.click('[data-gantt-view="bars"]'); await page.waitForTimeout(300);
+  await page.hover('#ganttChart .gantt-bar[data-item-id="i4"]'); await page.waitForTimeout(150);
+  await page.click('.gantt-row-trash[data-trash-id="i4"]'); await page.waitForTimeout(900);
+  if (get('plan_items.json').some(r => r.id === 'i4')) fail('Soptunnan i staplarna');
+  await page.click('#modelToast button'); await page.waitForTimeout(900);
+  if (!get('plan_items.json').some(r => r.id === 'i4')) fail('Ångra i staplarna');
+  console.log('OK: ta bort lappar – egen direkt, importerad med varning; kopplingarna städas; Ångra lägger tillbaka; soptunna på lappen och raden');
   if (errors.length) fail('Fel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
   await browser.close(); server.close();
