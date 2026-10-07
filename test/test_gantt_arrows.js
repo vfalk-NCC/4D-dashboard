@@ -112,6 +112,17 @@ seed('plan_items.json', [
   await page.mouse.up(); await page.waitForTimeout(800);
   rows = get('plan_items.json');
   if (rows.find(r => r.id === 'i2').end_date <= day(8) || rows.find(r => r.id === 'i3').start_date <= day(13)) fail('Staplarna: knuffen ska sparas: ' + JSON.stringify(rows.map(r => [r.id, r.start_date, r.end_date])));
+  // Dra i högerkanten på Montage: stapeln blir längre direkt, kortare när man drar tillbaka.
+  b = await page.locator('#ganttChart .gantt-bar[data-item-id="i4"]').boundingBox();
+  const w0 = b.width, pxd2 = w0 / 3;
+  await page.mouse.move(b.x + b.width - 3, b.y + b.height / 2); await page.mouse.down();
+  await page.mouse.move(b.x + b.width - 3 + pxd2 * 4, b.y + b.height / 2, { steps: 6 }); await page.waitForTimeout(250);
+  const wLong = (await page.locator('#ganttChart .gantt-bar[data-item-id="i4"]').boundingBox()).width;
+  await page.mouse.move(b.x + b.width - 3 + pxd2 * 1, b.y + b.height / 2, { steps: 4 }); await page.waitForTimeout(250);
+  const wShort = (await page.locator('#ganttChart .gantt-bar[data-item-id="i4"]').boundingBox()).width;
+  if (!(wLong > w0 + pxd2 * 3) || !(wShort < wLong && wShort > w0)) fail('Stapeln ska växa och krympa medan man drar: ' + JSON.stringify({ w0, wLong, wShort }));
+  await page.mouse.up(); await page.waitForTimeout(800);
+  if (get('plan_items.json').find(r => r.id === 'i4').end_date === day(17)) fail('Nytt slut ska sparas');
   console.log('OK: staplarna – pilar, och beroende staplar glider med och sparas framskjutna');
 
   // Ny aktivitet efter Återfyllning (högerklick på tavlan).

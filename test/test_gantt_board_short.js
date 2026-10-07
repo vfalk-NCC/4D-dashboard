@@ -79,7 +79,11 @@ seed('plan_items.json', [
   const n1 = page.locator('#ganttChart .pnote[data-item-id="i1"]');
   const b = await n1.boundingBox();
   const x0 = b.x + dayPx - 3, y0 = b.y + b.height / 2;
-  await page.mouse.move(x0, y0); await page.mouse.down(); await page.mouse.move(x0 + dayPx * 2, y0, { steps: 5 }); await page.mouse.up(); await page.waitForTimeout(600);
+  await page.mouse.move(x0, y0); await page.mouse.down(); await page.mouse.move(x0 + dayPx * 2, y0, { steps: 5 }); await page.waitForTimeout(250);
+  // Medan man drar växer lappen (den färgade delen) direkt – 1 dag → 3 dagar.
+  const liveReal = await page.evaluate(() => parseFloat(document.querySelector('#ganttChart .pnote[data-item-id="i1"]').style.getPropertyValue('--real')));
+  if (Math.abs(liveReal - dayPx * 3) > 1) fail('Lappen ska växa medan man drar: ' + JSON.stringify({ liveReal, want: dayPx * 3 }));
+  await page.mouse.up(); await page.waitForTimeout(600);
   const r1 = get('plan_items.json').find(r => r.id === 'i1');
   if (r1.start_date !== day(2) || r1.end_date !== day(4)) fail('Högerkanten ska förlänga aktiviteten: ' + JSON.stringify(r1));
   console.log('OK: den riktiga högerkanten går att dra');

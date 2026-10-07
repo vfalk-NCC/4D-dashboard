@@ -3193,6 +3193,9 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
   const startX = evt.clientX;
   const pxPerDay = colPx / 7;
   const targets = noteTargetIds(it);
+  // Utgångsläget för storleksändring: lappens bredd och (för en förlängd lapp) den färgade delen.
+  const w0 = rect.width, ext0 = !!parseFloat(noteEl.style.getPropertyValue("--real"));
+  const real0 = ext0 ? parseFloat(noteEl.style.getPropertyValue("--real")) : w0;
   let delta = 0, moved = false;
   const preview = e => {
     const withDeps = !e.shiftKey;
@@ -3215,8 +3218,25 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
     delta = Math.round(dx / pxPerDay);
     noteEl.classList.add("pnote-dragging");
     if (mode === "move") noteEl.style.transform = `translateX(${dx}px) rotate(0deg)`;
+    else {
+      // Kanten: lappen växer/krymper direkt, dag för dag, med en mjuk animering (Victor 2026-10-06).
+      noteEl.classList.add("pnote-resizing");
+      noteEl.style.boxShadow = `0 0 0 2px var(--accent)`;
+      const d = delta * pxPerDay;
+      if (mode === "right") {
+        const real = Math.max(pxPerDay, real0 + d);
+        noteEl.style.justifySelf = "start";
+        noteEl.style.width = `${Math.max(real, ext0 ? w0 : 0)}px`;
+        if (ext0) noteEl.style.setProperty("--real", `${real}px`);
+      } else {
+        const dd = Math.min(d, real0 - pxPerDay);
+        noteEl.style.justifySelf = "start";
+        noteEl.style.transform = `translateX(${dd}px) rotate(0deg)`;
+        noteEl.style.width = `${Math.max(pxPerDay, w0 - dd)}px`;
+        if (ext0) noteEl.style.setProperty("--real", `${Math.max(pxPerDay, real0 - dd)}px`);
+      }
+    }
     if (ganttShowArrows) arrowsFollow(noteEl.closest(".gantt-chart"));
-    else noteEl.style.boxShadow = `0 0 0 2px var(--accent)`;
     preview(e);
   };
   const onUp = e => {
@@ -3224,7 +3244,10 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
     document.removeEventListener("pointerup", onUp);
     noteEl.style.transform = "";
     noteEl.style.boxShadow = "";
-    noteEl.classList.remove("pnote-dragging");
+    noteEl.style.width = "";
+    noteEl.style.justifySelf = "";
+    if (ext0) noteEl.style.setProperty("--real", `${real0}px`);
+    noteEl.classList.remove("pnote-dragging", "pnote-resizing");
     { const ch = noteEl.closest(".gantt-chart"); if (ch) { ch.querySelectorAll(".ga-pushed").forEach(n => { n.style.transform = ""; n.classList.remove("ga-pushed"); }); drawGanttArrows(ch); } }
     hideGanttTooltip();
     if (!moved) return;
@@ -3976,6 +3999,7 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
       let previewStart = it.startDate;
       let previewEnd = it.endDate;
       let lastDelta = 0, lastShift = false;
+      const origBarWidth = barEl.style.width;
       const targets = new Set([it.id]);
       const barPlan = (dd, withDeps) => mode === "move" ? planMove(targets, dd, withDeps) : planResize(targets, mode === "resize-left" ? "left" : "right", dd, withDeps);
 
@@ -4000,7 +4024,18 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
           previewStart = it.startDate;
         }
         barEl.classList.add("gantt-bar-dragging");
-        barEl.style.transform = `translateX(${deltaPx}px)`;
+        if (mode === "move") barEl.style.transform = `translateX(${deltaPx}px)`;
+        else {
+          // Kanten: stapeln växer/krymper direkt, dag för dag (Victor 2026-10-06).
+          barEl.classList.add("gantt-bar-resizing");
+          const d = deltaDays * effectivePxPerDay, minW = Math.max(3, effectivePxPerDay);
+          if (mode === "resize-right") barEl.style.width = `${Math.max(minW, barRect.width + d)}px`;
+          else {
+            const dd = Math.min(d, barRect.width - minW);
+            barEl.style.transform = `translateX(${dd}px)`;
+            barEl.style.width = `${Math.max(minW, barRect.width - dd)}px`;
+          }
+        }
         if (ganttShowArrows) arrowsFollow(el);
       };
 
@@ -4008,7 +4043,8 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
         document.removeEventListener("pointermove", onMove);
         document.removeEventListener("pointerup", onUp);
         barEl.style.transform = "";
-        barEl.classList.remove("gantt-bar-dragging");
+        barEl.style.width = origBarWidth;
+        barEl.classList.remove("gantt-bar-dragging", "gantt-bar-resizing");
         el.querySelectorAll(".ga-pushed").forEach(n => { n.style.transform = ""; n.classList.remove("ga-pushed"); });
         drawGanttArrows(el);
 

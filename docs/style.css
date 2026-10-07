@@ -2003,3 +2003,8 @@ svg.gantt-arrows.has-hot path.ga.ga-late.hot { stroke: #e5484d; }
 .pnote-prog > span:first-child { border-radius: inherit; }
 .pnote-pct { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 8.5px; font-weight: 700; line-height: 11px; padding: 0 3px; border-radius: 6px; color: rgba(17, 24, 39, .5); background: var(--bg, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,.06); white-space: nowrap; pointer-events: none; }
 .pnote-ext .pnote-pct { background: #fff; }
+/* Storleksändring: lappen/stapeln växer och krymper mjukt dag för dag medan man drar i kanten. */
+.pnote.pnote-resizing { transition: width .12s cubic-bezier(.2,.8,.2,1), transform .12s cubic-bezier(.2,.8,.2,1) !important; z-index: 5; }
+.pnote.pnote-resizing::before { transition: width .12s cubic-bezier(.2,.8,.2,1); }
+.gantt-bar.gantt-bar-resizing { transition: width .12s cubic-bezier(.2,.8,.2,1), transform .12s cubic-bezier(.2,.8,.2,1) !important; opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .pnote.pnote-resizing, .gantt-bar.gantt-bar-resizing { transition: none !important; } }
