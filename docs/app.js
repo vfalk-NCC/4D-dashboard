@@ -2795,8 +2795,34 @@ function showGanttTooltipAt(targetEl, html) {
 }
 
 function hideGanttTooltip() {
-  if (ganttTooltipEl) ganttTooltipEl.classList.add("hidden");
+  if (ganttTooltipEl) { ganttTooltipEl.classList.add("hidden"); ganttTooltipEl.classList.remove("pinned"); }
+  ganttTooltipPinnedEl = null;
 }
+/* Tipsrutan visas bara när man klickar på en aktivitet (Victor 2026-10-06: annars hamnar den i vägen
+   för pilarna när man pekar). Den läggs bredvid aktiviteten – under, eller över om det inte får plats –
+   och står kvar tills man klickar någon annanstans, trycker Esc eller scrollar. */
+let ganttTooltipPinnedEl = null, ganttTooltipPinnedAt = 0;
+function pinGanttTooltip(targetEl, html) {
+  if (!targetEl || !html) return;
+  const el = ensureGanttTooltip();
+  el.innerHTML = html;
+  el.classList.remove("hidden");
+  el.classList.add("pinned");
+  const r = targetEl.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  const left = Math.min(window.innerWidth - w - 6, Math.max(6, r.left));
+  const below = r.bottom + 8, above = r.top - h - 8;
+  el.style.left = `${left}px`;
+  el.style.top = `${below + h <= window.innerHeight - 6 || above < 6 ? below : above}px`;
+  ganttTooltipPinnedEl = targetEl;
+  ganttTooltipPinnedAt = Date.now();
+}
+document.addEventListener("pointerdown", e => {
+  if (!ganttTooltipPinnedEl || !ganttTooltipEl || ganttTooltipEl.classList.contains("hidden")) return;
+  if (ganttTooltipEl.contains(e.target) || ganttTooltipPinnedEl.contains(e.target)) return;
+  hideGanttTooltip();
+}, true);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && ganttTooltipPinnedEl) hideGanttTooltip(); });
+document.addEventListener("scroll", () => { if (ganttTooltipPinnedEl && Date.now() - ganttTooltipPinnedAt > 300) hideGanttTooltip(); }, true);
 
 function ganttTooltipRow(label, value) {
   return `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${escapeHtml(label)}</span><span class="gantt-tooltip-value">${escapeHtml(value)}</span></div>`;
@@ -3650,14 +3676,11 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   el.querySelectorAll(".pnote[data-item-id]").forEach(n => { const e2 = byNoteId.get(n.dataset.itemId); (e2 && e2.members ? e2.members : [e2 || { id: n.dataset.itemId }]).forEach(m => el._arrowMap.set(String(m.id), n)); });
   requestAnimationFrame(() => drawGanttArrows(el));
   el.querySelectorAll(".pnote").forEach(n => {
-    n.addEventListener("mouseenter", e => showGanttTooltip(e, tooltips.get(n.dataset.ganttTip)));
-    n.addEventListener("mousemove", positionGanttTooltip);
-    n.addEventListener("mouseleave", hideGanttTooltip);
-    n.addEventListener("focus", () => showGanttTooltipAt(n, tooltips.get(n.dataset.ganttTip)));
-    n.addEventListener("blur", hideGanttTooltip);
+    n.addEventListener("focus", () => { if (!boardLinkPick) pinGanttTooltip(n, tooltips.get(n.dataset.ganttTip)); });
     n.addEventListener("click", () => {
       if (n._justDragged) { n._justDragged = false; return; }
       if (boardLinkPick) { boardLinkPicked(byNoteId.get(n.dataset.itemId)); return; }
+      pinGanttTooltip(n, tooltips.get(n.dataset.ganttTip));
       selectActivityInModel(byNoteId.get(n.dataset.itemId));
     });
     n.addEventListener("contextmenu", e => { e.preventDefault(); hideGanttTooltip(); openBoardDepMenu(e, byNoteId.get(n.dataset.itemId), byNoteId); });
@@ -3934,11 +3957,8 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
   el.querySelectorAll("[data-gantt-tip]").forEach(markEl => {
     const html = tooltips.get(markEl.dataset.ganttTip);
     if (!html) return;
-    markEl.onmouseover = evt => showGanttTooltip(evt, html);
-    markEl.onmousemove = evt => positionGanttTooltip(evt);
-    markEl.onmouseout = hideGanttTooltip;
-    markEl.onfocusin = () => showGanttTooltipAt(markEl, html);
-    markEl.onfocusout = hideGanttTooltip;
+    markEl.addEventListener("click", () => { if (markEl.isConnected) pinGanttTooltip(markEl, html); });
+    markEl.onfocusin = () => pinGanttTooltip(markEl, html);
   });
 
   // Klick på en huvudstapel (med beroenden) växlar highlight av dess
@@ -4055,6 +4075,8 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
           if (barEl.dataset.hasDeps) {
             ganttHighlightChainId = (ganttHighlightChainId === itemId) ? null : itemId;
             renderGantt(list);
+            const nb = el.querySelector(`.gantt-bar[data-item-id="${CSS.escape(itemId)}"]`);
+            if (nb) pinGanttTooltip(nb, tooltips.get(nb.dataset.ganttTip) || "");
           }
           return;
         }

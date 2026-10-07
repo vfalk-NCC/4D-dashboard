@@ -180,19 +180,22 @@ async function run() {
   if (fillWidth !== '40%') throw new Error('Förväntade en framdrift-fyllning på 40% för Pelare A, fick: ' + fillWidth);
   console.log('OK: staplarna har en framdrift-fyllning (meter) som motsvarar objektets progress-fält');
 
-  // ---- 7) Hover-tooltip visar status/datum/framdrift.
+  // ---- 7) Tipsrutan (vid klick – inte vid hovring, Victor 2026-10-06) visar status/datum/framdrift.
   const barA = page.locator('.gantt-row:not(.gantt-subrow)', { hasText: 'Pelare A' }).locator('.gantt-bar').first();
   await barA.hover();
   await page.waitForTimeout(50);
+  if (!(await page.locator('.gantt-tooltip').evaluate(el => el.classList.contains('hidden')).catch(() => true))) throw new Error('Hovring ska inte visa tipsrutan');
+  await barA.click();
+  await page.waitForTimeout(100);
   const tooltipText = await page.locator('.gantt-tooltip').innerText();
   if (!/Pelare A/.test(tooltipText) || !/Pågående/.test(tooltipText) || !/40 ?%/.test(tooltipText)) {
     throw new Error('Förväntade en tooltip med namn, status och framdrift för Pelare A, fick: ' + tooltipText);
   }
-  await page.mouse.move(5, 5);
+  await page.mouse.click(5, 5);
   await page.waitForTimeout(50);
   const tooltipHiddenAfter = await page.locator('.gantt-tooltip').evaluate(el => el.classList.contains('hidden'));
-  if (!tooltipHiddenAfter) throw new Error('Förväntade att tooltipen döljs när muspekaren lämnar stapeln');
-  console.log('OK: hover över en stapel visar en tooltip med status/datum/framdrift, som döljs igen när pekaren flyttas bort');
+  if (!tooltipHiddenAfter) throw new Error('Förväntade att tipsrutan stängs vid klick utanför');
+  console.log('OK: klick på en stapel visar tipsrutan med status/datum/framdrift; klick utanför stänger den');
 
   // ---- 8) Gruppering (Område) - grupphuvuden, hopfällbara.
   await page.locator('#ganttGroupBy').selectOption('area');

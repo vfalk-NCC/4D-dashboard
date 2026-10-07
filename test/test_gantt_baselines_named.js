@@ -73,7 +73,7 @@ seed('plan_baselines.json', [{ id: 'main', name: 'Kontraktstidplan', source: 'Ko
     return { both: !!a && !!b, below: b && b.getBoundingClientRect().top > a.getBoundingClientRect().top, color: b && getComputedStyle(b).backgroundColor, legend: document.getElementById('ganttLegend').innerText };
   });
   if (!d3.both || !d3.below || d3.color !== 'rgb(37, 99, 235)' || !/Jämför: Kontraktstidplan/.test(d3.legend)) fail('Två baselines samtidigt: ' + JSON.stringify(d3));
-  await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
+  await page.click('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
   const tip = await page.evaluate(() => (document.querySelector('.gantt-tooltip') || {}).innerText || '');
   if (!/Rev 1 – ÄTA 12[\s\S]*2 d senare[\s\S]*Kontraktstidplan[\s\S]*5 d senare/.test(tip) || (tip.match(/Kontraktstidplan/g) || []).length !== 1) fail('Tipsrutan ska visa båda (namnet en gång): ' + tip);
   { const bb = await page.locator('.gantt-tooltip').boundingBox(); await page.screenshot({ path: path.join(require('os').tmpdir(), 'tooltip_baseline.png'), clip: { x: bb.x - 2, y: bb.y - 2, width: bb.width + 4, height: bb.height + 4 } }); }

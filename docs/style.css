@@ -2008,3 +2008,6 @@ svg.gantt-arrows.has-hot path.ga.ga-late.hot { stroke: #e5484d; }
 .pnote.pnote-resizing::before { transition: width .12s cubic-bezier(.2,.8,.2,1); }
 .gantt-bar.gantt-bar-resizing { transition: width .12s cubic-bezier(.2,.8,.2,1), transform .12s cubic-bezier(.2,.8,.2,1) !important; opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .pnote.pnote-resizing, .gantt-bar.gantt-bar-resizing { transition: none !important; } }
+/* Tipsrutan efter klick: står kvar bredvid aktiviteten (klick utanför / Esc stänger). */
+.gantt-tooltip.pinned { box-shadow: 0 8px 24px rgba(0,0,0,.28); animation: tipIn .14s ease-out; }
+@keyframes tipIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }

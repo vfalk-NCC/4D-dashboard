@@ -111,7 +111,10 @@ seed('plan_baseline.json', [{ mode: 'prev', label: 'Import 01/10 2026 (Huvudtidp
   console.log('OK: "Bara ± dagar" – bara förskjutningen (+5 d / -2 d) syns, utan baseline-linjer, på tavlan och i staplarna');
 
   // Tipsrutan.
+  // Tipsrutan visas vid klick (inte vid hovring).
   await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
+  if (!(await page.evaluate(() => { const t = document.querySelector('.gantt-tooltip'); return !t || t.classList.contains('hidden'); }))) fail('Hovring ska inte visa tipsrutan');
+  await page.click('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
   const tip = await page.evaluate(() => (document.querySelector('.gantt-tooltip') || {}).innerText || '');
   if (!/Baseline/.test(tip) || !/5 d senare/.test(tip)) fail('Tipsrutan ska visa baseline: ' + tip);
 

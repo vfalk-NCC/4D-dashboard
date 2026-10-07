@@ -62,7 +62,7 @@ seed('plan_items.json', [
   if (!on.fs || Math.abs(on.top) > 1 || on.pw < 1390 || on.ph < 990 || on.ch <= before.ch || !/Stäng helskärm/.test(on.btn)) fail('Helskärm ska fylla skärmen: ' + JSON.stringify({ before, on }));
   await page.locator('section[data-panel-id="gantt"]').screenshot({ path: path.join(require('os').tmpdir(), 'gantt_fullscreen.png') });
   // Tipsrutan ska synas i helskärm (i webbläsarens helskärm syns bara panelen).
-  await page.hover('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
+  await page.click('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(250);
   const tipFs = await page.evaluate(() => { const t = document.querySelector('.gantt-tooltip'); return { fs: !!document.fullscreenElement, inside: !document.fullscreenElement || document.fullscreenElement.contains(t), shown: !t.classList.contains('hidden') && t.getBoundingClientRect().width > 0 }; });
   console.log('fullscreen i testet:', tipFs.fs);
   if (!tipFs.inside || !tipFs.shown) fail('Tipsrutan ska synas i helskärm: ' + JSON.stringify(tipFs));
