@@ -147,6 +147,17 @@ seed('plan_items.json', [
   await page.fill('.na-name', 'Egen stödmur'); await page.fill('.na-area', 'Linje K');
   await page.click('.na-save'); await page.waitForTimeout(900);
   if (!get('plan_items.json').some(r => r.object_name === 'Egen stödmur' && r.area === 'Linje K' && r.origin === 'manuell')) fail('＋ Aktivitet');
+  // Powerproject-läget: ingen Aktivitet-ruta – aktiviteten blir sista delen av området.
+  await page.evaluate(() => { planSource = 'pp'; });
+  await page.click('#ganttAddBtn'); await page.waitForTimeout(150);
+  if (await page.locator('.new-act-pop .na-act').count()) fail('Aktivitet ska inte gå att fylla i i Powerproject-läget');
+  if (!/^Namn\/Aktivitet/.test(await page.innerText('.new-act-pop label:first-of-type'))) fail('Fältet ska heta Namn/Aktivitet');
+  await page.fill('.na-name', 'Rivning tillfällig pelare del 1'); await page.fill('.na-area', 'PRODUKTION / 740 TEST');
+  if (await page.innerText('.na-act-show') !== '740 TEST') fail('Aktiviteten ska visas som sista delen av området');
+  await page.click('.na-save'); await page.waitForTimeout(900);
+  const ppNew = (get('pp/plan_items.json') || []).find(r => r.object_name === 'Rivning tillfällig pelare del 1');
+  if (!ppNew || ppNew.activity !== '740 TEST' || ppNew.area !== 'PRODUKTION / 740 TEST') fail('Sparad aktivitet = sista delen av området: ' + JSON.stringify(ppNew));
+  await page.evaluate(() => { planSource = 'excel'; });
   console.log('OK: ny aktivitet (knappen och "Ny aktivitet efter den här") – samma uppbyggnad, märkt Egen, pil från föregångaren, Ångra');
 
   // Ta bort lappar: egen (vanlig fråga) och importerad (varning), kopplingar städas, Ångra.

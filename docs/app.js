@@ -3756,9 +3756,11 @@ function openNewActivityDialog(after) {
   pop.className = "board-pop new-act-pop";
   pop.innerHTML = `
     <div class="board-pop-title">＋ Ny aktivitet${after ? ` <span class="hint">efter ${escapeHtml(tipShort(itemLabel(after), 40))}</span>` : ""}</div>
-    <label>Namn <input type="text" class="na-name" placeholder="t.ex. Grovbetong för fundament linje E31-40" /></label>
+    <label>${planSource === "pp" ? "Namn/Aktivitet" : "Namn"} <input type="text" class="na-name" placeholder="t.ex. Grovbetong för fundament linje E31-40" /></label>
     <label>Område <input type="text" class="na-area" list="naAreas" value="${escapeHtml(after ? after.area || "" : "")}" placeholder="t.ex. PRODUKTION / 744 Fläkthuset" /></label>
-    <label>Aktivitet <input type="text" class="na-act" list="naActs" value="${escapeHtml(after ? after.activity || "" : "")}" /></label>
+    ${planSource === "pp"
+      ? `<div class="hint na-act-auto">Sammanfattningsrad (grupp och färg): <b class="na-act-show"></b> – sista delen av området, som i Powerproject</div>`
+      : `<label>Aktivitet <input type="text" class="na-act" list="naActs" value="${escapeHtml(after ? after.activity || "" : "")}" /></label>`}
     <label>Entreprenör <input type="text" class="na-contr" list="naContrs" value="${escapeHtml(after ? after.contractor || "" : "")}" /></label>
     <div class="na-row"><label>Start <input type="date" class="na-start" value="${start}" /></label><label>Slut <input type="date" class="na-end" value="${addDaysIso(start, dur)}" /></label><label>Framdrift <input type="number" class="na-prog" min="0" max="100" step="5" value="0" /></label></div>
     <label>Väntar på <select class="na-pred"><option value="">– ingen –</option>${acts.map(a => `<option value="${escapeHtml(String(a.id))}"${after && a.id === after.id ? " selected" : ""}>${escapeHtml(tipShort(itemLabel(a), 60))}${a.area ? ` · ${escapeHtml(tipShort(a.area, 30))}` : ""}</option>`).join("")}</select></label>
@@ -3773,6 +3775,14 @@ function openNewActivityDialog(after) {
   document.addEventListener("keydown", onKey, true);
   pop.querySelector(".na-cancel").onclick = close;
   pop.querySelector(".na-name").focus();
+  // Powerproject: aktiviteten är sammanfattningsraden ovanför = sista delen av området (Victor 2026-10-07).
+  const actFromArea = a => { const parts = String(a || "").split(" / ").map(x => x.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : ""; };
+  const actShow = pop.querySelector(".na-act-show");
+  if (actShow) {
+    const upd = () => { actShow.textContent = actFromArea(pop.querySelector(".na-area").value) || "–"; };
+    pop.querySelector(".na-area").addEventListener("input", upd);
+    upd();
+  }
   pop.querySelector(".na-save").onclick = async () => {
     const v = c => pop.querySelector(c).value.trim();
     const name = v(".na-name"), s0 = v(".na-start"), e0 = v(".na-end");
@@ -3784,7 +3794,7 @@ function openNewActivityDialog(after) {
     // Är huvudbaselinen satt får en ny aktivitet sitt första datum som baseline (som vid importen).
     const mainSet = planBaselines.some(b => b && b.id === "main" && b.set_at && b.mode !== "none");
     const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
-      area: v(".na-area") || null, activity: v(".na-act") || null, contractor: v(".na-contr") || null, status: "planerad",
+      area: v(".na-area") || null, activity: (planSource === "pp" ? actFromArea(v(".na-area")) : v(".na-act")) || null, contractor: v(".na-contr") || null, status: "planerad",
       start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress: Math.max(0, Math.min(100, Number(v(".na-prog")) || 0)),
       estimated_hours: null, depends_on: predIds, source_key: null, origin: "manuell", group_id: null,
       baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };

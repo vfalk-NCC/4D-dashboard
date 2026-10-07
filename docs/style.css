@@ -2038,3 +2038,4 @@ svg.gantt-arrows.has-hot path.ga.ga-late.hot { stroke: #e5484d; }
 .pnote.pnote-editable:not(.pnote-one) .pnote-bl-d { right: 30px; }
 .pnote-one.pnote-editable { padding-right: 28px; }
 .pnote-one.pnote-editable .pnote-trash { right: 5px; }
+.new-act-pop .na-act-auto { margin: -2px 0 8px; font-size: 11.5px; }
