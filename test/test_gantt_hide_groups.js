@@ -61,6 +61,16 @@ seed('plan_items.json', [
   if ((await lanes()).join() !== 'Sektionsfickor,Sikthall') fail('Dölj: ' + (await lanes()));
   const bar = await page.evaluate(() => ({ txt: document.getElementById('ganttHiddenBar')?.textContent || '', saved: JSON.parse(localStorage.getItem(GANTT_PREFS_KEY)).hiddenGroups }));
   if (!bar.txt.includes('Inköp') || JSON.stringify(bar.saved) !== '["area:Inköp"]') fail('Dolda ska synas ovanför och sparas: ' + JSON.stringify(bar));
+  // Utskriften: det dolda området skrivs inte ut (tavlan).
+  await page.evaluate(() => { window.__prints = 0; window.print = () => { window.__prints++; }; });
+  await page.click('#ganttPrintBtn');
+  await page.click('.gantt-print-pop [data-act="print"]');
+  await page.waitForFunction(() => window.__prints === 1);
+  const printed = await page.evaluate(() => [...document.querySelectorAll('#ganttPrint .board-lane-name')].map(n => n.textContent.trim()));
+  if (!printed.length || printed.some(t => t.includes('Inköp'))) fail('Dolt område ska inte skrivas ut: ' + printed);
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint'))); await page.waitForTimeout(200);
+  const menuTxt = await page.evaluate(() => document.getElementById('ganttHiddenBar').textContent);
+  if (/[\u{1F300}-\u{1FAFF}]/u.test(menuTxt)) fail('Inga emojis: ' + menuTxt);
   // Visa bara Sikthall, sedan Visa alla via menyn.
   await page.click('#ganttChart .board-lane-head >> nth=1', { button: 'right' });
   await page.click('#ganttGroupMenu [data-gm="only"]');

@@ -2833,6 +2833,12 @@ function saveGanttPrefs() {
    Dölj, Visa bara den här, Visa alla. Dolda grupper syns som en rad ovanför schemat där de kan tas
    fram igen med ett klick. Valet sparas i webbläsaren som övriga Gantt-inställningar. */
 const ganttGroupName = key => key.slice(key.indexOf(":") + 1);
+const ganttHiddenNow = () => ganttGroupBy ? [...ganttHiddenGroups].filter(k => k.startsWith(ganttGroupBy + ":")) : [];
+/* Listan utan dolda grupper – samma för skärmen och utskriften. */
+function ganttWithoutHidden(list) {
+  const hs = new Set(ganttHiddenNow());
+  return hs.size ? list.filter(it => !hs.has(`${ganttGroupBy}:${ganttGroupKeyFor(it)}`)) : list;
+}
 function setGanttHidden(fn) { fn(); saveGanttPrefs(); renderGantt(getFilteredItems()); }
 function openGanttGroupMenu(e, key) {
   closeGanttGroupMenu();
@@ -2842,11 +2848,11 @@ function openGanttGroupMenu(e, key) {
   m.id = "ganttGroupMenu"; m.className = "gantt-group-menu"; m.setAttribute("role", "menu");
   const name = escapeHtml(tipShort(ganttGroupName(key), 34));
   m.innerHTML = `<div class="ggm-head">${name}</div>
-    <button type="button" data-gm="hide">🙈 Dölj "${name}"</button>
-    <button type="button" data-gm="only"${all.length < 2 ? " disabled" : ""}>👁 Visa bara "${name}"</button>
-    <button type="button" data-gm="all"${hiddenHere.length ? "" : " disabled"}>↺ Visa alla${hiddenHere.length ? ` (${hiddenHere.length} dolda)` : ""}</button>
-    <hr /><button type="button" data-gm="color">🎨 Välj färg…</button>
-    ${ganttCustomColors.has(key) ? `<button type="button" data-gm="uncolor">↺ Standardfärg</button>` : ""}`;
+    <button type="button" data-gm="hide">Dölj "${name}"</button>
+    <button type="button" data-gm="only"${all.length < 2 ? " disabled" : ""}>Visa bara "${name}"</button>
+    <button type="button" data-gm="all"${hiddenHere.length ? "" : " disabled"}>Visa alla${hiddenHere.length ? ` (${hiddenHere.length} dolda)` : ""}</button>
+    <hr /><button type="button" data-gm="color">Välj färg…</button>
+    ${ganttCustomColors.has(key) ? `<button type="button" data-gm="uncolor">Standardfärg</button>` : ""}`;
   document.body.appendChild(m);
   const r = m.getBoundingClientRect();
   m.style.left = Math.max(4, Math.min(e.clientX, innerWidth - r.width - 4)) + "px";
@@ -2872,7 +2878,7 @@ function renderGanttHiddenBar(el, hidden) {
   let bar = document.getElementById("ganttHiddenBar");
   if (!hidden.length) { if (bar) bar.remove(); return; }
   if (!bar) { bar = document.createElement("div"); bar.id = "ganttHiddenBar"; bar.className = "gantt-hidden-bar"; el.parentNode.insertBefore(bar, el); }
-  bar.innerHTML = `<span>🙈 Dolda:</span>${hidden.map(k => `<button type="button" class="ghb-chip" data-show="${escapeHtml(k)}" title="Visa igen">${escapeHtml(tipShort(ganttGroupName(k), 30))} ✕</button>`).join("")}<button type="button" class="ghb-all" data-show="*">Visa alla</button>`;
+  bar.innerHTML = `<span>Dolda:</span>${hidden.map(k => `<button type="button" class="ghb-chip" data-show="${escapeHtml(k)}" title="Visa igen">${escapeHtml(tipShort(ganttGroupName(k), 30))} ✕</button>`).join("")}<button type="button" class="ghb-all" data-show="*">Visa alla</button>`;
   bar.querySelectorAll("[data-show]").forEach(b => { b.onclick = () => setGanttHidden(() => { if (b.dataset.show === "*") hidden.forEach(k => ganttHiddenGroups.delete(k)); else ganttHiddenGroups.delete(b.dataset.show); }); });
 }
 function ganttGroupKeyFor(it) {
@@ -3230,8 +3236,8 @@ function renderGantt(list, target) {
     if (!target) { const c = document.getElementById("ganttSearchCount"); if (c) c.textContent = `${list.length} av ${before}`; }
   } else if (!target) { const c = document.getElementById("ganttSearchCount"); if (c) c.textContent = ""; }
   // Dolda grupper (områden/entreprenörer/aktiviteter) – gäller också utskriften.
-  const hiddenNow = ganttGroupBy ? [...ganttHiddenGroups].filter(k => k.startsWith(ganttGroupBy + ":")) : [];
-  if (hiddenNow.length) { const hs = new Set(hiddenNow); list = list.filter(it => !hs.has(`${ganttGroupBy}:${ganttGroupKeyFor(it)}`)); }
+  const hiddenNow = ganttHiddenNow();
+  list = ganttWithoutHidden(list);
   if (!target) renderGanttHiddenBar(el, hiddenNow);
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
@@ -5039,7 +5045,7 @@ function ganttPrintApplyGrid(chartEl, sec) {
 }
 
 function printGantt(opts) {
-  const list = getFilteredItems();
+  const list = ganttWithoutHidden(getFilteredItems()); // dolda områden skrivs inte ut
   const domain = ganttPrintDomain(list);
   if (!domain) { alert("Det finns inga aktiviteter med start- och slutdatum att skriva ut."); return; }
   const page = ganttPrintPageSize(opts.paper, opts.orient);
