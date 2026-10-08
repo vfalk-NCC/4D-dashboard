@@ -2872,13 +2872,72 @@ function openGanttGroupMenu(e, key) {
 function ganttGroupMenuKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeGanttGroupMenu(); } }
 function ganttGroupMenuOutside(e) { const m = document.getElementById("ganttGroupMenu"); if (m && !m.contains(e.target)) closeGanttGroupMenu(); }
 function closeGanttGroupMenu() { document.getElementById("ganttGroupMenu")?.remove(); document.removeEventListener("mousedown", ganttGroupMenuOutside, true); document.removeEventListener("keydown", ganttGroupMenuKey, true); }
-/* Raden ovanför schemat med de dolda grupperna. */
+/* Dolda grupper (Victor 2026-10-08: "ser konstigt ut när man döljer många"): en kompakt rad ovanför
+   schemat – "Områden: 4 av 58 visas ▾" – som öppnar en lista med bockrutor (bock = visas), sök,
+   Visa alla och Dölj alla. */
+const GANTT_GROUP_PLURAL = { area: "Områden", contractor: "Entreprenörer", activity: "Aktiviteter" };
+function ganttAllGroupKeys() {
+  return [...new Set(getFilteredItems().map(it => `${ganttGroupBy}:${ganttGroupKeyFor(it)}`))]
+    .sort((a, b) => ganttGroupName(a).localeCompare(ganttGroupName(b), "sv", { numeric: true }));
+}
 function renderGanttHiddenBar(el, hidden) {
   let bar = document.getElementById("ganttHiddenBar");
-  if (!hidden.length) { if (bar) bar.remove(); return; }
+  const openPick = document.getElementById("ganttGroupPicker");
+  if (!hidden.length) { if (bar) bar.remove(); if (openPick) fillGanttGroupPicker(openPick); return; } // listan får vara öppen tills man klickar utanför
   if (!bar) { bar = document.createElement("div"); bar.id = "ganttHiddenBar"; bar.className = "gantt-hidden-bar"; el.parentNode.insertBefore(bar, el); }
-  bar.innerHTML = `<span>Dolda:</span>${hidden.map(k => `<button type="button" class="ghb-chip" data-show="${escapeHtml(k)}" title="Visa igen">${escapeHtml(tipShort(ganttGroupName(k), 30))} ✕</button>`).join("")}<button type="button" class="ghb-all" data-show="*">Visa alla</button>`;
-  bar.querySelectorAll("[data-show]").forEach(b => { b.onclick = () => setGanttHidden(() => { if (b.dataset.show === "*") hidden.forEach(k => ganttHiddenGroups.delete(k)); else ganttHiddenGroups.delete(b.dataset.show); }); });
+  const all = ganttAllGroupKeys(), shown = all.filter(k => !ganttHiddenGroups.has(k)).length;
+  bar.innerHTML = `<button type="button" class="ghb-pick" title="Välj vilka som visas">${GANTT_GROUP_PLURAL[ganttGroupBy] || "Grupper"}: <b>${shown} av ${all.length}</b> visas ▾</button><button type="button" class="ghb-all">Visa alla</button>`;
+  bar.querySelector(".ghb-pick").onclick = e => { e.stopPropagation(); if (document.getElementById("ganttGroupPicker")) closeGanttGroupPicker(); else openGanttGroupPicker(bar.querySelector(".ghb-pick")); };
+  bar.querySelector(".ghb-all").onclick = () => { closeGanttGroupPicker(); setGanttHidden(() => hidden.forEach(k => ganttHiddenGroups.delete(k))); };
+  if (openPick) fillGanttGroupPicker(openPick);
+}
+function openGanttGroupPicker(btn) {
+  closeGanttGroupPicker();
+  const p = document.createElement("div");
+  p.id = "ganttGroupPicker"; p.className = "gantt-group-picker";
+  p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök…" />
+    <div class="ggp-acts"><button type="button" data-ga="all">Visa alla</button><button type="button" data-ga="none">Dölj alla</button><button type="button" data-ga="match" class="hidden">Visa bara träffarna</button></div>
+    <div class="ggp-list"></div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(4, Math.min(r.left, innerWidth - 340)) + "px";
+  p.style.top = (r.bottom + 4) + "px";
+  p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px";
+  const search = p.querySelector(".ggp-search");
+  search.oninput = () => fillGanttGroupPicker(p);
+  p.querySelector(".ggp-acts").onclick = e => {
+    const b = e.target.closest("[data-ga]"); if (!b) return;
+    const all = ganttAllGroupKeys(), q = search.value.trim().toLowerCase(), hit = k => ganttGroupName(k).toLowerCase().includes(q);
+    if (b.dataset.ga === "all") setGanttHidden(() => all.forEach(k => ganttHiddenGroups.delete(k)));
+    else if (b.dataset.ga === "none") setGanttHidden(() => all.forEach(k => ganttHiddenGroups.add(k)));
+    else setGanttHidden(() => all.forEach(k => { if (hit(k)) ganttHiddenGroups.delete(k); else ganttHiddenGroups.add(k); }));
+    fillGanttGroupPicker(p);
+  };
+  p.querySelector(".ggp-list").onchange = e => {
+    const c = e.target.closest("input[data-k]"); if (!c) return;
+    setGanttHidden(() => { if (c.checked) ganttHiddenGroups.delete(c.dataset.k); else ganttHiddenGroups.add(c.dataset.k); });
+  };
+  fillGanttGroupPicker(p);
+  setTimeout(() => document.addEventListener("mousedown", ganttGroupPickerOutside, true), 0);
+  document.addEventListener("keydown", ganttGroupPickerKey, true);
+  window.addEventListener("scroll", closeGanttGroupPicker, { once: true });
+  search.focus();
+}
+function fillGanttGroupPicker(p) {
+  const q = p.querySelector(".ggp-search").value.trim().toLowerCase();
+  const keys = ganttAllGroupKeys().filter(k => !q || ganttGroupName(k).toLowerCase().includes(q));
+  p.querySelector('[data-ga="match"]').classList.toggle("hidden", !q);
+  p.querySelector(".ggp-list").innerHTML = keys.map(k => `<label class="ggp-row" title="${escapeHtml(ganttGroupName(k))}"><input type="checkbox" data-k="${escapeHtml(k)}"${ganttHiddenGroups.has(k) ? "" : " checked"} /><span>${escapeHtml(ganttGroupName(k))}</span></label>`).join("") || `<div class="ggp-empty">Inga träffar</div>`;
+}
+function ganttGroupPickerOutside(e) {
+  const p = document.getElementById("ganttGroupPicker");
+  if (p && !p.contains(e.target) && !e.target.closest("#ganttHiddenBar .ghb-pick")) closeGanttGroupPicker();
+}
+function ganttGroupPickerKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeGanttGroupPicker(); } }
+function closeGanttGroupPicker() {
+  document.getElementById("ganttGroupPicker")?.remove();
+  document.removeEventListener("mousedown", ganttGroupPickerOutside, true);
+  document.removeEventListener("keydown", ganttGroupPickerKey, true);
 }
 function ganttGroupKeyFor(it) {
   if (ganttGroupBy === "area") return it.area || NO_AREA_LABEL;

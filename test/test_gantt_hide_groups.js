@@ -60,7 +60,7 @@ seed('plan_items.json', [
   await page.click('#ganttGroupMenu [data-gm="hide"]');
   if ((await lanes()).join() !== 'Sektionsfickor,Sikthall') fail('Dölj: ' + (await lanes()));
   const bar = await page.evaluate(() => ({ txt: document.getElementById('ganttHiddenBar')?.textContent || '', saved: JSON.parse(localStorage.getItem(GANTT_PREFS_KEY)).hiddenGroups }));
-  if (!bar.txt.includes('Inköp') || JSON.stringify(bar.saved) !== '["area:Inköp"]') fail('Dolda ska synas ovanför och sparas: ' + JSON.stringify(bar));
+  if (!/2 av 3/.test(bar.txt) || JSON.stringify(bar.saved) !== '["area:Inköp"]') fail('Dolda ska synas ovanför och sparas: ' + JSON.stringify(bar));
   // Utskriften: det dolda området skrivs inte ut (tavlan).
   await page.evaluate(() => { window.__prints = 0; window.print = () => { window.__prints++; }; });
   await page.click('#ganttPrintBtn');
@@ -70,6 +70,7 @@ seed('plan_items.json', [
   if (!printed.length || printed.some(t => t.includes('Inköp'))) fail('Dolt område ska inte skrivas ut: ' + printed);
   await page.evaluate(() => window.dispatchEvent(new Event('afterprint'))); await page.waitForTimeout(200);
   const menuTxt = await page.evaluate(() => document.getElementById('ganttHiddenBar').textContent);
+  if (!/Områden: 2 av 3 visas/.test(menuTxt)) fail('Kompakt rad: ' + menuTxt);
   if (/[\u{1F300}-\u{1FAFF}]/u.test(menuTxt)) fail('Inga emojis: ' + menuTxt);
   // Visa bara Sikthall, sedan Visa alla via menyn.
   await page.click('#ganttChart .board-lane-head >> nth=1', { button: 'right' });
@@ -88,10 +89,28 @@ seed('plan_items.json', [
   if (await page.$('#ganttGroupMenu')) fail('Esc ska stänga menyn');
   await page.click('#ganttChart [data-action="toggle-gantt-group"] >> nth=2', { button: 'right' });
   await page.click('#ganttGroupMenu [data-gm="hide"]');
-  await page.click('#ganttHiddenBar .ghb-chip');
-  if ((await groupsBars()).length !== 3) fail('Chippet ska visa området igen');
+  // Kompakt rad: "Områden: 2 av 3 visas ▾" – listan med bockrutor, sök, Dölj alla / Visa bara träffarna.
+  const lbl = await page.textContent('#ganttHiddenBar .ghb-pick');
+  if (!/Områden: 2 av 3 visas/.test(lbl)) fail('Raden: ' + lbl);
+  await page.click('#ganttHiddenBar .ghb-pick');
+  const rows = await page.evaluate(() => [...document.querySelectorAll('#ganttGroupPicker .ggp-row')].map(r => r.textContent.trim() + (r.querySelector('input').checked ? '+' : '-')));
+  if (rows.join() !== 'Inköp+,Sektionsfickor+,Sikthall-') fail('Listan: ' + rows);
+  await page.check('#ganttGroupPicker input[data-k="area:Sikthall"]'); await page.waitForTimeout(150);
+  if ((await groupsBars()).length !== 3 || (await page.$('#ganttHiddenBar'))) fail('Bock i listan ska visa området igen');
+  await page.click('#ganttChart [data-action="toggle-gantt-group"] >> nth=0', { button: 'right' });
+  await page.click('#ganttGroupMenu [data-gm="hide"]');
+  await page.click('#ganttHiddenBar .ghb-pick');
+  await page.fill('#ganttGroupPicker .ggp-search', 'sekt');
+  const filtered = await page.evaluate(() => [...document.querySelectorAll('#ganttGroupPicker .ggp-row')].map(r => r.textContent.trim()));
+  if (filtered.join() !== 'Sektionsfickor') fail('Sök i listan: ' + filtered);
+  await page.click('#ganttGroupPicker [data-ga="match"]'); await page.waitForTimeout(150);
+  if ((await groupsBars()).join() !== 'area:Sektionsfickor') fail('Visa bara träffarna: ' + (await groupsBars()));
+  if (!(await page.$('#ganttGroupPicker'))) fail('Listan ska vara öppen medan man väljer');
+  await page.keyboard.press('Escape');
+  await page.click('#ganttHiddenBar .ghb-all');
+  if ((await groupsBars()).length !== 3 || (await page.$('#ganttGroupPicker'))) fail('Visa alla');
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));
-  console.log('OK: dölj områden via högerklick (dölj, visa bara, visa alla, chip), tavla och staplar, sparas');
+  console.log('OK: dölj områden via högerklick (dölj, visa bara, visa alla, kompakt lista med bockrutor och sök), tavla och staplar, sparas');
   console.log('ALLA TESTER OK');
   await browser.close(); server.close();
 })().catch(e => { console.error('FEL:', e.message); process.exit(1); });
