@@ -107,12 +107,32 @@ seed('plan_items.json', [
   await ipad.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
   await ipad.goto(`http://localhost:${PORT}/index.html`); await ipad.waitForTimeout(800);
   await ipad.click('#ganttFullBtn'); await ipad.waitForTimeout(300);
-  const ip = await ipad.evaluate(() => { const p = document.querySelector('section.panel[data-panel-id="gantt"]'), r = p.getBoundingClientRect(); return { rf: window.__rf, fs: p.classList.contains('gantt-fullscreen'), w: r.width, h: r.height, top: r.top, ob: getComputedStyle(p).overscrollBehaviorY, bodyOb: getComputedStyle(document.body).overscrollBehaviorY }; });
-  if (ip.rf !== 0 || !ip.fs || ip.w < 1170 || ip.h < 810 || Math.abs(ip.top) > 1 || ip.ob !== 'contain' || ip.bodyOb !== 'none') fail('iPad-helskärm: ' + JSON.stringify(ip));
+  const ip = await ipad.evaluate(() => { const p = document.querySelector('section.panel[data-panel-id="gantt"]'), r = p.getBoundingClientRect(); return { rf: window.__rf, fs: p.classList.contains('gantt-fullscreen'), w: r.width, h: r.height, top: r.top, bodyOb: getComputedStyle(document.body).overscrollBehaviorY }; });
+  if (ip.rf !== 1 || !ip.fs || ip.w < 1170 || ip.h < 810 || Math.abs(ip.top) > 1 || ip.bodyOb !== 'none') fail('iPad: riktig helskärm som förut: ' + JSON.stringify(ip));
+  // Svep nedåt när schemat är högst upp fångas (når inte systemet); svep uppåt och i sidled släpps igenom.
+  const swipe = await ipad.evaluate(() => {
+    const t = document.querySelector('#ganttChart') || document.querySelector('section.panel[data-panel-id="gantt"]');
+    const mk = (type, x, y) => { const touch = new Touch({ identifier: 1, target: t, clientX: x, clientY: y }); const ev = new TouchEvent(type, { touches: type === 'touchend' ? [] : [touch], targetTouches: [], changedTouches: [touch], bubbles: true, cancelable: true }); t.dispatchEvent(ev); return ev.defaultPrevented; };
+    const sc = [t, ...document.querySelectorAll('section.panel[data-panel-id="gantt"] *')].find(n => n.scrollHeight > n.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(n).overflowY));
+    if (sc) sc.scrollTop = 0;
+    mk('touchstart', 300, 200); const down = mk('touchmove', 302, 260); mk('touchend', 302, 260);
+    mk('touchstart', 300, 260); const up = mk('touchmove', 300, 200); mk('touchend', 300, 200);
+    mk('touchstart', 300, 200); const side = mk('touchmove', 380, 210); mk('touchend', 380, 210);
+    return { down, up, side };
+  });
+  if (!swipe.down || swipe.up || swipe.side) fail('Svepskyddet: ' + JSON.stringify(swipe));
+  // Om systemet ändå stänger helskärmen: schemat ligger kvar och en knapp tar tillbaka helskärmen.
+  await ipad.evaluate(() => { Object.defineProperty(document, 'fullscreenElement', { get: () => null, configurable: true }); document.dispatchEvent(new Event('fullscreenchange')); });
+  await ipad.waitForTimeout(150);
+  const lost = await ipad.evaluate(() => ({ fs: document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen'), back: !!document.getElementById('ganttFsBack') }));
+  if (!lost.fs || !lost.back) fail('Efter systemets stängning: ' + JSON.stringify(lost));
+  await ipad.click('#ganttFsBack'); await ipad.waitForTimeout(150);
+  const back = await ipad.evaluate(() => ({ rf: window.__rf, btn: !!document.getElementById('ganttFsBack') }));
+  if (back.rf !== 2 || back.btn) fail('Tillbaka till helskärm: ' + JSON.stringify(back));
   await ipad.click('#ganttFullBtn'); await ipad.waitForTimeout(200);
   if (await ipad.evaluate(() => document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen'))) fail('iPad: knappen ska stänga');
   await ctx2.close();
-  console.log('OK: iPad – helskärmen fyller sidan utan systemets helskärm (svep nedåt stänger inget), dra-för-att-uppdatera av');
+  console.log('OK: iPad – riktig helskärm; svep nedåt högst upp fångas (stänger inget), uppåt/sidled rullar; stänger systemet ändå: schemat kvar + Tillbaka till helskärm');
   if (errors.length) fail('Fel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
   await browser.close(); server.close();

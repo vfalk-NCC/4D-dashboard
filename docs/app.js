@@ -5153,6 +5153,7 @@ function setGanttFsClean(on) {
 function setGanttFullscreen(on) {
   const panel = ganttFullscreenPanel(), btn = document.getElementById("ganttFullBtn");
   if (!panel) return;
+  if (!on) ganttFsLost(false);
   panel.classList.toggle("gantt-fullscreen", on);
   const fsTools = document.getElementById("ganttFsTools");
   if (fsTools) fsTools.textContent = ganttFsClean ? "☰ Visa knappar" : "☰ Dölj knappar";
@@ -5170,17 +5171,59 @@ async function toggleGanttFullscreen() {
     return;
   }
   setGanttFullscreen(true);
-  // Surfplatta (iPad m.fl., Victor 2026-10-08): webbläsarens helskärm stängs av systemet vid ett svep
-  // nedåt och det går inte att stoppa. Där fyller panelen sidan i stället (samma läge som i Trimble
-  // Connect) – svep rullar bara i schemat och stänger inget.
-  if (ganttIsTouchTablet()) return;
+  ganttFsEnterNative(panel);
+}
+async function ganttFsEnterNative(panel) {
+  ganttFsLost(false);
   if (document.fullscreenEnabled && panel.requestFullscreen) {
     try { await panel.requestFullscreen(); } catch (e) { /* inte tillåtet i ramen – panelen fyller ytan ändå */ }
   }
 }
+/* iPad (Victor 2026-10-08: "det hoppade ur när man swipeade nedåt"): iPadOS stänger webbläsarens
+   helskärm när ett svep nedåt inte tas om hand av sidan. Svep nedåt där schemat redan är högst upp
+   (inget att rulla) fångas därför här och når aldrig systemet; övriga svep rullar som vanligt.
+   Skulle helskärmen ändå stängas av systemet ligger schemat kvar och fyller sidan, med en knapp
+   för att gå tillbaka till helskärm (ett tryck – helskärm kräver ett tryck). */
+function ganttScrollParent(node, stop) {
+  for (let n = node; n && n !== stop.parentNode; n = n.parentNode) {
+    if (n.nodeType !== 1) continue;
+    const cs = getComputedStyle(n);
+    if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight + 1) return n;
+  }
+  return null;
+}
+(function bindGanttFsTouchGuard() {
+  let y0 = 0, x0 = 0, sc = null;
+  document.addEventListener("touchstart", e => {
+    const panel = ganttFullscreenPanel();
+    if (!panel || !panel.classList.contains("gantt-fullscreen") || e.touches.length !== 1) return;
+    y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; sc = ganttScrollParent(e.target, panel);
+  }, { passive: true });
+  document.addEventListener("touchmove", e => {
+    const panel = ganttFullscreenPanel();
+    if (!panel || !panel.classList.contains("gantt-fullscreen") || e.touches.length !== 1 || !panel.contains(e.target)) return;
+    const dy = e.touches[0].clientY - y0, dx = e.touches[0].clientX - x0;
+    if (dy > 0 && dy > Math.abs(dx) && (!sc || sc.scrollTop <= 0)) e.preventDefault(); // nedåt utan något att rulla
+  }, { passive: false });
+})();
+function ganttFsLost(on) {
+  const panel = ganttFullscreenPanel();
+  let b = document.getElementById("ganttFsBack");
+  if (!on) { if (b) b.remove(); return; }
+  if (!panel) return;
+  if (!b) {
+    b = document.createElement("button");
+    b.type = "button"; b.id = "ganttFsBack"; b.className = "gantt-fs-back"; b.textContent = "⛶ Tillbaka till helskärm";
+    b.onclick = () => ganttFsEnterNative(panel);
+    panel.appendChild(b);
+  }
+}
 document.addEventListener("fullscreenchange", () => {
   const panel = ganttFullscreenPanel();
-  if (!document.fullscreenElement && panel && panel.classList.contains("gantt-fullscreen")) setGanttFullscreen(false);
+  if (!document.fullscreenElement && panel && panel.classList.contains("gantt-fullscreen")) {
+    // Pekskärm: systemet stängde (t.ex. ett svep) – schemat ligger kvar och fyller sidan, knappen tar tillbaka helskärmen.
+    if (ganttIsTouchTablet()) ganttFsLost(true); else setGanttFullscreen(false);
+  }
 });
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape" || (e.target && e.target.id === "ganttSearch" && e.target.value)) return;

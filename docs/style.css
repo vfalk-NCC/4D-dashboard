@@ -2221,7 +2221,7 @@ svg.gantt-arrows.has-hot text.ga-lag-t.hot { opacity: 1; }
 
 /* Helskärm på surfplatta: fyller sidan (inte systemets helskärm), svep rullar bara i schemat och
    "dra för att uppdatera" är avstängt så länge helskärmen är på. */
-section.panel.gantt-fullscreen { height: 100vh; height: 100dvh; overscroll-behavior: contain; }
+section.panel.gantt-fullscreen { height: 100vh; height: 100dvh; overscroll-behavior: none; }
 section.panel.gantt-fullscreen #ganttChart { overscroll-behavior: contain; }
 html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavior: none; }
 
@@ -2230,3 +2230,5 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .board-fulltext .pnote:not(.pnote-one) .pnote-sub, .pnote.pnote-peek .pnote-sub { white-space: normal; }
 .pnote.pnote-peek { z-index: 40; box-shadow: 0 10px 28px rgba(15,23,42,.28); }
 .board-fulltext .pnote-one .pnote-title { max-width: none; }
+
+.gantt-fs-back { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 50; border: none; border-radius: 999px; padding: 8px 18px; background: #1f2937; color: #fff; font-size: 14px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.25); cursor: pointer; }
