@@ -805,6 +805,7 @@ async function fetchItems() {
   }
   try {
     items = (await ghReadJSON(settings.githubToken, tablePath("plan_items"))).map(fromRow);
+    await fetchGanttColors();
   } catch (e) {
     console.error("Kunde inte hämta planeringsdata", e);
     items = [];
@@ -2101,7 +2102,51 @@ const SOFT_PALETTE = [
   { bg: "#eceff3", bd: "#b3bcc8", ink: "#37404c" }  // grå
 ];
 let softColorMaps = null, softColorItemsRef = null;
+/* Egna färger (Victor 2026-10-08): välj färg per entreprenör/område/aktivitet. Sparas i projektet
+   (gantt_colors.json, en egen fil: [{ key: "contractor:NCC", color: "#rrggbb" }]) så att alla ser
+   samma färger, också i utskriften. Lappens bakgrund, kant och text räknas fram ur färgen. */
+let ganttCustomColors = new Map();
+const softFromHex = new Map();
+function softColorFromHex(hex) {
+  if (softFromHex.has(hex)) return softFromHex.get(hex);
+  const n = parseInt(hex.slice(1), 16), c = [n >> 16 & 255, n >> 8 & 255, n & 255];
+  const mix = (t, w) => "#" + c.map(v => Math.round(v + (t - v) * w).toString(16).padStart(2, "0")).join("");
+  const r = { bg: mix(255, 0.78), bd: mix(255, 0.25), ink: mix(0, 0.55) };
+  softFromHex.set(hex, r);
+  return r;
+}
+async function fetchGanttColors() {
+  if (!isBackendConfigured()) { ganttCustomColors = new Map(); return; }
+  try {
+    const arr = await ghReadJSON(settings.githubToken, tablePath("gantt_colors"));
+    ganttCustomColors = new Map((Array.isArray(arr) ? arr : []).filter(x => x && x.key && /^#[0-9a-f]{6}$/i.test(x.color || "")).map(x => [x.key, x.color.toLowerCase()]));
+  } catch (e) { console.warn("Kunde inte läsa egna Gantt-färger", e); }
+}
+async function setGanttColor(kind, key, hex) {
+  const k = `${kind}:${key}`, before = ganttCustomColors.get(k);
+  if (hex) ganttCustomColors.set(k, hex.toLowerCase()); else ganttCustomColors.delete(k);
+  renderGantt(getFilteredItems());
+  try {
+    await ghWriteJSON(settings.githubToken, tablePath("gantt_colors"), arr => [...(Array.isArray(arr) ? arr : []).filter(x => x && x.key !== k), ...(hex ? [{ key: k, color: hex.toLowerCase() }] : [])], hex ? `Gantt-färg: ${key}` : `Gantt-färg återställd: ${key}`);
+  } catch (e) {
+    if (before) ganttCustomColors.set(k, before); else ganttCustomColors.delete(k);
+    renderGantt(getFilteredItems());
+    alert("Kunde inte spara färgen: " + e.message);
+  }
+}
+/* Öppnar webbläsarens färgväljare för en entreprenör/ett område/en aktivitet. */
+function pickGanttColor(kind, key) {
+  const inp = document.createElement("input");
+  inp.type = "color"; inp.value = ganttCustomColors.get(`${kind}:${key}`) || softColor(kind, key).bd;
+  inp.style.cssText = "position:fixed;left:-100px;top:0;opacity:0;";
+  document.body.appendChild(inp);
+  inp.addEventListener("change", () => { setGanttColor(kind, key, inp.value); inp.remove(); });
+  inp.addEventListener("blur", () => setTimeout(() => inp.remove(), 500));
+  inp.click();
+}
 function softColor(kind, key) {
+  const own = ganttCustomColors.get(`${kind}:${key}`);
+  if (own) return softColorFromHex(own);
   if (!softColorMaps || softColorItemsRef !== items) {
     softColorItemsRef = items;
     softColorMaps = {};
@@ -2799,7 +2844,9 @@ function openGanttGroupMenu(e, key) {
   m.innerHTML = `<div class="ggm-head">${name}</div>
     <button type="button" data-gm="hide">🙈 Dölj "${name}"</button>
     <button type="button" data-gm="only"${all.length < 2 ? " disabled" : ""}>👁 Visa bara "${name}"</button>
-    <button type="button" data-gm="all"${hiddenHere.length ? "" : " disabled"}>↺ Visa alla${hiddenHere.length ? ` (${hiddenHere.length} dolda)` : ""}</button>`;
+    <button type="button" data-gm="all"${hiddenHere.length ? "" : " disabled"}>↺ Visa alla${hiddenHere.length ? ` (${hiddenHere.length} dolda)` : ""}</button>
+    <hr /><button type="button" data-gm="color">🎨 Välj färg…</button>
+    ${ganttCustomColors.has(key) ? `<button type="button" data-gm="uncolor">↺ Standardfärg</button>` : ""}`;
   document.body.appendChild(m);
   const r = m.getBoundingClientRect();
   m.style.left = Math.max(4, Math.min(e.clientX, innerWidth - r.width - 4)) + "px";
@@ -2809,6 +2856,8 @@ function openGanttGroupMenu(e, key) {
     if (!b || b.disabled) return;
     closeGanttGroupMenu();
     if (b.dataset.gm === "hide") setGanttHidden(() => ganttHiddenGroups.add(key));
+    else if (b.dataset.gm === "color") pickGanttColor(ganttGroupBy, ganttGroupName(key));
+    else if (b.dataset.gm === "uncolor") setGanttColor(ganttGroupBy, ganttGroupName(key), null);
     else if (b.dataset.gm === "only") setGanttHidden(() => all.forEach(k => { if (k !== key) ganttHiddenGroups.add(k); else ganttHiddenGroups.delete(k); }));
     else setGanttHidden(() => hiddenHere.forEach(k => ganttHiddenGroups.delete(k)));
   });
@@ -3135,6 +3184,22 @@ function renderGanttLegend() {
     ${ganttShowBaseline ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline"></span>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : ""}
     ${ganttShowBaseline && ganttBaseline2Id ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline2"></span>Jämför: ${escapeHtml(baselineLabel(ganttBaseline2Id))}</span>` : ""}
   `;
+  // Tavlans färger (Färga efter): en ruta per entreprenör/område/aktivitet – klicka för att välja egen färg.
+  if (ganttView === "board") {
+    const kind = ganttColorBy, none = { area: NO_AREA_LABEL, contractor: NO_CONTRACTOR_LABEL, activity: NO_ACTIVITY_LABEL }[kind];
+    const keys = [...new Set(getFilteredItems().map(it => it[kind] || none))].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+    if (keys.length && keys.length <= 40) {
+      const label = { area: "Område", contractor: "Entreprenör", activity: "Aktivitet" }[kind];
+      el.insertAdjacentHTML("beforeend", `<div class="gantt-colorkey"><span class="gck-lbl">${label}:</span>${keys.map(k => {
+        const c = softColor(kind, k), own = ganttCustomColors.has(`${kind}:${k}`);
+        return `<button type="button" class="gck-chip${own ? " own" : ""}" data-ck="${escapeHtml(k)}" style="--bg:${c.bg};--bd:${c.bd};--ink:${c.ink}" title="Klicka för att välja färg${own ? " – högerklicka för standardfärg" : ""}">${escapeHtml(tipShort(k, 26))}</button>`;
+      }).join("")}</div>`);
+      el.querySelectorAll(".gck-chip").forEach(b => {
+        b.onclick = () => pickGanttColor(kind, b.dataset.ck);
+        b.oncontextmenu = e => { if (!ganttCustomColors.has(`${kind}:${b.dataset.ck}`)) return; e.preventDefault(); setGanttColor(kind, b.dataset.ck, null); };
+      });
+    }
+  }
 }
 
 // Markerar (selekterar) ett Gantt-objekt i 3D-modellen, om det har en känd
