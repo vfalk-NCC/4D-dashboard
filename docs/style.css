@@ -1843,8 +1843,11 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item.gl-bars-only { di
 .pnote.pnote-ext.pnote-late::before { box-shadow: 0 0 0 2px #e5484d; }
 .pnote-ext .pnote-prog { right: auto; width: var(--real); }
 .pnote-ext .pnote-dates, .pnote-ext .pnote-dep { display: none; }
-.pnote-ext .pnote-sub { flex: 0 0 auto; overflow: visible; }
-.pnote-ext .pnote-title { max-width: none; overflow: visible; }
+.pnote-one.pnote-ext .pnote-sub { flex: 0 0 auto; overflow: visible; }
+.pnote-one.pnote-ext .pnote-title { max-width: none; overflow: visible; }
+/* Större lappar med förlängning: namnet högst två rader, undertexten en rad – inget rinner ut över status/datum. */
+.pnote-ext:not(.pnote-one) .pnote-title { overflow: hidden; -webkit-line-clamp: 2; }
+.pnote-ext:not(.pnote-one) .pnote-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pnote-ext .pnote-dot { position: relative; left: -5px; }
 
 /* Baseline (Victors önskemål 2026-10-06): en tidigare version av tidplanen som en grå stapel/linje. */
