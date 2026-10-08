@@ -50,6 +50,7 @@ let ganttSortBy = "startDate";     // "startDate" | "contractor" | "status" | "n
 let ganttDensity = "compact";      // "compact" | "comfortable"
 let ganttZoomPxPerDay = null;      // null = "Anpassa" (procentbaserat, fyller bredden) annars antal px/dag
 let ganttCollapsedGroups = new Set(); // vilka grupper (nyckel: "<ganttGroupBy>:<gruppnamn>") som är hopfällda
+let ganttHiddenGroups = new Set();    // dolda grupper (samma nyckel) – högerklick på gruppens rubrik (Victor 2026-10-08)
 let ganttRangeStart = null;        // eget visat datumintervall (annars auto utifrån objektens datum)
 let ganttRangeEnd = null;
 let ganttTooltipEl = null;         // återanvänd DOM-nod för hover-/fokustooltip, se ensureGanttTooltip()
@@ -2731,6 +2732,7 @@ function loadGanttPrefs() {
     if (prefs.density === "compact" || prefs.density === "comfortable") ganttDensity = prefs.density;
     if (prefs.zoomPxPerDay === null || Number.isFinite(prefs.zoomPxPerDay)) ganttZoomPxPerDay = prefs.zoomPxPerDay;
     if (Array.isArray(prefs.collapsedGroups)) ganttCollapsedGroups = new Set(prefs.collapsedGroups);
+    if (Array.isArray(prefs.hiddenGroups)) ganttHiddenGroups = new Set(prefs.hiddenGroups);
     if (typeof prefs.rangeStart === "string" || prefs.rangeStart === null) ganttRangeStart = prefs.rangeStart;
     if (typeof prefs.rangeEnd === "string" || prefs.rangeEnd === null) ganttRangeEnd = prefs.rangeEnd;
     if (typeof prefs.editable === "boolean") ganttEditable = prefs.editable;
@@ -2760,6 +2762,7 @@ function saveGanttPrefs() {
       density: ganttDensity,
       zoomPxPerDay: ganttZoomPxPerDay,
       collapsedGroups: [...ganttCollapsedGroups],
+      hiddenGroups: [...ganttHiddenGroups],
       rangeStart: ganttRangeStart,
       rangeEnd: ganttRangeEnd,
       editable: ganttEditable,
@@ -2780,6 +2783,49 @@ function saveGanttPrefs() {
   }
 }
 
+/* ----- Dölj grupper (Victor 2026-10-08) -------------------------------------------------------------
+   Högerklick på en grupps rubrik (område, entreprenör eller aktivitet – det man grupperar på):
+   Dölj, Visa bara den här, Visa alla. Dolda grupper syns som en rad ovanför schemat där de kan tas
+   fram igen med ett klick. Valet sparas i webbläsaren som övriga Gantt-inställningar. */
+const ganttGroupName = key => key.slice(key.indexOf(":") + 1);
+function setGanttHidden(fn) { fn(); saveGanttPrefs(); renderGantt(getFilteredItems()); }
+function openGanttGroupMenu(e, key) {
+  closeGanttGroupMenu();
+  const all = [...new Set(getFilteredItems().map(it => `${ganttGroupBy}:${ganttGroupKeyFor(it)}`))];
+  const hiddenHere = [...ganttHiddenGroups].filter(k => k.startsWith(ganttGroupBy + ":"));
+  const m = document.createElement("div");
+  m.id = "ganttGroupMenu"; m.className = "gantt-group-menu"; m.setAttribute("role", "menu");
+  const name = escapeHtml(tipShort(ganttGroupName(key), 34));
+  m.innerHTML = `<div class="ggm-head">${name}</div>
+    <button type="button" data-gm="hide">🙈 Dölj "${name}"</button>
+    <button type="button" data-gm="only"${all.length < 2 ? " disabled" : ""}>👁 Visa bara "${name}"</button>
+    <button type="button" data-gm="all"${hiddenHere.length ? "" : " disabled"}>↺ Visa alla${hiddenHere.length ? ` (${hiddenHere.length} dolda)` : ""}</button>`;
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(e.clientX, innerWidth - r.width - 4)) + "px";
+  m.style.top = Math.max(4, Math.min(e.clientY, innerHeight - r.height - 4)) + "px";
+  m.addEventListener("click", ev => {
+    const b = ev.target.closest("[data-gm]");
+    if (!b || b.disabled) return;
+    closeGanttGroupMenu();
+    if (b.dataset.gm === "hide") setGanttHidden(() => ganttHiddenGroups.add(key));
+    else if (b.dataset.gm === "only") setGanttHidden(() => all.forEach(k => { if (k !== key) ganttHiddenGroups.add(k); else ganttHiddenGroups.delete(k); }));
+    else setGanttHidden(() => hiddenHere.forEach(k => ganttHiddenGroups.delete(k)));
+  });
+  setTimeout(() => document.addEventListener("mousedown", ganttGroupMenuOutside, true), 0);
+  document.addEventListener("keydown", ganttGroupMenuKey, true);
+}
+function ganttGroupMenuKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeGanttGroupMenu(); } }
+function ganttGroupMenuOutside(e) { const m = document.getElementById("ganttGroupMenu"); if (m && !m.contains(e.target)) closeGanttGroupMenu(); }
+function closeGanttGroupMenu() { document.getElementById("ganttGroupMenu")?.remove(); document.removeEventListener("mousedown", ganttGroupMenuOutside, true); document.removeEventListener("keydown", ganttGroupMenuKey, true); }
+/* Raden ovanför schemat med de dolda grupperna. */
+function renderGanttHiddenBar(el, hidden) {
+  let bar = document.getElementById("ganttHiddenBar");
+  if (!hidden.length) { if (bar) bar.remove(); return; }
+  if (!bar) { bar = document.createElement("div"); bar.id = "ganttHiddenBar"; bar.className = "gantt-hidden-bar"; el.parentNode.insertBefore(bar, el); }
+  bar.innerHTML = `<span>🙈 Dolda:</span>${hidden.map(k => `<button type="button" class="ghb-chip" data-show="${escapeHtml(k)}" title="Visa igen">${escapeHtml(tipShort(ganttGroupName(k), 30))} ✕</button>`).join("")}<button type="button" class="ghb-all" data-show="*">Visa alla</button>`;
+  bar.querySelectorAll("[data-show]").forEach(b => { b.onclick = () => setGanttHidden(() => { if (b.dataset.show === "*") hidden.forEach(k => ganttHiddenGroups.delete(k)); else ganttHiddenGroups.delete(b.dataset.show); }); });
+}
 function ganttGroupKeyFor(it) {
   if (ganttGroupBy === "area") return it.area || NO_AREA_LABEL;
   if (ganttGroupBy === "contractor") return it.contractor || NO_CONTRACTOR_LABEL;
@@ -3118,6 +3164,10 @@ function renderGantt(list, target) {
     list = list.filter(ganttSearchMatch);
     if (!target) { const c = document.getElementById("ganttSearchCount"); if (c) c.textContent = `${list.length} av ${before}`; }
   } else if (!target) { const c = document.getElementById("ganttSearchCount"); if (c) c.textContent = ""; }
+  // Dolda grupper (områden/entreprenörer/aktiviteter) – gäller också utskriften.
+  const hiddenNow = ganttGroupBy ? [...ganttHiddenGroups].filter(k => k.startsWith(ganttGroupBy + ":")) : [];
+  if (hiddenNow.length) { const hs = new Set(hiddenNow); list = list.filter(it => !hs.has(`${ganttGroupBy}:${ganttGroupKeyFor(it)}`)); }
+  if (!target) renderGanttHiddenBar(el, hiddenNow);
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
   if (ganttView === "board") { renderGanttBoard(list, target); if (!target) applyGanttModelSel(false); return; }
@@ -3830,7 +3880,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     const lc = ganttGroupBy ? softColor(ganttGroupBy, k) : SOFT_PALETTE[11];
     const laneItems = lanes.get(k);
     return `<div class="board-lane${collapsed ? " collapsed" : ""}">
-        <div class="board-lane-head" style="--bg:${lc.bg}; --bd:${lc.bd}; --ink:${lc.ink};"${ganttGroupBy ? ` data-action="toggle-board-lane" data-group-key="${escapeHtml(collapseKey)}" title="Klicka för att fälla ihop/ut"` : ""}>
+        <div class="board-lane-head" style="--bg:${lc.bg}; --bd:${lc.bd}; --ink:${lc.ink};"${ganttGroupBy ? ` data-action="toggle-board-lane" data-group-key="${escapeHtml(collapseKey)}" title="Klicka för att fälla ihop/ut – högerklicka för att dölja"` : ""}>
           <span class="board-lane-name">${ganttGroupBy && !target ? (collapsed ? "▸ " : "▾ ") : ""}${escapeHtml(k)}</span>
           <span class="board-lane-count">${laneItems.length} st</span>
         </div>
@@ -3857,6 +3907,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
 
   if (target) return;
   el.querySelectorAll('[data-action="toggle-board-lane"]').forEach(h => {
+    h.oncontextmenu = e => { e.preventDefault(); openGanttGroupMenu(e, h.dataset.groupKey); };
     h.onclick = () => {
       const k = h.dataset.groupKey;
       if (ganttCollapsedGroups.has(k)) ganttCollapsedGroups.delete(k); else ganttCollapsedGroups.add(k);
@@ -4494,6 +4545,7 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
     b.onclick = e => { e.stopPropagation(); deleteActivity(items.find(x => String(x.id) === b.dataset.trashId)); };
   });
   el.querySelectorAll('[data-action="toggle-gantt-group"]').forEach(headerEl => {
+    headerEl.oncontextmenu = e => { e.preventDefault(); openGanttGroupMenu(e, headerEl.dataset.groupKey); };
     headerEl.onclick = () => {
       const key = headerEl.dataset.groupKey;
       if (ganttCollapsedGroups.has(key)) ganttCollapsedGroups.delete(key); else ganttCollapsedGroups.add(key);
