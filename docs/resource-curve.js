@@ -12,7 +12,7 @@
 const RC_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7"];
 const RC_OTHER = "#9ca3af", RC_OTHER_NAME = "Övriga";
 const RC_PREFS_KEY = "4ddash-rescurve";
-let rcPrefs = { mode: "people", only: "", table: false };
+let rcPrefs = { mode: "people", only: "", table: false, by: "resource" };
 try { rcPrefs = { ...rcPrefs, ...(JSON.parse(localStorage.getItem(RC_PREFS_KEY) || "{}") || {}) }; } catch (e) {}
 const rcSave = () => { try { localStorage.setItem(RC_PREFS_KEY, JSON.stringify(rcPrefs)); } catch (e) {} };
 
@@ -36,13 +36,21 @@ function rcActivities() {
   });
   return out;
 }
-/* Fasta färger: de 7 största resurserna (timmar) i hela planen. */
+/* Vad staplarna delas upp efter (Victor 2026-10-08): resurs, entreprenör eller område. */
+const RC_BY = { resource: "Resurs", contractor: "Entreprenör", area: "Område" };
+const rcBy = () => (rcPrefs.by in RC_BY ? rcPrefs.by : "resource");
+const rcNone = by => by === "contractor" ? (typeof NO_CONTRACTOR_LABEL !== "undefined" ? NO_CONTRACTOR_LABEL : "Utan entreprenör") : (typeof NO_AREA_LABEL !== "undefined" ? NO_AREA_LABEL : "Utan område");
+const rcKeyOf = (it, r, by) => by === "resource" ? r.name : (it[by] || rcNone(by));
+/* Fasta färger efter timmar i hela planen (inte urvalet – färgen följer serien, inte placeringen).
+   Resurs: de 7 största får standardpalettens färger. Entreprenör/område: samma färger som lapparna på
+   tavlan (även egna valda färger), de 11 största – resten blir Övriga. */
 function rcColorMap() {
-  const tot = new Map();
-  const seen = new Set();
-  items.forEach(it => { const k = it.activityKey || `id:${it.id}`; if (seen.has(k) || !it.resources) return; seen.add(k); it.resources.forEach(r => tot.set(r.name, (tot.get(r.name) || 0) + (Number(r.hours) || 0))); });
-  const top = [...tot].sort((a, b) => b[1] - a[1]).slice(0, RC_COLORS.length).map(([n]) => n).sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
-  return new Map(top.map((n, i) => [n, RC_COLORS[i]]));
+  const by = rcBy(), tot = new Map(), seen = new Set();
+  items.forEach(it => { const k = it.activityKey || `id:${it.id}`; if (seen.has(k) || !it.resources) return; seen.add(k); it.resources.forEach(r => { const s = rcKeyOf(it, r, by); tot.set(s, (tot.get(s) || 0) + (Number(r.hours) || 0)); }); });
+  const n = by === "resource" ? RC_COLORS.length : 11;
+  const top = [...tot].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k]) => k).sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+  if (by === "resource") return new Map(top.map((k, i) => [k, RC_COLORS[i]]));
+  return new Map(top.map(k => [k, typeof softColor === "function" ? softColor(by, k).bd : RC_COLORS[top.indexOf(k) % RC_COLORS.length]]));
 }
 /* Veckovärden: Map(veckans måndag -> Map(serie -> värde)), serie = resurs eller "Övriga". */
 function rcCompute(acts, colors, mode, d0, d1) {
@@ -55,8 +63,8 @@ function rcCompute(acts, colors, mode, d0, d1) {
       if (!(p0 >= a0 && p1 <= a1 && p0 <= p1)) { p0 = a0; p1 = a1; } // aktiviteten flyttad: följ den
       const days = []; for (let d = p0; d <= p1; d++) if (rcWork(d)) days.push(d);
       if (!days.length) for (let d = p0; d <= p1; d++) days.push(d);
-      const s = colors.has(r.name) ? r.name : RC_OTHER_NAME;
-      if (rcPrefs.only && r.name !== rcPrefs.only && s !== rcPrefs.only) return;
+      const key = rcKeyOf(it, r, rcBy()), s = colors.has(key) ? key : RC_OTHER_NAME;
+      if (rcPrefs.only && key !== rcPrefs.only && s !== rcPrefs.only) return;
       const hPerDay = (Number(r.hours) || 0) / days.length, qty = Number(r.qty) || 0;
       days.forEach(d => {
         if (d < d0 || d > d1) return;
@@ -72,7 +80,7 @@ function renderResourceCurve() {
   if (!el || typeof items === "undefined") return;
   const acts = rcActivities(), colors = rcColorMap(), mode = rcPrefs.mode === "hours" ? "hours" : "people";
   const anyRes = items.some(it => it.resources && it.resources.length);
-  const ctrl = `<div class="rc-ctrl"><div class="rc-seg" role="tablist"><button type="button" data-rc-mode="people" class="${mode === "people" ? "on" : ""}">Personer</button><button type="button" data-rc-mode="hours" class="${mode === "hours" ? "on" : ""}">Timmar</button></div>
+  const ctrl = `<div class="rc-ctrl"><label class="rc-by">Per <select class="rc-bysel">${Object.entries(RC_BY).map(([k, v]) => `<option value="${k}"${rcBy() === k ? " selected" : ""}>${v}</option>`).join("")}</select></label><div class="rc-seg" role="tablist"><button type="button" data-rc-mode="people" class="${mode === "people" ? "on" : ""}">Personer</button><button type="button" data-rc-mode="hours" class="${mode === "hours" ? "on" : ""}">Timmar</button></div>
     <span class="rc-note">${acts.length} aktivitet${acts.length === 1 ? "" : "er"} med resurser · följer filter, sök och dolda områden</span>
     <button type="button" class="rc-tablebtn">${rcPrefs.table ? "Visa diagram" : "Visa tabell"}</button></div>`;
   if (!anyRes) { el.innerHTML = `<div class="hint">Inga resurser inlagda ännu. Importera Powerproject-tidplanen (resurserna följer med) eller lägg in dem under <b>Avancerat (resurser)</b> när du redigerar en aktivitet.</div>`; return; }
@@ -137,6 +145,7 @@ function renderResourceCurve() {
 function rcBind(el) {
   el.querySelectorAll("[data-rc-mode]").forEach(b => { b.onclick = () => { rcPrefs.mode = b.dataset.rcMode; rcSave(); renderResourceCurve(); }; });
   el.querySelectorAll("[data-rc-only]").forEach(b => { b.onclick = () => { rcPrefs.only = rcPrefs.only === b.dataset.rcOnly ? "" : b.dataset.rcOnly; rcSave(); renderResourceCurve(); }; });
+  const bs = el.querySelector(".rc-bysel"); if (bs) bs.onchange = () => { rcPrefs.by = bs.value; rcPrefs.only = ""; rcSave(); renderResourceCurve(); };
   const t = el.querySelector(".rc-tablebtn"); if (t) t.onclick = () => { rcPrefs.table = !rcPrefs.table; rcSave(); renderResourceCurve(); };
 }
 window.addEventListener("resize", () => { clearTimeout(window._rcT); window._rcT = setTimeout(renderResourceCurve, 200); });

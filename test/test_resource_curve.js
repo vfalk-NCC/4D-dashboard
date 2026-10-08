@@ -82,7 +82,17 @@ seed('plan_items.json', [
   await page.evaluate(() => { ganttHiddenGroups = new Set(); rcPrefs.table = false; renderGantt(getFilteredItems()); }); await page.waitForTimeout(300);
   const svg = await page.evaluate(() => ({ bars: document.querySelectorAll('#resourceCurve .rc-svg rect[fill]').length, chips: [...document.querySelectorAll('#resourceCurve .rc-chip')].map(c => c.textContent.trim()) }));
   if (svg.bars < 3 || svg.chips.length !== 2) fail('Diagrammet: ' + JSON.stringify(svg));
-  console.log('OK: resurskurvan – personer och timmar per vecka och resurs, en aktivitet en gång, följer filter och dolda områden');
+  // Per entreprenör: samma färger som lapparna på tavlan.
+  await page.evaluate(() => { rcPrefs.table = true; rcPrefs.mode = 'people'; renderResourceCurve(); });
+  await page.selectOption('#resourceCurve .rc-bysel', 'contractor'); await page.waitForTimeout(200);
+  const hc = await page.evaluate(() => [...document.querySelectorAll('#resourceCurve .rc-table thead th')].map(th => th.textContent));
+  t = await table();
+  if (hc.join() !== 'Vecka,NCC,Peri,Totalt' || t[0].slice(1).join('|') !== '4|2|6') fail('Per entreprenör: ' + JSON.stringify([hc, t]));
+  const sw = await page.evaluate(() => { rcPrefs.table = false; renderResourceCurve(); const c = [...document.querySelectorAll('#resourceCurve .rc-chip')].find(b => b.dataset.rcOnly === 'Peri'); return { chip: c.querySelector('i').style.background, board: softColor('contractor', 'Peri').bd }; });
+  const hex = c => c.startsWith('#') ? c.toLowerCase() : '#' + c.match(/\d+/g).slice(0, 3).map(n => Number(n).toString(16).padStart(2, '0')).join('');
+  if (hex(sw.chip) !== hex(sw.board)) fail('Entreprenörens färg ska vara tavlans: ' + JSON.stringify(sw));
+  await page.selectOption('#resourceCurve .rc-bysel', 'resource');
+  console.log('OK: resurskurvan – personer och timmar per vecka och resurs, en aktivitet en gång, följer filter och dolda områden, per resurs/entreprenör med tavlans färger');
   // Redigera aktivitet: Avancerat (resurser) – lägg till en resurs på aktiviteten "Utan" och ändra Gjutning.
   await page.evaluate(() => { ganttEditable = true; });
   await page.click('[data-gantt-view="board"]'); await page.waitForTimeout(300);
