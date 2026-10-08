@@ -3009,6 +3009,12 @@ function tipDate(v) {
   return weekdayDateSv(v) + (d.getUTCFullYear() !== todayUTC().getUTCFullYear() ? ` ${d.getUTCFullYear()}` : "");
 }
 const tipRange = (a, b) => (a === b ? tipDate(a) : `${tipDate(a)} – ${tipDate(b)}`);
+/* Tooltiparna räknas fram först när de visas (2026-10-08): att bygga dem för alla lappar/staplar
+   vid varje omritning tog sekunder med många objekt. Ett värde kan vara en funktion som
+   anropas vid första get() – resultatet sparas. */
+class LazyTipMap extends Map {
+  get(k) { const v = super.get(k); if (typeof v !== "function") return v; const html = v(); super.set(k, html); return html; }
+}
 function ganttTooltipHtmlForItem(it, depById) {
   const e = escapeHtml;
   const row = (k, vHtml) => `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${e(k)}</span><span class="gantt-tooltip-value">${vHtml}</span></div>`;
@@ -3212,7 +3218,7 @@ function renderGantt(list, target) {
   // Tooltip-innehåll byggs en gång per stapel och läggs i en Map (nyckel ->
   // HTML), refererad via data-gantt-tip på respektive stapel - se
   // bindGanttInteractions. Undviker HTML-i-attribut-eskapering helt.
-  const tooltips = new Map();
+  const tooltips = new LazyTipMap();
   let tipCounter = 0;
   const registerTip = html => {
     const key = `t${tipCounter++}`;
@@ -3232,7 +3238,7 @@ function renderGantt(list, target) {
     const progressPct = Math.max(0, Math.min(100, Number(it.progress) || 0));
     const hasActual = ganttShowActual && it.actualStartDate && it.actualEndDate;
     const canSelectIn3d = Boolean(it.modelId && it.objectId);
-    const tipKey = registerTip(ganttTooltipHtmlForItem(it, depById));
+    const tipKey = registerTip(() => ganttTooltipHtmlForItem(it, depById));
 
     // Beroenderisk: minst ett ofärdigt beroende vars (verkliga, annars
     // planerade) slutdatum ligger på eller efter det här objektets planerade
@@ -3716,7 +3722,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   const skippedNoDate = list.length - withDates.length;
   const skippedRange = withDates.filter(it => !(it.startDate <= domainEnd && it.endDate >= domainStart)).length;
   const depById = itemsByIdAll();
-  const tooltips = new Map();
+  const tooltips = new LazyTipMap();
   const byNoteId = new Map(visible.map(it => [String(it.id), it]));
   const predSet = new Set(items.flatMap(x => x.dependsOn || []));
 
@@ -3743,7 +3749,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     if (it.members) subParts.push(`⛓ ${it.members.length} objekt`);
     const prog = Math.max(0, Math.min(100, Number(it.progress) || 0));
     const key = `b${tooltips.size}`;
-    tooltips.set(key, ganttTooltipHtmlForItem(it, depById));
+    tooltips.set(key, () => ganttTooltipHtmlForItem(it, depById));
     // Liten, stabil lutning per lapp - som riktiga post-it-lappar på en vägg.
     let h = 0; for (const ch of String(it.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     const tilt = ((h % 7) - 3) * 0.25;
@@ -4242,6 +4248,16 @@ async function deleteActivity(it) {
   hideGanttTooltip();
   const nowIso = new Date().toISOString();
   let removed = [], depBefore = new Map(), actsRemoved = [];
+  // Lappen försvinner direkt (2026-10-08) – sparandet sker sedan. Misslyckas det kommer allt tillbaka.
+  const itemsBefore = items.slice(), actsBefore = activities.slice();
+  const depsLocal = new Map(items.filter(x => (x.dependsOn || []).some(d => ids.has(String(d)))).map(x => [x, x.dependsOn]));
+  items = items.filter(x => !ids.has(String(x.id)));
+  depsLocal.forEach((_, x) => { x.dependsOn = (x.dependsOn || []).filter(d => !ids.has(String(d))); });
+  const hasActs = activities.some(a => ids.has(String(a.plan_item_id)));
+  activities = activities.filter(a => !ids.has(String(a.plan_item_id)));
+  renderAll();
+  modelToast(`Tar bort "${tipShort(name, 40)}"…`);
+  const restore = () => { items = itemsBefore; depsLocal.forEach((d, x) => { x.dependsOn = d; }); activities = actsBefore; renderAll(); };
   try {
     await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => {
       removed = arr.filter(r => ids.has(String(r.id)));
@@ -4252,17 +4268,14 @@ async function deleteActivity(it) {
         return { ...r, depends_on: r.depends_on.filter(d => !ids.has(String(d))), updated_at: nowIso };
       });
     }, `Ta bort aktivitet: ${name}`);
-    try {
+    // Delaktiviteterna skrivs bara om aktiviteten har några (sparar två anrop annars).
+    if (hasActs) try {
       await ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"), arr => {
         actsRemoved = arr.filter(a => ids.has(String(a.plan_item_id)));
         return actsRemoved.length ? arr.filter(a => !ids.has(String(a.plan_item_id))) : arr;
       }, `Ta bort delaktiviteter: ${name}`);
     } catch (e) { console.warn("Kunde inte ta bort delaktiviteterna", e); }
-  } catch (e) { alert("Kunde inte ta bort: " + e.message); return; }
-  items = items.filter(x => !ids.has(String(x.id)));
-  items.forEach(x => { if (depBefore.has(x.id)) x.dependsOn = (x.dependsOn || []).filter(d => !ids.has(String(d))); });
-  activities = activities.filter(a => !ids.has(String(a.plan_item_id)));
-  renderAll();
+  } catch (e) { restore(); alert("Kunde inte ta bort: " + e.message); return; }
   modelToast(`"${tipShort(name, 40)}" är borttagen`, { label: "Ångra", fn: async () => {
     try {
       await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => [
@@ -5407,21 +5420,25 @@ function itemsByIdAll() {
 // Alla objekt (direkt eller indirekt, transitivt) vars depends_on-kedja
 // till slut leder till `itemId` - dvs den nedströms-konsekvens en försening
 // av `itemId` skulle få. BFS "baklänges" över depends_on-kanterna.
+// Ett omvänt register (föregångare -> efterföljare) byggs en gång per anrop, så att kedjan
+// tar O(objekt + kopplingar) i stället för ett varv genom alla objekt per steg (2026-10-08:
+// gjorde tavlan sekunder långsam med många objekt). Ordningen är densamma som förut:
+// steg för steg, och inom ett steg i samma ordning som i `items`.
 function downstreamOf(itemId, byId) {
+  const succ = new Map(), idx = new Map();
+  items.forEach((it, i) => {
+    idx.set(it, i);
+    if (Array.isArray(it.dependsOn)) it.dependsOn.forEach(d => { const k = String(d); if (!succ.has(k)) succ.set(k, []); succ.get(k).push(it); });
+  });
   const result = [];
   const seen = new Set([itemId]);
   let frontier = [itemId];
   while (frontier.length) {
-    const next = [];
-    items.forEach(it => {
-      if (seen.has(it.id)) return;
-      if (Array.isArray(it.dependsOn) && it.dependsOn.some(depId => frontier.includes(depId))) {
-        seen.add(it.id);
-        next.push(it.id);
-        result.push(it);
-      }
-    });
-    frontier = next;
+    const layer = [];
+    frontier.forEach(id => (succ.get(String(id)) || []).forEach(it => { if (!seen.has(it.id)) { seen.add(it.id); layer.push(it); } }));
+    layer.sort((a, b) => idx.get(a) - idx.get(b));
+    result.push(...layer);
+    frontier = layer.map(it => it.id);
   }
   return result;
 }
