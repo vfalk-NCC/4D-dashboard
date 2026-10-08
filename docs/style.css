@@ -2218,3 +2218,9 @@ svg.gantt-arrows.has-hot text.ga-lag-t.hot { opacity: 1; }
 .pnote-one .pnote-res { margin-left: auto; }
 .pnote-one .pnote-res + .pnote-dates { margin-left: 0; }
 .pnote-one.pnote-ext .pnote-res { margin-left: 4px; }
+
+/* Helskärm på surfplatta: fyller sidan (inte systemets helskärm), svep rullar bara i schemat och
+   "dra för att uppdatera" är avstängt så länge helskärmen är på. */
+section.panel.gantt-fullscreen { height: 100vh; height: 100dvh; overscroll-behavior: contain; }
+section.panel.gantt-fullscreen #ganttChart { overscroll-behavior: contain; }
+html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavior: none; }

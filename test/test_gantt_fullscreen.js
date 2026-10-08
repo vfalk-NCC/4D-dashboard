@@ -92,6 +92,27 @@ seed('plan_items.json', [
   await page.click('#ganttFullBtn'); await page.waitForTimeout(300);
   if ((await size()).fs) fail('Knappen ska stänga helskärmen');
   console.log('OK: Helskärm – fyller skärmen; knapparna kan döljas (färgförklaringen kvar, valet sparas); Esc, ✕ och knappen stänger');
+  // iPad (Victor 2026-10-08): systemets helskärm stängs vid svep nedåt – där fyller panelen sidan i
+  // stället, utan webbläsarens helskärm, och "dra för att uppdatera" är avstängt.
+  const ctx2 = await browser.newContext({ viewport: { width: 1180, height: 820 }, hasTouch: true });
+  const ipad = await ctx2.newPage();
+  await ipad.addInitScript(() => {
+    localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1');
+    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5 });
+    const mm = window.matchMedia.bind(window); window.matchMedia = q => q.includes('pointer: coarse') ? { matches: true, addEventListener() {}, removeEventListener() {} } : mm(q);
+    window.__rf = 0; Element.prototype.requestFullscreen = function () { window.__rf++; return Promise.resolve(); };
+  });
+  await ipad.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: 'window.TrimbleConnectWorkspace = { connect: () => Promise.reject(new Error("x")) };' }));
+  await ipad.route('https://api.github.com/**', r => r.fulfill({ status: 404, body: '{}' }));
+  await ipad.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
+  await ipad.goto(`http://localhost:${PORT}/index.html`); await ipad.waitForTimeout(800);
+  await ipad.click('#ganttFullBtn'); await ipad.waitForTimeout(300);
+  const ip = await ipad.evaluate(() => { const p = document.querySelector('section.panel[data-panel-id="gantt"]'), r = p.getBoundingClientRect(); return { rf: window.__rf, fs: p.classList.contains('gantt-fullscreen'), w: r.width, h: r.height, top: r.top, ob: getComputedStyle(p).overscrollBehaviorY, bodyOb: getComputedStyle(document.body).overscrollBehaviorY }; });
+  if (ip.rf !== 0 || !ip.fs || ip.w < 1170 || ip.h < 810 || Math.abs(ip.top) > 1 || ip.ob !== 'contain' || ip.bodyOb !== 'none') fail('iPad-helskärm: ' + JSON.stringify(ip));
+  await ipad.click('#ganttFullBtn'); await ipad.waitForTimeout(200);
+  if (await ipad.evaluate(() => document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen'))) fail('iPad: knappen ska stänga');
+  await ctx2.close();
+  console.log('OK: iPad – helskärmen fyller sidan utan systemets helskärm (svep nedåt stänger inget), dra-för-att-uppdatera av');
   if (errors.length) fail('Fel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
   await browser.close(); server.close();

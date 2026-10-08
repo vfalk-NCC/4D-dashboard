@@ -5113,6 +5113,9 @@ function ganttPrintPageSize(paper, orient) {
 
 /* Helskärm (Victor 2026-10-06): Gantt-panelen fyller skärmen. Webbläsarens riktiga helskärm om
    Trimble Connect tillåter det, annars fyller panelen hela tilläggets yta. Esc/knappen stänger. */
+function ganttIsTouchTablet() {
+  try { return (navigator.maxTouchPoints || 0) > 1 && window.matchMedia("(pointer: coarse)").matches; } catch (e) { return false; }
+}
 function ganttFullscreenPanel() { return document.querySelector('section.panel[data-panel-id="gantt"]'); }
 /* I helskärm kan alla knappar döljas – bara färgförklaringen och schemat syns (Victor 2026-10-06).
    Valet sparas till nästa gång. */
@@ -5146,6 +5149,10 @@ async function toggleGanttFullscreen() {
     return;
   }
   setGanttFullscreen(true);
+  // Surfplatta (iPad m.fl., Victor 2026-10-08): webbläsarens helskärm stängs av systemet vid ett svep
+  // nedåt och det går inte att stoppa. Där fyller panelen sidan i stället (samma läge som i Trimble
+  // Connect) – svep rullar bara i schemat och stänger inget.
+  if (ganttIsTouchTablet()) return;
   if (document.fullscreenEnabled && panel.requestFullscreen) {
     try { await panel.requestFullscreen(); } catch (e) { /* inte tillåtet i ramen – panelen fyller ytan ändå */ }
   }
