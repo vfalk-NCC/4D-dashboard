@@ -79,7 +79,7 @@ let settings = {
 let filters = {
   area: "",
   activity: "",
-  contractor: ""
+  contractor: []   // flera entreprenörer (Victor 2026-10-08); tom = alla
 };
 
 // Svenska visningsnamn och färger per statusvärde - samma som i
@@ -364,7 +364,7 @@ function bindUI() {
 
   document.getElementById("filterArea").onchange = onFilterChange;
   document.getElementById("filterActivity").onchange = onFilterChange;
-  document.getElementById("filterContractor").onchange = onFilterChange;
+  initContractorFilter();
   document.getElementById("btnResetFilters").onclick = onResetFilters;
 
   initGanttControls();
@@ -579,15 +579,14 @@ function initStatusColorControls() {
 function onFilterChange() {
   filters.area = document.getElementById("filterArea").value;
   filters.activity = document.getElementById("filterActivity").value;
-  filters.contractor = document.getElementById("filterContractor").value;
   renderAll();
 }
 
 function onResetFilters() {
-  filters = { area: "", activity: "", contractor: "" };
+  filters = { area: "", activity: "", contractor: [] };
   document.getElementById("filterArea").value = "";
   document.getElementById("filterActivity").value = "";
-  document.getElementById("filterContractor").value = "";
+  renderContractorFilter();
   renderAll();
 }
 
@@ -595,7 +594,8 @@ function onResetFilters() {
 const FILTER_NONE = "__utan__";
 const filterHit = (want, v) => !want || (want === FILTER_NONE ? !v : v === want);
 function getFilteredItems() {
-  return items.filter(it => filterHit(filters.area, it.area) && filterHit(filters.activity, it.activity) && filterHit(filters.contractor, it.contractor));
+  const cs = filters.contractor || [];
+  return items.filter(it => filterHit(filters.area, it.area) && filterHit(filters.activity, it.activity) && (!cs.length || cs.some(w => filterHit(w, it.contractor))));
 }
 
 // Fyller filtrets tre <select>-fält med de värden som faktiskt finns i
@@ -604,7 +604,79 @@ function getFilteredItems() {
 function populateFilterOptions() {
   fillSelect("filterArea", "area", uniqueValues(it => it.area), "Alla områden", items.some(it => !it.area) ? NO_AREA_LABEL : "");
   fillSelect("filterActivity", "activity", uniqueValues(it => it.activity), "Alla aktiviteter", items.some(it => !it.activity) ? NO_ACTIVITY_LABEL : "");
-  fillSelect("filterContractor", "contractor", uniqueValues(it => it.contractor), "Alla entreprenörer", items.some(it => !it.contractor) ? NO_CONTRACTOR_LABEL : "");
+  // Entreprenör: flera kan väljas – val som inte längre finns i datan släpps.
+  const cv = new Set(uniqueValues(it => it.contractor)), hasNone = items.some(it => !it.contractor);
+  filters.contractor = (filters.contractor || []).filter(v => v === FILTER_NONE ? hasNone : cv.has(v));
+  renderContractorFilter();
+}
+
+/* Entreprenörsfiltret med flera val (Victor 2026-10-08): en knapp som öppnar en lista att bocka i,
+   med sök, "Utan entreprenör" och Alla. Gäller hela dashboarden som de andra filtren. */
+function contractorFilterLabel() {
+  const cs = filters.contractor || [];
+  if (!cs.length) return "Alla entreprenörer";
+  if (cs.length === 1) return cs[0] === FILTER_NONE ? NO_CONTRACTOR_LABEL : cs[0];
+  return `${cs.length} entreprenörer`;
+}
+function renderContractorFilter() {
+  const b = document.getElementById("filterContractorBtn");
+  if (b) { b.textContent = contractorFilterLabel() + " ▾"; b.classList.toggle("on", !!(filters.contractor || []).length); b.title = (filters.contractor || []).map(v => v === FILTER_NONE ? NO_CONTRACTOR_LABEL : v).join("\n") || "Alla entreprenörer"; }
+  const p = document.getElementById("contractorFilterPop");
+  if (p) fillContractorPop(p);
+}
+function initContractorFilter() {
+  const b = document.getElementById("filterContractorBtn");
+  if (!b) return;
+  b.onclick = e => { e.stopPropagation(); if (document.getElementById("contractorFilterPop")) closeContractorPop(); else openContractorPop(b); };
+  renderContractorFilter();
+}
+function openContractorPop(btn) {
+  closeContractorPop();
+  const p = document.createElement("div");
+  p.id = "contractorFilterPop"; p.className = "gantt-group-picker cf-pop";
+  p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök entreprenör…" />
+    <div class="ggp-acts"><button type="button" data-cf="all">Alla</button><button type="button" data-cf="match" class="hidden">Välj träffarna</button></div>
+    <div class="ggp-list"></div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(4, Math.min(r.left, innerWidth - 340)) + "px";
+  p.style.top = (r.bottom + 4) + "px";
+  p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px";
+  const search = p.querySelector(".ggp-search");
+  search.oninput = () => fillContractorPop(p);
+  p.querySelector(".ggp-acts").onclick = e => {
+    const a = e.target.closest("[data-cf]"); if (!a) return;
+    if (a.dataset.cf === "all") filters.contractor = [];
+    else filters.contractor = [...new Set([...(filters.contractor || []), ...contractorOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)])];
+    renderContractorFilter(); renderAll();
+  };
+  p.querySelector(".ggp-list").onchange = e => {
+    const c = e.target.closest("input[data-v]"); if (!c) return;
+    const set = new Set(filters.contractor || []);
+    if (c.checked) set.add(c.dataset.v); else set.delete(c.dataset.v);
+    filters.contractor = [...set];
+    renderContractorFilter(); renderAll();
+  };
+  fillContractorPop(p);
+  setTimeout(() => document.addEventListener("mousedown", contractorPopOutside, true), 0);
+  document.addEventListener("keydown", contractorPopKey, true);
+  search.focus();
+}
+function contractorOptions() {
+  return [...(items.some(it => !it.contractor) ? [{ value: FILTER_NONE, label: NO_CONTRACTOR_LABEL, none: true }] : []), ...uniqueValues(it => it.contractor).map(v => ({ value: v, label: v }))];
+}
+function fillContractorPop(p) {
+  const q = p.querySelector(".ggp-search").value.trim().toLowerCase(), sel = new Set(filters.contractor || []);
+  const opts = contractorOptions().filter(o => !q || o.label.toLowerCase().includes(q));
+  p.querySelector('[data-cf="match"]').classList.toggle("hidden", !q);
+  p.querySelector(".ggp-list").innerHTML = opts.map(o => `<label class="ggp-row" title="${escapeHtml(o.label)}"><input type="checkbox" data-v="${escapeHtml(o.value)}"${sel.has(o.value) ? " checked" : ""} /><span${o.none ? ' class="cf-none"' : ""}>${escapeHtml(o.label)}</span></label>`).join("") || `<div class="ggp-empty">Inga träffar</div>`;
+}
+function contractorPopOutside(e) { const p = document.getElementById("contractorFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterContractorBtn") closeContractorPop(); }
+function contractorPopKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeContractorPop(); } }
+function closeContractorPop() {
+  document.getElementById("contractorFilterPop")?.remove();
+  document.removeEventListener("mousedown", contractorPopOutside, true);
+  document.removeEventListener("keydown", contractorPopKey, true);
 }
 
 function uniqueValues(keyFn) {
@@ -790,8 +862,9 @@ async function setPlanSource(src) {
   try { localStorage.setItem(planSourceKey(), src); } catch (e) {}
   renderPlanSourceUi();
   // Filtren och ångra-stacken hör till den förra planeringen.
-  filters = { area: "", activity: "", contractor: "" };
-  ["filterArea", "filterActivity", "filterContractor"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  filters = { area: "", activity: "", contractor: [] };
+  ["filterArea", "filterActivity"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  renderContractorFilter();
   if (typeof scheduleUndo !== "undefined") { scheduleUndo.length = 0; scheduleRedo.length = 0; updateUndoButtons(); }
   ganttBoardScrolled = false;
   await refreshAll();
@@ -5175,7 +5248,8 @@ function printGantt(opts) {
   const colorText = { area: "område", contractor: "entreprenör", activity: "aktivitet" }[ganttColorBy];
   const sub = [(planSource === "pp" ? "Powerproject · " : "") + viewText + (groupText ? `, grupperat på ${groupText}` : "") + (ganttView === "board" ? `, färg efter ${colorText}` : ""),
     ganttPrintPeriodText(domain.start, domain.end)];
-  const filterParts = [["Område", filters.area, NO_AREA_LABEL], ["Aktivitet", filters.activity, NO_ACTIVITY_LABEL], ["Entreprenör", filters.contractor, NO_CONTRACTOR_LABEL]].filter(([, v]) => v).map(([k, v, none]) => v === FILTER_NONE ? none : `${k}: ${v}`);
+  const filterParts = [["Område", filters.area, NO_AREA_LABEL], ["Aktivitet", filters.activity, NO_ACTIVITY_LABEL]].filter(([, v]) => v).map(([k, v, none]) => v === FILTER_NONE ? none : `${k}: ${v}`)
+    .concat((filters.contractor || []).length ? [`Entreprenör: ${filters.contractor.map(v => v === FILTER_NONE ? NO_CONTRACTOR_LABEL : v).join(", ")}`] : []);
   const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")
     + (ganttView === "bars" && ganttShowActual ? `<span class="gp-leg"><i class="gp-leg-actual"></i>Verkligt</span>` : "")
     + (ganttShowBaseline ? `<span class="gp-leg"><i class="gp-leg-baseline" style="background:${ganttBaselineColor} !important"></i>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : "")

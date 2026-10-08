@@ -72,10 +72,10 @@ seed('plan_items.json', [
   t = await table();
   if (t[0].slice(1).join('|') !== '80|160|240' || t[1].slice(1).join('|') !== '80||80') fail('Timmar per vecka: ' + JSON.stringify(t));
   // Filter (entreprenör Peri) och dolt område (Hus B) följs.
-  await page.selectOption('#filterContractor', 'Peri'); await page.waitForTimeout(300);
+  await page.evaluate(() => { filters.contractor = ['Peri']; renderAll(); }); await page.waitForTimeout(300);
   t = await table();
   if (t.length !== 2 || t[0].slice(1).join('|') !== '80|80') fail('Filtret ska följas: ' + JSON.stringify(t));
-  await page.selectOption('#filterContractor', ''); await page.waitForTimeout(200);
+  await page.evaluate(() => { filters.contractor = []; renderAll(); }); await page.waitForTimeout(200);
   await page.evaluate(() => { ganttHiddenGroups = new Set(['area:Hus B']); renderGantt(getFilteredItems()); }); await page.waitForTimeout(300);
   t = await table();
   if (t.length !== 1 || t[0].slice(1).join('|') !== '160|160') fail('Dolda områden ska följas: ' + JSON.stringify(t));

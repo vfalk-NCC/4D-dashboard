@@ -51,16 +51,29 @@ seed('plan_items.json', [
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
   const fail = m => { throw new Error(m); };
-  const opts = await page.evaluate(() => [...document.querySelectorAll('#filterContractor option')].map(o => o.textContent));
-  if (opts.join() !== 'Alla entreprenörer,Utan entreprenör,NCC') fail('Valen: ' + opts);
+  // Entreprenör: flera val (Victor 2026-10-08) – lista att bocka i, med "Utan entreprenör" först.
+  await page.click('#filterContractorBtn');
+  const opts = await page.evaluate(() => [...document.querySelectorAll('#contractorFilterPop .ggp-row')].map(o => o.textContent.trim()));
+  if (opts.join() !== 'Utan entreprenör,NCC') fail('Valen: ' + opts);
   const areaOpts = await page.evaluate(() => [...document.querySelectorAll('#filterArea option')].map(o => o.textContent));
   if (areaOpts.includes('Utan område')) fail('"Utan område" ska bara visas när det finns sådana: ' + areaOpts);
-  await page.selectOption('#filterContractor', { label: 'Utan entreprenör' }); await page.waitForTimeout(300);
-  const shown = await page.evaluate(() => getFilteredItems().map(it => it.objectName).sort().join());
-  if (shown !== 'C1,C2') fail('Utan entreprenör ska visa C1 och C2: ' + shown);
-  await page.selectOption('#filterContractor', { label: 'NCC' }); await page.waitForTimeout(200);
-  if ((await page.evaluate(() => getFilteredItems().length)) !== 3) fail('NCC ska visa 3');
-  console.log('OK: filtret "Utan entreprenör" visar bara aktiviteter utan entreprenör; finns bara när det behövs');
+  await page.check('#contractorFilterPop .ggp-row >> nth=0'); await page.waitForTimeout(300);
+  let shown = await page.evaluate(() => getFilteredItems().map(it => it.objectName).sort().join());
+  if (shown !== 'C1,C2' || (await page.textContent('#filterContractorBtn')).trim() !== 'Utan entreprenör ▾') fail('Utan entreprenör ska visa C1 och C2: ' + shown);
+  await page.check('#contractorFilterPop .ggp-row >> nth=1'); await page.waitForTimeout(300);
+  shown = await page.evaluate(() => getFilteredItems().length);
+  if (shown !== 5 || (await page.textContent('#filterContractorBtn')).trim() !== '2 entreprenörer ▾') fail('Två val ska visa alla fem: ' + shown);
+  await page.uncheck('#contractorFilterPop .ggp-row >> nth=0'); await page.waitForTimeout(300);
+  if ((await page.evaluate(() => getFilteredItems().length)) !== 3) fail('Bara NCC ska visa 3');
+  // Sök + Välj träffarna, Esc stänger, Rensa filter nollställer.
+  await page.fill('#contractorFilterPop .ggp-search', 'utan');
+  await page.click('#contractorFilterPop [data-cf="match"]'); await page.waitForTimeout(200);
+  if ((await page.evaluate(() => filters.contractor.length)) !== 2) fail('Välj träffarna ska lägga till');
+  await page.keyboard.press('Escape');
+  if (await page.$('#contractorFilterPop')) fail('Esc ska stänga listan');
+  await page.click('#btnResetFilters'); await page.waitForTimeout(200);
+  if ((await page.evaluate(() => getFilteredItems().length)) !== 5 || (await page.textContent('#filterContractorBtn')).trim() !== 'Alla entreprenörer ▾') fail('Rensa filter');
+  console.log('OK: entreprenörsfiltret med flera val (bocka i, Utan entreprenör, sök, Välj träffarna, Rensa filter)');
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
   await browser.close(); server.close();

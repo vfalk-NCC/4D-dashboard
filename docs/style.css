@@ -2187,3 +2187,8 @@ svg.gantt-arrows.has-hot text.ga-lag-t.hot { opacity: 1; }
 .rc-table thead th { position: sticky; top: 0; background: #f8fafc; }
 .rc-by { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #4b5563; }
 .rc-by select { font-size: 12px; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 6px; }
+
+/* Entreprenörsfiltret med flera val */
+.filter-multi { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; cursor: pointer; min-width: 160px; text-align: left; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-multi.on { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+.cf-pop .cf-none { font-style: italic; color: #4b5563; }
