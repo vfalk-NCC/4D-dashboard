@@ -2192,3 +2192,29 @@ svg.gantt-arrows.has-hot text.ga-lag-t.hot { opacity: 1; }
 .filter-multi { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; cursor: pointer; min-width: 160px; text-align: left; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filter-multi.on { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
 .cf-pop .cf-none { font-style: italic; color: #4b5563; }
+
+/* Levande grafik per resurs i dialogen */
+.new-act-pop .nr-viz { margin: 0 0 6px; padding: 4px 6px; background: #f8fafc; border-radius: 5px; font-size: 11.5px; color: #374151; }
+.new-act-pop .nr-days { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 3px; }
+.new-act-pop .nr-days i { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 16px; padding: 0 2px; border-radius: 3px; background: #bfdbfe; color: #1e3a8a; font-style: normal; font-size: 9.5px; font-weight: 600; }
+.new-act-pop .nr-more { font-size: 10px; color: #6b7280; align-self: center; margin-left: 2px; }
+.new-act-pop .nr-ok { color: #15803d; }
+.new-act-pop .nr-warn { color: #b45309; }
+.new-act-pop .nr-note { margin-top: 3px; }
+.new-act-pop .nr-fix { border: 1px solid #cbd5e1; background: #fff; border-radius: 4px; padding: 1px 7px; font-size: 11px; cursor: pointer; margin: 2px 2px 0 0; }
+.new-act-pop .nr-fix:hover { border-color: #2563eb; color: #2563eb; }
+
+/* Resurskurvans sammanfattning */
+.rc-sum { margin-top: 10px; }
+.rc-sumtab { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.rc-sumtab th { text-align: right; font-size: 11px; color: #6b7280; font-weight: 600; padding: 4px 10px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+.rc-sumtab td { text-align: right; padding: 4px 10px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+.rc-sumtab th:first-child, .rc-sumtab td:first-child { text-align: left; white-space: normal; }
+.rc-sumtab td:first-child i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.rc-sumtab td b { font-size: 13.5px; }
+.rc-sumtab tfoot td { border-top: 2px solid #e5e7eb; border-bottom: none; font-weight: 600; }
+
+.pnote-res { display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px; background: rgba(255,255,255,.75); border: 1px solid rgba(0,0,0,.12); font-size: 9.5px; font-weight: 700; color: #1f2937; white-space: nowrap; flex: 0 0 auto; }
+.pnote-one .pnote-res { margin-left: auto; }
+.pnote-one .pnote-res + .pnote-dates { margin-left: 0; }
+.pnote-one.pnote-ext .pnote-res { margin-left: 4px; }

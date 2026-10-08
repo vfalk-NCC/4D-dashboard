@@ -92,6 +92,20 @@ seed('plan_items.json', [
   const hex = c => c.startsWith('#') ? c.toLowerCase() : '#' + c.match(/\d+/g).slice(0, 3).map(n => Number(n).toString(16).padStart(2, '0')).join('');
   if (hex(sw.chip) !== hex(sw.board)) fail('Entreprenörens färg ska vara tavlans: ' + JSON.stringify(sw));
   await page.selectOption('#resourceCurve .rc-bysel', 'resource');
+  // Sammanfattningen per resurs: personer samtidigt (max), timmar, aktiviteter; Totalt = samma dag tillsammans.
+  await page.evaluate(() => { rcPrefs = { mode: 'people', only: '', table: false, by: 'resource' }; renderResourceCurve(); });
+  const sumRows = await page.evaluate(() => [...document.querySelectorAll('#resourceCurve .rc-sumtab tbody tr, #resourceCurve .rc-sumtab tfoot tr')].map(tr => [...tr.children].slice(0, 4).map(td => td.textContent.trim()).join('|')));
+  if (sumRows.join(' / ') !== 'R012 Betongarbetare|4|160 h|1 / R01 Byggnadsarbetare|2|160 h|1 / Totalt|6|320 h|2') fail('Sammanfattningen: ' + JSON.stringify(sumRows));
+  // Per aktivitet.
+  await page.selectOption('#resourceCurve .rc-bysel', 'activity'); await page.waitForTimeout(150);
+  const actRows = await page.evaluate(() => [...document.querySelectorAll('#resourceCurve .rc-sumtab tbody tr')].map(tr => tr.children[0].textContent.trim() + '|' + tr.children[1].textContent.trim()));
+  if (actRows.join() !== 'G-a|4,M|2' && actRows.join() !== 'M|2,G-a|4') fail('Per aktivitet: ' + actRows);
+  await page.selectOption('#resourceCurve .rc-bysel', 'resource');
+  // En person som bara jobbar 2 dagar i en vecka visas som 1 person (inte 0,4).
+  await page.evaluate(() => { const x = items.find(i => i.objectName === 'Utan'); x.resources = [{ name: 'Kranförare', qty: 1, hours: 16 }]; x.endDate = x.startDate; x.startDate = x.startDate; const d = new Date(x.startDate); d.setUTCDate(d.getUTCDate() + 1); x.endDate = d.toISOString().slice(0, 10); rcPrefs.table = true; rcPrefs.only = 'Kranförare'; renderResourceCurve(); });
+  const kr = await page.evaluate(() => [...document.querySelectorAll('#resourceCurve .rc-table tbody tr')].map(tr => tr.lastElementChild.textContent.trim()).filter(Boolean));
+  if (kr.join() !== '1') fail('2 dagar à 1 person = 1 person den veckan: ' + kr);
+  await page.evaluate(() => { const x = items.find(i => i.objectName === 'Utan'); x.resources = null; rcPrefs.only = ''; rcPrefs.table = true; renderResourceCurve(); });
   console.log('OK: resurskurvan – personer och timmar per vecka och resurs, en aktivitet en gång, följer filter och dolda områden, per resurs/entreprenör med tavlans färger');
   // Redigera aktivitet: Avancerat (resurser) – lägg till en resurs på aktiviteten "Utan" och ändra Gjutning.
   await page.evaluate(() => { ganttEditable = true; });
@@ -111,6 +125,18 @@ seed('plan_items.json', [
   await page.evaluate(() => undoSchedule()); await page.waitForTimeout(600);
   const undone = get('plan_items.json').filter(r => r.group_id === 'G1').map(r => JSON.stringify((r.resources || []).map(x => [x.name, x.qty, x.hours])));
   if (undone.some(s => s !== '[["R012 Betongarbetare",4,160]]')) fail('Ångra ska ta tillbaka resurserna: ' + JSON.stringify(undone));
+  // Lappen visar bemanningen.
+  const badge = await page.evaluate(() => { const it = items.find(x => x.objectName === 'M'); const n = document.querySelector(`#ganttChart .pnote[data-item-id="${it.id}"] .pnote-res`); return n ? n.textContent : ''; });
+  if (badge !== '2 pers · 160 h') fail('Lappen ska visa bemanningen: ' + badge);
+  // Levande grafiken i dialogen: 1 pers, 200 h på 2 dagar -> förslag; Sätt timmar ger 16 h.
+  await page.dblclick(await noteOf('M')); await page.waitForTimeout(200);
+  await page.evaluate(() => { const s = document.querySelector('.na-start'), e = document.querySelector('.na-end'); const d = new Date(s.value); d.setUTCDate(d.getUTCDate() + 1); e.value = d.toISOString().slice(0, 10); e.dispatchEvent(new Event('change')); if (!document.querySelector('.na-res').open) document.querySelector('.na-res > summary').click(); });
+  await page.fill('.na-res-row .nr-qty', '1'); await page.fill('.na-res-row .nr-hours', '200');
+  const viz = await page.evaluate(() => ({ cells: document.querySelectorAll('.nr-viz .nr-days i').length, calc: document.querySelector('.nr-viz .nr-calc').textContent, warn: (document.querySelector('.nr-viz .nr-warn') || {}).textContent || '' }));
+  if (viz.cells !== 2 || !/1 pers\. × 2 arbetsdagar × 8 h = 16 h/.test(viz.calc) || !/200 h på 2 dagar motsvarar 12,5 personer/.test(viz.warn)) fail('Grafiken i dialogen: ' + JSON.stringify(viz));
+  await page.click('.nr-viz .nr-fix[data-fix="hours"]');
+  if ((await page.inputValue('.na-res-row .nr-hours')) !== '16' || !(await page.textContent('.nr-viz')).includes('✓ stämmer')) fail('Sätt timmar ska ge 16 h');
+  await page.click('.na-cancel');
   console.log('OK: Avancerat (resurser) i Redigera aktivitet – visar, ändrar och lägger till, sparas på alla objekt i aktiviteten, går att ångra');
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');

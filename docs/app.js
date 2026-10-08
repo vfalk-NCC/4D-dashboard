@@ -3249,6 +3249,14 @@ const tipRange = (a, b) => (a === b ? tipDate(a) : `${tipDate(a)} – ${tipDate(
 class LazyTipMap extends Map {
   get(k) { const v = super.get(k); if (typeof v !== "function") return v; const html = v(); super.set(k, html); return html; }
 }
+/* Resurserna på en aktivitet (samma för alla dess objekt): "4 pers · 320 h" och en rad per resurs. */
+function resOf(it) { const m = (it.members || [it]).find(x => x.resources && x.resources.length); return m ? m.resources : []; }
+function resSummaryText(it) {
+  const rs = resOf(it); if (!rs.length) return "";
+  const q = rs.reduce((a, r) => a + (Number(r.qty) || 0), 0), h = rs.reduce((a, r) => a + (Number(r.hours) || 0), 0);
+  return `${(Math.round(q * 10) / 10).toLocaleString("sv-SE")} pers · ${Math.round(h).toLocaleString("sv-SE")} h`;
+}
+function resDetailText(it) { return resOf(it).map(r => `${r.name}: ${(Math.round((Number(r.qty) || 0) * 10) / 10).toLocaleString("sv-SE")} pers, ${Math.round(Number(r.hours) || 0).toLocaleString("sv-SE")} h`).join("\n"); }
 function ganttTooltipHtmlForItem(it, depById) {
   const e = escapeHtml;
   const row = (k, vHtml) => `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${e(k)}</span><span class="gantt-tooltip-value">${vHtml}</span></div>`;
@@ -3260,6 +3268,7 @@ function ganttTooltipHtmlForItem(it, depById) {
   ];
   if (it.actualStartDate || it.actualEndDate) rows.push(row("Verkligt", e(`${it.actualStartDate ? tipDate(it.actualStartDate) : "?"} – ${it.actualEndDate ? tipDate(it.actualEndDate) : "pågår"}`)));
   if (it.contractor) rows.push(row("Entreprenör", e(it.contractor)));
+  if (resOf(it).length) rows.push(row("Resurser", resOf(it).map(r => `${e(r.name)} <b>${(Math.round((Number(r.qty) || 0) * 10) / 10).toLocaleString("sv-SE")} pers</b> · ${Math.round(Number(r.hours) || 0).toLocaleString("sv-SE")} h`).join("<br>")));
   if (it.origin === "manuell") rows.push(row("Källa", "Egen aktivitet <span class=\"gantt-tip-dim\">· finns inte i Powerproject</span>"));
   let html = `<div class="gantt-tooltip-title">${e(itemLabel(it))}</div>${rows.join("")}`;
   // Baseline: namnet (och källan) en gång, datumen, förskjutningen som etikett.
@@ -4004,6 +4013,8 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     if (it.contractor && ganttGroupBy !== "contractor") subParts.push(it.contractor);
     if (it.members) subParts.push(`⛓ ${it.members.length} objekt`);
     const prog = Math.max(0, Math.min(100, Number(it.progress) || 0));
+    // Bemanningen på lappen (Victor 2026-10-08: "jättelätt att förstå hur många arbetare och timmar").
+    const resTxt = resSummaryText(it), resTag = resTxt ? `<span class="pnote-res" title="${escapeHtml(resDetailText(it))}">${escapeHtml(resTxt)}</span>` : "";
     const key = `b${tooltips.size}`;
     tooltips.set(key, () => ganttTooltipHtmlForItem(it, depById));
     // Liten, stabil lutning per lapp - som riktiga post-it-lappar på en vägg.
@@ -4042,7 +4053,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     let gEnd = c1, ext = false, realPx = (c1 - c0 + 1) * colPx / 7;
     if (ganttBoardOneLine && !cont.includes("cont-r")) {
       // Namnet och aktiviteten (det som talar om vad lappen handlar om); entreprenör och datum står i tipsrutan.
-      const need = 9 + 8 + 7 + boardTextWidth((blocked ? "⛔ " : "") + name) + 22 + (subParts.length ? 7 + boardTextWidth(subParts.join(" · "), "400 10px") : 0) + (bShift ? 40 : 0);
+      const need = 9 + 8 + 7 + boardTextWidth((blocked ? "⛔ " : "") + name) + 22 + (subParts.length ? 7 + boardTextWidth(subParts.join(" · "), "400 10px") : 0) + (bShift ? 40 : 0) + (resTxt ? 20 + boardTextWidth(resTxt, "700 9.5px") : 0);
       if (realPx < need) { ext = true; gEnd = Math.min(nDays - 1, c0 + Math.ceil(need / (colPx / 7)) - 1); }
     } else if (!ganttBoardOneLine && !cont.includes("cont-r") && realPx < 130) {
       // Större lappar (Victor 2026-10-08): samma ljusa förlängning när lappen är för smal för att läsas –
@@ -4061,13 +4072,13 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     if (ganttBoardOneLine) return `<div class="${cls}" ${attrs}>
         <i class="pnote-dot" style="background:${st}"></i><span class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</span>${ownTag}${depMark}
         ${subParts.length ? `<span class="pnote-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
-        <span class="pnote-dates">${dates}</span>${blHtml}
+        ${resTag}<span class="pnote-dates">${dates}</span>${blHtml}
         <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span>${prog > 0 ? `<b class="pnote-pct" style="left:clamp(14px, ${prog}%, calc(100% - 18px))">${prog} %</b>` : ""}</div>
       </div>`;
     return `<div class="${cls}" ${attrs}>
         <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}${ownTag}${depMark}</div>
         ${subParts.length ? `<div class="pnote-sub">${escapeHtml(subParts.join(" · "))}</div>` : ""}
-        <div class="pnote-meta"><span class="pnote-status"><i style="background:${st}"></i>${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}</span><span>${dates}</span></div>${blHtml}
+        <div class="pnote-meta"><span class="pnote-status"><i style="background:${st}"></i>${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}</span>${resTag}<span>${dates}</span></div>${blHtml}
         <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span>${prog > 0 ? `<b class="pnote-pct" style="left:clamp(14px, ${prog}%, calc(100% - 18px))">${prog} %</b>` : ""}</div>
       </div>`;
   };
@@ -4357,17 +4368,55 @@ function openActivityDialog({ after = null, edit = null } = {}) {
         <input type="text" class="nr-name" value="${escapeHtml(r.name || "")}" placeholder="t.ex. R01 Byggnadsarbetare" />
         <input type="number" class="nr-qty" min="0" step="0.5" value="${r.qty ?? ""}" />
         <input type="number" class="nr-hours" min="0" step="1" value="${r.hours ?? ""}" />
-        <button type="button" class="nr-del" title="Ta bort">✕</button></div>`).join("") : `<div class="hint">Inga resurser.</div>`;
+        <button type="button" class="nr-del" title="Ta bort">✕</button></div><div class="nr-viz" data-i="${i}"></div>`).join("") : `<div class="hint">Inga resurser.</div>`;
     box.querySelectorAll(".na-res-row").forEach(row => {
       const r = resRows[Number(row.dataset.i)];
       row.querySelector(".nr-name").oninput = e => { r.name = e.target.value; sumRes(); };
-      row.querySelector(".nr-qty").oninput = e => { r.qty = e.target.value === "" ? null : Number(e.target.value); sumRes(); };
-      row.querySelector(".nr-hours").oninput = e => { r.hours = e.target.value === "" ? null : Number(e.target.value); sumRes(); };
+      row.querySelector(".nr-qty").oninput = e => { r.qty = e.target.value === "" ? null : Number(e.target.value); r._edited = true; sumRes(); vizRes(); };
+      row.querySelector(".nr-hours").oninput = e => { r.hours = e.target.value === "" ? null : Number(e.target.value); r._edited = true; sumRes(); vizRes(); };
       row.querySelector(".nr-del").onclick = () => { resRows.splice(Number(row.dataset.i), 1); renderRes(); };
       attachCombo(row.querySelector(".nr-name"), () => resNames().map(n => ({ value: n, label: n })), {});
     });
     sumRes();
+    vizRes();
   };
+  // Levande grafik per resurs (Victor 2026-10-08: "hur ska jag tyda detta … mer visuellt"): en ruta per
+  // arbetsdag i aktiviteten med antalet personer, uträkningen antal × dagar × 8 h, och förslag när
+  // timmar och antal inte går ihop.
+  const workdays = () => {
+    const a = q(".na-start").value, b = q(".na-end").value;
+    if (!a || !b || a > b) return 0;
+    let n = 0; for (let d = new Date(a + "T00:00:00Z"); d <= new Date(b + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1)) if (d.getUTCDay() % 6) n++;
+    return n;
+  };
+  const nf = v => (Math.round(v * 10) / 10).toLocaleString("sv-SE");
+  const vizRes = () => {
+    const days = workdays();
+    pop.querySelectorAll(".nr-viz").forEach(box => {
+      const r = resRows[Number(box.dataset.i)];
+      if (!r) return;
+      const qty = Number(r.qty) || 0, hours = Number(r.hours) || 0;
+      if (!days) { box.innerHTML = `<span class="hint">Ange start och slut för att se fördelningen.</span>`; return; }
+      // Från Powerproject (egen period, inte ändrad här): Powerprojects egna kalender gäller – ingen varning.
+      if (r.start && r.end && !r._edited) {
+        const f = iso => { const d = new Date(iso + "T00:00:00Z"); return `${d.getUTCDate()}/${d.getUTCMonth() + 1}`; };
+        box.innerHTML = `<div class="nr-calc">Enligt Powerproject: <b>${nf(qty)} pers.</b> på plats ${f(r.start)}–${f(r.end)}, <b>${nf(hours)} h</b> totalt.</div><div class="hint">Ändrar du antal eller timmar räknas det om här.</div>`;
+        return;
+      }
+      const calc = qty * days * 8, shown = Math.min(days, 40);
+      const cells = Array.from({ length: shown }, () => `<i title="${nf(qty)} pers.">${qty ? nf(qty) : ""}</i>`).join("") + (days > shown ? `<span class="nr-more">+${days - shown}</span>` : "");
+      const off = hours > 0 && qty > 0 && Math.abs(hours - calc) > Math.max(4, calc * 0.15);
+      const perPers = hours > 0 && days ? hours / (days * 8) : 0;
+      let note = "";
+      if (!hours && qty) note = `<button type="button" class="nr-fix" data-fix="hours" data-v="${Math.round(calc)}">Fyll i ${nf(calc)} h</button>`;
+      else if (off) note = `<span class="nr-warn">${nf(hours)} h på ${days} dagar motsvarar <b>${nf(perPers)} personer</b> på heltid.</span> <button type="button" class="nr-fix" data-fix="qty" data-v="${Math.round(perPers * 10) / 10}">Sätt antal ${nf(perPers)}</button> <button type="button" class="nr-fix" data-fix="hours" data-v="${Math.round(calc)}">Sätt timmar ${nf(calc)}</button>`;
+      box.innerHTML = `<div class="nr-days" title="En ruta per arbetsdag (mån–fre) i aktiviteten">${cells}</div>
+        <div class="nr-calc">${nf(qty)} pers. × ${days} arbetsdag${days === 1 ? "" : "ar"} × 8 h = <b>${nf(calc)} h</b>${hours && !off ? ` <span class="nr-ok">✓ stämmer med ${nf(hours)} h</span>` : ""}</div>${note ? `<div class="nr-note">${note}</div>` : ""}`;
+      box.querySelectorAll(".nr-fix").forEach(b => { b.onclick = () => { const v = Number(b.dataset.v); if (b.dataset.fix === "qty") r.qty = v; else r.hours = v; renderRes(); }; });
+    });
+  };
+  q(".na-start").addEventListener("change", () => vizRes());
+  q(".na-end").addEventListener("change", () => vizRes());
   const sumRes = () => {
     const live = resRows.filter(r => (r.name || "").trim());
     const h = live.reduce((a, r) => a + (Number(r.hours) || 0), 0);

@@ -37,25 +37,37 @@ function rcActivities() {
   return out;
 }
 /* Vad staplarna delas upp efter (Victor 2026-10-08): resurs, entreprenör eller område. */
-const RC_BY = { resource: "Resurs", contractor: "Entreprenör", area: "Område" };
+const RC_BY = { resource: "Resurs", contractor: "Entreprenör", area: "Område", activity: "Aktivitet" };
 const rcBy = () => (rcPrefs.by in RC_BY ? rcPrefs.by : "resource");
 const rcNone = by => by === "contractor" ? (typeof NO_CONTRACTOR_LABEL !== "undefined" ? NO_CONTRACTOR_LABEL : "Utan entreprenör") : (typeof NO_AREA_LABEL !== "undefined" ? NO_AREA_LABEL : "Utan område");
-const rcKeyOf = (it, r, by) => by === "resource" ? r.name : (it[by] || rcNone(by));
+const rcKeyOf = (it, r, by) => by === "resource" ? r.name : by === "activity" ? (typeof itemLabel === "function" ? itemLabel(it) : it.objectName || "?") : (it[by] || rcNone(by));
 /* Fasta färger efter timmar i hela planen (inte urvalet – färgen följer serien, inte placeringen).
    Resurs: de 7 största får standardpalettens färger. Entreprenör/område: samma färger som lapparna på
    tavlan (även egna valda färger), de 11 största – resten blir Övriga. */
 function rcColorMap() {
   const by = rcBy(), tot = new Map(), seen = new Set();
   items.forEach(it => { const k = it.activityKey || `id:${it.id}`; if (seen.has(k) || !it.resources) return; seen.add(k); it.resources.forEach(r => { const s = rcKeyOf(it, r, by); tot.set(s, (tot.get(s) || 0) + (Number(r.hours) || 0)); }); });
-  const n = by === "resource" ? RC_COLORS.length : 11;
+  const own = by === "resource" || by === "activity"; // egna färger ur paletten (inga tavelfärger)
+  const n = own ? RC_COLORS.length : 11;
   const top = [...tot].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k]) => k).sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
-  if (by === "resource") return new Map(top.map((k, i) => [k, RC_COLORS[i]]));
-  return new Map(top.map(k => [k, typeof softColor === "function" ? softColor(by, k).bd : RC_COLORS[top.indexOf(k) % RC_COLORS.length]]));
+  if (own) return new Map(top.map((k, i) => [k, RC_COLORS[i]]));
+  // Tavlans färg, men aldrig samma färg på två serier: krockar får nästa lediga färg i tavlans palett.
+  const used = new Set(), pal = typeof SOFT_PALETTE !== "undefined" ? SOFT_PALETTE.map(p => p.bd) : RC_COLORS;
+  return new Map(top.map(k => {
+    let c = typeof softColor === "function" ? softColor(by, k).bd : RC_COLORS[top.indexOf(k) % RC_COLORS.length];
+    if (used.has(c)) c = pal.find(x => !used.has(x) && x !== RC_OTHER) || c;
+    used.add(c);
+    return [k, c];
+  }));
 }
 /* Veckovärden: Map(veckans måndag -> Map(serie -> värde)), serie = resurs eller "Övriga". */
+/* Personer (Victor 2026-10-08: "jag förstår inte riktigt" – ett snitt som 0,4 pers. var svårt att tyda):
+   för varje dag räknas hur många som är på plats; veckans stapel = den dag med flest (och dess
+   fördelning per resurs). Timmar: veckans summa. */
 function rcCompute(acts, colors, mode, d0, d1) {
-  const weeks = new Map();
+  const weeks = new Map(), daysMap = new Map();
   const add = (wk, s, v) => { if (!weeks.has(wk)) weeks.set(wk, new Map()); const m = weeks.get(wk); m.set(s, (m.get(s) || 0) + v); };
+  const addDay = (d, s, v) => { if (!daysMap.has(d)) daysMap.set(d, new Map()); const m = daysMap.get(d); m.set(s, (m.get(s) || 0) + v); };
   acts.forEach(it => {
     const a0 = rcDay(it.startDate), a1 = rcDay(it.endDate);
     it.resources.forEach(r => {
@@ -68,20 +80,66 @@ function rcCompute(acts, colors, mode, d0, d1) {
       const hPerDay = (Number(r.hours) || 0) / days.length, qty = Number(r.qty) || 0;
       days.forEach(d => {
         if (d < d0 || d > d1) return;
-        const wk = d - rcDow(d);
-        add(wk, s, mode === "hours" ? hPerDay : qty / 5);
+        if (mode === "hours") add(d - rcDow(d), s, hPerDay); else addDay(d, s, qty);
       });
     });
   });
+  if (mode !== "hours") daysMap.forEach((m, d) => {
+    const wk = d - rcDow(d), tot = [...m.values()].reduce((a, v) => a + v, 0);
+    const cur = weeks.get(wk), curTot = cur ? [...cur.values()].reduce((a, v) => a + v, 0) : -1;
+    if (tot > curTot) weeks.set(wk, new Map(m));
+  });
   return weeks;
+}
+/* Sammanfattning (Victor 2026-10-08: "idiotsäkrat och jättelätt att förstå hur många arbetare och
+   timmar per akt, område osv."): per vald indelning – personer samtidigt (högsta antalet samma dag),
+   timmar och antal aktiviteter i perioden. Alla, inte bara de med egen färg. */
+function rcSummary(acts, d0, d1) {
+  const by = rcBy(), rows = new Map(), allDays = new Map();
+  acts.forEach(it => {
+    const a0 = rcDay(it.startDate), a1 = rcDay(it.endDate);
+    it.resources.forEach(r => {
+      let p0 = r.start ? rcDay(r.start) : a0, p1 = r.end ? rcDay(r.end) : a1;
+      if (!(p0 >= a0 && p1 <= a1 && p0 <= p1)) { p0 = a0; p1 = a1; }
+      const days = []; for (let d = p0; d <= p1; d++) if (rcWork(d)) days.push(d);
+      if (!days.length) for (let d = p0; d <= p1; d++) days.push(d);
+      const key = rcKeyOf(it, r, by), hPerDay = (Number(r.hours) || 0) / days.length, qty = Number(r.qty) || 0;
+      if (!rows.has(key)) rows.set(key, { key, hours: 0, days: new Map(), acts: new Set(), first: null, last: null });
+      const row = rows.get(key);
+      let used = false;
+      days.forEach(d => {
+        if (d < d0 || d > d1) return;
+        used = true;
+        row.hours += hPerDay;
+        row.days.set(d, (row.days.get(d) || 0) + qty);
+        allDays.set(d, (allDays.get(d) || 0) + qty);
+        if (row.first === null || d < row.first) row.first = d;
+        if (row.last === null || d > row.last) row.last = d;
+      });
+      if (used) row.acts.add(it.activityKey || it.id);
+    });
+  });
+  const list = [...rows.values()].filter(r => r.acts.size).map(r => ({ ...r, max: Math.max(0, ...r.days.values()) })).sort((a, b) => b.hours - a.hours);
+  return { list, max: Math.max(0, ...allDays.values()), hours: list.reduce((a, r) => a + r.hours, 0), acts: new Set(acts.map(it => it.activityKey || it.id)).size };
+}
+function rcSummaryHtml(sum, colorOf) {
+  if (!sum.list.length) return "";
+  const n1 = v => (Math.round(v * 10) / 10).toLocaleString("sv-SE"), h = v => Math.round(v).toLocaleString("sv-SE");
+  const shortDate = d => { const x = new Date(d * 86400000); return `${x.getUTCDate()}/${x.getUTCMonth() + 1}`; };
+  const shown = sum.list.slice(0, 40);
+  return `<div class="rc-sum"><table class="rc-sumtab"><thead><tr><th>${RC_BY[rcBy()]}</th><th title="Högsta antalet personer/maskiner på plats samma dag">Personer samtidigt (max)</th><th>Timmar</th><th>Aktiviteter</th><th>Period</th></tr></thead><tbody>
+    ${shown.map(r => `<tr><td><i style="background:${colorOf(r.key)}"></i>${escapeHtml(r.key)}</td><td><b>${n1(r.max)}</b></td><td>${h(r.hours)} h</td><td>${r.acts.size}</td><td>${shortDate(r.first)} – ${shortDate(r.last)}</td></tr>`).join("")}
+    ${sum.list.length > shown.length ? `<tr><td colspan="5" class="rc-dim">+ ${sum.list.length - shown.length} till</td></tr>` : ""}
+    </tbody><tfoot><tr><td>Totalt</td><td><b>${n1(sum.max)}</b></td><td><b>${h(sum.hours)} h</b></td><td>${sum.acts}</td><td></td></tr></tfoot></table>
+    <div class="hint">Personer samtidigt = flest på plats samma dag. Totalt räknar alla tillsammans (samma dag), inte summan av raderna.</div></div>`;
 }
 function renderResourceCurve() {
   const el = document.getElementById("resourceCurve");
   if (!el || typeof items === "undefined") return;
   const acts = rcActivities(), colors = rcColorMap(), mode = rcPrefs.mode === "hours" ? "hours" : "people";
   const anyRes = items.some(it => it.resources && it.resources.length);
-  const ctrl = `<div class="rc-ctrl"><label class="rc-by">Per <select class="rc-bysel">${Object.entries(RC_BY).map(([k, v]) => `<option value="${k}"${rcBy() === k ? " selected" : ""}>${v}</option>`).join("")}</select></label><div class="rc-seg" role="tablist"><button type="button" data-rc-mode="people" class="${mode === "people" ? "on" : ""}">Personer</button><button type="button" data-rc-mode="hours" class="${mode === "hours" ? "on" : ""}">Timmar</button></div>
-    <span class="rc-note">${acts.length} aktivitet${acts.length === 1 ? "" : "er"} med resurser · följer filter, sök och dolda områden</span>
+  const ctrl = `<div class="rc-ctrl"><label class="rc-by">Per <select class="rc-bysel">${Object.entries(RC_BY).map(([k, v]) => `<option value="${k}"${rcBy() === k ? " selected" : ""}>${v}</option>`).join("")}</select></label><div class="rc-seg" role="tablist"><button type="button" data-rc-mode="people" class="${mode === "people" ? "on" : ""}" title="Hur många som är på plats samma dag – den dag i veckan med flest">Personer</button><button type="button" data-rc-mode="hours" class="${mode === "hours" ? "on" : ""}" title="Arbetstimmar den veckan">Timmar</button></div>
+    <span class="rc-note">${mode === "hours" ? "Arbetstimmar per vecka" : "Personer på plats – högsta antalet samma dag i veckan"} · ${acts.length} aktivitet${acts.length === 1 ? "" : "er"} med resurser · följer filter, sök och dolda områden</span>
     <button type="button" class="rc-tablebtn">${rcPrefs.table ? "Visa diagram" : "Visa tabell"}</button></div>`;
   if (!anyRes) { el.innerHTML = `<div class="hint">Inga resurser inlagda ännu. Importera Powerproject-tidplanen (resurserna följer med) eller lägg in dem under <b>Avancerat (resurser)</b> när du redigerar en aktivitet.</div>`; return; }
   // Perioden: Gantt-schemats valda period, annars resursernas.
@@ -102,7 +160,7 @@ function renderResourceCurve() {
     el.innerHTML = ctrl + legend + `<div class="rc-tablewrap"><table class="rc-table"><thead><tr><th>Vecka</th>${series.map(s => `<th>${escapeHtml(s)}</th>`).join("")}<th>Totalt</th></tr></thead><tbody>${wkList.map(w => {
       const m = weeks.get(w) || new Map(), tot = series.reduce((a, s) => a + (m.get(s) || 0), 0);
       return `<tr><td>v.${rcWeekNo(w)} <span>${rcIso(w)}</span></td>${series.map(s => `<td>${m.get(s) ? fmt(m.get(s)).replace(/ (h|pers\.)$/, "") : ""}</td>`).join("")}<td><b>${tot ? fmt(tot).replace(/ (h|pers\.)$/, "") : ""}</b></td></tr>`;
-    }).join("")}</tbody></table></div>`;
+    }).join("")}</tbody></table></div>` + rcSummaryHtml(rcSummary(acts, d0, d1), colorOf);
     rcBind(el); return;
   }
   // Staplade staplar per vecka (SVG). Bredd efter panelen, minst 12 px per vecka (annars rullning i sidled).
@@ -125,7 +183,7 @@ function renderResourceCurve() {
     return `<g>${segs}</g>${lab}<rect class="rc-hit" x="${x}" y="${padT}" width="${bw}" height="${H - padT - padB}" data-i="${i}"/>`;
   }).join("");
   const nowLine = todayW >= wkList[0] && todayW <= wkList[wkList.length - 1] ? `<line class="rc-now" x1="${padL + ((todayW - wkList[0]) / 7 + (rcDow(today) + 0.5) / 7) * bw}" x2="${padL + ((todayW - wkList[0]) / 7 + (rcDow(today) + 0.5) / 7) * bw}" y1="${padT}" y2="${H - padB}"/>` : "";
-  el.innerHTML = ctrl + legend + `<div class="rc-scroll"><svg class="rc-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Resurskurva per vecka">${grid.join("")}<line x1="${padL}" x2="${W - 4}" y1="${y(0)}" y2="${y(0)}" class="rc-base"/>${bars}${nowLine}</svg><div class="rc-tip" hidden></div></div>`;
+  el.innerHTML = ctrl + legend + `<div class="rc-scroll"><svg class="rc-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Resurskurva per vecka">${grid.join("")}<line x1="${padL}" x2="${W - 4}" y1="${y(0)}" y2="${y(0)}" class="rc-base"/>${bars}${nowLine}</svg><div class="rc-tip" hidden></div></div>` + rcSummaryHtml(rcSummary(acts, d0, d1), colorOf);
   rcBind(el);
   // Tooltip per vecka.
   const tip = el.querySelector(".rc-tip"), sc = el.querySelector(".rc-scroll");
@@ -133,7 +191,7 @@ function renderResourceCurve() {
     h.addEventListener("mouseenter", () => {
       const i = Number(h.dataset.i), w = wkList[i], m = weeks.get(w) || new Map();
       const rows = series.filter(s => m.get(s)).sort((a, b) => m.get(b) - m.get(a));
-      tip.innerHTML = `<b>v.${rcWeekNo(w)}</b> <span class="rc-dim">${rcIso(w)} – ${rcIso(w + 6)}</span><div class="rc-tot">${fmt(sums[i])}</div>${rows.map(s => `<div class="rc-row"><i style="background:${colorOf(s)}"></i><span>${escapeHtml(s)}</span><b>${fmt(m.get(s))}</b></div>`).join("") || `<div class="rc-dim">Inget planerat</div>`}`;
+      tip.innerHTML = `<b>v.${rcWeekNo(w)}</b> <span class="rc-dim">${rcIso(w)} – ${rcIso(w + 6)}</span><div class="rc-tot">${fmt(sums[i])} <span class="rc-dim">${mode === "hours" ? "den här veckan" : "på plats samma dag (mest i veckan)"}</span></div>${rows.map(s => `<div class="rc-row"><i style="background:${colorOf(s)}"></i><span>${escapeHtml(s)}</span><b>${fmt(m.get(s))}</b></div>`).join("") || `<div class="rc-dim">Inget planerat</div>`}`;
       tip.hidden = false;
       const x = padL + i * bw + bw + 8 - sc.scrollLeft;
       tip.style.left = `${Math.min(x, sc.clientWidth - 240)}px`; tip.style.top = "8px";
