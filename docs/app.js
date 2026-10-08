@@ -591,22 +591,20 @@ function onResetFilters() {
   renderAll();
 }
 
+// "Utan entreprenör/område/aktivitet" (Victor 2026-10-08): ett eget val i filtret för poster där fältet är tomt.
+const FILTER_NONE = "__utan__";
+const filterHit = (want, v) => !want || (want === FILTER_NONE ? !v : v === want);
 function getFilteredItems() {
-  return items.filter(it => {
-    if (filters.area && it.area !== filters.area) return false;
-    if (filters.activity && it.activity !== filters.activity) return false;
-    if (filters.contractor && it.contractor !== filters.contractor) return false;
-    return true;
-  });
+  return items.filter(it => filterHit(filters.area, it.area) && filterHit(filters.activity, it.activity) && filterHit(filters.contractor, it.contractor));
 }
 
 // Fyller filtrets tre <select>-fält med de värden som faktiskt finns i
 // datan just nu. Behåller vald filtrering om värdet fortfarande finns
 // kvar i listan efter en omhämtning, annars nollställs det.
 function populateFilterOptions() {
-  fillSelect("filterArea", "area", uniqueValues(it => it.area), "Alla områden");
-  fillSelect("filterActivity", "activity", uniqueValues(it => it.activity), "Alla aktiviteter");
-  fillSelect("filterContractor", "contractor", uniqueValues(it => it.contractor), "Alla entreprenörer");
+  fillSelect("filterArea", "area", uniqueValues(it => it.area), "Alla områden", items.some(it => !it.area) ? NO_AREA_LABEL : "");
+  fillSelect("filterActivity", "activity", uniqueValues(it => it.activity), "Alla aktiviteter", items.some(it => !it.activity) ? NO_ACTIVITY_LABEL : "");
+  fillSelect("filterContractor", "contractor", uniqueValues(it => it.contractor), "Alla entreprenörer", items.some(it => !it.contractor) ? NO_CONTRACTOR_LABEL : "");
 }
 
 function uniqueValues(keyFn) {
@@ -618,15 +616,16 @@ function uniqueValues(keyFn) {
   return Array.from(set).sort((a, b) => a.localeCompare(b, "sv"));
 }
 
-function fillSelect(id, filterKey, values, allLabel) {
+function fillSelect(id, filterKey, values, allLabel, noneLabel = "") {
   const el = document.getElementById(id);
   const current = filters[filterKey];
 
   el.innerHTML = [`<option value="">${escapeHtml(allLabel)}</option>`]
+    .concat(noneLabel ? [`<option value="${FILTER_NONE}">${escapeHtml(noneLabel)}</option>`] : [])
     .concat(values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`))
     .join("");
 
-  if (current && values.includes(current)) {
+  if (current && (values.includes(current) || (current === FILTER_NONE && noneLabel))) {
     el.value = current;
   } else {
     filters[filterKey] = "";
@@ -5066,7 +5065,7 @@ function printGantt(opts) {
   const colorText = { area: "område", contractor: "entreprenör", activity: "aktivitet" }[ganttColorBy];
   const sub = [(planSource === "pp" ? "Powerproject · " : "") + viewText + (groupText ? `, grupperat på ${groupText}` : "") + (ganttView === "board" ? `, färg efter ${colorText}` : ""),
     ganttPrintPeriodText(domain.start, domain.end)];
-  const filterParts = [["Område", filters.area], ["Aktivitet", filters.activity], ["Entreprenör", filters.contractor]].filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`);
+  const filterParts = [["Område", filters.area, NO_AREA_LABEL], ["Aktivitet", filters.activity, NO_ACTIVITY_LABEL], ["Entreprenör", filters.contractor, NO_CONTRACTOR_LABEL]].filter(([, v]) => v).map(([k, v, none]) => v === FILTER_NONE ? none : `${k}: ${v}`);
   const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")
     + (ganttView === "bars" && ganttShowActual ? `<span class="gp-leg"><i class="gp-leg-actual"></i>Verkligt</span>` : "")
     + (ganttShowBaseline ? `<span class="gp-leg"><i class="gp-leg-baseline" style="background:${ganttBaselineColor} !important"></i>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : "")
