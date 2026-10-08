@@ -2135,3 +2135,53 @@ svg.gantt-arrows.has-hot text.ga-lag-t.hot { opacity: 1; }
 /* Namnet i Redigera aktivitet: ruta på fyra rader */
 .new-act-pop textarea.na-name { font: inherit; font-size: 12.5px; font-weight: 400; color: var(--text, #111827); padding: 5px 22px 5px 6px; width: 100%; box-sizing: border-box; resize: vertical; min-height: 4.6em; line-height: 1.35; background-position: right 8px top 10px !important; }
 .new-act-pop textarea.na-name:focus { outline: none; border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37,99,235,.14); }
+
+/* Avancerat (resurser) i Redigera/Ny aktivitet */
+.new-act-pop .na-res { margin: 2px 0 8px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.new-act-pop .na-res > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: #4b5563; padding: 2px 0; }
+.new-act-pop .na-res[open] > summary { margin-bottom: 4px; }
+.new-act-pop .na-res-h, .new-act-pop .na-res-row { display: grid; grid-template-columns: 1fr 64px 76px 24px; gap: 4px; align-items: center; }
+.new-act-pop .na-res-h { font-size: 10.5px; color: #6b7280; font-weight: 600; margin-bottom: 2px; }
+.new-act-pop .na-res-row { margin-bottom: 3px; }
+.new-act-pop .na-res-row input { border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; font-size: 12px; }
+.new-act-pop .na-res-row .nr-del { border: none; background: none; color: #9ca3af; cursor: pointer; padding: 0; }
+.new-act-pop .na-res-row .nr-del:hover { color: #dc2626; }
+.new-act-pop .na-res-add { border: 1px dashed #cbd5e1; background: #f8fafc; border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; margin: 2px 0 4px; }
+
+/* Resurskurva */
+.resource-curve { position: relative; }
+.rc-ctrl { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; }
+.rc-seg { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+.rc-seg button { border: none; background: #fff; padding: 4px 12px; font-size: 12px; cursor: pointer; color: #374151; }
+.rc-seg button + button { border-left: 1px solid #cbd5e1; }
+.rc-seg button.on { background: #1f2937; color: #fff; }
+.rc-note { font-size: 11.5px; color: #6b7280; }
+.rc-tablebtn { margin-left: auto; border: none; background: none; color: #2563eb; font-size: 12px; cursor: pointer; text-decoration: underline; }
+.rc-legend { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-bottom: 6px; }
+.rc-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #e5e7eb; background: #fff; border-radius: 999px; padding: 2px 9px 2px 6px; font-size: 11.5px; color: #111827; cursor: pointer; }
+.rc-chip i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.rc-chip span { color: #6b7280; }
+.rc-chip.on { border-color: #1f2937; box-shadow: inset 0 0 0 1px #1f2937; }
+.rc-all { border: none; background: none; color: #2563eb; font-size: 11.5px; cursor: pointer; text-decoration: underline; }
+.rc-scroll { position: relative; overflow-x: auto; }
+.rc-svg { display: block; }
+.rc-grid { stroke: #eef0f3; stroke-width: 1; }
+.rc-base { stroke: #9ca3af; stroke-width: 1; }
+.rc-ytick { font-size: 10px; fill: #6b7280; text-anchor: end; }
+.rc-xtick { font-size: 10px; fill: #6b7280; text-anchor: middle; }
+.rc-xtick.now { fill: #2563eb; font-weight: 700; }
+.rc-now { stroke: #2563eb; stroke-width: 1.5; stroke-dasharray: 3 3; }
+.rc-hit { fill: transparent; cursor: default; }
+.rc-hit.on { fill: rgba(15,23,42,.05); }
+.rc-tip { position: absolute; z-index: 5; width: 230px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.16); padding: 8px 10px; font-size: 12px; pointer-events: none; }
+.rc-tip .rc-tot { font-size: 15px; font-weight: 700; margin: 2px 0 4px; }
+.rc-tip .rc-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 6px; align-items: center; padding: 1px 0; }
+.rc-tip .rc-row i { width: 10px; height: 10px; border-radius: 3px; }
+.rc-tip .rc-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-dim { color: #6b7280; font-size: 11px; }
+.rc-tablewrap { overflow: auto; max-height: 420px; }
+.rc-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.rc-table th, .rc-table td { border-bottom: 1px solid #eef0f3; padding: 3px 8px; text-align: right; white-space: nowrap; }
+.rc-table th:first-child, .rc-table td:first-child { text-align: left; }
+.rc-table td span { color: #9ca3af; font-size: 11px; }
+.rc-table thead th { position: sticky; top: 0; background: #f8fafc; }

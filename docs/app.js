@@ -871,6 +871,8 @@ function fromRow(row) {
     baselineEndDate: row.baseline_end_date || null,
     baselines: row.baselines && typeof row.baselines === "object" && !Array.isArray(row.baselines) ? row.baselines : null,
     estimatedHours: Number.isFinite(row.estimated_hours) ? row.estimated_hours : null,
+    // Resurser per aktivitet (Powerproject-importen eller "Avancerat (resurser)"): [{ name, qty, hours, start, end }].
+    resources: Array.isArray(row.resources) ? row.resources.filter(r => r && r.name) : null,
     // Används av Gantt-schemat för att kunna markera objektet i 3D-modellen
     // vid klick på dess namn - se selectGanttItemInModel().
     modelId: row.model_id ?? null,
@@ -2232,7 +2234,7 @@ function planSize(plan) { return plan.items.size + plan.acts.size + (plan.deps ?
 /* Glappet (dagar) på kopplingen pred -> succ, eller undefined om inget glapp är satt. */
 const lagLabel = lag => `${lag > 0 ? "+" : lag < 0 ? "−" : "±"}${Math.abs(lag)} d`;
 function lagOf(succ, predId) { const v = succ && succ.depLags ? succ.depLags[String(predId)] : undefined; return Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : undefined; }
-const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress" };
+const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources" };
 function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
 function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
 
@@ -3279,6 +3281,8 @@ async function selectGanttItemInModel(it) {
 }
 
 function renderGantt(list, target) {
+  // Resurskurvan följer Gantt-schemats urval (filter, sök, dolda områden, period) – ritas om efteråt.
+  if (!target && typeof renderResourceCurve === "function") setTimeout(renderResourceCurve, 0);
   // target: ritar i ett annat element (utskriften, se printGantt) - utan anteckningar och interaktion.
   const el = target || document.getElementById("ganttChart");
   const notesEl = target ? null : document.getElementById("ganttNotes");
@@ -4096,6 +4100,7 @@ function ganttSearchMatch(it) {
    Kopplas på ett textfält: listan filtreras medan man skriver (alla ord ska finnas, utan hänsyn till
    å/ä/ö-accenter), pilar + Enter väljer, Esc stänger listan. Det man skriver får ändå vara ett nytt
    värde. source() -> [{ value, label, sub?, count? }]. onPick(o) tar över valet (t.ex. Väntar på). */
+const naResOpen = () => { try { return localStorage.getItem("4ddash-res-open") !== "0"; } catch (e) { return true; } };
 function attachCombo(input, source, { onPick, empty = "Inga träffar – det du skriver blir ett nytt värde", max = 80 } = {}) {
   const host = input.closest(".board-pop") || document.body;
   const list = document.createElement("div");
@@ -4199,6 +4204,8 @@ function openActivityDialog({ after = null, edit = null } = {}) {
   };
   // Startvärden.
   let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0;
+  // Resurser: samma för alla objekt i aktiviteten – den första som har några gäller.
+  const res0 = edit ? ((members.find(m => m.resources && m.resources.length) || {}).resources || []).map(r => ({ ...r })) : [];
   const preds = []; // { entry, lag: "" | tal }
   if (edit) {
     name0 = itemLabel(edit) === "Okänt objekt" ? "" : (edit.objectName || "");
@@ -4240,6 +4247,11 @@ function openActivityDialog({ after = null, edit = null } = {}) {
       <input type="text" class="na-pred-search" placeholder="＋ Sök aktivitet att vänta på…" />
       <input type="hidden" class="na-pred" />
     </div>
+    <details class="na-res"${res0.length && naResOpen() ? " open" : ""}><summary>Avancerat (resurser) <span class="hint na-res-sum"></span></summary>
+      <div class="na-res-rows"></div>
+      <button type="button" class="na-res-add">＋ Resurs</button>
+      <div class="hint">Antal = personer/maskiner samtidigt, timmar = totalt för aktiviteten. ${pp ? "Från Powerproject – har aktiviteten resurser där skrivs de över vid nästa import." : ""}</div>
+    </details>
     ${edit ? `<label class="na-withdeps-l"><input type="checkbox" class="na-withdeps" checked /> Flytta med det som väntar på den här</label>` : ""}
     <p class="hint na-foot">${edit
       ? (imported ? `⚠ Kommer från ${pp ? "Powerproject" : "Excel"} – namn, område, datum och kopplingar kan skrivas över vid nästa import. Glappen behålls så länge kopplingen finns kvar.` : "Egen aktivitet – finns bara i 4D. Ändringen går att ångra (Ctrl+Z).")
@@ -4262,6 +4274,40 @@ function openActivityDialog({ after = null, edit = null } = {}) {
   };
   document.addEventListener("keydown", onKey, true);
   q(".na-cancel").onclick = close;
+
+  // Avancerat (resurser) (Victor 2026-10-08): resurs, antal och timmar per aktivitet – fälls ut.
+  const resRows = res0.slice();
+  const resNames = () => [...new Set(items.flatMap(it => (it.resources || []).map(r => r.name)))].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+  const renderRes = () => {
+    const box = q(".na-res-rows");
+    box.innerHTML = resRows.length ? `<div class="na-res-h"><span>Resurs</span><span>Antal</span><span>Timmar</span><span></span></div>` + resRows.map((r, i) => `<div class="na-res-row" data-i="${i}">
+        <input type="text" class="nr-name" value="${escapeHtml(r.name || "")}" placeholder="t.ex. R01 Byggnadsarbetare" />
+        <input type="number" class="nr-qty" min="0" step="0.5" value="${r.qty ?? ""}" />
+        <input type="number" class="nr-hours" min="0" step="1" value="${r.hours ?? ""}" />
+        <button type="button" class="nr-del" title="Ta bort">✕</button></div>`).join("") : `<div class="hint">Inga resurser.</div>`;
+    box.querySelectorAll(".na-res-row").forEach(row => {
+      const r = resRows[Number(row.dataset.i)];
+      row.querySelector(".nr-name").oninput = e => { r.name = e.target.value; sumRes(); };
+      row.querySelector(".nr-qty").oninput = e => { r.qty = e.target.value === "" ? null : Number(e.target.value); sumRes(); };
+      row.querySelector(".nr-hours").oninput = e => { r.hours = e.target.value === "" ? null : Number(e.target.value); sumRes(); };
+      row.querySelector(".nr-del").onclick = () => { resRows.splice(Number(row.dataset.i), 1); renderRes(); };
+      attachCombo(row.querySelector(".nr-name"), () => resNames().map(n => ({ value: n, label: n })), {});
+    });
+    sumRes();
+  };
+  const sumRes = () => {
+    const live = resRows.filter(r => (r.name || "").trim());
+    const h = live.reduce((a, r) => a + (Number(r.hours) || 0), 0);
+    q(".na-res-sum").textContent = live.length ? `· ${live.length} resurs${live.length === 1 ? "" : "er"}, ${Math.round(h).toLocaleString("sv-SE")} h` : "";
+  };
+  q(".na-res-add").onclick = () => { resRows.push({ name: "", qty: 1, hours: null }); renderRes(); const ins = pop.querySelectorAll(".nr-name"); if (ins.length) ins[ins.length - 1].focus(); };
+  q(".na-res").addEventListener("toggle", () => { try { localStorage.setItem("4ddash-res-open", q(".na-res").open ? "1" : "0"); } catch (e) {} });
+  renderRes();
+  const resOut = () => {
+    const out = resRows.filter(r => (r.name || "").trim()).map(r => ({ name: r.name.trim(), qty: Number(r.qty) || 0, hours: Number(r.hours) || 0, ...(r.start ? { start: r.start } : {}), ...(r.end ? { end: r.end } : {}) }));
+    return out.length ? out : null;
+  };
+  const resChanged = () => JSON.stringify(resOut()) !== JSON.stringify(res0.length ? res0.map(r => ({ name: r.name, qty: Number(r.qty) || 0, hours: Number(r.hours) || 0, ...(r.start ? { start: r.start } : {}), ...(r.end ? { end: r.end } : {}) })) : null);
 
   // Powerproject: aktiviteten är sammanfattningsraden ovanför = sista delen av området (Victor 2026-10-07).
   const actFromArea = a => { const parts = String(a || "").split(" / ").map(x => x.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : ""; };
@@ -4366,6 +4412,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
         if (!pp && activity !== act0) f.activity = activity || null;
         if (contractor !== contr0) f.contractor = contractor || null;
         if (progDirty && progress !== (Number(m.progress) || 0)) f.progress = progress;
+        if (resChanged()) f.resources = resOut();
         if (Object.keys(f).length) plan.fields.set(m.id, f);
         const curDeps = (m.dependsOn || []).map(String);
         const nextDeps = [...new Set([...curDeps.filter(id => !initIds.has(id)), ...predIds])];
@@ -4396,7 +4443,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
       area: area || null, activity: activity || null, contractor: contractor || null, status: "planerad",
       start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress,
-      estimated_hours: null, depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
+      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
       baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };
     const btn = q(".na-save");
     btn.disabled = true;
