@@ -4227,7 +4227,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
   pop.className = `board-pop new-act-pop${edit ? " edit-act-pop" : ""}`;
   pop.innerHTML = `
     <div class="board-pop-title">${title}</div>
-    <label>${pp ? "Namn/Aktivitet" : "Namn"} <input type="text" class="na-name" value="${escapeHtml(name0)}" placeholder="t.ex. Grovbetong för fundament linje E31-40" /></label>
+    <label>${pp ? "Namn/Aktivitet" : "Namn"} <textarea class="na-name" rows="4" placeholder="t.ex. Grovbetong för fundament linje E31-40">${escapeHtml(name0)}</textarea></label>
     <label>Område <input type="text" class="na-area" value="${escapeHtml(area0)}" placeholder="t.ex. PRODUKTION / 744 Fläkthuset" /></label>
     ${pp
       ? `<div class="hint na-act-auto">Sammanfattningsrad (grupp och färg): <b class="na-act-show"></b> – sista delen av området, som i Powerproject</div>`
@@ -4329,6 +4329,9 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     if (o.entry.end && o.entry.status !== "klar" && q(".na-start").value <= o.entry.end) setStart(addDaysIso(o.entry.end, 1));
     q(".na-pred-search").focus();
   } });
+  // Namnet i en ruta på fyra rader (Victor 2026-10-08) – men det är en rad text: Enter gör ingen radbrytning.
+  q(".na-name").addEventListener("keydown", e => { if (e.key === "Enter" && !e.defaultPrevented) e.preventDefault(); });
+  q(".na-name").addEventListener("input", e => { const t = e.target; if (/[\r\n]/.test(t.value)) t.value = t.value.replace(/\s*[\r\n]+\s*/g, " "); });
   q(".na-name").focus();
 
   const v = c => (q(c) ? q(c).value.trim() : "");

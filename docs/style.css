@@ -2131,3 +2131,7 @@ svg.gantt-arrows.has-hot text.ga-lag-t.hot { opacity: 1; }
 .gantt-colorkey .gck-chip:hover { filter: brightness(.96); box-shadow: 0 1px 4px rgba(0,0,0,.15); }
 .gantt-colorkey .gck-chip.own::after { content: " ●"; color: var(--bd); }
 .gantt-group-menu hr { border: none; border-top: 1px solid #e5e7eb; margin: 4px 2px; }
+
+/* Namnet i Redigera aktivitet: ruta på fyra rader */
+.new-act-pop textarea.na-name { font: inherit; font-size: 12.5px; font-weight: 400; color: var(--text, #111827); padding: 5px 22px 5px 6px; width: 100%; box-sizing: border-box; resize: vertical; min-height: 4.6em; line-height: 1.35; background-position: right 8px top 10px !important; }
+.new-act-pop textarea.na-name:focus { outline: none; border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37,99,235,.14); }
