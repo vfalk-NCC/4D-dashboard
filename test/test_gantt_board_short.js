@@ -105,13 +105,14 @@ seed('plan_items.json', [
   await page.evaluate(() => { ganttBoardOneLine = false; ganttBoardFullText = false; const x = items.find(i => i.id === 'i3'); x.objectName = 'Ställningsmontage till kontrafor. KLART PÅ FREDAG. Resten på kontrafor efter det. STÄLLNING FRAMFLYTTAD PGA UPPSTICK. PROJFÖRÄNDRING. PROJ LÖST.'; const d = new Date(x.startDate); d.setUTCDate(d.getUTCDate() + 5); x.endDate = d.toISOString().slice(0, 10); renderGantt(getFilteredItems()); });
   await page.waitForTimeout(200);
   const lines = () => page.evaluate(() => { const t = document.querySelector('#ganttChart .pnote[data-item-id="i3"] .pnote-title'); return Math.round(t.getBoundingClientRect().height / parseFloat(getComputedStyle(t).lineHeight)); });
-  const posOthers = () => page.evaluate(() => [...document.querySelectorAll('#ganttChart .pnote:not([data-item-id="i3"])')].map(n => Math.round(n.getBoundingClientRect().top)).join());
+  const posOthers = () => page.evaluate(() => { const top = document.getElementById('ganttChart').getBoundingClientRect().top; return [...document.querySelectorAll('#ganttChart .pnote:not([data-item-id="i3"])')].map(n => Math.round(n.getBoundingClientRect().top - top)).join(); });
   if ((await lines()) > 2) fail('Standard: högst två rader');
+  await page.locator('#ganttChart .pnote[data-item-id="i3"]').scrollIntoViewIfNeeded();
   const before = await posOthers();
   await page.hover('#ganttChart .pnote[data-item-id="i3"] .pnote-meta');
   await page.waitForTimeout(150);
   const peek = await page.evaluate(() => document.querySelector('#ganttChart .pnote[data-item-id="i3"]').classList.contains('pnote-peek'));
-  if (!peek || (await lines()) <= 2 || (await posOthers()) !== before) fail('Peka: lappen ska fällas ut utan att något flyttas: ' + JSON.stringify({ peek, lines: await lines() }));
+  if (!peek || (await lines()) <= 2 || (await posOthers()) !== before) fail('Peka: lappen ska fällas ut utan att något flyttas: ' + JSON.stringify({ peek, lines: await lines(), before, after: await posOthers(), mb: await page.evaluate(() => document.querySelector('#ganttChart .pnote[data-item-id="i3"]').style.marginBottom) }));
   await page.mouse.move(5, 5); await page.waitForTimeout(100);
   await page.check('#ganttBoardFull'); await page.waitForTimeout(200);
   if ((await lines()) <= 2 || !(await page.evaluate(() => JSON.parse(localStorage.getItem(GANTT_PREFS_KEY)).boardFullText))) fail('Hela texten ska visa allt och sparas');
