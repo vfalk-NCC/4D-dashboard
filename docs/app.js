@@ -3903,6 +3903,11 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
       // Namnet och aktiviteten (det som talar om vad lappen handlar om); entreprenör och datum står i tipsrutan.
       const need = 9 + 8 + 7 + boardTextWidth((blocked ? "⛔ " : "") + name) + 22 + (subParts.length ? 7 + boardTextWidth(subParts.join(" · "), "400 10px") : 0) + (bShift ? 40 : 0);
       if (realPx < need) { ext = true; gEnd = Math.min(nDays - 1, c0 + Math.ceil(need / (colPx / 7)) - 1); }
+    } else if (!ganttBoardOneLine && !cont.includes("cont-r") && realPx < 130) {
+      // Större lappar (Victor 2026-10-08): samma ljusa förlängning när lappen är för smal för att läsas –
+      // namnet på högst två rader, status och datum.
+      const need = Math.min(260, Math.max(170, 30 + boardTextWidth((blocked ? "⛔ " : "") + name, "700 11px") / 2));
+      ext = true; gEnd = Math.min(nDays - 1, c0 + Math.ceil(need / dayPx) - 1);
     }
     const cls = `pnote${ganttBoardOneLine ? " pnote-one" : ""}${ext ? " pnote-ext" : ""}${cont}${shortNote && !ext ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}${blHtml ? " pnote-hasbl" : ""}`;
     const attrs = `style="grid-column:${c0 + 1} / ${gEnd + 2};${ext ? ` --real:${realPx}px;` : ""} --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${ganttBoardOneLine ? 0 : tilt}deg;"

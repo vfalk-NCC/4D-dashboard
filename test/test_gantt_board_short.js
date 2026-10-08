@@ -1,6 +1,6 @@
 // Tavlan, "En rad" (Victors önskemål 2026-10-06: "ingen aning om vad akt. handlar om om den blir
 // för kort"): en lapp som är för kort för sitt namn får en ljus förlängning med namnet; den färgade
-// delen är fortfarande exakt aktivitetens längd och högerkanten där går att dra.
+// delen är fortfarande exakt aktivitetens längd och högerkanten där går att dra. Även med större lappar.
 const { chromium } = require('playwright');
 const path = require('path'), http = require('http'), fs = require('fs');
 const DOCS_DIR = path.join(__dirname, '..', 'docs');
@@ -89,7 +89,10 @@ seed('plan_items.json', [
   console.log('OK: den riktiga högerkanten går att dra');
 
   await page.uncheck('#ganttBoardOneLine'); await page.waitForTimeout(150);
-  if (await page.locator('#ganttChart .pnote-ext').count()) fail('Utan "En rad" ska inga lappar förlängas');
+  // Större lappar (Victor 2026-10-08): en för smal lapp förlängs på samma sätt; de breda gör det inte.
+  const big = await page.evaluate(() => [...document.querySelectorAll('#ganttChart .pnote')].map(n => ({ id: n.dataset.itemId, ext: n.classList.contains('pnote-ext'), w: n.getBoundingClientRect().width, meta: !!n.querySelector('.pnote-meta') && getComputedStyle(n.querySelector('.pnote-meta')).display !== 'none' })));
+  const kort = big.find(x => x.id === 'i1');
+  if (!kort || !kort.ext || kort.w < 160 || !kort.meta || big.filter(x => x.ext).length !== 1) fail('Utan "En rad": den smala lappen ska förlängas (namn, status, datum), inte de andra: ' + JSON.stringify(big));
 
   if (errors.length) fail('Fel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
