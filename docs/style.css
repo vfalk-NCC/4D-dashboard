@@ -2224,3 +2224,9 @@ svg.gantt-arrows.has-hot text.ga-lag-t.hot { opacity: 1; }
 section.panel.gantt-fullscreen { height: 100vh; height: 100dvh; overscroll-behavior: contain; }
 section.panel.gantt-fullscreen #ganttChart { overscroll-behavior: contain; }
 html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavior: none; }
+
+/* Hela texten: knappen (alla lappar) och lappen man pekar på */
+.board-fulltext .pnote:not(.pnote-one) .pnote-title, .pnote.pnote-peek .pnote-title { -webkit-line-clamp: unset; display: block; overflow: visible; }
+.board-fulltext .pnote:not(.pnote-one) .pnote-sub, .pnote.pnote-peek .pnote-sub { white-space: normal; }
+.pnote.pnote-peek { z-index: 40; box-shadow: 0 10px 28px rgba(15,23,42,.28); }
+.board-fulltext .pnote-one .pnote-title { max-width: none; }

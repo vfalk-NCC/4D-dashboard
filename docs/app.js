@@ -59,6 +59,7 @@ let ganttView = "bars";            // "bars" (klassiska staplar) | "board" (post
 let ganttColorBy = "contractor";   // tavlans lappfärg: "contractor" | "area" | "activity"
 let ganttBoardScrolled = false;    // tavlan har scrollats till dagens vecka en gång
 let ganttBoardSplit = false;       // tavlan: en lapp per 3D-objekt i stället för en per aktivitet
+let ganttBoardFullText = false;    // tavlan: hela namnet på alla lappar (Victor 2026-10-08)
 let ganttBoardOneLine = true;      // tavlan: lapparna på en rad (Victors önskemål 2026-10-06)
 const GANTT_ZOOM_LEVELS = [3, 6, 10, 18, 30, 50]; // px per dag, stigande zoomnivåer
 // Bredden (px) som toggle- och etikettkolumnerna + mellanrummen äter av varje
@@ -2859,6 +2860,7 @@ function loadGanttPrefs() {
     if (["contractor", "area", "activity"].includes(prefs.colorBy)) ganttColorBy = prefs.colorBy;
     if (typeof prefs.boardSplit === "boolean") ganttBoardSplit = prefs.boardSplit;
     if (typeof prefs.boardOneLine === "boolean") ganttBoardOneLine = prefs.boardOneLine;
+    if (typeof prefs.boardFullText === "boolean") ganttBoardFullText = prefs.boardFullText;
     if (typeof prefs.baseline === "boolean") ganttShowBaseline = prefs.baseline;
     if (typeof prefs.baselineDaysOnly === "boolean") ganttBaselineDaysOnly = prefs.baselineDaysOnly;
     if (typeof prefs.arrows === "boolean") ganttShowArrows = prefs.arrows;
@@ -2889,6 +2891,7 @@ function saveGanttPrefs() {
       colorBy: ganttColorBy,
       boardSplit: ganttBoardSplit,
       boardOneLine: ganttBoardOneLine,
+      boardFullText: ganttBoardFullText,
       baseline: ganttShowBaseline,
       baselineDaysOnly: ganttBaselineDaysOnly,
       arrows: ganttShowArrows,
@@ -3248,6 +3251,23 @@ const tipRange = (a, b) => (a === b ? tipDate(a) : `${tipDate(a)} – ${tipDate(
    anropas vid första get() – resultatet sparas. */
 class LazyTipMap extends Map {
   get(k) { const v = super.get(k); if (typeof v !== "function") return v; const html = v(); super.set(k, html); return html; }
+}
+/* Hela texten på lappen man pekar på (Victor 2026-10-08): en större lapp vars namn är avkortat fälls ut
+   till full höjd ovanpå de andra – utan att något flyttas (negativ marginal tar upp den extra höjden). */
+function bindNotePeek(el) {
+  if (!window.matchMedia || !window.matchMedia("(hover: hover)").matches) return; // pekskärm: tipsrutan räcker
+  el.querySelectorAll(".pnote:not(.pnote-one)").forEach(n => {
+    n.addEventListener("mouseenter", () => {
+      const t = n.querySelector(".pnote-title");
+      if (!t || n.classList.contains("pnote-peek") || el.classList.contains("board-fulltext")) return;
+      const h0 = n.getBoundingClientRect().height, t0 = t.getBoundingClientRect().height;
+      n.classList.add("pnote-peek");
+      if (t.getBoundingClientRect().height <= t0 + 1) { n.classList.remove("pnote-peek"); return; } // ryms redan
+      const extra = n.getBoundingClientRect().height - h0;
+      if (extra > 0) n.style.marginBottom = `${-extra}px`;
+    });
+    n.addEventListener("mouseleave", () => { n.classList.remove("pnote-peek"); n.style.marginBottom = ""; });
+  });
 }
 /* Resurserna på en aktivitet (samma för alla dess objekt): "4 pers · 320 h" och en rad per resurs. */
 function resOf(it) { const m = (it.members || [it]).find(x => x.resources && x.resources.length); return m ? m.resources : []; }
@@ -4111,7 +4131,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
       </div>`;
   }).join("");
 
-  el.className = `gantt-chart gantt-board-chart${boardLinkPick && !target ? " board-linking" : ""}`;
+  el.className = `gantt-chart gantt-board-chart${boardLinkPick && !target ? " board-linking" : ""}${ganttBoardFullText ? " board-fulltext" : ""}`;
   el.innerHTML = `
     <div class="board" style="width:${BOARD_LANE_PX + nWeeks * colPx}px">
       <div class="board-head">
@@ -4139,6 +4159,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     };
   });
   bindNearHighlight(el, ".pnote", n => byNoteId.get(n.dataset.itemId), [...byNoteId.values()], "pnote");
+  bindNotePeek(el);
   el._arrowMap = new Map();
   el.querySelectorAll(".pnote[data-item-id]").forEach(n => { const e2 = byNoteId.get(n.dataset.itemId); (e2 && e2.members ? e2.members : [e2 || { id: n.dataset.itemId }]).forEach(m => el._arrowMap.set(String(m.id), n)); });
   requestAnimationFrame(() => drawGanttArrows(el));
@@ -5552,6 +5573,11 @@ function initGanttControls() {
     bl2Color.value = ganttBaselineColor2;
     bl2Color.oninput = () => { ganttBaselineColor2 = bl2Color.value; applyBaselineColor(); };
     bl2Color.onchange = () => { ganttBaselineColor2 = bl2Color.value; saveGanttPrefs(); renderGanttLegend(); };
+  }
+  const fullCb = document.getElementById("ganttBoardFull");
+  if (fullCb) {
+    fullCb.checked = ganttBoardFullText;
+    fullCb.onchange = () => { ganttBoardFullText = fullCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
   }
   const oneCb = document.getElementById("ganttBoardOneLine");
   if (oneCb) {

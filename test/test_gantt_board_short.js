@@ -100,6 +100,23 @@ seed('plan_items.json', [
   const oneDay = await page.evaluate(() => { const n = document.querySelector('#ganttChart .pnote[data-item-id="i3"]'); return { txt: n.querySelector('.pnote-meta').textContent, iso: getComputedStyle(n).isolation, ext: n.classList.contains('pnote-ext') }; });
   if (!/· 1 dag/.test(oneDay.txt) || / – /.test(oneDay.txt) || !oneDay.ext || oneDay.iso !== 'isolate') fail('Endagsaktivitet: ' + JSON.stringify(oneDay));
   console.log('OK: endagsaktivitet visas som heldag ("1 dag") och den färgade dagen syns även i utskriften');
+  // Hela texten (Victor 2026-10-08): knappen visar hela namnet på alla större lappar; att peka på en lapp
+  // fäller ut den utan att något annat flyttas.
+  await page.evaluate(() => { ganttBoardOneLine = false; ganttBoardFullText = false; const x = items.find(i => i.id === 'i3'); x.objectName = 'Ställningsmontage till kontrafor. KLART PÅ FREDAG. Resten på kontrafor efter det. STÄLLNING FRAMFLYTTAD PGA UPPSTICK. PROJFÖRÄNDRING. PROJ LÖST.'; const d = new Date(x.startDate); d.setUTCDate(d.getUTCDate() + 5); x.endDate = d.toISOString().slice(0, 10); renderGantt(getFilteredItems()); });
+  await page.waitForTimeout(200);
+  const lines = () => page.evaluate(() => { const t = document.querySelector('#ganttChart .pnote[data-item-id="i3"] .pnote-title'); return Math.round(t.getBoundingClientRect().height / parseFloat(getComputedStyle(t).lineHeight)); });
+  const posOthers = () => page.evaluate(() => [...document.querySelectorAll('#ganttChart .pnote:not([data-item-id="i3"])')].map(n => Math.round(n.getBoundingClientRect().top)).join());
+  if ((await lines()) > 2) fail('Standard: högst två rader');
+  const before = await posOthers();
+  await page.hover('#ganttChart .pnote[data-item-id="i3"] .pnote-meta');
+  await page.waitForTimeout(150);
+  const peek = await page.evaluate(() => document.querySelector('#ganttChart .pnote[data-item-id="i3"]').classList.contains('pnote-peek'));
+  if (!peek || (await lines()) <= 2 || (await posOthers()) !== before) fail('Peka: lappen ska fällas ut utan att något flyttas: ' + JSON.stringify({ peek, lines: await lines() }));
+  await page.mouse.move(5, 5); await page.waitForTimeout(100);
+  await page.check('#ganttBoardFull'); await page.waitForTimeout(200);
+  if ((await lines()) <= 2 || !(await page.evaluate(() => JSON.parse(localStorage.getItem(GANTT_PREFS_KEY)).boardFullText))) fail('Hela texten ska visa allt och sparas');
+  await page.uncheck('#ganttBoardFull');
+  console.log('OK: Hela texten – knappen visar hela namnet, att peka fäller ut lappen utan att något flyttas');
   if (errors.length) fail('Fel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
   await browser.close(); server.close();
