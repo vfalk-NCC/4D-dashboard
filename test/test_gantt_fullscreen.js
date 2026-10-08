@@ -126,13 +126,37 @@ seed('plan_items.json', [
   await ipad.waitForTimeout(150);
   const lost = await ipad.evaluate(() => ({ fs: document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen'), back: !!document.getElementById('ganttFsBack') }));
   if (!lost.fs || !lost.back) fail('Efter systemets stängning: ' + JSON.stringify(lost));
-  await ipad.click('#ganttFsBack'); await ipad.waitForTimeout(150);
+  // Första tryck var som helst på schemat tar tillbaka helskärmen.
+  await ipad.evaluate(() => { const t = document.querySelector('section.panel[data-panel-id="gantt"] .gantt-legend') || document.querySelector('section.panel[data-panel-id="gantt"]'); const touch = new Touch({ identifier: 2, target: t, clientX: 50, clientY: 50 }); t.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch], bubbles: true, cancelable: true })); });
+  await ipad.waitForTimeout(150);
   const back = await ipad.evaluate(() => ({ rf: window.__rf, btn: !!document.getElementById('ganttFsBack') }));
-  if (back.rf !== 2 || back.btn) fail('Tillbaka till helskärm: ' + JSON.stringify(back));
+  if (back.rf !== 2 || back.btn) fail('Ett tryck var som helst ska ta tillbaka helskärmen: ' + JSON.stringify(back));
+  await ipad.evaluate(() => { document.dispatchEvent(new Event('fullscreenchange')); });
+  await ipad.click('#ganttFsBack'); await ipad.waitForTimeout(150);
+  if ((await ipad.evaluate(() => window.__rf)) !== 3) fail('Knappen ska också ta tillbaka helskärmen');
   await ipad.click('#ganttFullBtn'); await ipad.waitForTimeout(200);
   if (await ipad.evaluate(() => document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen'))) fail('iPad: knappen ska stänga');
   await ctx2.close();
-  console.log('OK: iPad – riktig helskärm; svep nedåt högst upp fångas (stänger inget), uppåt/sidled rullar; stänger systemet ändå: schemat kvar + Tillbaka till helskärm');
+  // Från hemskärmen (appläge): ingen systemhelskärm – panelen fyller skärmen och kan inte stängas av ett svep.
+  const ctx3 = await browser.newContext({ viewport: { width: 1180, height: 820 }, hasTouch: true });
+  const app = await ctx3.newPage();
+  await app.addInitScript(() => {
+    localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1');
+    const mm = window.matchMedia.bind(window); window.matchMedia = q => q.includes('display-mode: standalone') ? { matches: true, addEventListener() {}, removeEventListener() {} } : mm(q);
+    window.__rf = 0; Element.prototype.requestFullscreen = function () { window.__rf++; return Promise.resolve(); };
+  });
+  await app.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: 'window.TrimbleConnectWorkspace = { connect: () => Promise.reject(new Error("x")) };' }));
+  await app.route('https://api.github.com/**', r => r.fulfill({ status: 404, body: '{}' }));
+  await app.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
+  await app.goto(`http://localhost:${PORT}/index.html`); await app.waitForTimeout(800);
+  const mf = await app.evaluate(async () => { const l = document.querySelector('link[rel="manifest"]'); const m = await (await fetch(l.href)).json(); return { display: m.display, icon: !!document.querySelector('link[rel="apple-touch-icon"]'), capable: document.querySelector('meta[name="apple-mobile-web-app-capable"]').content }; });
+  if (mf.display !== 'fullscreen' || !mf.icon || mf.capable !== 'yes') fail('Hemskärmsappen: ' + JSON.stringify(mf));
+  await app.click('#ganttFullBtn'); await app.waitForTimeout(200);
+  const st = await app.evaluate(() => ({ rf: window.__rf, fs: document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen') }));
+  if (st.rf !== 0 || !st.fs) fail('Appläge: panelen fyller skärmen utan systemhelskärm: ' + JSON.stringify(st));
+  await ctx3.close();
+  console.log('OK: hemskärmsapp – manifest/ikon; i appläge fyller helskärmen skärmen utan systemets helskärm');
+  console.log('OK: iPad – riktig helskärm; svep nedåt högst upp fångas (stänger inget), uppåt/sidled rullar; stänger systemet ändå: schemat kvar, ett tryck var som helst tar tillbaka helskärmen');
   if (errors.length) fail('Fel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
   await browser.close(); server.close();

@@ -3,6 +3,15 @@
 <head>
 <meta charset="UTF-8" />
 <title>4D-dashboard</title>
+<!-- Hemskärmsapp (Victor 2026-10-08): lagd på iPadens hemskärm öppnas dashboarden utan webbläsarens fält –
+     helskärm hela tiden, utan systemets helskärm som ett svep nedåt kan stänga. -->
+<link rel="manifest" href="app.webmanifest" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="4D-dashboard" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="theme-color" content="#0f2f73" />
+<link rel="apple-touch-icon" href="icon-180.png" />
 <link rel="stylesheet" href="style.css" />
 <script src="error-guard.js"></script>
 <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>

@@ -5173,8 +5173,14 @@ async function toggleGanttFullscreen() {
   setGanttFullscreen(true);
   ganttFsEnterNative(panel);
 }
+/* Öppnad från hemskärmen (Victor 2026-10-08): ingen webbläsarram och redan helskärm – systemets
+   helskärm behövs inte (och kan då inte heller stängas av ett svep). Panelen fyller skärmen. */
+function ganttIsStandalone() {
+  try { return window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches || window.matchMedia("(display-mode: fullscreen)").matches; } catch (e) { return false; }
+}
 async function ganttFsEnterNative(panel) {
   ganttFsLost(false);
+  if (ganttIsStandalone()) return;
   if (document.fullscreenEnabled && panel.requestFullscreen) {
     try { await panel.requestFullscreen(); } catch (e) { /* inte tillåtet i ramen – panelen fyller ytan ändå */ }
   }
@@ -5206,6 +5212,14 @@ function ganttScrollParent(node, stop) {
     if (dy > 0 && dy > Math.abs(dx) && (!sc || sc.scrollTop <= 0)) e.preventDefault(); // nedåt utan något att rulla
   }, { passive: false });
 })();
+/* Efter att systemet stängt helskärmen: första tryck var som helst på schemat tar tillbaka den
+   (helskärm får bara startas av ett tryck – det här trycket räcker). */
+function ganttFsRetouch(e) {
+  const panel = ganttFullscreenPanel();
+  if (!panel || !document.getElementById("ganttFsBack") || document.fullscreenElement || !panel.contains(e.target)) return;
+  ganttFsEnterNative(panel);
+}
+document.addEventListener("touchend", ganttFsRetouch, true);
 function ganttFsLost(on) {
   const panel = ganttFullscreenPanel();
   let b = document.getElementById("ganttFsBack");
@@ -5213,7 +5227,7 @@ function ganttFsLost(on) {
   if (!panel) return;
   if (!b) {
     b = document.createElement("button");
-    b.type = "button"; b.id = "ganttFsBack"; b.className = "gantt-fs-back"; b.textContent = "⛶ Tillbaka till helskärm";
+    b.type = "button"; b.id = "ganttFsBack"; b.className = "gantt-fs-back"; b.textContent = "⛶ Tryck var som helst för helskärm igen";
     b.onclick = () => ganttFsEnterNative(panel);
     panel.appendChild(b);
   }
