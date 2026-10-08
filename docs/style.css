@@ -1836,7 +1836,9 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item.gl-bars-only { di
 @media print { .plan-source { display: none !important; } }
 
 /* För kort lapp: namnet på en ljus förlängning till höger (den färgade delen = aktivitetens längd). */
-.pnote.pnote-ext { background: linear-gradient(to right, transparent var(--real), rgba(255,255,255,.92) var(--real)); border-left: none; box-shadow: none; padding-left: 14px; overflow: visible; }
+.pnote.pnote-ext { background: linear-gradient(to right, transparent var(--real), rgba(255,255,255,.92) var(--real)); border-left: none; box-shadow: none; padding-left: 14px; overflow: visible; isolation: isolate; }
+/* Förlängningen: en tunn kant i lappens färg så att den syns höra till lappen (också i utskriften). */
+.pnote.pnote-ext:not(.pnote-one) { outline: 1px solid color-mix(in srgb, var(--bd) 55%, transparent); outline-offset: -1px; }
 .pnote.pnote-ext::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--real); box-sizing: border-box; background: var(--bg); border-left: 5px solid var(--st); border-radius: 2px 2px 8px 2px; box-shadow: 0 1px 1px rgba(0,0,0,.08), 0 4px 10px -2px rgba(0,0,0,.12); z-index: -1; }
 .pnote.pnote-ext::after { display: none; }
 .pnote.pnote-ext.pnote-late { box-shadow: none; }

@@ -3976,7 +3976,8 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     const cls = `pnote${ganttBoardOneLine ? " pnote-one" : ""}${ext ? " pnote-ext" : ""}${cont}${shortNote && !ext ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}${blHtml ? " pnote-hasbl" : ""}`;
     const attrs = `style="grid-column:${c0 + 1} / ${gEnd + 2};${ext ? ` --real:${realPx}px;` : ""} --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${ganttBoardOneLine ? 0 : tilt}deg;"
         data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0"`;
-    const dates = `${escapeHtml(weekdayDateSv(it.startDate))} – ${escapeHtml(weekdayDateSv(it.endDate))}`;
+    // En dag (start = slut) är en heldag: datumet en gång och "1 dag" (Victor 2026-10-08).
+    const dates = it.startDate === it.endDate ? `${escapeHtml(weekdayDateSv(it.startDate))} · <b>1 dag</b>` : `${escapeHtml(weekdayDateSv(it.startDate))} – ${escapeHtml(weekdayDateSv(it.endDate))}`;
     // En rad: statusprick · namn · aktivitet/entreprenör · datum i grått, framdriften i underkanten.
     const ownTag = (it.origin === "manuell" ? `<span class="pnote-own" title="Egen aktivitet – finns bara i 4D, inte i Powerproject">Egen</span>` : "")
       + (ganttEditable && !target ? `<button type="button" class="pnote-trash" title="Ta bort lappen" aria-label="Ta bort lappen">🗑</button>` : "");

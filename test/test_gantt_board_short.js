@@ -94,6 +94,12 @@ seed('plan_items.json', [
   const kort = big.find(x => x.id === 'i1');
   if (!kort || !kort.ext || kort.w < 160 || !kort.meta || big.filter(x => x.ext).length !== 1) fail('Utan "En rad": den smala lappen ska förlängas (namn, status, datum), inte de andra: ' + JSON.stringify(big));
 
+  // En dag = heldag: datumet en gång och "1 dag"; den färgade dagen ligger kvar framför tavlan även
+  // utan lutning (utskriften) – förlängningen är en egen stapelkontext.
+  await page.evaluate(() => { const x = items.find(i => i.id === 'i3'); x.endDate = x.startDate; renderGantt(getFilteredItems()); });
+  const oneDay = await page.evaluate(() => { const n = document.querySelector('#ganttChart .pnote[data-item-id="i3"]'); return { txt: n.querySelector('.pnote-meta').textContent, iso: getComputedStyle(n).isolation, ext: n.classList.contains('pnote-ext') }; });
+  if (!/· 1 dag/.test(oneDay.txt) || / – /.test(oneDay.txt) || !oneDay.ext || oneDay.iso !== 'isolate') fail('Endagsaktivitet: ' + JSON.stringify(oneDay));
+  console.log('OK: endagsaktivitet visas som heldag ("1 dag") och den färgade dagen syns även i utskriften');
   if (errors.length) fail('Fel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
   await browser.close(); server.close();
