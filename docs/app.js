@@ -957,7 +957,9 @@ function fromRow(row) {
     // Samma aktivitet kopplad till flera 3D-objekt (en rad per objekt i
     // 4D-planering) - se mergeActivityGroups.
     activityKey: row.group_id ? `g:${row.group_id}` : (row.source_key ? `s:${row.source_key}` : null),
-    origin: row.origin || null
+    origin: row.origin || null,
+    // Temporär (4D-planering, Victor 2026-10-09): t.ex. en mobilkran – syns i 3D bara mellan start och slut.
+    temporary: row.temporary === true
   };
 }
 
@@ -994,7 +996,7 @@ function mergeActivityGroups(list) {
         }));
         return Object.keys(out).length ? out : null;
       })(),
-      status: late ? "forsenad" : members[0].status, progress, members });
+      status: late ? "forsenad" : members[0].status, progress, members, temporary: members.some(m => m.temporary) });
   });
   return out;
 }
@@ -2308,7 +2310,7 @@ function planSize(plan) { return plan.items.size + plan.acts.size + (plan.deps ?
 /* Glappet (dagar) på kopplingen pred -> succ, eller undefined om inget glapp är satt. */
 const lagLabel = lag => `${lag > 0 ? "+" : lag < 0 ? "−" : "±"}${Math.abs(lag)} d`;
 function lagOf(succ, predId) { const v = succ && succ.depLags ? succ.depLags[String(predId)] : undefined; return Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : undefined; }
-const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources" };
+const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary" };
 function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
 function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
 
@@ -3289,6 +3291,7 @@ function ganttTooltipHtmlForItem(it, depById) {
   if (it.actualStartDate || it.actualEndDate) rows.push(row("Verkligt", e(`${it.actualStartDate ? tipDate(it.actualStartDate) : "?"} – ${it.actualEndDate ? tipDate(it.actualEndDate) : "pågår"}`)));
   if (it.contractor) rows.push(row("Entreprenör", e(it.contractor)));
   if (resOf(it).length) rows.push(row("Resurser", resOf(it).map(r => `${e(r.name)} <b>${(Math.round((Number(r.qty) || 0) * 10) / 10).toLocaleString("sv-SE")} pers</b> · ${Math.round(Number(r.hours) || 0).toLocaleString("sv-SE")} h`).join("<br>")));
+  if (it.temporary) rows.push(row("Temporär", `syns i 3D ${e(tipRange(it.startDate, it.actualEndDate || it.endDate))} <span class="gantt-tip-dim">· tas bort sedan</span>`));
   if (it.origin === "manuell") rows.push(row("Källa", "Egen aktivitet <span class=\"gantt-tip-dim\">· finns inte i Powerproject</span>"));
   let html = `<div class="gantt-tooltip-title">${e(itemLabel(it))}</div>${rows.join("")}`;
   // Baseline: namnet (och källan) en gång, datumen, förskjutningen som etikett.
@@ -3559,7 +3562,9 @@ function renderGantt(list, target) {
     // schemalägga om direkt på staplarna istället för bara via formulär i
     // 4D-planering.
     const draggableAttrs = ganttEditable ? ` data-action="drag-gantt-bar"` : "";
-    const barClass = `gantt-bar${isBlockedRisk ? " gantt-bar-risk" : ""}${ganttEditable ? " gantt-bar-draggable" : ""}`;
+    const barClass = `gantt-bar${isBlockedRisk ? " gantt-bar-risk" : ""}${ganttEditable ? " gantt-bar-draggable" : ""}${it.temporary ? " gantt-bar-temp" : ""}`;
+    // Temporär: streckad stapel och en markering där objektet tas bort (slutet).
+    const tempEndHtml = it.temporary && it.endDate ? `<span class="gantt-temp-end" style="left:calc(${left} + ${width});" title="Temporär – tas bort ${escapeHtml(tipDate(it.actualEndDate || it.endDate))}">⏏</span>` : "";
 
     let actualHtml = "";
     if (ganttShowBaseline && ganttBaselineDaysOnly) {
@@ -3587,12 +3592,12 @@ function renderGantt(list, target) {
     const rowHtml = `
       <div class="${rowClass}"${groupColor ? ` style="--grp:${groupColor.bd}; --grp-bg:${groupColor.bg};"` : ""}>
         <span class="gantt-toggle${hasActivities ? "" : " gantt-toggle-empty"}"${hasActivities ? ` data-action="toggle-gantt" data-item-id="${escapeHtml(String(it.id))}"` : ""}>${hasActivities ? (expanded ? "▾" : "▸") : ""}</span>
-        ${ganttEditable ? `<button type="button" class="gantt-row-trash" data-trash-id="${escapeHtml(String(it.id))}" title="Ta bort" aria-label="Ta bort">🗑</button>` : ""}<span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}${depBadgeHtml}</span>
+        ${ganttEditable ? `<button type="button" class="gantt-row-trash" data-trash-id="${escapeHtml(String(it.id))}" title="Ta bort" aria-label="Ta bort">🗑</button>` : ""}<span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}${it.temporary ? `<span class="gantt-temp-badge" title="Temporär – syns i 3D bara mellan start och slut">⏱</span>` : ""}${depBadgeHtml}</span>
         <div class="gantt-track">
           <span class="${barClass}" style="left:${left}; width:${width}; border-color:${color};" data-gantt-tip="${tipKey}" data-item-id="${escapeHtml(String(it.id))}"${hasDeps ? ` data-has-deps="1"` : ""} tabindex="0"${draggableAttrs}>
             <span class="gantt-bar-fill" style="width:${progressPct}%; background:${color};"></span>
           </span>
-          ${actualHtml}
+          ${actualHtml}${tempEndHtml}
         </div>
       </div>`;
 
@@ -4308,7 +4313,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     return [...m].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([v, n]) => ({ value: v, label: v, count: `${n} akt.` }));
   };
   // Startvärden.
-  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0;
+  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0, temp0 = false;
   // Resurser: samma för alla objekt i aktiviteten – den första som har några gäller.
   const res0 = edit ? ((members.find(m => m.resources && m.resources.length) || {}).resources || []).map(r => ({ ...r })) : [];
   const preds = []; // { entry, lag: "" | tal }
@@ -4316,6 +4321,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     name0 = itemLabel(edit) === "Okänt objekt" ? "" : (edit.objectName || "");
     area0 = edit.area || ""; act0 = edit.activity || ""; contr0 = edit.contractor || "";
     prog0 = Math.round(members.reduce((s, m) => s + (Number(m.progress) || 0), 0) / Math.max(1, members.length));
+    temp0 = members.some(m => m.temporary);
     start0 = edit.startDate || todayISO(); end0 = edit.endDate || start0;
     const seen = new Set();
     members.flatMap(m => m.dependsOn || []).map(String).filter(id => !own.has(id)).forEach(id => {
@@ -4346,6 +4352,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
       : `<label>Aktivitet <input type="text" class="na-act" value="${escapeHtml(act0)}" /></label>`}
     <label>Entreprenör <input type="text" class="na-contr" value="${escapeHtml(contr0)}" /></label>
     <div class="na-row"><label>Start <input type="date" class="na-start" value="${start0}" /></label><label>Slut <input type="date" class="na-end" value="${end0}" /></label><label>Framdrift <input type="number" class="na-prog" min="0" max="100" step="5" value="${prog0}" /></label></div>
+    <label class="na-temp" title="T.ex. en mobilkran, stämp eller tillfällig vägg: syns i 3D bara från start till slut och försvinner sedan"><input type="checkbox" class="na-temp-chk" ${temp0 ? "checked" : ""} /> <span><b>Temporär</b> – syns i 3D bara mellan start och slut (t.ex. mobilkran)</span></label>
     <div class="na-dep">
       <div class="na-dep-h">Väntar på <span class="hint">· glapp i dagar: + väntar, − överlappar · tomt = inget fast glapp</span></div>
       <div class="na-preds"></div>
@@ -4556,6 +4563,8 @@ function openActivityDialog({ after = null, edit = null } = {}) {
         if (contractor !== contr0) f.contractor = contractor || null;
         if (progDirty && progress !== (Number(m.progress) || 0)) f.progress = progress;
         if (resChanged()) f.resources = resOut();
+        const tmp = q(".na-temp-chk").checked;
+        if (tmp !== !!m.temporary) f.temporary = tmp;
         if (Object.keys(f).length) plan.fields.set(m.id, f);
         const curDeps = (m.dependsOn || []).map(String);
         const nextDeps = [...new Set([...curDeps.filter(id => !initIds.has(id)), ...predIds])];
@@ -4586,7 +4595,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
       area: area || null, activity: activity || null, contractor: contractor || null, status: "planerad",
       start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress,
-      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
+      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
       baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };
     const btn = q(".na-save");
     btn.disabled = true;
