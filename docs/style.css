@@ -2239,3 +2239,9 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .gantt-temp-badge { margin-left: 4px; font-size: 10px; cursor: help; }
 .new-act-pop .na-temp { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; background: #fff7ed; border: 1px dashed #fdba74; cursor: pointer; font-size: 12.5px; line-height: 1.35; color: #431407; }
 .new-act-pop .na-temp input { width: auto; margin-top: 2px; }
+
+/* Leveranser och upplag (Victor 2026-10-09) */
+.delivery-row .delivery-desc .delivery-stor { display: block; font-weight: 400; color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.delivery-warn-tag { margin-left: 6px; font-weight: 700; color: #b45309; }
+.delivery-warn-tag.bad { color: #dc2626; }
+.delivery-warn-sum { margin: 2px 0 6px; padding: 5px 8px; border-radius: 6px; background: rgba(245, 158, 11, .12); color: #b45309; font-size: 11.5px; font-weight: 600; }

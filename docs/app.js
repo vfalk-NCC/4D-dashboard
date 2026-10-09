@@ -6390,10 +6390,59 @@ function renderResourceHours(list) {
    planerat OCH faktiskt leveransdatum), så logiken byggs en gång som en
    fabrik och instansieras för respektive tabell/panel nedan.
    ------------------------------------------------------------------- */
-function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix, addBtnId, emptyText }) {
+/* Leveranser och upplag (Victor 2026-10-09): en leverans kan läggas på ett upplag i lägesplanen
+   (site_layers, type "storage") eller på ett upplag i Placera i 3D ("place:<id>"), med yta (space_m2)
+   och sista dag den ligger kvar (until_date). Samma regler som lägesplanen (lagesplan-storage.js):
+   leveransen ligger där från levererat (annars planerat) datum till och med until_date. */
+let deliveryStorages = [];
+async function fetchDeliveryStorages() {
+  const rd = t => ghReadJSON(settings.githubToken, tablePath(t)).catch(() => []);
+  const [site, pl] = await Promise.all([rd("site_layers"), rd("plan_placements")]);
+  const area = x => Number.isFinite(x.w) ? x.w * x.h : (Array.isArray(x.pts) && x.pts.length >= 2 ? Math.abs((x.pts[1][0] - x.pts[0][0]) * (x.pts[1][1] - x.pts[0][1])) : 0);
+  deliveryStorages = [
+    ...(Array.isArray(site) ? site : []).filter(x => x && x.type === "storage").map(x => ({ id: x.id, name: x.name || "Upplag", cap: Math.round(area(x) * 10) / 10, where: "lägesplanen" })),
+    ...(Array.isArray(pl) ? pl : []).filter(p => p && p.type === "upplag").map(p => ({ id: "place:" + p.id, name: p.name || "Upplag", cap: Math.round((Number(p.L) || 0) * (Number(p.B) || 0) * 10) / 10, where: "3D" })),
+  ];
+}
+function deliveryRangeOf(d) { const s = d.actual_date || d.planned_date || ""; return [s, d.until_date && d.until_date >= s ? d.until_date : s]; }
+/* Dagar då upplaget har mer på sig än det rymmer. */
+function storageOverDays(sid, list) {
+  const st = deliveryStorages.find(x => x.id === sid), out = new Set();
+  if (!st || !(st.cap > 0)) return out;
+  const mine = list.filter(d => d.storage_id === sid).map(d => ({ d, r: deliveryRangeOf(d) })).filter(x => x.r[0]);
+  if (!mine.length) return out;
+  let day = mine.map(x => x.r[0]).sort()[0];
+  const last = mine.map(x => x.r[1]).sort().pop();
+  for (let i = 0; i < 400 && day <= last; i++, day = addDaysIso(day, 1)) {
+    const used = mine.filter(x => x.r[0] <= day && day <= x.r[1]).reduce((a, x) => a + (Number(x.d.space_m2) || 0), 0);
+    if (used > st.cap + 1e-9) out.add(day);
+  }
+  return out;
+}
+function deliveryWarnings(list) {
+  const today = todayISO(), by = new Map(), over = new Map();
+  deliveryStorages.forEach(st => over.set(st.id, storageOverDays(st.id, list)));
+  list.forEach(d => {
+    const [s, e] = deliveryRangeOf(d);
+    if (!s || e < today) return;
+    if (!d.storage_id) { by.set(d.id, { text: "Saknar upplag", sev: "warn" }); return; }
+    if (!deliveryStorages.some(x => x.id === d.storage_id)) { by.set(d.id, { text: "Upplaget finns inte längre", sev: "warn" }); return; }
+    const days = [...(over.get(d.storage_id) || [])].filter(x => x >= s && x <= e && x >= today).sort();
+    if (days.length) by.set(d.id, { text: `Upplaget fullt ${formatDateSv(days[0])}${days.length > 1 ? ` (+${days.length - 1} d)` : ""}`, sev: "bad" });
+  });
+  return by;
+}
+function storageOptionsHtml(cur) {
+  return `<option value="">– inget upplag –</option>` + deliveryStorages.map(st => `<option value="${escapeHtml(st.id)}" ${st.id === cur ? "selected" : ""}>${escapeHtml(st.name)} (${String(st.cap).replace(".", ",")} m², ${st.where})</option>`).join("")
+    + (cur && !deliveryStorages.some(x => x.id === cur) ? `<option value="${escapeHtml(cur)}" selected>(borttaget upplag)</option>` : "");
+}
+const m2In = v => { const t = String(v || "").trim().replace(",", "."); return t === "" ? null : Math.max(0, Number(t) || 0); };
+
+function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix, addBtnId, emptyText, storage = false }) {
   async function fetchFn() {
     if (!isBackendConfigured()) { setArr([]); return; }
     try {
+      if (storage) await fetchDeliveryStorages();
       setArr(await ghReadJSON(settings.githubToken, tablePath(table)));
     } catch (e) {
       console.error(`Kunde inte hämta ${table}`, e);
@@ -6410,6 +6459,8 @@ function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix
     }
 
     const sorted = [...getArr()].sort((a, b) => (a.planned_date || "").localeCompare(b.planned_date || ""));
+    const warns = storage ? deliveryWarnings(getArr()) : new Map();
+    const stName = id => { const st = deliveryStorages.find(x => x.id === id); return st ? st.name : "Upplag"; };
 
     const rows = sorted.length === 0
       ? `<div class="hint">${emptyText}</div>`
@@ -6420,7 +6471,10 @@ function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix
           const color = DELIVERY_STATUS_COLORS[status] || "#6b7280";
           return `
             <div class="delivery-row">
-              <span class="delivery-desc" title="${escapeHtml(d.description || "")}">${escapeHtml(d.description || "")}</span>
+              <span class="delivery-desc" title="${escapeHtml(d.description || "")}">${escapeHtml(d.description || "")}${storage ? (() => {
+                const w = warns.get(d.id), bits = [d.storage_id ? `📦 ${stName(d.storage_id)}` : "", d.space_m2 != null ? `${String(d.space_m2).replace(".", ",")} m²` : "", d.until_date ? `t.o.m. ${formatDateSv(d.until_date)}` : ""].filter(Boolean);
+                return bits.length || w ? `<small class="delivery-stor">${escapeHtml(bits.join(" · "))}${w ? `<b class="delivery-warn-tag ${w.sev}">⚠ ${escapeHtml(w.text)}</b>` : ""}</small>` : "";
+              })() : ""}</span>
               <span class="delivery-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>
               <span class="delivery-dates">
                 <span class="delivery-date-row"><span class="delivery-date-label">Planerad</span> ${formatDateSv(d.planned_date)}</span>
@@ -6431,7 +6485,13 @@ function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix
             </div>`;
         }).join("");
 
-    el.innerHTML = rows + formHtml();
+    const summary = (() => {
+      if (!storage || !warns.size) return "";
+      const n = k => [...warns.values()].filter(w => w.text.startsWith(k)).length;
+      const parts = [[n("Upplaget fullt"), "på fullt upplag"], [n("Saknar upplag"), "saknar upplag"], [n("Upplaget finns inte"), "på borttaget upplag"]].filter(([c]) => c).map(([c, t]) => `${c} ${c === 1 ? "leverans" : "leveranser"} ${t}`);
+      return `<div class="delivery-warn-sum">⚠ ${escapeHtml(parts.join(" · "))}</div>`;
+    })();
+    el.innerHTML = summary + rows + formHtml();
     document.getElementById(addBtnId).onclick = onAdd;
     bindRowActions(el, editKey, {
       render,
@@ -6451,6 +6511,9 @@ function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix
         <input type="text" class="edit-contractor" value="${escapeHtml(d.contractor || "")}" placeholder="Entreprenör" list="${formPrefix}ContractorListEdit" />
         <datalist id="${formPrefix}ContractorListEdit">${contractors.map(c => `<option value="${escapeHtml(c)}"></option>`).join("")}</datalist>
         <input type="text" class="edit-area" value="${escapeHtml(d.area || "")}" placeholder="Område" />
+        ${storage ? `<select class="edit-storage" title="Upplag (lägesplanen eller Placera i 3D)">${storageOptionsHtml(d.storage_id || "")}</select>
+        <input type="text" inputmode="decimal" class="edit-m2" value="${d.space_m2 != null ? String(d.space_m2).replace(".", ",") : ""}" placeholder="Yta m²" title="Ytan leveransen tar på upplaget" />
+        <label class="inline-field">Ligger kvar t.o.m. <input type="date" class="edit-until" value="${escapeHtml(d.until_date || "")}" /></label>` : ""}
         <label class="inline-field">Planerad <input type="date" class="edit-date" value="${escapeHtml(d.planned_date || "")}" /></label>
         <label class="inline-field">Levererad <input type="date" class="edit-actual-date" value="${escapeHtml(d.actual_date || "")}" /></label>
         <select class="edit-status">
@@ -6477,7 +6540,8 @@ function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix
         area: row.querySelector(".edit-area").value.trim() || null,
         planned_date,
         actual_date: row.querySelector(".edit-actual-date").value || null,
-        status: row.querySelector(".edit-status").value
+        status: row.querySelector(".edit-status").value,
+        ...(storage ? { storage_id: row.querySelector(".edit-storage").value || null, space_m2: m2In(row.querySelector(".edit-m2").value), until_date: row.querySelector(".edit-until").value || null } : {})
       });
       if (ok) {
         editingState[editKey] = null;
@@ -6500,6 +6564,9 @@ function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix
         <input type="text" id="${formPrefix}Contractor" placeholder="Entreprenör" list="${formPrefix}ContractorList" />
         <datalist id="${formPrefix}ContractorList">${contractors.map(c => `<option value="${escapeHtml(c)}"></option>`).join("")}</datalist>
         <input type="text" id="${formPrefix}Area" placeholder="Område" />
+        ${storage ? `<select id="${formPrefix}Storage" title="Upplag (lägesplanen eller Placera i 3D)">${storageOptionsHtml("")}</select>
+        <input type="text" inputmode="decimal" id="${formPrefix}M2" placeholder="Yta m²" title="Ytan leveransen tar på upplaget" />
+        <label class="inline-field">Ligger kvar t.o.m. <input type="date" id="${formPrefix}Until" /></label>` : ""}
         <label class="inline-field">Planerad * <input type="date" id="${formPrefix}Date" title="Planerat datum *" /></label>
         <label class="inline-field">Levererad <input type="date" id="${formPrefix}ActualDate" title="Faktiskt levererad" /></label>
         <select id="${formPrefix}Status">
@@ -6529,7 +6596,9 @@ function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix
       area: area || null,
       planned_date,
       actual_date: actual_date || null,
-      status
+      status,
+      ...(storage ? (() => { const o = {}, sid = document.getElementById(`${formPrefix}Storage`).value, m2 = m2In(document.getElementById(`${formPrefix}M2`).value), u = document.getElementById(`${formPrefix}Until`).value;
+        if (sid) o.storage_id = sid; if (m2 != null) o.space_m2 = m2; if (u) o.until_date = u; return o; })() : {})
     });
     if (ok) {
       await fetchFn();
@@ -6548,7 +6617,8 @@ const deliveriesModule = createDeliveryModule({
   setArr: v => { deliveries = v; },
   formPrefix: "newDelivery",
   addBtnId: "btnAddDelivery",
-  emptyText: "Inga leveranser inplanerade ännu."
+  emptyText: "Inga leveranser inplanerade ännu.",
+  storage: true
 });
 function fetchDeliveries() { return deliveriesModule.fetch(); }
 function renderDeliveries() { return deliveriesModule.render(); }
