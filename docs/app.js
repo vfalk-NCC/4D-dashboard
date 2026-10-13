@@ -3413,11 +3413,19 @@ async function applyGanttIsolate(force) {
     }
     if (!ganttIsolate) return; // avstängd medan vi väntade
     if (!entities.length) { modelToast("Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); isolateSig = sig; return; }
-    await API.viewer.isolateEntities(entities);
+    try { await API.viewer.isolateEntities(entities); }
+    catch (e1) {
+      // Trimble Connect avvisar isolateEntities i vissa versioner (fel utan text) – samma resultat med synlighet:
+      // släck allt, tänd sedan de kopplade objekten.
+      console.warn("isolateEntities misslyckades, släcker allt och tänder de kopplade i stället", e1);
+      if (typeof API.viewer.setObjectState !== "function") throw e1;
+      await API.viewer.setObjectState(undefined, { visible: false });
+      await API.viewer.setObjectState({ modelObjectIds: entities.map(m => ({ modelId: m.modelId, objectRuntimeIds: m.entityIds })) }, { visible: true });
+    }
     isolateSig = sig;
     const n = entities.reduce((a, m) => a + m.entityIds.length, 0);
     modelToast(`Visar endast ${n} kopplade objekt${document.fullscreenElement ? " – stäng helskärmen för att se modellen" : ""}`);
-  } catch (e) { console.warn("Kunde inte isolera kopplade objekt", e); modelToast("Kunde inte visa endast kopplade: " + e.message); }
+  } catch (e) { console.warn("Kunde inte isolera kopplade objekt", e); modelToast("Kunde inte visa endast kopplade: " + ((e && (e.message || e.error || e.reason)) || (typeof e === "string" ? e : "") || "Trimble Connect svarade inte (försök igen)")); }
 }
 function scheduleGanttIsolate() { clearTimeout(isolateTimer); isolateTimer = setTimeout(() => applyGanttIsolate(false), 500); }
 async function setGanttIsolate(on, quiet) {

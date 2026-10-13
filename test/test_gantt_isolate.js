@@ -82,6 +82,15 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.fill('#ganttSearch', 'Schakt'); await page.waitForTimeout(900);
   if ((await iso()).length !== 3) fail('Av: schemat ändras utan att modellen isoleras');
   console.log('OK: Visa endast kopplade – isolerar objekten för det som visas i Gantt, följer sökningen, av = hela modellen igen');
+  // Avvisar Trimble Connect isolateEntities (fel utan text, som hos Victor): släck allt och tänd de kopplade i stället.
+  await page.evaluate(() => { window.__state = []; API.viewer.isolateEntities = () => Promise.reject(undefined); });
+  await page.fill('#ganttSearch', ''); await page.waitForTimeout(600);
+  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(800);
+  const stt = await page.evaluate(() => window.__state.map(x => JSON.stringify(x)));
+  if (stt[0] !== '{"visible":false}' || stt[1] !== '{"visible":true}') fail('Reserv när isolateEntities avvisas: ' + JSON.stringify(stt));
+  if (/Kunde inte/.test(await page.innerText('#modelToast'))) fail('Inget felmeddelande när reserven fungerar: ' + await page.innerText('#modelToast'));
+  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(300);
+  console.log('OK: reserv (släck allt, tänd kopplade) när isolateEntities avvisas');
   // Uppdatera-knappen i Gantt: snurrar medan den hämtar, visar "Uppdaterad" och går tillbaka.
   await page.evaluate(() => { window.__ref = 0; const o = window.refreshAll; window.refreshAll = async () => { window.__ref++; await new Promise(r => setTimeout(r, 300)); return o && o(); }; });
   await page.click('#ganttRefreshBtn'); await page.waitForTimeout(100);
