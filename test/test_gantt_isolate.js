@@ -19,6 +19,8 @@ seed('plan_items.json', [
   it('Schakt', 'Linje K', 'Mark', 6, 9, { model_id: 'M1', object_id: 'G5' }),                           // i2 – kopplad
   it('Armering', 'Linje K', 'Betong', 3, 8, { model_id: 'M1', object_id: 'G7' }),                       // i3 – kopplad
   it('Saknas', 'Linje K', 'Betong', 3, 8, { model_id: 'M1', object_id: 'BADOBJ' }),                      // i4b – objekt som saknas i modellversionen
+  it('Pelare A', 'Linje Z', 'Pelare', 4, 6, { group_id: 'g1', source_key: 'pp:g1', origin: 'powerproject' }),
+  it('Pelare B', 'Linje Z', 'Pelare', 4, 6, { group_id: 'g1', source_key: 'pp:g1', origin: 'powerproject' }),
   it('Gammal', 'Linje K', 'Betong', 3, 8, { model_id: 'BAD', object_id: 'G9' }),                        // i4 – modell som inte är inläst
 ]);
 seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form', start_date: day(0), end_date: day(2) }]);
@@ -224,6 +226,17 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (await page.$('#ganttMultiBar') || (await page.locator('.gantt-multisel').count())) fail('Esc rensar markeringen');
   await page.click('[data-gmode="off"]'); await page.waitForTimeout(300);
   console.log('OK: Ctrl-klick markerar flera aktiviteter – pushas till 3D, Bara dessa, Esc rensar');
+  // Ta bort ett objekt ur en aktivitet (redigeringsdialogen): bara det objektet, aktiviteten finns kvar.
+  const mergedG1 = () => page.evaluate(() => { const m = mergeActivityGroups(items.filter(x => x.activityKey === 'g:g1'))[0]; return m && m.members ? m.members.length : 0; });
+  if ((await mergedG1()) !== 2) fail('Testdata: aktiviteten ska ha två objekt: ' + await mergedG1());
+  await page.evaluate(() => { ganttEditable = true; openActivityDialog({ edit: mergeActivityGroups(items.filter(x => x.activityKey === 'g:g1'))[0] }); });
+  await page.click('.na-objs summary'); await page.waitForTimeout(150);
+  if ((await page.locator('.na-obj').count()) !== 2) fail('Objektlistan ska visa två objekt');
+  await page.locator('.na-obj', { hasText: 'Pelare B' }).locator('.na-obj-x').click(); await page.waitForTimeout(900);
+  if (get('plan_items.json').some(r => r.object_name === 'Pelare B') || !get('plan_items.json').some(r => r.object_name === 'Pelare A')) fail('Bara Pelare B ska tas bort ur aktiviteten');
+  if (await page.$('.na-objs')) fail('Med ett objekt kvar ska listan försvinna');
+  await page.click('.na-cancel'); await page.evaluate(() => { ganttEditable = false; });
+  console.log('OK: ett objekt kan tas bort ur aktiviteten (redigeringsdialogen)');
   // Uppdatera-knappen i Gantt: snurrar medan den hämtar, visar "Uppdaterad" och går tillbaka.
   await page.evaluate(() => { window.__ref = 0; const o = window.refreshAll; window.refreshAll = async () => { window.__ref++; await new Promise(r => setTimeout(r, 300)); return o && o(); }; });
   await page.click('#ganttRefreshBtn'); await page.waitForTimeout(100);

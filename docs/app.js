@@ -4794,6 +4794,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
       <input type="text" class="na-pred-search" placeholder="＋ Sök aktivitet att vänta på…" />
       <input type="hidden" class="na-pred" />
     </div>
+    ${edit && members.length > 1 ? `<details class="na-objs"><summary>Objekt i aktiviteten <span class="hint na-objs-n">(${members.length})</span></summary><div class="na-objs-list"></div><div class="hint">✕ tar bort bara det objektet ur aktiviteten – aktiviteten och de andra objekten finns kvar.</div></details>` : ""}
     <details class="na-res"${(res0.length && naResOpen()) || temp0 || demo0 || doneCol0 ? " open" : ""}><summary>Avancerat (temporär, rivning, resurser) <span class="hint na-res-sum"></span></summary>
       <label class="na-temp" title="T.ex. en mobilkran, stämp eller tillfällig vägg: syns i 3D bara från start till slut och försvinner sedan"><input type="checkbox" class="na-temp-chk" ${temp0 ? "checked" : ""} /> <span><b>Temporär</b> – syns i 3D bara mellan start och slut (t.ex. mobilkran)</span></label>
       <label class="na-temp" title="Rivning: objektet syns hela tiden före start, färgas som vanligt under aktiviteten och försvinner efter slut"><input type="checkbox" class="na-demo-chk" ${demo0 ? "checked" : ""} /> <span><b>Rivning</b> – syns även före start, försvinner efter slut</span></label>
@@ -4809,6 +4810,20 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">${edit ? "Spara" : "Lägg till"}</button></div>`;
   overlayHost().appendChild(pop);
   const q = c => pop.querySelector(c);
+  const renderObjs = () => {
+    const list = q(".na-objs-list"); if (!list) return;
+    const sec = q(".na-objs");
+    if (members.length < 2) { if (sec) sec.remove(); return; }
+    list.innerHTML = members.map(m => `<div class="na-obj"><span class="na-obj-name" title="${escapeHtml(String(m.objectId || ""))}">${escapeHtml(m.objectName || m.objectId || "Objekt")}${m.modelId ? ' <span class="hint">· 3D-kopplad</span>' : ""}</span><button type="button" class="na-obj-x" data-mid="${escapeHtml(String(m.id))}" title="Ta bort objektet ur aktiviteten" aria-label="Ta bort objektet">✕</button></div>`).join("");
+    q(".na-objs-n").textContent = `(${members.length})`;
+    list.querySelectorAll(".na-obj-x").forEach(b => { b.onclick = async () => {
+      const m = members.find(x => String(x.id) === b.dataset.mid); if (!m) return;
+      const nm = m.objectName || m.objectId || "objektet", act = itemLabel(edit);
+      const ok = await deleteActivity(m, { ok: "Ta bort objektet", msg: `Ta bort "${nm}" ur aktiviteten "${act}"?\n\nAktiviteten finns kvar med de ${members.length - 1} andra objekten.${m.modelId ? "\n⚠ Objektets 3D-koppling försvinner." : ""}${m.origin !== "manuell" ? `\n⚠ Objektet kommer från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen och kommer tillbaka vid nästa import.` : ""}` });
+      if (ok) { const i = members.indexOf(m); if (i >= 0) members.splice(i, 1); own.delete(String(m.id)); renderObjs(); }
+    }; });
+  };
+  renderObjs();
   q(".na-done-op").oninput = e => { q(".na-done-val").textContent = e.target.value; q(".na-done-chk").checked = true; };
   q(".na-done-col").oninput = () => { q(".na-done-chk").checked = true; };
   q(".na-temp-chk").onchange = e => { if (e.target.checked) q(".na-demo-chk").checked = false; };
@@ -5066,7 +5081,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
    Hela aktiviteten (alla dess objekt), dess delaktiviteter och kopplingarna till den tas bort. En egen
    aktivitet efter en vanlig fråga; en importerad med en tydlig varning – den finns kvar i Powerproject-/
    Excel-filen och kommer tillbaka vid nästa import, och 3D-kopplingen försvinner. Ångra direkt efteråt. */
-async function deleteActivity(it) {
+async function deleteActivity(it, opts = {}) {
   if (!it) return;
   if (!ganttEditable) { modelToast("Slå på Redigerbar för att ta bort lappar"); return; }
   const members = it.members || [it];
@@ -5079,7 +5094,7 @@ async function deleteActivity(it) {
     : `Ta bort "${name}"${members.length > 1 ? ` (${members.length} objekt)` : ""}?\n\n` +
       `⚠ Den kommer från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen och kommer tillbaka vid nästa import – ta bort den där för att bli av med den för gott.` +
       (coupled ? `\n⚠ ${coupled} 3D-koppling${coupled === 1 ? "" : "ar"} försvinner.` : "");
-  if (!(await dashConfirm(msg, { danger: true }))) return;
+  if (!(await dashConfirm(opts.msg || msg, { danger: true, ...(opts.ok ? { ok: opts.ok } : {}) }))) return false;
   hideGanttTooltip();
   const nowIso = new Date().toISOString();
   let removed = [], depBefore = new Map(), actsRemoved = [];
@@ -5110,7 +5125,7 @@ async function deleteActivity(it) {
         return actsRemoved.length ? arr.filter(a => !ids.has(String(a.plan_item_id))) : arr;
       }, `Ta bort delaktiviteter: ${name}`);
     } catch (e) { console.warn("Kunde inte ta bort delaktiviteterna", e); }
-  } catch (e) { restore(); alert("Kunde inte ta bort: " + e.message); return; }
+  } catch (e) { restore(); alert("Kunde inte ta bort: " + e.message); return false; }
   modelToast(`"${tipShort(name, 40)}" är borttagen`, { label: "Ångra", fn: async () => {
     try {
       await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => [
@@ -5124,6 +5139,7 @@ async function deleteActivity(it) {
       renderAll();
     } catch (e) { alert("Kunde inte ångra: " + e.message); }
   } });
+  return true;
 }
 
 /* ----- Pilar för kopplingarna (Victor 2026-10-06) ----------------------------------------------

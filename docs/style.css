@@ -2297,3 +2297,11 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .gantt-multibar button[data-mb="clear"] { background: rgba(255,255,255,.14); }
 .gantt-multibar button:hover { filter: brightness(1.12); }
 @media print { .gantt-multibar { display: none; } }
+
+.new-act-pop .na-objs { margin: 2px 0 8px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.new-act-pop .na-objs > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: #4b5563; padding: 2px 0; }
+.new-act-pop .na-objs-list { max-height: 160px; overflow: auto; margin: 4px 0; }
+.new-act-pop .na-obj { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 4px; border-radius: 4px; font-size: 12.5px; }
+.new-act-pop .na-obj:hover { background: #f1f5f9; }
+.new-act-pop .na-obj-x { border: 0; background: transparent; color: #b91c1c; cursor: pointer; font-size: 14px; padding: 0 6px; border-radius: 4px; }
+.new-act-pop .na-obj-x:hover { background: #fee2e2; }
