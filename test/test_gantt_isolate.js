@@ -37,7 +37,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `
     window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({
       project: { getProject: () => Promise.resolve({ id: '${PID}', name: 'Test' }) },
-      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : ids.includes('BADOBJ') ? Promise.reject(new Error('Objektet finns inte')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
+      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getModels: () => Promise.resolve([{ id: 'M1', state: 'unloaded' }, { id: 'BAD', state: 'unloaded' }]), toggleModel: (id, on) => { (window.__tog = window.__tog || []).push([id, on]); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : ids.includes('BADOBJ') ? Promise.reject(new Error('Objektet finns inte')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
     }) };` }));
   await page.route('https://api.github.com/repos/vfalk-NCC/4D-data/contents/**', r => {
     const req = r.request(), f = decodeURIComponent(new URL(req.url()).pathname.replace('/repos/vfalk-NCC/4D-data/contents/', ''));
@@ -101,9 +101,9 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('[data-gmode="time"]'); await page.waitForTimeout(400);
   if (!(await page.isVisible('#ganttTimeRow')) || !(await page.isVisible('#ganttTimeSlider'))) fail('Tidslinje-raden ska visas');
   await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(500);
-  if (!(await page.$('.gantt-today-label.asof')) && !(await page.$('.board-week-today'))) fail('Markeringen i schemat ska följa datumet');
+  if (!(await page.$('.gantt-scrub'))) fail('Dragstrecket ska ligga ovanpå schemat');
   const sum = await page.innerText('#ganttTimeSum');
-  if (!/klara · \d+ pågår · \d+ kommande/.test(sum)) fail('Sammanfattning per datum: ' + sum);
+  if (!/klara · \d+ pågår · \d+ kvar/.test(sum)) fail('Sammanfattning per datum: ' + sum);
   await page.waitForTimeout(1200);
   let R = await replay();
   if (R.shown !== 'G7') fail('Vid dag 4 ska bara G7 (hunnit starta) visas: ' + JSON.stringify(R));
@@ -133,6 +133,25 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.evaluate(() => { const i = document.querySelector('[data-tcol="pagaende"]'); i.value = '#123456'; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
   R = await replay();
   if (hx(R.col.G7) !== '#123456') fail('Vald färg för pågående ska användas i 3D: ' + JSON.stringify(R.col.G7));
+  // Dragstrecket: dra i greppet med musen – datumet ändras och 3D följer.
+  await page.fill('#ganttTimeDate', day(2)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(700);
+  const hb = await (await page.$('.gantt-scrub-handle')).boundingBox();
+  const d0 = await page.evaluate(() => ganttAsOf);
+  await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2); await page.mouse.down();
+  await page.mouse.move(hb.x + hb.width / 2 + 160, hb.y + hb.height / 2, { steps: 8 }); await page.waitForTimeout(300);
+  const dMid = await page.evaluate(() => ganttAsOf);
+  await page.mouse.up(); await page.waitForTimeout(500);
+  if (!(dMid > d0)) fail('Dra strecket åt höger ska ge ett senare datum: ' + d0 + ' → ' + dMid);
+  if ((await page.inputValue('#ganttTimeDate')) !== dMid || !(await page.$('.gantt-scrub'))) fail('Datumfältet följer strecket och strecket finns kvar efter släpp');
+  // Samma streck i stapelvyn: ligger inom tidsspåret och följer datumet.
+  await page.click('[data-gantt-view="bars"]'); await page.waitForTimeout(700);
+  const sg = await page.evaluate(() => { const sc = document.querySelector('.gantt-scrub'), tr = document.querySelector('.gantt-ruler-track'); return sc && tr ? { l: sc.offsetLeft, a: tr.offsetLeft, b: tr.offsetLeft + tr.offsetWidth } : null; });
+  if (!sg || sg.l < sg.a || sg.l > sg.b) fail('Dragstrecket i stapelvyn ska ligga inom tidsspåret: ' + JSON.stringify(sg));
+  await page.click('[data-gantt-view="board"]'); await page.waitForTimeout(700);
+  // Modeller: läs in alla kopplade modeller.
+  await page.click('#ganttLoadModelsBtn'); await page.waitForTimeout(500);
+  const tog = await page.evaluate(() => window.__tog);
+  if (!tog || tog.length !== 2 || !tog.every(t => t[1] === true)) fail('Läs in modeller: ' + JSON.stringify(tog));
   // Uppspelning: 3D uppdateras medan det spelas (inte först vid paus).
   await page.fill('#ganttTimeDate', day(2)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(600);
   const nPlay = await page.evaluate(() => window.__calls.length);
@@ -152,7 +171,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (R.shown !== 'G5,G7') fail('Visa kommande: båda i 3D: ' + R.shown);
   await page.uncheck('#ganttTimeFuture'); await page.waitForTimeout(800);
   await page.click('[data-gmode="off"]'); await page.waitForTimeout(600);
-  if (await page.isVisible('#ganttTimeRow') || await page.$('.gantt-today-label.asof')) fail('Av: raden och datummarkeringen ska försvinna');
+  if (await page.isVisible('#ganttTimeRow') || await page.$('.gantt-scrub')) fail('Av: raden och dragstrecket ska försvinna');
 
   console.log('OK: tidslinje-dragare över schemat – datummarkering, realtid i 3D, färger/opacitet efter slut, intervall, kommande');
   // Avvisar Trimble Connect isolateEntities (fel utan text, som hos Victor): släck allt och tänd de kopplade i stället.

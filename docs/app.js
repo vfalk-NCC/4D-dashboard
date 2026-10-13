@@ -3122,7 +3122,7 @@ function buildGanttTimeline(domainStart, domainEnd, domainDays, isFit, pxPerDay)
       image: "linear-gradient(var(--accent), var(--accent))",
       pos: `${toUnit(offset)}${suffix} 0`, size: "2px 100%", repeat: "no-repeat"
     });
-    todayLabel = `<span class="gantt-today-label${ganttAsOf ? " asof" : ""}" style="left:${toUnit(offset)}${suffix}">${ganttAsOf ? escapeHtml(shortDateSv(parseDate(ganttAsOf))) : "Idag"}</span>`;
+    todayLabel = `<span class="gantt-today-label" style="left:${toUnit(offset)}${suffix}">Idag</span>`;
   }
 
   const gridStyle = {
@@ -3399,7 +3399,7 @@ async function selectGanttItemInModel(it) {
 /* Tidslinje-dragaren över schemat (Victor 2026-10-13): ett valfritt datum som ersätter "Idag"-markeringen och
    styr vilka objekt som visas i 3D (de som hunnit starta). null = av. */
 let ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
-const ganttMarkerIso = () => ganttAsOf || todayISO();
+const ganttMarkerIso = () => todayISO(); // "Idag"-linjen står kvar; datumet för tidslinjen är dragstrecket (se renderGanttScrub)
 let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
 function ganttCoupledTargets() {
   const seen = new Set(), out = [], timed = !!(ganttAsOf && ganttTime3d);
@@ -3484,7 +3484,7 @@ async function ganttTimeApply3d() {
     }
     ganttPhaseNow = next; ganttColored = true;
     const shown = [...next.values()].filter(v => !v.startsWith("dold")).length;
-    ganttTimeInfo(`${shown} objekt visas i 3D${skipped ? ` · ${skipped} ${skipped === 1 ? "modell" : "modeller"} ej inlästa` : ""}`);
+    ganttTimeInfo(`${shown} i 3D${skipped ? ` · ${skipped} mod. ej inlästa` : ""}`);
   } catch (e) { console.warn("Tidslinjen i 3D", e); modelToast("Kunde inte uppdatera 3D: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
   finally { ganttTimeBusy = false; if (ganttTimePending) { ganttTimePending = false; ganttTimeApply3d(); } }
 }
@@ -3564,6 +3564,26 @@ async function setGanttHideCoupled(on) {
 }
 /* ---- 3D-läge för schemat: ETT val som utesluter de andra (Victor 2026-10-13: knapparna påverkade varandra).
    off = rör inte 3D · isolate = bara kopplade · hide = dölj kopplade · time = tidslinjen. */
+/* Läs in alla modeller som aktiviteterna är kopplade till (som i 4D-planering). */
+async function loadCoupledModelsDash() {
+  const btn = document.getElementById("ganttLoadModelsBtn"), V = API && API.viewer;
+  if (!V || typeof V.toggleModel !== "function") { modelToast("Modellen är inte ansluten"); return; }
+  const ids = [...new Set(items.flatMap(it => it.members || [it]).map(m => m.modelId).filter(Boolean))];
+  if (!ids.length) { modelToast("Inget är kopplat till en modell"); return; }
+  const old = btn ? btn.textContent : ""; if (btn) { btn.disabled = true; btn.textContent = "Läser in…"; }
+  try {
+    let specs = []; try { specs = await V.getModels(); } catch (e) { /* okänd lista – försök ändå */ }
+    const byId = new Map(); (specs || []).forEach(m => { byId.set(m.id, m); if (m.versionId) byId.set(m.versionId, m); });
+    let loaded = 0, already = 0, failed = 0;
+    for (const id of ids) {
+      const spec = byId.get(id);
+      if (spec && spec.state === "loaded") { already++; continue; }
+      try { await V.toggleModel(spec ? spec.id : id, true, false); loaded++; } catch (e) { failed++; }
+    }
+    modelToast(`${loaded} inlästa${already ? `, ${already} fanns` : ""}${failed ? `, ${failed} hittades inte` : ""}`);
+    if (loaded && ganttMode !== "off") { ganttTimeReset(); isolateSig = ""; if (ganttMode === "hide") setGanttHideCoupled(true); else scheduleGanttIsolate(); } // nya modeller → räkna om läget
+  } finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
+}
 let ganttMode = "off", ganttModeSeq = 0;
 function syncGanttModeUi() {
   document.querySelectorAll("#ganttModeSeg [data-gmode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.gmode === ganttMode)));
@@ -3576,7 +3596,7 @@ async function setGanttMode(mode, quiet) {
   const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
   // Lämna det förra läget helt (flaggor först, så inget hinner köra om det).
   ganttMode = mode; ganttIsolate = false; ganttHideCoupled = false; ganttTime3d = false; isolateSig = ""; ganttTimeReset();
-  const hadAsOf = ganttAsOf; ganttAsOf = null;
+  const hadAsOf = ganttAsOf; ganttAsOf = null; ganttScrubInfo = null;
   syncGanttModeUi();
   if (hadAsOf) renderGantt(getFilteredItems());
   const V = API && API.viewer;
@@ -3598,6 +3618,57 @@ async function setGanttIsolate(on, quiet) {
   if (quiet) return;
   try { if (API && API.viewer && typeof API.viewer.setObjectState === "function") await API.viewer.setObjectState(undefined, { visible: "reset" }); modelToast("Hela modellen visas igen"); }
   catch (e) { console.warn("Kunde inte visa hela modellen", e); }
+}
+/* Dragstrecket ovanpå schemat (Victor 2026-10-13): ett tydligt streck med ett grepp och datum som man drar fram och tillbaka.
+   Ritas om tillsammans med schemat (renderGanttScrub) och flyttas direkt under dragning (placeGanttScrub). */
+let ganttScrubInfo = null, ganttScrubDrag = false;
+function renderGanttScrub(el, info) {
+  ganttScrubInfo = info ? { ...info, el } : null;
+  if (!info || ganttMode !== "time" || !ganttAsOf) return;
+  const host = el.querySelector(".gantt-inner, .board"); if (!host) return;
+  host.insertAdjacentHTML("beforeend", `<div class="gantt-scrub" role="slider" aria-label="Valt datum – dra i strecket"><span class="gantt-scrub-handle" title="Dra för att se läget ett visst datum"><i></i><b class="gantt-scrub-date"></b><i></i></span><span class="gantt-scrub-line"></span></div>`);
+  const sc = host.querySelector(".gantt-scrub");
+  ganttScrubInfo.host = host; ganttScrubInfo.node = sc;
+  placeGanttScrub();
+  const dateAt = clientX => {
+    const I = ganttScrubInfo, r = host.getBoundingClientRect(), g = ganttScrubGeometry();
+    const day = Math.round((clientX - r.left - g.left) / g.dayPx - 0.5);
+    let d = addDaysIso(I.startIso, Math.max(0, Math.min(I.days - 1, day)));
+    const rg = ganttTimeRange(); if (rg) d = d < rg[0] ? rg[0] : d > rg[1] ? rg[1] : d;
+    return d;
+  };
+  sc.onpointerdown = e => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    ganttScrubDrag = true; sc.classList.add("drag"); try { sc.setPointerCapture(e.pointerId); } catch (x) {}
+    clearTimeout(ganttTimeTimer); ganttTimeTimer = null; const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
+  };
+  sc.onpointermove = e => {
+    if (!ganttScrubDrag) return;
+    // Rulla med när strecket närmar sig kanten.
+    const cr = el.getBoundingClientRect();
+    if (e.clientX > cr.right - 40) el.scrollLeft += 14; else if (e.clientX < cr.left + (ganttScrubInfo.kind === "board" ? 190 : 260)) el.scrollLeft -= 14;
+    const d = dateAt(e.clientX);
+    if (d !== ganttAsOf) setGanttAsOf(d, { noRender: true });
+  };
+  const end = e => {
+    if (!ganttScrubDrag) return;
+    ganttScrubDrag = false; sc.classList.remove("drag"); try { sc.releasePointerCapture(e.pointerId); } catch (x) {}
+    renderGantt(getFilteredItems()); updateGanttTimeUi(); // statusen i schemat uppdateras när man släppt
+  };
+  sc.onpointerup = end; sc.onpointercancel = end;
+}
+function ganttScrubGeometry() {
+  const I = ganttScrubInfo; if (!I) return { left: 0, dayPx: 1 };
+  if (I.kind === "board") return { left: I.left, dayPx: I.dayPx };
+  const tr = I.host.querySelector(".gantt-ruler-track");
+  return tr ? { left: tr.offsetLeft, dayPx: Math.max(0.5, tr.offsetWidth / Math.max(1, I.days)) } : { left: 0, dayPx: 1 };
+}
+function placeGanttScrub() {
+  const I = ganttScrubInfo; if (!I || !I.node || !ganttAsOf) return;
+  const g = ganttScrubGeometry(), day = daysBetweenIso(I.startIso, ganttAsOf);
+  I.node.style.left = `${g.left + (day + 0.5) * g.dayPx}px`;
+  const d = I.node.querySelector(".gantt-scrub-date"); if (d) d.textContent = shortDateSv(parseDate(ganttAsOf));
 }
 /* Datumspannet för dragaren: tidigast start till senast slut bland aktiviteterna som visas. */
 function ganttTimeRange() {
@@ -3624,12 +3695,14 @@ function updateGanttTimeUi() {
   sl.min = 0; sl.max = Math.max(1, n); sl.value = Math.min(Math.max(0, daysBetweenIso(r[0], ganttAsOf)), n);
   di.value = ganttAsOf;
   const c = ganttTimeCounts();
-  sum.textContent = `${c.done} klara · ${c.going} pågår · ${c.soon} kommande`;
+  sum.textContent = `${c.done} klara · ${c.going} pågår · ${c.soon} kvar`;
 }
 function setGanttAsOf(iso, opts = {}) {
   ganttAsOf = iso || null;
   updateGanttTimeUi();
   if (ganttAsOf && ganttIsolate && ganttTime3d) ganttTimeApply3d(); // 3D följer direkt medan man drar
+  placeGanttScrub(); // dragstrecket följer direkt
+  if (opts.noRender) return;
   clearTimeout(ganttTimeRender);
   ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); updateGanttTimeUi(); }, opts.now ? 0 : 120);
 }
@@ -3971,6 +4044,7 @@ function renderGantt(list, target) {
 
   if (!target) {
     bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays });
+    renderGanttScrub(el, { kind: "bars", startIso: domainStart, days: domainDays });
     applyGanttModelSel(false);
     el._arrowMap = new Map([...el.querySelectorAll(".gantt-bar[data-item-id]")].map(b => [String(b.dataset.itemId), b]));
     requestAnimationFrame(() => drawGanttArrows(el));
@@ -4309,7 +4383,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   const colOf = iso => Math.round((startOfWeekUTC(parseDate(iso)) - w0) / (7 * 86400000));
   const dayOf = iso => Math.round((parseDate(iso) - w0) / 86400000);
   const nDays = nWeeks * 7;
-  const todayCol = Math.round((startOfWeekUTC(ganttAsOf ? parseDate(ganttAsOf) : todayUTC()) - w0) / (7 * 86400000));
+  const todayCol = Math.round((startOfWeekUTC(todayUTC()) - w0) / (7 * 86400000));
 
   const visible = (ganttBoardSplit ? withDates : mergeActivityGroups(withDates)).filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
   const skippedNoDate = list.length - withDates.length;
@@ -4457,6 +4531,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   }
 
   if (target) return;
+  renderGanttScrub(el, { kind: "board", startIso: new Date(w0).toISOString().slice(0, 10), days: nDays, left: BOARD_LANE_PX, dayPx: colPx / 7 });
   el.querySelectorAll('[data-action="toggle-board-lane"]').forEach(h => {
     h.oncontextmenu = e => { e.preventDefault(); openGanttGroupMenu(e, h.dataset.groupKey); };
     h.onclick = () => {
@@ -5869,6 +5944,7 @@ function initGanttControls() {
   };
   initGanttTime();
   syncGanttModeUi();
+  const lmBtn = document.getElementById("ganttLoadModelsBtn"); if (lmBtn) lmBtn.onclick = loadCoupledModelsDash;
   const fullBtn = document.getElementById("ganttFullBtn");
   if (fullBtn) fullBtn.onclick = toggleGanttFullscreen;
   const fsTools = document.getElementById("ganttFsTools"), fsClose = document.getElementById("ganttFsClose");

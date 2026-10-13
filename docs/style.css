@@ -2269,3 +2269,13 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .gantt-mode-seg { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel, #fff); }
 .gantt-mode-seg .gantt-seg-lbl { font-size: 11px; font-weight: 700; color: var(--muted); padding: 0 8px; }
 .gantt-mode-seg .gantt-toolbar-btn { border: 0; border-left: 1px solid var(--border); border-radius: 0; margin: 0; }
+
+/* Dragstrecket för tidslinjen ovanpå schemat */
+.gantt-scrub { position: absolute; top: 0; bottom: 0; width: 0; z-index: 40; pointer-events: none; }
+.gantt-scrub-line { position: absolute; top: 0; bottom: 0; left: -2px; width: 4px; border-radius: 2px; background: #f59e0b; box-shadow: 0 0 0 1px rgba(255,255,255,.85), 0 0 10px rgba(245,158,11,.55); pointer-events: auto; cursor: ew-resize; touch-action: none; }
+.gantt-scrub-handle { position: sticky; top: 6px; display: flex; align-items: center; gap: 4px; transform: translateX(-50%); width: max-content; z-index: 2; padding: 3px 10px; border-radius: 999px; background: #f59e0b; color: #1f2937; font-size: 12px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.28); cursor: ew-resize; pointer-events: auto; user-select: none; touch-action: none; }
+.gantt-scrub-handle i { width: 2px; height: 12px; border-radius: 1px; background: rgba(31,41,55,.55); }
+.gantt-scrub.drag .gantt-scrub-handle { background: #d97706; color: #fff; }
+.gantt-scrub.drag .gantt-scrub-line { background: #d97706; }
+.gantt-scrub.drag, .gantt-scrub.drag * { cursor: grabbing; }
+@media print { .gantt-scrub { display: none; } }
