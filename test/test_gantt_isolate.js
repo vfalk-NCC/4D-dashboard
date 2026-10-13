@@ -219,6 +219,13 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   const ss = await page.evaluate(() => (window.__setsel || []).slice(-1)[0]);
   const ssIds = ss ? ss.modelObjectIds.flatMap(m => m.objectRuntimeIds).sort().join() : '';
   if (ssIds !== 'G5,G7') fail('De markerade ska pushas till 3D samtidigt: ' + ssIds);
+  // Aktivitet med flera objekt: alla objekten följer med (inte bara ett).
+  const nMem = await page.evaluate(() => ganttMultiMembers().length);
+  if (nMem !== 2) fail('Två markerade enkla aktiviteter = 2 objekt: ' + nMem);
+  await page.evaluate(() => { ganttMultiSel.clear(); const g = items.find(x => x.activityKey === 'g:g1'); ganttMultiSel.add(String(g.id)); });
+  const nGrp = await page.evaluate(() => ganttMultiMembers().map(m => m.objectName).sort().join());
+  if (nGrp !== 'Pelare A,Pelare B') fail('Alla objekt i aktiviteten ska följa med: ' + nGrp);
+  await page.evaluate(() => { ganttMultiSel.clear(); ganttMultiSel.add(String(items.find(x => x.objectId === 'G5').id)); ganttMultiSel.add(String(items.find(x => x.objectId === 'G7').id)); applyGanttMultiSel(); });
   await page.click('#ganttMultiBar [data-mb="only"]'); await page.waitForTimeout(900);
   const only = await page.evaluate(() => ({ mode: ganttMode, last: window.__iso.slice(-1)[0] }));
   if (only.mode !== 'isolate' || only.last.flatMap(m => m.entityIds).sort().join() !== 'G5,G7') fail('Bara dessa: ' + JSON.stringify(only));

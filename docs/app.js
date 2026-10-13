@@ -3404,8 +3404,14 @@ let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = 
 /* ---- Flera aktiviteter markerade med Ctrl/Cmd-klick (Victor 2026-10-13): visas samtidigt i 3D och kan isoleras. ---- */
 const ganttMultiSel = new Set(); // aktivitets-id (strängar)
 let ganttIsoOverride = null, ganttMultiTimer = null; // ganttIsoOverride: bara de markerade (objektlista) i läget Kopplade
+/* Schemat visar EN lapp per aktivitet (objekten med samma aktivitetsnyckel är sammanslagna), men listan som ritas innehåller
+   en rad per objekt – så alla objekt i aktiviteten hämtas via aktivitetsnyckeln (annars blev det bara ett objekt per aktivitet). */
 const ganttMultiItems = () => [...ganttMultiSel].map(id => ganttShownItems.find(x => String(x.id) === id) || items.find(x => String(x.id) === id)).filter(Boolean);
-const ganttMultiMembers = () => ganttMultiItems().flatMap(it => it.members || [it]);
+const ganttMultiMembers = () => {
+  const out = new Map();
+  ganttMultiItems().forEach(it => { (it.members || (it.activityKey ? items.filter(x => x.activityKey === it.activityKey) : [it])).forEach(m => out.set(String(m.id), m)); if (!it.activityKey && !it.members) out.set(String(it.id), it); });
+  return [...out.values()];
+};
 function applyGanttMultiSel() {
   document.querySelectorAll("#ganttChart [data-item-id]").forEach(n => n.classList.toggle("gantt-multisel", ganttMultiSel.has(n.dataset.itemId)));
   let bar = document.getElementById("ganttMultiBar");
