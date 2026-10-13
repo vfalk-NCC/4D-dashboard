@@ -3410,7 +3410,12 @@ function ganttCoupledTargets() {
       // Läget vid valt datum: klar efter slutet, pågående mellan start och slut, annars kommande (dolt om inte "Visa kommande").
       const end = m.actualEndDate && m.actualEndDate > (m.endDate || "") ? m.actualEndDate : m.endDate;
       phase = end && end < ganttAsOf ? "klar" : (!m.startDate || m.startDate <= ganttAsOf) ? "pagaende" : "planerad";
+      // Temporär finns bara mellan start och slut; Rivning syns före start men försvinner efter slut (slutet = verkligt slut om det finns).
+      const tEnd = m.actualEndDate || m.endDate;
+      if (m.temporary && ((m.startDate && m.startDate > ganttAsOf) || (tEnd && tEnd < ganttAsOf))) phase = "dold";
+      else if (m.demolition) { if (tEnd && tEnd < ganttAsOf) phase = "dold"; else if (phase === "planerad") phase = "planerad_syns"; }
       if (phase === "planerad" && !ganttTimeFuture) phase = "dold"; // släckt i 3D vid det här datumet
+      if (phase === "planerad_syns") phase = "planerad"; // rivning före start: syns alltid
     }
     const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase, doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity }); }
   });
@@ -3637,7 +3642,7 @@ function renderGanttScrub(el, info) {
   ganttScrubInfo = info ? { ...info, el } : null;
   if (!info || ganttMode !== "time" || !ganttAsOf) return;
   const host = el.querySelector(".gantt-inner, .board"); if (!host) return;
-  host.insertAdjacentHTML("beforeend", `<div class="gantt-scrub" role="slider" aria-label="Valt datum – dra i strecket"><span class="gantt-scrub-handle" title="Dra för att se läget ett visst datum"><i></i><b class="gantt-scrub-date"></b><i></i></span><span class="gantt-scrub-line"></span></div>`);
+  host.insertAdjacentHTML("beforeend", `<div class="gantt-scrub" role="slider" aria-label="Valt datum – dra i strecket"><span class="gantt-scrub-handle" title="Dra för att se läget ett visst datum"><span class="gs-grip" aria-hidden="true"></span><b class="gantt-scrub-date"></b><span class="gs-grip" aria-hidden="true"></span></span><span class="gantt-scrub-line"></span></div>`);
   const sc = host.querySelector(".gantt-scrub");
   ganttScrubInfo.host = host; ganttScrubInfo.node = sc;
   placeGanttScrub();
@@ -3679,7 +3684,8 @@ function placeGanttScrub() {
   const I = ganttScrubInfo; if (!I || !I.node || !ganttAsOf) return;
   const g = ganttScrubGeometry(), day = daysBetweenIso(I.startIso, ganttAsOf);
   I.node.style.left = `${g.left + (day + 0.5) * g.dayPx}px`;
-  const d = I.node.querySelector(".gantt-scrub-date"); if (d) d.textContent = shortDateSv(parseDate(ganttAsOf));
+  const d = I.node.querySelector(".gantt-scrub-date");
+  if (d) { let wd = ""; try { wd = parseDate(ganttAsOf).toLocaleDateString("sv-SE", { weekday: "short", timeZone: "UTC" }).replace(".", ""); } catch (e) {} d.textContent = `${wd ? wd + " " : ""}${shortDateSv(parseDate(ganttAsOf))}`; }
 }
 /* Datumspannet för dragaren: tidigast start till senast slut bland aktiviteterna som visas. */
 function ganttTimeRange() {

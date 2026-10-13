@@ -2272,10 +2272,18 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 
 /* Dragstrecket för tidslinjen ovanpå schemat */
 .gantt-scrub { position: absolute; top: 0; bottom: 0; width: 0; z-index: 40; pointer-events: none; }
-.gantt-scrub-line { position: absolute; top: 0; bottom: 0; left: -2px; width: 4px; border-radius: 2px; background: #f59e0b; box-shadow: 0 0 0 1px rgba(255,255,255,.85), 0 0 10px rgba(245,158,11,.55); pointer-events: auto; cursor: ew-resize; touch-action: none; }
-.gantt-scrub-handle { position: sticky; top: 6px; display: flex; align-items: center; gap: 4px; transform: translateX(-50%); width: max-content; z-index: 2; padding: 3px 10px; border-radius: 999px; background: #f59e0b; color: #1f2937; font-size: 12px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.28); cursor: ew-resize; pointer-events: auto; user-select: none; touch-action: none; }
-.gantt-scrub-handle i { width: 2px; height: 12px; border-radius: 1px; background: rgba(31,41,55,.55); }
-.gantt-scrub.drag .gantt-scrub-handle { background: #d97706; color: #fff; }
-.gantt-scrub.drag .gantt-scrub-line { background: #d97706; }
+.gantt-scrub-line { position: absolute; top: 0; bottom: 0; left: -1.5px; width: 3px; border-radius: 2px; pointer-events: auto; cursor: ew-resize; touch-action: none;
+  background: linear-gradient(to bottom, #f59e0b, rgba(245,158,11,.75)); box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 0 12px rgba(245,158,11,.45); }
+.gantt-scrub-line::before { content: ""; position: absolute; left: -9px; right: -9px; top: 0; bottom: 0; } /* större träffyta */
+.gantt-scrub-handle { position: sticky; top: 8px; display: flex; align-items: center; gap: 8px; transform: translateX(-50%); width: max-content; z-index: 2;
+  padding: 5px 12px; border-radius: 10px; background: #1f2937; color: #fff; font-size: 12.5px; font-weight: 650; letter-spacing: .01em;
+  border: 2px solid #f59e0b; box-shadow: 0 6px 16px rgba(0,0,0,.30); cursor: ew-resize; pointer-events: auto; user-select: none; touch-action: none; transition: background .12s, box-shadow .12s; }
+.gantt-scrub-handle::after { content: ""; position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); border: 6px solid transparent; border-top: 6px solid #f59e0b; border-bottom: 0; }
+.gantt-scrub-handle:hover { background: #111827; box-shadow: 0 8px 20px rgba(0,0,0,.36); }
+.gs-grip { width: 6px; height: 14px; background: radial-gradient(circle, rgba(255,255,255,.85) 1.2px, transparent 1.6px) 0 0 / 6px 5px; opacity: .8; }
+.gantt-scrub.drag .gantt-scrub-handle { background: #f59e0b; color: #1f2937; border-color: #fff; box-shadow: 0 8px 22px rgba(245,158,11,.55); }
+.gantt-scrub.drag .gantt-scrub-handle::after { border-top-color: #fff; }
+.gantt-scrub.drag .gs-grip { background-image: radial-gradient(circle, rgba(31,41,55,.8) 1.2px, transparent 1.6px); }
+.gantt-scrub.drag .gantt-scrub-line { box-shadow: 0 0 0 1px #fff, 0 0 18px rgba(245,158,11,.8); }
 .gantt-scrub.drag, .gantt-scrub.drag * { cursor: grabbing; }
 @media print { .gantt-scrub { display: none; } }

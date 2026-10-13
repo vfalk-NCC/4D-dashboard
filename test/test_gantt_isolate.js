@@ -153,6 +153,19 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('#ganttLoadModelsBtn'); await page.waitForTimeout(500);
   const tog = await page.evaluate(() => window.__tog);
   if (!tog || tog.length !== 2 || !tog.every(t => t[1] === true)) fail('Läs in modeller: ' + JSON.stringify(tog));
+  // Temporär försvinner efter slut, Rivning syns före start men försvinner efter slut.
+  const tdp = await page.evaluate(([d0, d1, d3, d4, d6, d7]) => {
+    const keep = [ganttShownItems, ganttAsOf, ganttTime3d];
+    ganttShownItems = [{ members: [
+      { modelId: 'M1', objectId: 'T1', temporary: true, startDate: d1, endDate: d3 },
+      { modelId: 'M1', objectId: 'D1', demolition: true, startDate: d4, endDate: d6 }] }];
+    ganttTime3d = true;
+    const at = d => { ganttAsOf = d; return ganttCoupledTargets().map(t => t.objectId + ':' + t.phase).join(); };
+    const r = [at(d0), at(d1), at(d4), at(d7)];
+    [ganttShownItems, ganttAsOf, ganttTime3d] = keep;
+    return r;
+  }, [day(0), day(1), day(3), day(4), day(6), day(7)]);
+  if (tdp[0] !== 'T1:dold,D1:planerad' || tdp[1] !== 'T1:pagaende,D1:planerad' || tdp[2] !== 'T1:dold,D1:pagaende' || tdp[3] !== 'T1:dold,D1:dold') fail('Temporär/Rivning i tidslinjen: ' + JSON.stringify(tdp));
   // Uppspelning: 3D uppdateras medan det spelas (inte först vid paus).
   await page.fill('#ganttTimeDate', day(2)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(600);
   const nPlay = await page.evaluate(() => window.__calls.length);
