@@ -155,6 +155,18 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('#ganttLoadModelsBtn'); await page.waitForTimeout(500);
   const tog = await page.evaluate(() => window.__tog);
   if (!tog || tog.length !== 2 || !tog.every(t => t[1] === true)) fail('Läs in modeller: ' + JSON.stringify(tog));
+  // Pulserande ljus på pågående objekt (valfritt).
+  await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(800);
+  await page.evaluate(() => { window.__calls = []; });
+  await page.check('#ganttTimePulse'); await page.waitForTimeout(2200);
+  const pcols = await page.evaluate(() => [...new Set(window.__calls.filter(c => c.a && c.b.color && c.b.color !== 'reset').map(c => JSON.stringify(c.b.color)))]);
+  if (pcols.length < 3) fail('Pågående ska pulsera (flera färgsteg): ' + pcols.length);
+  await page.uncheck('#ganttTimePulse'); await page.waitForTimeout(500);
+  const restored = await page.evaluate(() => JSON.stringify(window.__calls.filter(c => c.a && c.b.color && c.b.color !== 'reset').slice(-1)[0].b.color));
+  const baseC = await page.evaluate(() => JSON.stringify(hexToRgbaObj(STATUS_COLORS.pagaende, 1)));
+  if (restored !== baseC) fail('Av: pågående-färgen ska återställas: ' + restored + ' vs ' + baseC);
+  const nCalls = await page.evaluate(() => window.__calls.length); await page.waitForTimeout(600);
+  if ((await page.evaluate(() => window.__calls.length)) !== nCalls) fail('Pulsen ska stanna när rutan släpps');
   // Temporär försvinner efter slut, Rivning syns före start men försvinner efter slut.
   const tdp = await page.evaluate(([d0, d1, d3, d4, d6, d7]) => {
     const keep = [ganttShownItems, ganttAsOf, ganttTime3d];

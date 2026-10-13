@@ -3496,6 +3496,30 @@ function ganttTimeColorOf(t) {
   return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, 1);
 }
 let ganttVisSig = "";
+/* Pulserande ljus på pågående objekt (Victor 2026-10-13): färgen på det som pågår andas mellan statusfärgen och ett ljust gult –
+   ett tydligt "här händer det nu" i Trimble Connect. Bara pågående objekt rörs, med några få anrop per steg. */
+let ganttPulse = false, ganttPulseTimer = null, ganttPulseGroups = [], ganttPulseBusy = false;
+function ganttPulseStop(restore) {
+  clearInterval(ganttPulseTimer); ganttPulseTimer = null;
+  const V = API && API.viewer;
+  if (restore && V && typeof V.setObjectState === "function") ganttPulseGroups.forEach(g => V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: hexToRgbaObj(STATUS_COLORS.pagaende, 1) }).catch(() => {}));
+}
+function ganttPulseSync() {
+  const want = ganttPulse && ganttMode === "time" && ganttAsOf && ganttPulseGroups.length;
+  if (!want) { if (ganttPulseTimer) ganttPulseStop(false); return; }
+  if (ganttPulseTimer) return;
+  const t0 = performance.now();
+  ganttPulseTimer = setInterval(async () => {
+    const V = API && API.viewer;
+    if (!ganttPulse || ganttMode !== "time" || ganttTimeBusy || ganttPulseBusy || !ganttPulseGroups.length || !V) return;
+    ganttPulseBusy = true;
+    try {
+      const k = (1 - Math.cos(((performance.now() - t0) / 1500) * 2 * Math.PI)) / 2 * 0.85, b = hexToRgbaObj(STATUS_COLORS.pagaende, 1), L = [255, 247, 194];
+      const c = { r: Math.round(b.r + (L[0] - b.r) * k), g: Math.round(b.g + (L[1] - b.g) * k), b: Math.round(b.b + (L[2] - b.b) * k), a: 255 };
+      for (const g of ganttPulseGroups) await V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: c });
+    } catch (e) { /* nästa steg */ } finally { ganttPulseBusy = false; }
+  }, 180);
+}
 function ganttTimeReset() { ganttPhaseNow = new Map(); ganttTimeBase = false; ganttVisSig = ""; isolateSig = ""; ganttRidCache.clear(); }
 async function ganttTimeApply3d() {
   if (!ganttIsolate || !ganttAsOf || !ganttTime3d) return;
@@ -3545,6 +3569,8 @@ async function ganttTimeApply3d() {
     }
     for (const g of groups.values()) await V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: g.color });
     ganttPhaseNow = next; ganttColored = true;
+    { const pm = new Map(); targets.forEach(t => { if (t.phase !== "pagaende") return; const rid = ganttRidCache.get(`${t.modelId}|${t.objectId}`); if (rid !== null && rid !== undefined) (pm.get(t.modelId) || pm.set(t.modelId, []).get(t.modelId)).push(rid); });
+      ganttPulseGroups = [...pm].map(([modelId, rids]) => ({ modelId, rids })); ganttPulseSync(); }
     const shown = [...next.values()].filter(v => !v.startsWith("dold")).length;
     ganttTimeInfo(`${shown} i 3D${skipped ? ` · ${skipped} mod. ej inlästa` : ""}`);
   } catch (e) { console.warn("Tidslinjen i 3D", e); modelToast("Kunde inte uppdatera 3D: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
@@ -3658,6 +3684,7 @@ async function setGanttMode(mode, quiet) {
   const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
   // Lämna det förra läget helt (flaggor först, så inget hinner köra om det).
   if (mode !== "isolate") ganttIsoOverride = null;
+  ganttPulseStop(false); ganttPulseGroups = [];
   ganttMode = mode; ganttIsolate = false; ganttHideCoupled = false; ganttTime3d = false; isolateSig = ""; ganttTimeReset();
   const hadAsOf = ganttAsOf; ganttAsOf = null; ganttScrubInfo = null;
   syncGanttModeUi();
@@ -3819,6 +3846,9 @@ function initGanttTime() {
       clearTimeout(ganttTimeRender); ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); if (typeof initStatusColorControls === "function") initStatusColorControls(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); }, 200);
     };
   });
+  const pul = document.getElementById("ganttTimePulse");
+  try { ganttPulse = localStorage.getItem("4ddash-gantt-pulse") === "1"; } catch (e) {}
+  if (pul) { pul.checked = ganttPulse; pul.onchange = () => { ganttPulse = pul.checked; try { localStorage.setItem("4ddash-gantt-pulse", ganttPulse ? "1" : "0"); } catch (e) {} if (ganttPulse) ganttPulseSync(); else ganttPulseStop(true); }; }
   const dop = document.getElementById("ganttTimeDoneOp"), dopv = document.getElementById("ganttTimeDoneOpVal");
   try { const v = localStorage.getItem("4ddash-gantt-time-doneop"); if (v !== null && v !== "") ganttDoneOp = Math.max(0, Math.min(100, Number(v))); } catch (e) {}
   dop.value = ganttDoneOp; dopv.textContent = ganttDoneOp;
