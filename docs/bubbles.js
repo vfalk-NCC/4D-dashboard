@@ -22,15 +22,31 @@ function bubbleActs() {
   if (typeof ganttMode !== "undefined" && ganttMode === "time" && typeof ganttAsOf !== "undefined" && ganttAsOf && !ganttTimeFuture) acts = acts.filter(a => ganttPhaseAt(a, ganttAsOf) !== "planerad");
   return { acts: acts.filter(a => (a.members || [a]).some(m => m.modelId && m.objectId)).slice(0, Math.max(1, Math.min(100, Number(bubbleCfg.max) || 30))), scope };
 }
-function bubbleText(a) {
-  const f = bubbleCfg, L = [], fd = d => (d ? shortDateSv(parseDate(d)) : "");
-  if (f.name) L.push(itemLabel(a));
-  if (f.date && a.startDate) L.push(`${fd(a.startDate)} – ${fd(a.actualEndDate && a.actualEndDate > (a.endDate || "") ? a.actualEndDate : a.endDate || a.startDate)}`);
-  if (f.progress) L.push(`${Math.round(Number(a.progress) || 0)} %${ganttPhaseAt(a, (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO()) === "forsenad" ? " · försenad" : ""}`); // samma text som bubblorna i 3D-editorn
-  if (f.area && a.area) L.push(a.area);
-  if (f.activity && a.activity && a.activity !== a.objectName) L.push(a.activity);
-  return L.join("\n") || itemLabel(a);
+/* Kompakt text (Victor 2026-10-13: "gör bubblorna snyggare"): TC ritar texten utan ruta och radbrytning, så raderna kortas och
+   bryts här – namn på högst två rader, "9 okt – 27 okt · 20 %" på en rad, och området bara med sista ledet. */
+function bubbleWrap(t, n, maxLines) {
+  const words = String(t || "").replace(/\s+/g, " ").trim().split(" "), out = []; let cur = "";
+  words.forEach(w => { if (cur && (cur + " " + w).length > n) { out.push(cur); cur = w; } else cur = cur ? cur + " " + w : w; });
+  if (cur) out.push(cur);
+  if (out.length > maxLines) { const k = out.slice(0, maxLines); k[maxLines - 1] = k[maxLines - 1].slice(0, Math.max(1, n - 1)).replace(/\s+$/, "") + "…"; return k; }
+  return out;
 }
+function bubbleText(a) {
+  const f = bubbleCfg, L = [], fd = d => (d ? shortDateSv(parseDate(d)) : ""), at = (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO();
+  const last = x => String(x || "").split("/").map(y => y.trim()).filter(Boolean).pop() || "";
+  const name = itemLabel(a);
+  if (f.name) L.push(...bubbleWrap(name, 26, 2));
+  const bits = [];
+  if (f.date && a.startDate) bits.push(`${fd(a.startDate)} – ${fd(a.actualEndDate && a.actualEndDate > (a.endDate || "") ? a.actualEndDate : a.endDate || a.startDate)}`);
+  if (f.progress) bits.push(`${Math.round(Number(a.progress) || 0)} %${ganttPhaseAt(a, at) === "forsenad" ? " · försenad" : ""}`);
+  if (bits.length) L.push(bits.join(" · "));
+  const ar = last(a.area);
+  if (f.area && ar && ar !== name) L.push(...bubbleWrap(ar, 26, 1));
+  if (f.activity && a.activity && a.activity !== a.objectName && a.activity !== ar && a.activity !== name) L.push(...bubbleWrap(a.activity, 26, 1));
+  return L.join("\n") || name;
+}
+/* Textens färg efter läge (mörka nyanser som syns mot ljus bakgrund och gröna/gula objekt). */
+const BUBBLE_INK = { forsenad: "#b42318", pagaende: "#1d4ed8", klar: "#166534", planerad: "#374151" };
 async function bubblesClear() {
   const ids = bubbleIds; bubbleIds = [];
   if (!ids.length || !API || !API.markup) return;
@@ -59,18 +75,29 @@ async function bubblesRebuild() {
       const byRid = new Map(boxes.map(b => [b.id, b.boundingBox]));
       ids.forEach(id => { const rid = r.map.get(id); if (rid !== null && rid !== undefined && byRid.has(rid)) boxOf.set(`${modelId}|${id}`, { rid, box: byRid.get(rid) }); });
     }
-    const marks = [];
+    const marks = [], stems = []; let idx = 0;
     acts.forEach(a => {
       const bs = (a.members || [a]).map(m => boxOf.get(`${m.modelId}|${m.objectId}`)).filter(Boolean);
       if (!bs.length) return;
       const lo = { x: Infinity, y: Infinity, z: Infinity }, hi = { x: -Infinity, y: -Infinity, z: -Infinity };
       bs.forEach(({ box }) => ["x", "y", "z"].forEach(k => { lo[k] = Math.min(lo[k], box.min[k]); hi[k] = Math.max(hi[k], box.max[k]); }));
-      const p = { positionX: (lo.x + hi.x) / 2 * 1000, positionY: (lo.y + hi.y) / 2 * 1000, positionZ: hi.z * 1000, modelId: (a.members || [a]).find(m => boxOf.has(`${m.modelId}|${m.objectId}`)).modelId, objectId: bs[0].rid };
-      marks.push({ text: bubbleText(a), start: p, end: p });
+      const cx = (lo.x + hi.x) / 2 * 1000, cy = (lo.y + hi.y) / 2 * 1000, mid = (a.members || [a]).find(m => boxOf.has(`${m.modelId}|${m.objectId}`)).modelId;
+      const lift = (idx % 2 ? 4200 : 2200); // varannan bubbla högre upp så att närliggande inte hamnar ovanpå varandra
+      const at = (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO();
+      const top = { positionX: cx, positionY: cy, positionZ: hi.z * 1000, modelId: mid, objectId: bs[0].rid };
+      const p = { ...top, positionZ: hi.z * 1000 + lift };
+      idx++;
+      marks.push({ text: bubbleText(a), start: p, end: p, color: BUBBLE_INK[ganttPhaseAt(a, at)] || BUBBLE_INK.planerad });
+      stems.push({ start: p, end: top, color: BUBBLE_INK[ganttPhaseAt(a, at)] || BUBBLE_INK.planerad });
     });
     if (!marks.length) { bubblesInfo("Objekten finns inte i de inlästa modellerna"); return; }
     const created = await API.markup.addTextMarkup(marks);
     bubbleIds = (created || []).map(m => m.id).filter(id => id !== undefined);
+    // Sträck från texten ner till objektet (om Trimble Connect har pilar/linjer) så att det syns vilket objekt bubblan hör till.
+    try {
+      const fn = API.markup.addArrowMarkup || API.markup.addLineMarkup;
+      if (typeof fn === "function" && stems.length) { const c2 = await fn.call(API.markup, stems); bubbleIds.push(...(c2 || []).map(m => m.id).filter(id => id !== undefined)); }
+    } catch (e) { console.warn("Bubblornas linjer", e); }
     bubblesInfo(`${marks.length} bubblor`);
   } catch (e) { console.warn("Bubblor", e); modelToast("Kunde inte skapa bubblor: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
   finally { bubbleBusy = false; if (bubblePending) { bubblePending = false; bubblesSchedule(true); } }
