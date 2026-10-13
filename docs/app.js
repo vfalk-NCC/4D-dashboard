@@ -3423,6 +3423,7 @@ const ganttMultiMembers = () => {
   return [...out.values()];
 };
 function applyGanttMultiSel() {
+  if (typeof bubblesSchedule === "function") bubblesSchedule();
   document.querySelectorAll("#ganttChart [data-item-id]").forEach(n => n.classList.toggle("gantt-multisel", ganttMultiSel.has(n.dataset.itemId)));
   let bar = document.getElementById("ganttMultiBar");
   if (!ganttMultiSel.size) { if (bar) bar.remove(); return; }
@@ -3633,6 +3634,7 @@ async function ganttTimeApply3d() {
       ganttActiveGroups = [...am].map(([modelId, rids]) => ({ modelId, rids })); }
     { const pm = new Map(); targets.forEach(t => { if (t.phase !== "pagaende") return; const rid = ganttRidCache.get(`${t.modelId}|${t.objectId}`); if (rid !== null && rid !== undefined) (pm.get(t.modelId) || pm.set(t.modelId, []).get(t.modelId)).push(rid); });
       ganttPulseGroups = [...pm].map(([modelId, rids]) => ({ modelId, rids })); ganttPulseSync(); ganttSelActSync(); }
+    if (typeof bubblesSchedule === "function") bubblesSchedule();
     const shown = [...next.values()].filter(v => !v.startsWith("dold")).length;
     ganttTimeInfo(`${shown} i 3D${skipped ? ` · ${skipped} mod. ej inlästa` : ""}`);
   } catch (e) { console.warn("Tidslinjen i 3D", e); modelToast("Kunde inte uppdatera 3D: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
@@ -3747,6 +3749,7 @@ async function setGanttMode(mode, quiet) {
   // Lämna det förra läget helt (flaggor först, så inget hinner köra om det).
   if (mode !== "isolate") ganttIsoOverride = null;
   ganttPulseStop(false); ganttPulseGroups = []; ganttSelActSync();
+  if (typeof bubblesSchedule === "function") bubblesSchedule();
   ganttMode = mode; ganttIsolate = false; ganttHideCoupled = false; ganttTime3d = false; isolateSig = ""; ganttTimeReset();
   const hadAsOf = ganttAsOf; ganttAsOf = null; ganttScrubInfo = null;
   syncGanttModeUi();
@@ -3939,7 +3942,7 @@ function renderGantt(list, target) {
   // Dolda grupper (områden/entreprenörer/aktiviteter) – gäller också utskriften.
   const hiddenNow = ganttHiddenNow();
   list = ganttWithoutHidden(list);
-  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); if (ganttAsOf) setTimeout(updateGanttTimeUi, 0); setTimeout(applyGanttMultiSel, 0); } // "Visa endast kopplade" följer schemat
+  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); if (ganttAsOf) setTimeout(updateGanttTimeUi, 0); setTimeout(applyGanttMultiSel, 0); if (typeof bubblesSchedule === "function") bubblesSchedule(); } // "Visa endast kopplade" följer schemat
   if (!target) renderGanttHiddenBar(el, hiddenNow);
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
@@ -6127,7 +6130,7 @@ function initGanttControls() {
     refBtn.classList.remove("spin");
     setTimeout(() => { refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdatera"; }, 1800);
   };
-  initGanttTime(); initGanttMulti();
+  initGanttTime(); initGanttMulti(); if (typeof initBubbles === "function") initBubbles();
   syncGanttModeUi();
   const lmBtn = document.getElementById("ganttLoadModelsBtn"); if (lmBtn) lmBtn.onclick = loadCoupledModelsDash;
   const ppxBtn = document.getElementById("ganttPpExportBtn"); if (ppxBtn) ppxBtn.onclick = () => openPpExportDialog();

@@ -38,8 +38,9 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   page.on('dialog', d => { dialogs.push(d.message()); d.accept(); });
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `
     window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({
+      markup: { addTextMarkup: m => { (window.__mk = window.__mk || []).push(m); return Promise.resolve(m.map((x, i) => ({ id: 100 + i + (window.__mk.length * 10) }))); }, removeMarkups: ids => { (window.__mkRm = window.__mkRm || []).push(ids); return Promise.resolve(); } },
       project: { getProject: () => Promise.resolve({ id: '${PID}', name: 'Test' }) },
-      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); (window.__calls = window.__calls || []).push({ iso: e }); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getModels: () => Promise.resolve([{ id: 'M1', state: 'unloaded' }, { id: 'BAD', state: 'unloaded' }]), toggleModel: (id, on) => { (window.__tog = window.__tog || []).push([id, on]); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : ids.includes('BADOBJ') ? Promise.reject(new Error('Objektet finns inte')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: (sel, mode) => { (window.__setsel = window.__setsel || []).push(sel); return Promise.resolve(); } }
+      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); (window.__calls = window.__calls || []).push({ iso: e }); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getObjectBoundingBoxes: (m, rids) => Promise.resolve(rids.map(id => ({ id, boundingBox: { min: { x: 0, y: 0, z: 0 }, max: { x: 2, y: 2, z: 3 } } }))), getModels: () => Promise.resolve([{ id: 'M1', state: 'unloaded' }, { id: 'BAD', state: 'unloaded' }]), toggleModel: (id, on) => { (window.__tog = window.__tog || []).push([id, on]); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : ids.includes('BADOBJ') ? Promise.reject(new Error('Objektet finns inte')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: (sel, mode) => { (window.__setsel = window.__setsel || []).push(sel); return Promise.resolve(); } }
     }) };` }));
   await page.route('https://api.github.com/repos/vfalk-NCC/4D-data/contents/**', r => {
     const req = r.request(), f = decodeURIComponent(new URL(req.url()).pathname.replace('/repos/vfalk-NCC/4D-data/contents/', ''));
@@ -268,6 +269,20 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (await page.$('#ganttMultiBar') || (await page.locator('.gantt-multisel').count())) fail('Esc rensar markeringen');
   await page.click('[data-gmode="off"]'); await page.waitForTimeout(300);
   console.log('OK: Ctrl-klick markerar flera aktiviteter – pushas till 3D, Bara dessa, Esc rensar');
+  // Info-bubblor i 3D: en per aktivitet med namn, datum, framdrift, område och aktivitet; följer Ctrl-markeringen; av = borttagna.
+  await page.evaluate(() => { window.__mk = []; window.__mkRm = []; });
+  await page.click('#bubbleBtn'); await page.waitForTimeout(1200);
+  let mk = await page.evaluate(() => (window.__mk || []).slice(-1)[0]);
+  if (!mk || !mk.length || !/Framdrift \d+ %/.test(mk[0].text) || !/\d/.test(mk[0].text.split('\n')[1] || '') || mk[0].start.positionZ !== 3000) fail('Bubbla med datum och framdrift: ' + JSON.stringify(mk && mk[0]));
+  await page.evaluate(() => { ganttMultiSel.clear(); ganttMultiSel.add(String(items.find(x => x.objectId === 'G5').id)); applyGanttMultiSel(); }); await page.waitForTimeout(1500);
+  mk = await page.evaluate(() => (window.__mk || []).slice(-1)[0]);
+  if (!mk || mk.length !== 1 || !/Schakt/.test(mk[0].text)) fail('Bubbla bara för det markerade: ' + JSON.stringify(mk));
+  if (!(await page.evaluate(() => (window.__mkRm || []).length))) fail('Gamla bubblor tas bort vid ny uppsättning');
+  await page.evaluate(() => { ganttMultiSel.clear(); applyGanttMultiSel(); });
+  await page.click('#bubbleBtn'); await page.waitForTimeout(800);
+  const nRm = await page.evaluate(() => window.__mkRm.length); await page.waitForTimeout(900);
+  if (await page.evaluate(() => bubbleIds.length)) fail('Av: alla bubblor borttagna');
+  console.log('OK: info-bubblor i 3D – datum, framdrift, område, aktivitet; följer markeringen; av = borta');
   // Ta bort ett objekt ur en aktivitet (redigeringsdialogen): bara det objektet, aktiviteten finns kvar.
   const mergedG1 = () => page.evaluate(() => { const m = mergeActivityGroups(items.filter(x => x.activityKey === 'g:g1'))[0]; return m && m.members ? m.members.length : 0; });
   if ((await mergedG1()) !== 2) fail('Testdata: aktiviteten ska ha två objekt: ' + await mergedG1());

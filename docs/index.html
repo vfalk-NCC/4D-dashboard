@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=1791903884" />
+<link rel="stylesheet" href="style.css?v=1791915599" />
 <script src="error-guard.js"></script>
 <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
 </head>
@@ -164,6 +164,7 @@
             <button type="button" data-gmode="hide" aria-pressed="false" class="gantt-toolbar-btn" title="Dölj kopplade – visa bara det okopplade">Okopplade</button>
             <button type="button" data-gmode="time" aria-pressed="false" class="gantt-toolbar-btn" title="Tidslinje: se läget ett visst datum">⏱ Tid</button>
           </div>
+          <button type="button" id="bubbleBtn" class="gantt-toolbar-btn" aria-pressed="false" title="Info-bubbla vid varje aktivitet i 3D: datum, framdrift, område och aktivitet">💬 Bubblor</button><button type="button" id="bubbleCfgBtn" class="gantt-toolbar-btn" title="Vilka bubblor och vilken info">▾</button><span id="bubbleInfo" class="hint"></span>
           <button type="button" id="ganttLoadModelsBtn" class="gantt-toolbar-btn" title="Läs in alla modeller som aktiviteterna är kopplade till">📥 Modeller</button>
           <button type="button" id="ganttFullBtn" class="gantt-toolbar-btn" title="Visa Gantt-schemat i helskärm (Esc stänger)">⛶ Helskärm</button>
           <button type="button" id="ganttPpExportBtn" class="gantt-toolbar-btn" title="Exportera aktiviteter till Powerproject (Microsoft Project-XML)">⇪ Till PP</button>
@@ -394,9 +395,10 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=1791903884"></script>
-  <script src="app.js?v=1791903884"></script>
-  <script src="resource-curve.js?v=1791903884"></script>
-  <script src="pp-export.js?v=1791903884"></script>
+  <script src="ui-dialog.js?v=1791915599"></script>
+  <script src="app.js?v=1791915599"></script>
+  <script src="resource-curve.js?v=1791915599"></script>
+  <script src="pp-export.js?v=1791915599"></script>
+  <script src="bubbles.js?v=1791915599"></script>
 </body>
 </html>
