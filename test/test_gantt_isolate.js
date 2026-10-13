@@ -163,6 +163,18 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (/Kunde inte/.test(await page.innerText('#modelToast'))) fail('Inget felmeddelande när reserven fungerar: ' + await page.innerText('#modelToast'));
   await page.click('#ganttIsolateBtn'); await page.waitForTimeout(300);
   console.log('OK: reserv (släck allt, tänd kopplade) när isolateEntities avvisas');
+  // Dölj kopplade objekt: släcker alla kopplade (hela planeringen), av = hela modellen igen; utesluter Visa endast kopplade.
+  await page.evaluate(() => { window.__calls = []; });
+  await page.click('#ganttHideCoupledBtn'); await page.waitForTimeout(700);
+  const hc = await page.evaluate(() => window.__calls.filter(c => c.a && c.b.visible === false).flatMap(c => c.a.modelObjectIds.flatMap(m => m.objectRuntimeIds)).sort().join());
+  if (hc !== 'G5,G7' || (await page.getAttribute('#ganttHideCoupledBtn', 'aria-pressed')) !== 'true') fail('Dölj kopplade ska släcka G5 och G7 (inte den inte inlästa modellen): ' + hc);
+  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(600);
+  if ((await page.getAttribute('#ganttHideCoupledBtn', 'aria-pressed')) !== 'false') fail('Visa endast kopplade ska släppa Dölj kopplade');
+  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(400);
+  await page.click('#ganttHideCoupledBtn'); await page.waitForTimeout(400); await page.click('#ganttHideCoupledBtn'); await page.waitForTimeout(500);
+  if (!(await page.evaluate(() => window.__calls.some(c => !c.a && c.b.visible === 'reset')))) fail('Av: visible reset');
+  await page.click('#ganttHideCoupledBtn'); await page.waitForTimeout(400);
+  console.log('OK: Dölj kopplade objekt – släcker kopplade, av/på, utesluter Visa endast kopplade');
   // Uppdatera-knappen i Gantt: snurrar medan den hämtar, visar "Uppdaterad" och går tillbaka.
   await page.evaluate(() => { window.__ref = 0; const o = window.refreshAll; window.refreshAll = async () => { window.__ref++; await new Promise(r => setTimeout(r, 300)); return o && o(); }; });
   await page.click('#ganttRefreshBtn'); await page.waitForTimeout(100);

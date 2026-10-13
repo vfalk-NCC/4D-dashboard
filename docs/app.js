@@ -3519,9 +3519,37 @@ async function applyGanttIsolate(force) {
     modelToast(`Visar endast ${n} kopplade objekt${skippedModels ? ` (${skippedModels} ${skippedModels === 1 ? "modell" : "modeller"} är inte inlästa och hoppades över)` : ""}${document.fullscreenElement ? " – stäng helskärmen för att se modellen" : ""}`);
   } catch (e) { console.warn("Kunde inte isolera kopplade objekt", e); modelToast("Kunde inte visa endast kopplade: " + ((e && (e.message || e.error || e.reason)) || (typeof e === "string" ? e : "") || "Trimble Connect svarade inte (försök igen)")); }
 }
+/* "Dölj kopplade objekt" (Victor 2026-10-13): släcker alla objekt som är kopplade till någon aktivitet, så att det som
+   återstår i 3D är det som inte är kopplat – och kanske borde vara det. Gäller hela planeringen, inte bara det som visas. */
+let ganttHideCoupled = false;
+async function setGanttHideCoupled(on) {
+  const b = document.getElementById("ganttHideCoupledBtn");
+  const V = API && API.viewer;
+  if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); return; }
+  ganttHideCoupled = !!on;
+  if (b) { b.setAttribute("aria-pressed", String(ganttHideCoupled)); b.textContent = ganttHideCoupled ? "🙈 Visar bara okopplade" : "🙈 Dölj kopplade objekt"; }
+  try {
+    if (ganttIsolate) await setGanttIsolate(false, true); // utesluter "Visa endast kopplade"
+    if (!ganttHideCoupled) { await V.setObjectState(undefined, { visible: "reset" }); modelToast("Hela modellen visas igen"); return; }
+    const byModel = {};
+    items.flatMap(it => it.members || [it]).forEach(m => { if (m.modelId && m.objectId) (byModel[m.modelId] = byModel[m.modelId] || new Set()).add(String(m.objectId)); });
+    let n = 0, skipped = 0; const sel = [];
+    for (const modelId of Object.keys(byModel)) {
+      try {
+        const rids = (await V.convertToObjectRuntimeIds(modelId, [...byModel[modelId]])).filter(id => id !== undefined && id !== null);
+        if (rids.length) { sel.push({ modelId, objectRuntimeIds: rids }); n += rids.length; }
+      } catch (e) { console.warn("Hoppar över modell som inte är inläst", modelId, e); skipped++; }
+    }
+    if (!sel.length) { modelToast(skipped ? "Modellerna som aktiviteterna är kopplade till är inte inlästa i vyn" : "Inga kopplade objekt hittades i modellen"); ganttHideCoupled = false; if (b) { b.setAttribute("aria-pressed", "false"); b.textContent = "🙈 Dölj kopplade objekt"; } return; }
+    await V.setObjectState(undefined, { visible: "reset" });
+    await V.setObjectState({ modelObjectIds: sel }, { visible: false });
+    modelToast(`${n} kopplade objekt dolda – det som syns är okopplat${skipped ? ` (${skipped} ${skipped === 1 ? "modell" : "modeller"} ej inlästa)` : ""}`);
+  } catch (e) { console.warn("Kunde inte dölja kopplade", e); modelToast("Kunde inte dölja kopplade: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
+}
 function scheduleGanttIsolate() { clearTimeout(isolateTimer); isolateTimer = setTimeout(() => applyGanttIsolate(false), 500); }
 async function setGanttIsolate(on, quiet) {
   ganttIsolate = !!on; isolateSig = ""; ganttTimeReset();
+  if (ganttIsolate && ganttHideCoupled) { ganttHideCoupled = false; const hb = document.getElementById("ganttHideCoupledBtn"); if (hb) { hb.setAttribute("aria-pressed", "false"); hb.textContent = "🙈 Dölj kopplade objekt"; } }
   const b = document.getElementById("ganttIsolateBtn"); if (b) { b.setAttribute("aria-pressed", String(ganttIsolate)); b.textContent = ganttIsolate ? "🧊 Visar endast kopplade" : "🧊 Visa endast kopplade"; }
   clearTimeout(isolateTimer);
   if (ganttIsolate) { await applyGanttIsolate(true); return; }
@@ -5812,6 +5840,8 @@ function initGanttControls() {
     setTimeout(() => { refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdatera"; }, 1800);
   };
   initGanttTime();
+  const hideBtn = document.getElementById("ganttHideCoupledBtn");
+  if (hideBtn) hideBtn.onclick = () => setGanttHideCoupled(!ganttHideCoupled);
   const isoBtn = document.getElementById("ganttIsolateBtn");
   if (isoBtn) isoBtn.onclick = () => setGanttIsolate(!ganttIsolate);
   const fullBtn = document.getElementById("ganttFullBtn");
