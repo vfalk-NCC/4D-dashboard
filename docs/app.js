@@ -1122,7 +1122,7 @@ async function commitCouple() {
   const objs = st.sel.slice(), name = itemLabel(st.it);
   // Objekt som redan hör till andra aktiviteter: fråga först (de blir kopplade till båda).
   const others = objs.filter(o => items.some(x => x.modelId === o.modelId && String(x.objectId) === o.objectId));
-  if (others.length && !confirm(`${others.length} av objekten är redan kopplade till andra aktiviteter.\n\nKoppla dem till "${name}" också?`)) return;
+  if (others.length && !(await dashConfirm(`${others.length} av objekten är redan kopplade till andra aktiviteter.\n\nKoppla dem till "${name}" också?`, { ok: "Koppla ändå" }))) return;
   stopCoupleMode();
   const memberIds = new Set(st.members.map(m => String(m.id)));
   const nowIso = new Date().toISOString();
@@ -2290,7 +2290,7 @@ async function saveItemSchedule(it, newStart, newEnd) {
   const plan = emptyPlan();
   plan.items.set(it.id, { startDate: newStart, endDate: newEnd });
   const conflicts = planConflicts(new Set([it.id]), plan);
-  if (conflicts.length && !confirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`)) { renderGantt(getFilteredItems()); return; }
+  if (conflicts.length && !(await dashConfirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`, { ok: "Flytta ändå" }))) { renderGantt(getFilteredItems()); return; }
   await applySchedulePlan(plan, `Ändrade ${itemLabel(it)}`);
 }
 
@@ -2597,7 +2597,7 @@ function updateUndoButtons() {
 }
 
 async function supaDelete(table, id, confirmMsg) {
-  if (!window.confirm(confirmMsg || "Ta bort den här raden?")) return false;
+  if (!(await dashConfirm(confirmMsg || "Ta bort den här raden?", { danger: true }))) return false;
   try {
     await ghWriteJSON(
       settings.githubToken,
@@ -3738,7 +3738,7 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
     if (ganttShowArrows) arrowsFollow(noteEl.closest(".gantt-chart"));
     preview(e);
   };
-  const onUp = e => {
+  const onUp = async e => {
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerup", onUp);
     noteEl.style.transform = "";
@@ -3755,7 +3755,7 @@ function onBoardNotePointerDown(evt, noteEl, it, colPx) {
     const withDeps = !e.shiftKey;
     const plan = mode === "move" ? planMove(targets, delta, withDeps) : planResize(targets, mode, delta, withDeps);
     const conflicts = planConflicts(targets, plan);
-    if (conflicts.length && !confirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`)) { renderGantt(getFilteredItems()); return; }
+    if (conflicts.length && !(await dashConfirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`, { ok: "Flytta ändå" }))) { renderGantt(getFilteredItems()); return; }
     const verb = mode === "move" ? `Flyttade ${itemLabel(it)} ${delta > 0 ? "+" : ""}${delta} d` : `${mode === "left" ? "Ny start" : "Nytt slut"} för ${itemLabel(it)}`;
     const deps = [...plan.items.keys()].filter(id => !targets.has(id)).length;
     applySchedulePlan(plan, deps ? `${verb} (${deps} beroende framskjutna)` : verb);
@@ -3844,7 +3844,7 @@ async function setNoteDependency(succIds, predIds, add) {
     // Startar den innan föregångaren är klar? Erbjud att flytta den (och det som följer den).
     const predEnd = pred.filter(p => p.status !== "klar").map(p => p.endDate).filter(Boolean).sort().pop();
     const succStart = succ.map(m => m.startDate).filter(Boolean).sort()[0];
-    if (predEnd && succStart && predEnd >= succStart && confirm(`"${sName}" startar ${succStart}, innan "${pName}" är klar (${predEnd}).\n\nFlytta "${sName}" så att den startar dagen efter? (Det som väntar på den flyttas med.)`)) {
+    if (predEnd && succStart && predEnd >= succStart && await dashConfirm(`"${sName}" startar ${succStart}, innan "${pName}" är klar (${predEnd}).\n\nFlytta "${sName}" så att den startar dagen efter? (Det som väntar på den flyttas med.)`)) {
       const ids = new Set(succIds);
       planShift(ids, daysBetweenIso(succStart, addDaysIso(predEnd, 1)), plan);
       pushDependents(ids, plan);
@@ -4543,7 +4543,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     preds.forEach(p => { if (p.lag !== "") p.entry.ids.forEach(id => { lagMap[id] = Number(p.lag); }); });
     // Startar den innan något utan glapp är klart? (med glapp hålls avståndet automatiskt)
     const early = preds.filter(p => p.lag === "" && p.entry.end && p.entry.status !== "klar" && p.entry.end >= s0);
-    if (early.length && !confirm(`"${tipShort(name || itemLabel(edit), 50)}" startar ${s0}, innan ${early.map(p => `"${tipShort(p.entry.label, 40)}" (slutar ${p.entry.end})`).join(", ")} är klar.\n\nSpara ändå?`)) return;
+    if (early.length && !(await dashConfirm(`"${tipShort(name || itemLabel(edit), 50)}" startar ${s0}, innan ${early.map(p => `"${tipShort(p.entry.label, 40)}" (slutar ${p.entry.end})`).join(", ")} är klar.\n\nSpara ändå?`))) return;
 
     if (edit) {
       const ids = [...own];
@@ -4632,7 +4632,7 @@ async function deleteActivity(it) {
     : `Ta bort "${name}"${members.length > 1 ? ` (${members.length} objekt)` : ""}?\n\n` +
       `⚠ Den kommer från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen och kommer tillbaka vid nästa import – ta bort den där för att bli av med den för gott.` +
       (coupled ? `\n⚠ ${coupled} 3D-koppling${coupled === 1 ? "" : "ar"} försvinner.` : "");
-  if (!confirm(msg)) return;
+  if (!(await dashConfirm(msg, { danger: true }))) return;
   hideGanttTooltip();
   const nowIso = new Date().toISOString();
   let removed = [], depBefore = new Map(), actsRemoved = [];
@@ -5010,7 +5010,7 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
         if (ganttShowArrows) arrowsFollow(el);
       };
 
-      const onUp = () => {
+      const onUp = async () => {
         document.removeEventListener("pointermove", onMove);
         document.removeEventListener("pointerup", onUp);
         barEl.style.transform = "";
@@ -5047,7 +5047,7 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
         // Som på tavlan: beroende aktiviteter skjuts fram (Shift = inte).
         const plan = barPlan(lastDelta, !lastShift);
         const conflicts = planConflicts(targets, plan);
-        if (conflicts.length && !confirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`)) { renderGantt(getFilteredItems()); return; }
+        if (conflicts.length && !(await dashConfirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`, { ok: "Flytta ändå" }))) { renderGantt(getFilteredItems()); return; }
         const deps = [...plan.items.keys()].filter(id => !targets.has(id)).length;
         const verb = mode === "move" ? `Flyttade ${itemLabel(it)} ${lastDelta > 0 ? "+" : ""}${lastDelta} d` : `${mode === "resize-left" ? "Ny start" : "Nytt slut"} för ${itemLabel(it)}`;
         applySchedulePlan(plan, deps ? `${verb} (${deps} beroende framskjutna)` : verb);
