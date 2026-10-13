@@ -298,6 +298,16 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (px.tasks[2].dur !== 'PT40H0M0S' || px.tasks[2].pc !== '40') fail('Varaktighet och framdrift: ' + JSON.stringify(px.tasks[2]));
   if (px.tasks[3].pred.join() !== '3:9600' || px.links !== 1 || px.dropped !== 1) fail('Väntar på med glapp (2 d = 9600) och utelämnad extern koppling: ' + JSON.stringify([px.tasks[3].pred, px.links, px.dropped]));
   if (px.res !== 1 || px.work !== 'PT160H0M0S') fail('Resurser: ' + JSON.stringify([px.res, px.work]));
+  // Med mall från Powerproject: allt utom uppgifterna tas från mallen, uppgifterna får mallens extra fält, resurser kopplas på namn.
+  const tp = await page.evaluate(() => {
+    const tpl = '<?xml version="1.0" encoding="UTF-8"?>\r\n<Project xmlns="http://schemas.microsoft.com/project"><Name>Mall</Name><StartDate>2026-01-01T08:00:00</StartDate><FinishDate>2026-01-02T16:00:00</FinishDate><CalendarUID>1</CalendarUID><OutlineCodes><OutlineCode><Guid>X</Guid></OutlineCode></OutlineCodes><ExtendedAttributes><ExtendedAttribute><FieldID>1</FieldID><FieldName>Text1</FieldName><Alias>Unique_Task_ID</Alias></ExtendedAttribute></ExtendedAttributes><Calendars><Calendar><UID>1</UID><Name>Std</Name><IsBaseCalendar>1</IsBaseCalendar><BaseCalendarUID>-1</BaseCalendarUID></Calendar></Calendars><Tasks><Task><UID>9</UID><ID>1</ID><Name>S</Name><Summary>1</Summary><ExtendedAttribute><FieldID>1</FieldID><Value>s01</Value></ExtendedAttribute></Task><Task><UID>10</UID><ID>2</ID><Name>L</Name><Summary>0</Summary><ExtendedAttribute><FieldID>1</FieldID><Value>a07</Value></ExtendedAttribute></Task></Tasks><Resources><Resource><UID>77</UID><ID>1</ID><Name>Betongarbetare</Name></Resource></Resources><Assignments/></Project>';
+    const A = { id: 'x1', objectName: 'Grund', area: 'PRODUKTION', startDate: '2026-10-05', endDate: '2026-10-09', progress: 0, resources: [{ name: 'Betongarbetare', qty: 2, hours: 80 }, { name: 'Okänd', qty: 1, hours: 8 }] };
+    const r = buildMspXmlFromTemplate([A], tpl, { project: 'T', resources: true });
+    const d = new DOMParser().parseFromString(r.xml, 'application/xml');
+    const tk = [...d.getElementsByTagName('Task')].map(t => [t.getElementsByTagName('Name')[0].textContent, (t.getElementsByTagName('Value')[0] || {}).textContent]);
+    return { err: d.getElementsByTagName('parsererror').length, tk, oc: r.xml.includes('<OutlineCodes>'), fa: r.xml.includes('<FieldName>Text1</FieldName>'), asg: [...d.getElementsByTagName('Assignment')].map(a => a.getElementsByTagName('ResourceUID')[0].textContent + ':' + a.getElementsByTagName('Units')[0].textContent), skipped: r.skippedResources, start: (d.getElementsByTagName('StartDate')[0] || {}).textContent, crlf: r.xml.includes('\r\n') };
+  });
+  if (tp.err || !tp.oc || !tp.fa || JSON.stringify(tp.tk) !== '[["PRODUKTION","s01"],["Grund","a07"]]' || tp.asg.join() !== '77:2' || tp.skipped !== 1 || !/^2026-10-05/.test(tp.start)) fail('Export på mall: ' + JSON.stringify(tp));
   await page.evaluate(() => { ganttMultiSel.clear(); }); 
   await page.click('#ganttPpExportBtn'); await page.waitForSelector('.ppx-pop');
   const dlp = page.waitForEvent('download', { timeout: 10000 });

@@ -2323,3 +2323,6 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .gantt-pulse-pop input[type="color"] { width: 34px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 4px; }
 .gantt-pulse-pop select { font: inherit; font-size: 12px; max-width: 150px; }
 .gantt-pulse-pop input[type="range"] { width: 100px; }
+
+.ppx-tpl { font-size: 12px; margin: 6px 0; padding: 6px 8px; border: 1px dashed var(--border); border-radius: 6px; }
+.ppx-tpl input[type=file] { max-width: 100%; font-size: 11px; }

@@ -16,7 +16,7 @@ const ppxHours = h => `PT${Math.max(0, Math.round(Number(h) * 100) / 100)}H0M0S`
 /* En uppgift exakt som Powerproject själv skriver den i sin Microsoft Project-XML (samma fält, samma ordning, inga andra) –
    Powerprojects egen inläsning avvisade en fuller MSP-fil som "inte en giltig XML fil" (Victor 2026-10-13). */
 function ppxTask(t) {
-  return `<Task><UID>${t.uid}</UID><ID>${t.uid}</ID><Name>${ppxEsc(t.name)}</Name><Type>0</Type><IsNull>0</IsNull><WBS>${t.num}</WBS><OutlineNumber>${t.num}</OutlineNumber><OutlineLevel>${t.level}</OutlineLevel><Start>${t.start}</Start><Finish>${t.finish}</Finish><ManualStart>${t.start}</ManualStart><ManualFinish>${t.finish}</ManualFinish><Duration>${t.dur}</Duration><ManualDuration>${t.dur}</ManualDuration><DurationFormat>7</DurationFormat><Milestone>${t.milestone}</Milestone><Summary>${t.summary}</Summary><Critical>0</Critical><FixedCost>0</FixedCost><FixedCostAccrual>3</FixedCostAccrual><PercentComplete>${t.pct}</PercentComplete><ConstraintType>4</ConstraintType><CalendarUID>1</CalendarUID><ConstraintDate>${t.start}</ConstraintDate>${t.preds}</Task>`;
+  return `<Task><UID>${t.uid}</UID><ID>${t.uid}</ID><Name>${ppxEsc(t.name)}</Name><Type>0</Type><IsNull>0</IsNull><WBS>${t.num}</WBS><OutlineNumber>${t.num}</OutlineNumber><OutlineLevel>${t.level}</OutlineLevel><Start>${t.start}</Start><Finish>${t.finish}</Finish><ManualStart>${t.start}</ManualStart><ManualFinish>${t.finish}</ManualFinish><Duration>${t.dur}</Duration><ManualDuration>${t.dur}</ManualDuration><DurationFormat>7</DurationFormat><Milestone>${t.milestone}</Milestone><Summary>${t.summary}</Summary><Critical>0</Critical><FixedCost>0</FixedCost><FixedCostAccrual>3</FixedCostAccrual><PercentComplete>${t.pct}</PercentComplete><ConstraintType>4</ConstraintType><CalendarUID>1</CalendarUID><ConstraintDate>${t.start}</ConstraintDate>${t.preds}${t.ext || ""}</Task>`;
 }
 
 /* acts: sammanslagna aktiviteter (som Gantten visar). opts: { project, resources }.
@@ -62,7 +62,7 @@ function buildMspXml(acts, opts = {}) {
       if (n.level === 0) return; // projektraden skrivs inte (Powerproject skriver heller ingen)
       const r = range(n);
       const days = r.s ? ppxWorkdays(r.s, r.e) : 1;
-      taskXml.push(ppxTask({ uid: n.uid, name: n.name, level: n.level, num: n.level === 0 ? "0" : n.num, start: iso(r.s || rootR0), finish: iso(r.e || rootR0, true), dur: ppxDur(days), summary: 1, milestone: 0, pct: 0, preds: "" }));
+      taskXml.push(ppxTask({ uid: n.uid, name: n.name, level: n.level, num: n.level === 0 ? "0" : n.num, start: iso(r.s || rootR0), finish: iso(r.e || rootR0, true), dur: ppxDur(days), summary: 1, milestone: 0, pct: 0, preds: "", ext: opts.extSummary || "" }));
     } else {
       const a = o.act, end = a.endDate || a.startDate, days = ppxWorkdays(a.startDate, end);
       const num = o.num;
@@ -76,16 +76,17 @@ function buildMspXml(acts, opts = {}) {
         const lag = (m.depLags && m.depLags[d] !== undefined && m.depLags[d] !== null && m.depLags[d] !== "" ? Number(m.depLags[d]) : 0) || 0;
         pl += `<PredecessorLink><PredecessorUID>${pu}</PredecessorUID><Type>1</Type><CrossProject>0</CrossProject><LinkLag>${Math.round(lag * 4800)}</LinkLag><LagFormat>7</LagFormat></PredecessorLink>`;
       });
-      taskXml.push(ppxTask({ uid: o.uid, name: a.objectName || a.activity || "Aktivitet", level: o.level, num, start: iso(a.startDate), finish: iso(end, true), dur: ppxDur(days), summary: 0, milestone: milestone ? 1 : 0, pct: Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0))), preds: pl }));
+      taskXml.push(ppxTask({ uid: o.uid, name: a.objectName || a.activity || "Aktivitet", level: o.level, num, start: iso(a.startDate), finish: iso(end, true), dur: ppxDur(days), summary: 0, milestone: milestone ? 1 : 0, pct: Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0))), preds: pl, ext: opts.extLeaf || "" }));
     }
   });
   // Resurser och tilldelningar.
-  const resList = [], resUid = new Map(), assign = [];
+  const resList = [], resUid = new Map(), assign = [], assignList = [];
   if (opts.resources !== false) list.forEach(a => {
     const rs = (a.members || [a]).map(m => m.resources).find(r => Array.isArray(r) && r.length) || [];
     rs.forEach(r => {
       if (!r || !r.name) return;
       if (!resUid.has(r.name)) { resUid.set(r.name, resList.length + 1); resList.push(r.name); }
+      assignList.push({ task: uidOfAct.get(a), res: r.name, units: Number(r.qty) || 1, hours: r.hours });
       assign.push(`<Assignment><UID>${assign.length + 1}</UID><TaskUID>${uidOfAct.get(a)}</TaskUID><ResourceUID>${resUid.get(r.name)}</ResourceUID><Units>${Number(r.qty) || 1}</Units><Work>${ppxHours(r.hours)}</Work></Assignment>`);
     });
   });
@@ -96,7 +97,7 @@ function buildMspXml(acts, opts = {}) {
   const resXml = resList.length ? `<Resources>${resList.map((n, i) => `<Resource><UID>${i + 1}</UID><ID>${i + 1}</ID><Name>${ppxEsc(n)}</Name><Type>1</Type><MaxUnits>1</MaxUnits><StandardRateFormat>2</StandardRateFormat><Cost>0</Cost><OvertimeRateFormat>2</OvertimeRateFormat><IsCostResource>0</IsCostResource><AccrueAt>3</AccrueAt><CalendarUID>1</CalendarUID><IsGeneric>0</IsGeneric></Resource>`).join("")}</Resources><Assignments>${assign.join("")}</Assignments>` : "<Resources/><Assignments/>";
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Project xmlns="http://schemas.microsoft.com/project">${hdr}${cal}<Tasks>${taskXml.join("")}</Tasks>${resXml}</Project>`;
-  return { xml, tasks: list.length, links, droppedLinks, resources: resList.length };
+  return { xml, tasks: list.length, links, droppedLinks, resources: resList.length, taskXml: taskXml.join(""), assignList, rootR, hdrName: project };
 }
 
 /* Dialogen: vilka aktiviteter som ska med. */
@@ -112,21 +113,73 @@ function openPpExportDialog() {
   pop.innerHTML = `<div class="board-pop-title">⇪ Exportera till Powerproject</div>
     <div class="hint">Skapar en Microsoft Project-XML-fil. Importera den i Powerproject: <b>Importera från Microsoft Project® (XML)</b>. Din Powerproject-fil ändras inte.</div>
     <div class="ppx-opts">${opts.map(([k, l, a]) => `<label class="ppx-opt${a.length ? "" : " off"}"><input type="radio" name="ppxScope" value="${k}"${k === first && a.length ? " checked" : ""}${a.length ? "" : " disabled"} /> ${l} <span class="hint">${a.length} st</span></label>`).join("")}</div>
+    <div class="ppx-tpl"><b>Mall från Powerproject</b> <span class="hint" id="ppxTplState"></span><br><input type="file" id="ppxTplFile" accept=".xml" /> <button type="button" class="link-btn" id="ppxTplClear">Ta bort mall</button>
+      <div class="hint">Exportera en liten tidplan från Powerproject (<i>Exportera till Microsoft Project® XML</i>) och välj den här. Filen byggs då på den, vilket Powerproject godtar. Sparas i din webbläsare.</div></div>
     <label class="na-temp"><input type="checkbox" id="ppxRes" /> <span>Med resurser (skapar nya resurser i Powerproject om namnen inte finns)</span></label>
     <div class="hint" id="ppxNote"></div>
     <div class="board-pop-actions"><button type="button" class="ppx-cancel">Avbryt</button><button type="button" class="ppx-go primary">Exportera</button></div>`;
   overlayHost().appendChild(pop);
   pop.style.left = `${Math.max(8, (window.innerWidth - pop.offsetWidth) / 2)}px`; pop.style.top = `${Math.max(8, Math.min(120, (window.innerHeight - pop.offsetHeight) / 2))}px`;
   const close = () => pop.remove();
+  const tplKey = "4ddash-pp-template";
+  const tplGet = () => { try { return JSON.parse(localStorage.getItem(tplKey) || "null"); } catch (e) { return null; } };
+  const tplShow = () => { const t = tplGet(); pop.querySelector("#ppxTplState").textContent = t ? `✓ ${t.name}` : "(ingen vald – enklare fil)"; };
+  tplShow();
+  pop.querySelector("#ppxTplFile").onchange = async e => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const txt = await f.text();
+    if (!ppxTemplateInfo(txt)) { pop.querySelector("#ppxNote").textContent = "Det där är ingen Microsoft Project-XML med uppgifter – exportera från Powerproject och försök igen."; return; }
+    try { localStorage.setItem(tplKey, JSON.stringify({ name: f.name, xml: txt })); } catch (x) { pop.querySelector("#ppxNote").textContent = "Mallen är för stor för att sparas i webbläsaren – den används bara den här gången."; window.__ppxTplTmp = { name: f.name, xml: txt }; }
+    tplShow();
+  };
+  pop.querySelector("#ppxTplClear").onclick = () => { try { localStorage.removeItem(tplKey); } catch (e) {} window.__ppxTplTmp = null; tplShow(); };
   pop.querySelector(".ppx-cancel").onclick = close;
   pop.querySelector(".ppx-go").onclick = () => {
     const scope = (pop.querySelector('input[name="ppxScope"]:checked') || {}).value;
     const acts = (opts.find(o => o[0] === scope) || [])[2] || [];
     if (!acts.length) { pop.querySelector("#ppxNote").textContent = "Inget att exportera i det valet."; return; }
-    const r = buildMspXml(acts, { project: `4D – ${todayISO()}`, resources: pop.querySelector("#ppxRes").checked });
+    const tpl = tplGet() || window.__ppxTplTmp, ro = { project: `4D – ${todayISO()}`, resources: pop.querySelector("#ppxRes").checked };
+    const r = (tpl && buildMspXmlFromTemplate(acts, tpl.xml, ro)) || buildMspXml(acts, ro);
     const blob = new Blob([r.xml], { type: "application/xml;charset=utf-8" }), url = URL.createObjectURL(blob), a = document.createElement("a");
     a.href = url; a.download = `4D-aktiviteter ${todayISO()}.xml`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
     close();
-    modelToast(`${r.tasks} aktiviteter exporterade${r.links ? `, ${r.links} kopplingar` : ""}${r.droppedLinks ? ` – ${r.droppedLinks} kopplingar till aktiviteter utanför exporten utelämnades` : ""}`);
+    modelToast(`${r.tasks} aktiviteter exporterade${r.fromTemplate ? " (på din mall)" : " (utan mall)"}${r.skippedResources ? `, ${r.skippedResources} resurser saknas i mallen och hoppades över` : ""}${r.links ? `, ${r.links} kopplingar` : ""}${r.droppedLinks ? ` – ${r.droppedLinks} kopplingar till aktiviteter utanför exporten utelämnades` : ""}`);
   };
+}
+
+
+/* Mall från Powerproject (Victor 2026-10-13): Powerprojects inläsning godtog inte en egenbyggd fil men godtog en fil som
+   Powerproject själv exporterat. Därför byggs filen på en sådan: allt utom uppgifterna (rubrik, kalendrar, egna fält, resurser)
+   tas från mallen, och uppgifterna skrivs med samma extra fält som mallens egna uppgifter. Resurser kopplas på namn. */
+function ppxTemplateInfo(tplXml) {
+  const d = new DOMParser().parseFromString(tplXml, "application/xml");
+  if (d.getElementsByTagName("parsererror").length || !d.getElementsByTagName("Tasks").length) return null;
+  const ser = new XMLSerializer(), strip = x => x.replace(/ xmlns="[^"]*"/g, "");
+  const tasks = [...d.getElementsByTagName("Task")];
+  const extOf = t => t ? [...t.children].filter(c => c.tagName === "ExtendedAttribute").map(c => strip(ser.serializeToString(c)).replace(/<(\w+)\/>/g, "<$1></$1>")).join("") : "";
+  const leaf = tasks.find(t => (t.getElementsByTagName("Summary")[0] || {}).textContent === "0"), sum = tasks.find(t => (t.getElementsByTagName("Summary")[0] || {}).textContent === "1");
+  const res = new Map(); [...d.getElementsByTagName("Resource")].forEach(r => { const n = r.getElementsByTagName("Name")[0], u = r.getElementsByTagName("UID")[0]; if (n && u) res.set(n.textContent, u.textContent); });
+  return { extLeaf: extOf(leaf || sum), extSummary: extOf(sum || leaf), resources: res };
+}
+function buildMspXmlFromTemplate(acts, tplXml, opts = {}) {
+  const info = ppxTemplateInfo(tplXml);
+  if (!info) return null;
+  const r = buildMspXml(acts, { ...opts, extLeaf: info.extLeaf, extSummary: info.extSummary });
+  const i0 = tplXml.indexOf("<Tasks>"), i1 = tplXml.indexOf("</Tasks>") + 8;
+  if (i0 < 0 || i1 < 8) return null;
+  let xml = tplXml.slice(0, i0) + `<Tasks>${r.taskXml}</Tasks>` + tplXml.slice(i1);
+  // Uppgifternas datum och namn i rubriken.
+  const iso = (d, end) => `${d}T${end ? "16:00:00" : "08:00:00"}`;
+  if (r.rootR.s) {
+    xml = xml.replace(/<StartDate>[^<]*<\/StartDate>/, `<StartDate>${iso(r.rootR.s)}</StartDate>`).replace(/<FinishDate>[^<]*<\/FinishDate>/, `<FinishDate>${iso(r.rootR.e, true)}</FinishDate>`);
+  }
+  // Tilldelningar: resurser som finns i mallen (på namn).
+  let skipped = 0, n = 0; const ass = [];
+  (opts.resources === false ? [] : r.assignList).forEach(a => {
+    const ru = info.resources.get(a.res);
+    if (ru === undefined) { skipped++; return; }
+    ass.push(`<Assignment><UID>${++n}</UID><TaskUID>${a.task}</TaskUID><ResourceUID>${ru}</ResourceUID><Units>${a.units}</Units><Work>${ppxHours(a.hours)}</Work></Assignment>`);
+  });
+  xml = xml.replace(/<Assignments\/>|<Assignments>[\s\S]*?<\/Assignments>/, ass.length ? `<Assignments>${ass.join("")}</Assignments>` : "<Assignments/>");
+  return { ...r, xml, skippedResources: skipped, assigned: ass.length, fromTemplate: true };
 }
