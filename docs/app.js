@@ -3942,7 +3942,7 @@ function renderGantt(list, target) {
   // Dolda grupper (områden/entreprenörer/aktiviteter) – gäller också utskriften.
   const hiddenNow = ganttHiddenNow();
   list = ganttWithoutHidden(list);
-  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); if (ganttAsOf) setTimeout(updateGanttTimeUi, 0); setTimeout(applyGanttMultiSel, 0); if (typeof bubblesSchedule === "function") bubblesSchedule(); } // "Visa endast kopplade" följer schemat
+  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); if (ganttAsOf) setTimeout(updateGanttTimeUi, 0); setTimeout(applyGanttMultiSel, 0); if (typeof vidRefresh === "function") setTimeout(vidRefresh, 0); if (typeof bubblesSchedule === "function") bubblesSchedule(); } // "Visa endast kopplade" följer schemat
   if (!target) renderGanttHiddenBar(el, hiddenNow);
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
