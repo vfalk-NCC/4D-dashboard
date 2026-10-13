@@ -18,6 +18,7 @@ seed('plan_items.json', [
   it('Gjutning', 'Linje J', 'Betong', 0, 5, { source_key: 'pp:1', origin: 'powerproject' }),            // i1 – okopplad
   it('Schakt', 'Linje K', 'Mark', 6, 9, { model_id: 'M1', object_id: 'G5' }),                           // i2 – kopplad
   it('Armering', 'Linje K', 'Betong', 3, 8, { model_id: 'M1', object_id: 'G7' }),                       // i3 – kopplad
+  it('Gammal', 'Linje K', 'Betong', 3, 8, { model_id: 'BAD', object_id: 'G9' }),                        // i4 – modell som inte är inläst
 ]);
 seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form', start_date: day(0), end_date: day(2) }]);
 ['plan_milestones.json', 'plan_deliveries.json', 'plan_item_baseline_history.json'].forEach(f => seed(f, []));
@@ -35,7 +36,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `
     window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({
       project: { getProject: () => Promise.resolve({ id: '${PID}', name: 'Test' }) },
-      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
+      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
     }) };` }));
   await page.route('https://api.github.com/repos/vfalk-NCC/4D-data/contents/**', r => {
     const req = r.request(), f = decodeURIComponent(new URL(req.url()).pathname.replace('/repos/vfalk-NCC/4D-data/contents/', ''));
@@ -65,6 +66,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   let I = await iso();
   if (I.length !== 1 || ids(I[0]) !== 'G5,G7' || I[0][0].modelId !== 'M1') fail('Isolerar objekten som är kopplade till det som visas: ' + JSON.stringify(I));
   if ((await page.getAttribute('#ganttIsolateBtn', 'aria-pressed')) !== 'true' || !/Visar endast kopplade/.test(await page.innerText('#ganttIsolateBtn'))) fail('Knappen ska visa att den är intryckt');
+  if (!/hoppades över/.test(await page.innerText('#modelToast'))) fail('Modell som inte är inläst ska hoppas över med besked: ' + await page.innerText('#modelToast'));
   // Följer schemat: sökning på Schakt → bara G5.
   await page.fill('#ganttSearch', 'Schakt'); await page.waitForTimeout(1000);
   I = await iso();
@@ -82,6 +84,26 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.fill('#ganttSearch', 'Schakt'); await page.waitForTimeout(900);
   if ((await iso()).length !== 3) fail('Av: schemat ändras utan att modellen isoleras');
   console.log('OK: Visa endast kopplade – isolerar objekten för det som visas i Gantt, följer sökningen, av = hela modellen igen');
+  // Tidslinje-dragaren: valfri rad med dragare + datum; markeringen följer datumet, "Visa i 3D" visar bara objekt som hunnit starta.
+  await page.fill('#ganttSearch', ''); await page.waitForTimeout(500);
+  if (await page.isVisible('#ganttTimeRow')) fail('Dragaren ska vara avstängd som standard');
+  await page.click('#ganttTimeBtn'); await page.waitForTimeout(400);
+  if (!(await page.isVisible('#ganttTimeRow')) || !(await page.isVisible('#ganttTimeSlider'))) fail('Tidslinje-raden ska visas');
+  await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(500);
+  if (!(await page.$('.gantt-today-label.asof')) && !(await page.$('.board-week-today'))) fail('Markeringen i schemat ska följa datumet');
+  const sum = await page.innerText('#ganttTimeSum');
+  if (!/klara · \d+ pågår · \d+ kommande/.test(sum)) fail('Sammanfattning per datum: ' + sum);
+  const n0 = (await iso()).length;
+  await page.check('#ganttTime3d'); await page.waitForTimeout(1000);
+  let T = await iso();
+  if (T.length <= n0 || ids(T[T.length - 1]) !== 'G7') fail('Vid dag 4 ska bara G7 (hunnit starta) visas: ' + JSON.stringify(T.slice(n0)));
+  await page.fill('#ganttTimeDate', day(7)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(1000);
+  T = await iso();
+  if (ids(T[T.length - 1]) !== 'G5,G7') fail('Vid dag 7 ska båda visas: ' + JSON.stringify(T[T.length - 1]));
+  await page.click('#ganttTimeBtn'); await page.waitForTimeout(300);
+  if (await page.isVisible('#ganttTimeRow') || await page.$('.gantt-today-label.asof')) fail('Av: raden och datummarkeringen ska försvinna');
+  await page.evaluate(() => { document.getElementById('ganttTime3d').checked = false; document.getElementById('ganttTime3d').onchange(); }); await page.click('#ganttIsolateBtn'); await page.waitForTimeout(400);
+  console.log('OK: tidslinje-dragare över schemat – datummarkering, per-datum-summering, Visa i 3D följer datumet');
   // Avvisar Trimble Connect isolateEntities (fel utan text, som hos Victor): släck allt och tänd de kopplade i stället.
   await page.evaluate(() => { window.__state = []; API.viewer.isolateEntities = () => Promise.reject(undefined); });
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(600);

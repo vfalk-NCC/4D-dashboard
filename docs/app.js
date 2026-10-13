@@ -1015,7 +1015,9 @@ async function selectActivityInModel(it) {
     targets.forEach(m => { (byModel[m.modelId] = byModel[m.modelId] || []).push(m.objectId); });
     const modelObjectIds = [];
     for (const modelId of Object.keys(byModel)) {
-      const rids = (await API.viewer.convertToObjectRuntimeIds(modelId, byModel[modelId])).filter(id => id !== undefined && id !== null);
+      let rids = [];
+      try { rids = (await API.viewer.convertToObjectRuntimeIds(modelId, byModel[modelId])).filter(id => id !== undefined && id !== null); }
+      catch (e) { console.warn("Hoppar över modell som inte är inläst", modelId, e); continue; }
       if (rids.length) modelObjectIds.push({ modelId, objectRuntimeIds: rids });
     }
     if (!modelObjectIds.length) { modelToast("Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); return; }
@@ -3110,14 +3112,14 @@ function buildGanttTimeline(domainStart, domainEnd, domainDays, isFit, pxPerDay)
   });
 
   // Dagens datum - tydlig linje + etikett, om den ligger inom det visade intervallet.
-  const today = todayISO();
+  const today = ganttMarkerIso();
   if (today >= domainStart && today <= domainEnd) {
     const offset = daysBetweenIso(domainStart, today);
     layers.unshift({
       image: "linear-gradient(var(--accent), var(--accent))",
       pos: `${toUnit(offset)}${suffix} 0`, size: "2px 100%", repeat: "no-repeat"
     });
-    todayLabel = `<span class="gantt-today-label" style="left:${toUnit(offset)}${suffix}">Idag</span>`;
+    todayLabel = `<span class="gantt-today-label${ganttAsOf ? " asof" : ""}" style="left:${toUnit(offset)}${suffix}">${ganttAsOf ? escapeHtml(shortDateSv(parseDate(ganttAsOf))) : "Idag"}</span>`;
   }
 
   const gridStyle = {
@@ -3391,10 +3393,14 @@ async function selectGanttItemInModel(it) {
 /* ----- Visa endast kopplade (Victor 2026-10-13): släcker allt i 3D-modellen utom objekten som är kopplade till
    aktiviteterna som visas i Gantt-schemat just nu (efter filter, sökning och dolda grupper). Följer schemat medan
    knappen är intryckt; ett tryck till visar hela modellen igen. Trimble Connects egen isolering (isolateEntities). */
+/* Tidslinje-dragaren över schemat (Victor 2026-10-13): ett valfritt datum som ersätter "Idag"-markeringen och
+   styr vilka objekt som visas i 3D (de som hunnit starta). null = av. */
+let ganttAsOf = null, ganttTime3d = false, ganttTimeTimer = null, ganttTimeRender = null;
+const ganttMarkerIso = () => ganttAsOf || todayISO();
 let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
 function ganttCoupledTargets() {
   const seen = new Set(), out = [];
-  ganttShownItems.flatMap(it => it.members || [it]).forEach(m => { if (!m.modelId || !m.objectId) return; const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId) }); } });
+  ganttShownItems.flatMap(it => it.members || [it]).forEach(m => { if (!m.modelId || !m.objectId) return; if (ganttAsOf && ganttTime3d && m.startDate && m.startDate > ganttAsOf) return; /* ännu inte påbörjad vid valt datum */ const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId) }); } });
   return out;
 }
 async function applyGanttIsolate(force) {
@@ -3406,13 +3412,16 @@ async function applyGanttIsolate(force) {
   try {
     const byModel = {};
     targets.forEach(t => { (byModel[t.modelId] = byModel[t.modelId] || []).push(t.objectId); });
-    const entities = [];
+    const entities = []; let skippedModels = 0;
     for (const modelId of Object.keys(byModel)) {
-      const rids = (await API.viewer.convertToObjectRuntimeIds(modelId, byModel[modelId])).filter(id => id !== undefined && id !== null);
+      // En modell som inte är inläst i vyn (äldre version, avtänd) ger "Invalid model id" – hoppa över den, inte hela urvalet.
+      let rids = [];
+      try { rids = (await API.viewer.convertToObjectRuntimeIds(modelId, byModel[modelId])).filter(id => id !== undefined && id !== null); }
+      catch (e) { console.warn("Hoppar över modell som inte är inläst", modelId, e); skippedModels++; continue; }
       if (rids.length) entities.push({ modelId, entityIds: rids });
     }
     if (!ganttIsolate) return; // avstängd medan vi väntade
-    if (!entities.length) { modelToast("Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); isolateSig = sig; return; }
+    if (!entities.length) { modelToast(skippedModels ? "Modellerna som schemat är kopplat till är inte inlästa i vyn – tänd rätt modell (och version) i Trimble Connect" : "Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); isolateSig = sig; return; }
     try { await API.viewer.isolateEntities(entities); }
     catch (e1) {
       // Trimble Connect avvisar isolateEntities i vissa versioner (fel utan text) – samma resultat med synlighet:
@@ -3424,7 +3433,7 @@ async function applyGanttIsolate(force) {
     }
     isolateSig = sig;
     const n = entities.reduce((a, m) => a + m.entityIds.length, 0);
-    modelToast(`Visar endast ${n} kopplade objekt${document.fullscreenElement ? " – stäng helskärmen för att se modellen" : ""}`);
+    modelToast(`Visar endast ${n} kopplade objekt${skippedModels ? ` (${skippedModels} ${skippedModels === 1 ? "modell" : "modeller"} är inte inlästa och hoppades över)` : ""}${document.fullscreenElement ? " – stäng helskärmen för att se modellen" : ""}`);
   } catch (e) { console.warn("Kunde inte isolera kopplade objekt", e); modelToast("Kunde inte visa endast kopplade: " + ((e && (e.message || e.error || e.reason)) || (typeof e === "string" ? e : "") || "Trimble Connect svarade inte (försök igen)")); }
 }
 function scheduleGanttIsolate() { clearTimeout(isolateTimer); isolateTimer = setTimeout(() => applyGanttIsolate(false), 500); }
@@ -3436,6 +3445,73 @@ async function setGanttIsolate(on, quiet) {
   if (quiet) return;
   try { if (API && API.viewer && typeof API.viewer.setObjectState === "function") await API.viewer.setObjectState(undefined, { visible: "reset" }); modelToast("Hela modellen visas igen"); }
   catch (e) { console.warn("Kunde inte visa hela modellen", e); }
+}
+/* Datumspannet för dragaren: tidigast start till senast slut bland aktiviteterna som visas. */
+function ganttTimeRange() {
+  const its = ganttShownItems.length ? ganttShownItems : [];
+  let a = null, b = null;
+  its.forEach(it => { if (it.startDate && (!a || it.startDate < a)) a = it.startDate; const e = it.actualEndDate && it.actualEndDate > (it.endDate || "") ? it.actualEndDate : it.endDate; if (e && (!b || e > b)) b = e; });
+  return a && b ? [a, b] : null;
+}
+function ganttTimeCounts() {
+  let done = 0, going = 0, soon = 0;
+  ganttShownItems.forEach(it => { if (!it.startDate) return; if (ganttAsOf < it.startDate) soon++; else if (it.endDate && ganttAsOf > it.endDate) done++; else going++; });
+  return { done, going, soon };
+}
+function updateGanttTimeUi() {
+  const row = document.getElementById("ganttTimeRow"); if (!row) return;
+  const r = ganttTimeRange(), sl = document.getElementById("ganttTimeSlider"), di = document.getElementById("ganttTimeDate"), sum = document.getElementById("ganttTimeSum");
+  if (!r || !ganttAsOf) { if (sum) sum.textContent = ""; return; }
+  const n = daysBetweenIso(r[0], r[1]);
+  sl.min = 0; sl.max = Math.max(1, n); sl.value = Math.min(Math.max(0, daysBetweenIso(r[0], ganttAsOf)), n);
+  di.value = ganttAsOf;
+  const c = ganttTimeCounts();
+  sum.textContent = `${c.done} klara · ${c.going} pågår · ${c.soon} kommande`;
+}
+function setGanttAsOf(iso, opts = {}) {
+  ganttAsOf = iso || null;
+  updateGanttTimeUi();
+  clearTimeout(ganttTimeRender);
+  ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); updateGanttTimeUi(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); }, opts.now ? 0 : 90);
+}
+function setGanttTimeOn(on) {
+  const row = document.getElementById("ganttTimeRow"), btn = document.getElementById("ganttTimeBtn");
+  if (row) row.classList.toggle("hidden", !on);
+  if (btn) btn.setAttribute("aria-pressed", String(!!on));
+  try { localStorage.setItem("4ddash-gantt-time", on ? "1" : "0"); } catch (e) {}
+  clearInterval(ganttTimeTimer); ganttTimeTimer = null;
+  const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
+  if (!on) { const had = ganttAsOf; ganttAsOf = null; if (had) { renderGantt(getFilteredItems()); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); } return; }
+  const r = ganttTimeRange();
+  setGanttAsOf(r && todayISO() >= r[0] && todayISO() <= r[1] ? todayISO() : (r ? r[0] : todayISO()), { now: true });
+}
+function initGanttTime() {
+  const btn = document.getElementById("ganttTimeBtn"); if (!btn || btn.dataset.wired) return;
+  btn.dataset.wired = "1";
+  btn.onclick = () => setGanttTimeOn(btn.getAttribute("aria-pressed") !== "true");
+  const sl = document.getElementById("ganttTimeSlider"), di = document.getElementById("ganttTimeDate"), pb = document.getElementById("ganttTimePlay"), td = document.getElementById("ganttTimeToday"), c3 = document.getElementById("ganttTime3d");
+  sl.oninput = () => { const r = ganttTimeRange(); if (r) setGanttAsOf(addDaysIso(r[0], Number(sl.value))); };
+  di.onchange = () => { if (di.value) setGanttAsOf(di.value, { now: true }); };
+  td.onclick = () => setGanttAsOf(todayISO(), { now: true });
+  pb.onclick = () => {
+    if (ganttTimeTimer) { clearInterval(ganttTimeTimer); ganttTimeTimer = null; pb.textContent = "▶"; return; }
+    const r = ganttTimeRange(); if (!r) return;
+    if (!ganttAsOf || ganttAsOf >= r[1]) ganttAsOf = r[0];
+    pb.textContent = "⏸";
+    ganttTimeTimer = setInterval(() => {
+      const rr = ganttTimeRange(); if (!rr || ganttAsOf >= rr[1]) { clearInterval(ganttTimeTimer); ganttTimeTimer = null; pb.textContent = "▶"; return; }
+      setGanttAsOf(addDaysIso(ganttAsOf, 1), { now: true });
+    }, 250);
+  };
+  c3.onchange = () => {
+    ganttTime3d = c3.checked;
+    try { localStorage.setItem("4ddash-gantt-time3d", ganttTime3d ? "1" : "0"); } catch (e) {}
+    if (ganttTime3d && !ganttIsolate) setGanttIsolate(true); else if (ganttIsolate) scheduleGanttIsolate();
+  };
+  try { ganttTime3d = localStorage.getItem("4ddash-gantt-time3d") === "1"; } catch (e) {}
+  c3.checked = ganttTime3d;
+  let on = false; try { on = localStorage.getItem("4ddash-gantt-time") === "1"; } catch (e) {}
+  if (on) setTimeout(() => setGanttTimeOn(true), 0);
 }
 function renderGantt(list, target) {
   // Resurskurvan följer Gantt-schemats urval (filter, sök, dolda områden, period) – ritas om efteråt.
@@ -3457,7 +3533,7 @@ function renderGantt(list, target) {
   // Dolda grupper (områden/entreprenörer/aktiviteter) – gäller också utskriften.
   const hiddenNow = ganttHiddenNow();
   list = ganttWithoutHidden(list);
-  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); } // "Visa endast kopplade" följer schemat
+  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); if (ganttAsOf) setTimeout(updateGanttTimeUi, 0); } // "Visa endast kopplade" följer schemat
   if (!target) renderGanttHiddenBar(el, hiddenNow);
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
@@ -4059,7 +4135,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   const colOf = iso => Math.round((startOfWeekUTC(parseDate(iso)) - w0) / (7 * 86400000));
   const dayOf = iso => Math.round((parseDate(iso) - w0) / 86400000);
   const nDays = nWeeks * 7;
-  const todayCol = Math.round((startOfWeekUTC(todayUTC()) - w0) / (7 * 86400000));
+  const todayCol = Math.round((startOfWeekUTC(ganttAsOf ? parseDate(ganttAsOf) : todayUTC()) - w0) / (7 * 86400000));
 
   const visible = (ganttBoardSplit ? withDates : mergeActivityGroups(withDates)).filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
   const skippedNoDate = list.length - withDates.length;
@@ -4173,7 +4249,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   const avail = (el.clientWidth || 0) - BOARD_LANE_PX - 2;
   const colPx = Math.max(minColPx, Math.floor(avail / nWeeks) || 0);
   const todayOn = todayCol >= 0 && todayCol < nWeeks;
-  const todayDay = dayOf(todayISO());
+  const todayDay = dayOf(ganttMarkerIso());
   const gridBg = `--cols:${nWeeks}; --col:${colPx}px; --days:${nDays}; --day:${colPx / 7}px; --today-left:${todayOn ? todayDay * colPx / 7 : -9999}px;`;
   const lanesHtml = laneKeys.map(k => {
     const collapseKey = `${ganttGroupBy}:${k}`;
@@ -5611,6 +5687,7 @@ function initGanttControls() {
     refBtn.classList.remove("spin");
     setTimeout(() => { refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdatera"; }, 1800);
   };
+  initGanttTime();
   const isoBtn = document.getElementById("ganttIsolateBtn");
   if (isoBtn) isoBtn.onclick = () => setGanttIsolate(!ganttIsolate);
   const fullBtn = document.getElementById("ganttFullBtn");

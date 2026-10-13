@@ -2254,3 +2254,8 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .gantt-refresh-btn.done { background: #16a34a; color: #fff; border-color: #16a34a; }
 @keyframes ganttRefreshSpin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .gantt-refresh-btn.spin .gantt-refresh-ico { animation-duration: 2s; } }
+
+.gantt-time-row { align-items: center; gap: 8px; }
+.gantt-time-slider { flex: 1 1 240px; min-width: 120px; accent-color: #f59e0b; }
+.gantt-time-sum { white-space: nowrap; }
+.gantt-today-label.asof { background: #f59e0b; color: #1f2937; }
