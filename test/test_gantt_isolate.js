@@ -244,6 +244,28 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (await page.$('.na-objs')) fail('Med ett objekt kvar ska listan försvinna');
   await page.click('.na-cancel'); await page.evaluate(() => { ganttEditable = false; });
   console.log('OK: ett objekt kan tas bort ur aktiviteten (redigeringsdialogen)');
+  // Export till Powerproject (MS Project-XML): hierarki från området, kopplingar med glapp, resurser.
+  const px = await page.evaluate(() => {
+    const A = { id: 'x1', objectName: 'Grund', area: 'PRODUKTION / 741 Sikthall', startDate: '2026-10-05', endDate: '2026-10-09', progress: 40, resources: [{ name: 'Betongarbetare', qty: 4, hours: 160 }], dependsOn: [] };
+    const B = { id: 'x2', objectName: 'Stomme', area: 'PRODUKTION / 741 Sikthall', startDate: '2026-10-12', endDate: '2026-10-16', progress: 0, dependsOn: ['x1', 'ute'], depLags: { x1: 2 } };
+    const r = buildMspXml([A, B], { project: 'T' });
+    const d = new DOMParser().parseFromString(r.xml, 'application/xml');
+    const tasks = [...d.getElementsByTagName('Task')].map(t => ({ n: t.getElementsByTagName('Name')[0].textContent, l: t.getElementsByTagName('OutlineLevel')[0].textContent, s: t.getElementsByTagName('Summary')[0].textContent, dur: (t.getElementsByTagName('Duration')[0] || {}).textContent, pc: t.getElementsByTagName('PercentComplete')[0].textContent, pred: [...t.getElementsByTagName('PredecessorLink')].map(p => p.getElementsByTagName('PredecessorUID')[0].textContent + ':' + p.getElementsByTagName('LinkLag')[0].textContent) }));
+    return { err: d.getElementsByTagName('parsererror').length, tasks, links: r.links, dropped: r.droppedLinks, res: d.getElementsByTagName('Assignment').length, work: (d.getElementsByTagName('Work')[0] || {}).textContent };
+  });
+  if (px.err) fail('XML ska vara välformad');
+  const nm = px.tasks.map(t => t.l + t.n + (t.s === '1' ? '*' : '')).join('|');
+  if (nm !== '0T*|1PRODUKTION*|2741 Sikthall*|3Grund|3Stomme') fail('Hierarkin från området: ' + nm);
+  if (px.tasks[3].dur !== 'PT40H0M0S' || px.tasks[3].pc !== '40') fail('Varaktighet och framdrift: ' + JSON.stringify(px.tasks[3]));
+  if (px.tasks[4].pred.join() !== '3:9600' || px.links !== 1 || px.dropped !== 1) fail('Väntar på med glapp (2 d = 9600) och utelämnad extern koppling: ' + JSON.stringify([px.tasks[4].pred, px.links, px.dropped]));
+  if (px.res !== 1 || px.work !== 'PT160H0M0S') fail('Resurser: ' + JSON.stringify([px.res, px.work]));
+  await page.evaluate(() => { ganttMultiSel.clear(); }); 
+  await page.click('#ganttPpExportBtn'); await page.waitForSelector('.ppx-pop');
+  const dlp = page.waitForEvent('download', { timeout: 10000 });
+  await page.click('.ppx-pop input[value="all"]'); await page.click('.ppx-go');
+  const dwn = await dlp;
+  if (!/\.xml$/i.test(dwn.suggestedFilename())) fail('Filen ska vara .xml: ' + dwn.suggestedFilename());
+  console.log('OK: export till Powerproject (MS Project-XML) – hierarki, glapp, resurser, nedladdning');
   // Uppdatera-knappen i Gantt: snurrar medan den hämtar, visar "Uppdaterad" och går tillbaka.
   await page.evaluate(() => { window.__ref = 0; const o = window.refreshAll; window.refreshAll = async () => { window.__ref++; await new Promise(r => setTimeout(r, 300)); return o && o(); }; });
   await page.click('#ganttRefreshBtn'); await page.waitForTimeout(100);

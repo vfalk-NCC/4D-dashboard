@@ -2305,3 +2305,8 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .new-act-pop .na-obj:hover { background: #f1f5f9; }
 .new-act-pop .na-obj-x { border: 0; background: transparent; color: #b91c1c; cursor: pointer; font-size: 14px; padding: 0 6px; border-radius: 4px; }
 .new-act-pop .na-obj-x:hover { background: #fee2e2; }
+
+.ppx-pop { max-width: 380px; }
+.ppx-opts { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.ppx-opt { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.ppx-opt.off { opacity: .5; }

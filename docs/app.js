@@ -6025,6 +6025,7 @@ function initGanttControls() {
   initGanttTime(); initGanttMulti();
   syncGanttModeUi();
   const lmBtn = document.getElementById("ganttLoadModelsBtn"); if (lmBtn) lmBtn.onclick = loadCoupledModelsDash;
+  const ppxBtn = document.getElementById("ganttPpExportBtn"); if (ppxBtn) ppxBtn.onclick = () => openPpExportDialog();
   const fullBtn = document.getElementById("ganttFullBtn");
   if (fullBtn) fullBtn.onclick = toggleGanttFullscreen;
   const fsTools = document.getElementById("ganttFsTools"), fsClose = document.getElementById("ganttFsClose");
