@@ -3498,6 +3498,19 @@ function ganttTimeColorOf(t) {
 let ganttVisSig = "";
 /* Pulserande ljus på pågående objekt (Victor 2026-10-13): färgen på det som pågår andas mellan statusfärgen och ett ljust gult –
    ett tydligt "här händer det nu" i Trimble Connect. Bara pågående objekt rörs, med några få anrop per steg. */
+/* Markera pågående i Trimble Connect (Victor 2026-10-13): de pågående objekten väljs med TC:s egen markering, så de "lyses upp". */
+let ganttSelAct = false, ganttSelActSig = "", ganttSelActOwn = false;
+async function ganttSelActSync() {
+  const V = API && API.viewer; if (!V || typeof V.setSelection !== "function") return;
+  if (!ganttSelAct || ganttMode !== "time" || !ganttAsOf) {
+    if (ganttSelActOwn) { ganttSelActOwn = false; ganttSelActSig = ""; try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: [] }, "set"); } catch (e) { /* ignorera */ } }
+    return;
+  }
+  const sig = ganttPulseGroups.map(g => g.modelId + ":" + g.rids.slice().sort().join(".")).sort().join("|");
+  if (sig === ganttSelActSig) return;
+  ganttSelActSig = sig;
+  try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: ganttPulseGroups.map(g => ({ modelId: g.modelId, objectRuntimeIds: g.rids })) }, "set"); ganttSelActOwn = true; } catch (e) { console.warn("Kunde inte markera pågående", e); }
+}
 let ganttPulse = false, ganttPulseTimer = null, ganttPulseGroups = [], ganttPulseBusy = false;
 function ganttPulseStop(restore) {
   clearInterval(ganttPulseTimer); ganttPulseTimer = null;
@@ -3570,7 +3583,7 @@ async function ganttTimeApply3d() {
     for (const g of groups.values()) await V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: g.color });
     ganttPhaseNow = next; ganttColored = true;
     { const pm = new Map(); targets.forEach(t => { if (t.phase !== "pagaende") return; const rid = ganttRidCache.get(`${t.modelId}|${t.objectId}`); if (rid !== null && rid !== undefined) (pm.get(t.modelId) || pm.set(t.modelId, []).get(t.modelId)).push(rid); });
-      ganttPulseGroups = [...pm].map(([modelId, rids]) => ({ modelId, rids })); ganttPulseSync(); }
+      ganttPulseGroups = [...pm].map(([modelId, rids]) => ({ modelId, rids })); ganttPulseSync(); ganttSelActSync(); }
     const shown = [...next.values()].filter(v => !v.startsWith("dold")).length;
     ganttTimeInfo(`${shown} i 3D${skipped ? ` · ${skipped} mod. ej inlästa` : ""}`);
   } catch (e) { console.warn("Tidslinjen i 3D", e); modelToast("Kunde inte uppdatera 3D: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
@@ -3684,7 +3697,7 @@ async function setGanttMode(mode, quiet) {
   const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
   // Lämna det förra läget helt (flaggor först, så inget hinner köra om det).
   if (mode !== "isolate") ganttIsoOverride = null;
-  ganttPulseStop(false); ganttPulseGroups = [];
+  ganttPulseStop(false); ganttPulseGroups = []; ganttSelActSync();
   ganttMode = mode; ganttIsolate = false; ganttHideCoupled = false; ganttTime3d = false; isolateSig = ""; ganttTimeReset();
   const hadAsOf = ganttAsOf; ganttAsOf = null; ganttScrubInfo = null;
   syncGanttModeUi();
@@ -3849,6 +3862,8 @@ function initGanttTime() {
   const pul = document.getElementById("ganttTimePulse");
   try { ganttPulse = localStorage.getItem("4ddash-gantt-pulse") === "1"; } catch (e) {}
   if (pul) { pul.checked = ganttPulse; pul.onchange = () => { ganttPulse = pul.checked; try { localStorage.setItem("4ddash-gantt-pulse", ganttPulse ? "1" : "0"); } catch (e) {} if (ganttPulse) ganttPulseSync(); else ganttPulseStop(true); }; }
+  const sa = document.getElementById("ganttTimeSelAct");
+  if (sa) sa.onchange = () => { ganttSelAct = sa.checked; ganttSelActSig = ""; ganttSelActSync(); };
   const dop = document.getElementById("ganttTimeDoneOp"), dopv = document.getElementById("ganttTimeDoneOpVal");
   try { const v = localStorage.getItem("4ddash-gantt-time-doneop"); if (v !== null && v !== "") ganttDoneOp = Math.max(0, Math.min(100, Number(v))); } catch (e) {}
   dop.value = ganttDoneOp; dopv.textContent = ganttDoneOp;

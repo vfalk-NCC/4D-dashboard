@@ -167,6 +167,14 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (restored !== baseC) fail('Av: pågående-färgen ska återställas: ' + restored + ' vs ' + baseC);
   const nCalls = await page.evaluate(() => window.__calls.length); await page.waitForTimeout(600);
   if ((await page.evaluate(() => window.__calls.length)) !== nCalls) fail('Pulsen ska stanna när rutan släpps');
+  // Markera pågående med TC:s egen markering (och släpp den igen).
+  await page.evaluate(() => { window.__setsel = []; });
+  await page.check('#ganttTimeSelAct'); await page.waitForTimeout(800);
+  const sel1 = await page.evaluate(() => (window.__setsel || []).slice(-1)[0]);
+  if (!sel1 || sel1.modelObjectIds.flatMap(m => m.objectRuntimeIds).join() !== 'G7') fail('Pågående (G7 vid dag 4) ska markeras: ' + JSON.stringify(sel1));
+  await page.uncheck('#ganttTimeSelAct'); await page.waitForTimeout(600);
+  const sel2 = await page.evaluate(() => (window.__setsel || []).slice(-1)[0]);
+  if (!sel2 || sel2.modelObjectIds.length !== 0) fail('Av: markeringen släpps: ' + JSON.stringify(sel2));
   // Temporär försvinner efter slut, Rivning syns före start men försvinner efter slut.
   const tdp = await page.evaluate(([d0, d1, d3, d4, d6, d7]) => {
     const keep = [ganttShownItems, ganttAsOf, ganttTime3d];
