@@ -7,7 +7,7 @@
    Inget sparas i tidplanen eller i TC. Kameravyer och val sparas i webbläsaren. */
 
 const VID_KEY = "4ddash-video";
-const vid = { keys: [], cfg: { from: "", to: "", sec: 20, fps: 15, wait: 300, title: true, now: true, meter: true, pearls: true }, run: null, shot: "" };
+const vid = { keys: [], cfg: { from: "", to: "", sec: 20, fps: 15, wait: 300, title: true, now: true, meter: true, miles: true, pearls: true }, run: null, shot: "" };
 try { const s = JSON.parse(localStorage.getItem(VID_KEY) || "{}"); if (Array.isArray(s.keys)) vid.keys = s.keys.filter(k => k && k.date && k.cam); Object.assign(vid.cfg, s.cfg || {}); } catch (e) { /* standard */ }
 const vidSave = () => { try { localStorage.setItem(VID_KEY, JSON.stringify({ keys: vid.keys, cfg: vid.cfg })); } catch (e) { /* ingen lagring */ } };
 const vidSleep = ms => new Promise(r => setTimeout(r, ms));
@@ -54,58 +54,9 @@ async function vidSnapshot() {
 }
 
 /* ---- Grafik ----------------------------------------------------------------------------------------- */
-/* Det som ritas för ett datum (räknas när bilden tas): klar-andel och pågående aktiviteter. */
-function vidInfoAt(d) {
-  const its = (typeof ganttShownItems !== "undefined" ? ganttShownItems : []).filter(x => x.startDate);
-  const acts = mergeActivityGroups(its);
-  let done = 0; const now = [];
-  acts.forEach(a => { const ph = ganttPhaseAt(a, d); if (ph === "klar") done++; else if (ph === "pagaende" || ph === "forsenad") now.push({ name: itemLabel(a), pct: Math.round(Number(a.progress) || 0), late: ph === "forsenad" }); });
-  return { pct: acts.length ? Math.round(done / acts.length * 100) : 0, done, total: acts.length, now: now.slice(0, 6), more: Math.max(0, now.length - 6) };
-}
-function vidRound(ctx, x, y, w, h, r) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); }
-function vidDraw(ctx, img, W, H, fr, from, to) {
-  ctx.drawImage(img, 0, 0, W, H);
-  const s = H / 1080, C = vid.cfg, dt = parseDate(fr.d);
-  const font = (px, w = 600) => `${w} ${Math.round(px * s)}px system-ui, -apple-system, Segoe UI, sans-serif`;
-  ctx.save(); ctx.textBaseline = "middle";
-  if (C.title) {
-    const lbl = `v.${isoWeekNumber(dt)} · ${shortDateSv(dt)} ${dt.getUTCFullYear()}`;
-    ctx.font = font(40, 700); const w = ctx.measureText(lbl).width + 44 * s;
-    ctx.fillStyle = "rgba(15,23,42,.74)"; vidRound(ctx, 30 * s, 30 * s, w, 70 * s, 14 * s); ctx.fill();
-    ctx.fillStyle = "#fff"; ctx.fillText(lbl, 52 * s, 66 * s);
-  }
-  if (C.meter) {
-    const w = 330 * s, x = W - w - 30 * s, y = 30 * s;
-    ctx.fillStyle = "rgba(15,23,42,.74)"; vidRound(ctx, x, y, w, 82 * s, 14 * s); ctx.fill();
-    ctx.font = font(24, 600); ctx.fillStyle = "#fff"; ctx.fillText(`Klart ${fr.info.pct} %`, x + 20 * s, y + 26 * s);
-    ctx.font = font(18, 500); ctx.fillStyle = "#cbd5e1"; ctx.textAlign = "right"; ctx.fillText(`${fr.info.done} av ${fr.info.total}`, x + w - 20 * s, y + 26 * s); ctx.textAlign = "left";
-    ctx.fillStyle = "rgba(255,255,255,.25)"; vidRound(ctx, x + 20 * s, y + 50 * s, w - 40 * s, 14 * s, 7 * s); ctx.fill();
-    ctx.fillStyle = STATUS_COLORS.klar || "#3fb950"; vidRound(ctx, x + 20 * s, y + 50 * s, Math.max(14 * s, (w - 40 * s) * fr.info.pct / 100), 14 * s, 7 * s); ctx.fill();
-  }
-  if (C.now && fr.info.now.length) {
-    const rows = fr.info.now, rh = 38 * s, w = 460 * s, h = 54 * s + rows.length * rh + (fr.info.more ? 26 * s : 0), x = W - w - 30 * s, y = H - h - (C.pearls ? 120 : 30) * s;
-    ctx.fillStyle = "rgba(15,23,42,.78)"; vidRound(ctx, x, y, w, h, 14 * s); ctx.fill();
-    ctx.font = font(22, 700); ctx.fillStyle = "#fff"; ctx.fillText("Pågår nu", x + 20 * s, y + 28 * s);
-    rows.forEach((r, i) => {
-      const yy = y + 54 * s + i * rh;
-      ctx.fillStyle = r.late ? STATUS_COLORS.forsenad || "#e5484d" : STATUS_COLORS.pagaende || "#f5a623"; vidRound(ctx, x + 20 * s, yy + 8 * s, 8 * s, 22 * s, 4 * s); ctx.fill();
-      ctx.font = font(19, 500); ctx.fillStyle = "#f1f5f9";
-      let t = r.name; const maxW = w - 130 * s; while (t.length > 4 && ctx.measureText(t).width > maxW) t = t.slice(0, -2); if (t !== r.name) t = t.replace(/\s+$/, "") + "…";
-      ctx.fillText(t, x + 38 * s, yy + 19 * s); ctx.textAlign = "right"; ctx.fillStyle = "#cbd5e1"; ctx.fillText(`${r.pct} %`, x + w - 20 * s, yy + 19 * s); ctx.textAlign = "left";
-    });
-    if (fr.info.more) { ctx.font = font(17, 500); ctx.fillStyle = "#94a3b8"; ctx.fillText(`+ ${fr.info.more} till`, x + 38 * s, y + h - 16 * s); }
-  }
-  if (C.pearls) {
-    const x0 = 60 * s, x1 = W - 60 * s, y = H - 52 * s, span = Math.max(1, daysBetweenIso(from, to));
-    ctx.fillStyle = "rgba(15,23,42,.6)"; vidRound(ctx, 30 * s, H - 100 * s, W - 60 * s, 76 * s, 14 * s); ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,.3)"; ctx.fillRect(x0, y - 2 * s, x1 - x0, 4 * s);
-    const px = x0 + (x1 - x0) * Math.max(0, Math.min(1, daysBetweenIso(from, fr.d) / span));
-    ctx.fillStyle = "#60a5fa"; ctx.fillRect(x0, y - 2 * s, px - x0, 4 * s);
-    ctx.beginPath(); ctx.arc(px, y, 9 * s, 0, 7); ctx.fillStyle = "#fff"; ctx.fill();
-    ctx.font = font(18, 500); ctx.fillStyle = "#cbd5e1"; ctx.textAlign = "left"; ctx.fillText(shortDateSv(parseDate(from)), x0, y + 24 * s); ctx.textAlign = "right"; ctx.fillText(shortDateSv(parseDate(to)), x1, y + 24 * s); ctx.textAlign = "left";
-  }
-  ctx.restore();
-}
+/* Själva ritningen finns i video-gfx.js (samma som filmen i 3D-editorn). Här: bilden + grafiken för ett datum. */
+const vidFxOpts = () => ({ date: !!vid.cfg.title, now: !!vid.cfg.now, meter: !!vid.cfg.meter, miles: vid.cfg.miles !== false });
+function vidDraw(ctx, img, W, H, fx, iso, ft) { ctx.drawImage(img, 0, 0, W, H); vgxDraw(ctx, W, H, iso, ft, fx, !!vid.cfg.pearls); }
 
 /* ---- Körning ---------------------------------------------------------------------------------------- */
 function vidMime() {
@@ -151,8 +102,10 @@ function vidShot() {
   return vidSession(async run => {
     const [from, to] = vidRange(), d = ganttAsOf && ganttAsOf >= from && ganttAsOf <= to ? ganttAsOf : from;
     await vidSetCam(vidCamAt(d)); await vidSetDate(d); await vidSleep(Number(vid.cfg.wait) || 300);
-    const blob = await vidSnapshot(), img = await createImageBitmap(blob), c = document.createElement("canvas");
-    c.width = img.width; c.height = img.height; vidDraw(c.getContext("2d"), img, c.width, c.height, { d, i: 0, info: vidInfoAt(d) }, from, to);
+    const blob = await vidSnapshot(), img = await createImageBitmap(blob), c = document.createElement("canvas"), fx = vgxStart(from, to, vidFxOpts()), tms = vgxDate(d).getTime() + VGX_DAY / 2;
+    c.width = img.width; c.height = img.height;
+    vgxFrame(fx, d, 0, tms); vgxFrame(fx, d, 2, tms); // två steg så att det som glider in syns på plats
+    vidDraw(c.getContext("2d"), img, c.width, c.height, fx, d, 2);
     const box = document.getElementById("vidShotBox"); if (box) { box.innerHTML = ""; c.className = "vid-shot"; box.appendChild(c); }
     vidMsg(`Provbild ${d}: ${img.width}×${img.height} px.`);
   });
@@ -170,7 +123,7 @@ function vidRender() {
       if (d !== lastD) { await vidSetDate(d); lastD = d; }
       await vidSleep(wait);
       const blob = await vidSnapshot();
-      frames.push({ blob, d, i, info: vidInfoAt(d) });
+      frames.push({ blob, d, i });
       const el = (performance.now() - t0) / 1000, left = el / (i + 1) * (n - i);
       vidMsg(`Tar bilder: ${i + 1} av ${n + 1} (${d}) – ca ${Math.max(1, Math.round(left / 60))} min kvar. Avbryt med ■.`);
     }
@@ -183,10 +136,11 @@ function vidRender() {
     const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: Math.round(W * H * fps * 0.12) });
     rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
     rec.start(1000);
-    const start = performance.now();
+    const start = performance.now(), fx = vgxStart(from, to, vidFxOpts()), t0ms = vgxDate(from).getTime(), t1ms = vgxDate(to).getTime() + VGX_DAY;
     for (let i = 0; i < frames.length; i++) {
-      const img = await createImageBitmap(frames[i].blob);
-      vidDraw(ctx, img, W, H, frames[i], from, to);
+      const img = await createImageBitmap(frames[i].blob), ft = i / fps;
+      vgxFrame(fx, frames[i].d, ft, t0ms + (t1ms - t0ms) * (frames[i].i / n)); // animationerna går i takt med filmens tid
+      vidDraw(ctx, img, W, H, fx, frames[i].d, ft);
       if (track.requestFrame) track.requestFrame();
       const wt = start + (i + 1) * 1000 / fps - performance.now(); await vidSleep(Math.max(0, wt));
     }
@@ -213,7 +167,7 @@ function vidRender2() {
         <label>Längd <input type="number" id="vidSec" min="3" max="600" value="${C.sec}" /> s</label>
         <label>Bilder/s <select id="vidFps">${[10, 15, 24, 30].map(v => `<option value="${v}"${Number(C.fps) === v ? " selected" : ""}>${v}</option>`).join("")}</select></label>
         <label title="Hur länge TC får rita om efter att datum och kamera ändrats, innan bilden tas. Längre = säkrare men långsammare.">Väntetid <input type="number" id="vidWait" min="0" max="5000" step="50" value="${C.wait}" /> ms</label></div>
-      <div class="vid-row vid-checks"><label><input type="checkbox" id="vidTitle"${C.title ? " checked" : ""} /> Datumskylt</label><label><input type="checkbox" id="vidNow"${C.now ? " checked" : ""} /> Pågår nu-ruta</label><label><input type="checkbox" id="vidMeter"${C.meter ? " checked" : ""} /> Förloppsmätare</label><label><input type="checkbox" id="vidPearls"${C.pearls ? " checked" : ""} /> Tidslinje</label></div>
+      <div class="vid-row vid-checks"><label><input type="checkbox" id="vidTitle"${C.title ? " checked" : ""} /> Datumskylt</label><label><input type="checkbox" id="vidNow"${C.now ? " checked" : ""} /> Pågår nu-ruta</label><label><input type="checkbox" id="vidMeter"${C.meter ? " checked" : ""} /> Förloppsmätare</label><label><input type="checkbox" id="vidMiles"${C.miles !== false ? " checked" : ""} /> Milstolpar</label><label><input type="checkbox" id="vidPearls"${C.pearls ? " checked" : ""} /> Tidslinje</label></div>
       <div class="vid-row"><button type="button" id="vidShot" title="Tar en bild med grafik så att du ser utseendet och upplösningen">Provbild</button><button type="button" id="vidPreview" title="Kamera och datum i TC utan att spela in">▶ Förhandsvisa</button><button type="button" id="vidRender" class="primary" title="Tar alla bilder och sparar videon på datorn">⏺ Rendera video</button><button type="button" id="vidStop" class="hidden" title="Avbryt">■ Stoppa</button>
         <span class="hint">${n + 1} bilder · ${vidMime() ? (/mp4/.test(vidMime()) ? "MP4" : "WebM") : "video stöds inte"} · tar ungefär ${Math.max(1, Math.round((n + 1) * ((Number(C.wait) || 300) + 500) / 60000))} min</span></div>
       <div id="vidMsg" class="hint vid-msg"></div><div id="vidShotBox" class="vid-shotbox"></div></div>`;
@@ -236,7 +190,7 @@ function vidRender2() {
   q("#vidSec").onchange = e => { put("sec", Math.max(3, Math.min(600, Number(e.target.value) || 20))); vidRender2(); };
   q("#vidFps").onchange = e => { put("fps", Number(e.target.value)); vidRender2(); };
   q("#vidWait").onchange = e => { put("wait", Math.max(0, Math.min(5000, Number(e.target.value) || 300))); vidRender2(); };
-  [["vidTitle", "title"], ["vidNow", "now"], ["vidMeter", "meter"], ["vidPearls", "pearls"]].forEach(([id, k]) => { q("#" + id).onchange = e => put(k, e.target.checked); });
+  [["vidTitle", "title"], ["vidNow", "now"], ["vidMeter", "meter"], ["vidMiles", "miles"], ["vidPearls", "pearls"]].forEach(([id, k]) => { q("#" + id).onchange = e => put(k, e.target.checked); });
   q("#vidShot").onclick = vidShot; q("#vidPreview").onclick = vidPreview; q("#vidRender").onclick = vidRender;
   q("#vidStop").onclick = () => { if (vid.run) vid.run.stop = true; };
   if (vid.run) vidBusyUi(true);
