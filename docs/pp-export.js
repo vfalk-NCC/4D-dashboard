@@ -13,11 +13,10 @@ function ppxWorkdays(a, b) {
 const ppxDur = days => `PT${days * 8}H0M0S`;
 const ppxHours = h => `PT${Math.max(0, Math.round(Number(h) * 100) / 100)}H0M0S`.replace(/(\.\d+)?H/, m => m);
 
-const ppxUid = () => "00000000-0000-4000-8000-" + String(Date.now()).padStart(12, "0").slice(-12);
-/* En uppgift med alla fält i samma ordning som Microsoft Project själv skriver dem (MSPDI), så att strikta läsare accepterar filen. */
+/* En uppgift exakt som Powerproject själv skriver den i sin Microsoft Project-XML (samma fält, samma ordning, inga andra) –
+   Powerprojects egen inläsning avvisade en fuller MSP-fil som "inte en giltig XML fil" (Victor 2026-10-13). */
 function ppxTask(t) {
-  const now = new Date().toISOString().slice(0, 19), st = t.start || now, fi = t.finish || now;
-  return `<Task><UID>${t.uid}</UID><ID>${t.uid}</ID><Name>${ppxEsc(t.name)}</Name><Active>1</Active><Manual>0</Manual><Type>0</Type><IsNull>0</IsNull><CreateDate>${now}</CreateDate><WBS>${t.num}</WBS><OutlineNumber>${t.num}</OutlineNumber><OutlineLevel>${t.level}</OutlineLevel><Priority>500</Priority><Start>${st}</Start><Finish>${fi}</Finish><Duration>${t.dur}</Duration><DurationFormat>7</DurationFormat><Work>PT0H0M0S</Work><ResumeValid>0</ResumeValid><EffortDriven>0</EffortDriven><Recurring>0</Recurring><OverAllocated>0</OverAllocated><Estimated>0</Estimated><Milestone>${t.milestone}</Milestone><Summary>${t.summary}</Summary><DisplayAsSummary>0</DisplayAsSummary><Critical>0</Critical><IsSubproject>0</IsSubproject><IsSubprojectReadOnly>0</IsSubprojectReadOnly><ExternalTask>0</ExternalTask><EarlyStart>${st}</EarlyStart><EarlyFinish>${fi}</EarlyFinish><LateStart>${st}</LateStart><LateFinish>${fi}</LateFinish><StartVariance>0</StartVariance><FinishVariance>0</FinishVariance><WorkVariance>0</WorkVariance><FreeSlack>0</FreeSlack><TotalSlack>0</TotalSlack><FixedCost>0</FixedCost><FixedCostAccrual>3</FixedCostAccrual><PercentComplete>${t.pct}</PercentComplete><PercentWorkComplete>0</PercentWorkComplete><Cost>0</Cost><OvertimeCost>0</OvertimeCost><OvertimeWork>PT0H0M0S</OvertimeWork><ActualDuration>PT0H0M0S</ActualDuration><ActualCost>0</ActualCost><ActualOvertimeCost>0</ActualOvertimeCost><ActualWork>PT0H0M0S</ActualWork><RegularWork>PT0H0M0S</RegularWork><RemainingDuration>${t.dur}</RemainingDuration><RemainingCost>0</RemainingCost><RemainingWork>PT0H0M0S</RemainingWork><RemainingOvertimeCost>0</RemainingOvertimeCost><RemainingOvertimeWork>PT0H0M0S</RemainingOvertimeWork><ACWP>0</ACWP><CV>0</CV><ConstraintType>0</ConstraintType><CalendarUID>-1</CalendarUID><LevelAssignments>1</LevelAssignments><LevelingCanSplit>1</LevelingCanSplit><LevelingDelay>0</LevelingDelay><LevelingDelayFormat>8</LevelingDelayFormat><IgnoreResourceCalendar>0</IgnoreResourceCalendar><HideBar>0</HideBar><Rollup>0</Rollup><BCWS>0</BCWS><BCWP>0</BCWP><PhysicalPercentComplete>0</PhysicalPercentComplete><EarnedValueMethod>0</EarnedValueMethod>${t.preds}<ActualWorkProtected>PT0H0M0S</ActualWorkProtected><ActualOvertimeWorkProtected>PT0H0M0S</ActualOvertimeWorkProtected></Task>`;
+  return `<Task><UID>${t.uid}</UID><ID>${t.uid}</ID><Name>${ppxEsc(t.name)}</Name><Type>0</Type><IsNull>0</IsNull><WBS>${t.num}</WBS><OutlineNumber>${t.num}</OutlineNumber><OutlineLevel>${t.level}</OutlineLevel><Start>${t.start}</Start><Finish>${t.finish}</Finish><ManualStart>${t.start}</ManualStart><ManualFinish>${t.finish}</ManualFinish><Duration>${t.dur}</Duration><ManualDuration>${t.dur}</ManualDuration><DurationFormat>7</DurationFormat><Milestone>${t.milestone}</Milestone><Summary>${t.summary}</Summary><Critical>0</Critical><FixedCost>0</FixedCost><FixedCostAccrual>3</FixedCostAccrual><PercentComplete>${t.pct}</PercentComplete><ConstraintType>4</ConstraintType><CalendarUID>1</CalendarUID><ConstraintDate>${t.start}</ConstraintDate>${t.preds}</Task>`;
 }
 
 /* acts: sammanslagna aktiviteter (som Gantten visar). opts: { project, resources }.
@@ -53,15 +52,17 @@ function buildMspXml(acts, opts = {}) {
     const s = all.map(a => a.startDate).sort(), e = all.map(a => a.endDate || a.startDate).sort();
     return { s: s[0], e: e[e.length - 1] };
   };
-  const iso = (d, end) => `${d}T${end ? "17:00:00" : "08:00:00"}`;
+  const rootR0 = list.length ? list.map(a => a.startDate).sort()[0] : new Date().toISOString().slice(0, 10);
+  const iso = (d, end) => `${d}T${end ? "16:00:00" : "08:00:00"}`;
   let links = 0, droppedLinks = 0;
   const taskXml = [];
   order.forEach(o => {
     if (o.node) {
       const n = o.node;
+      if (n.level === 0) return; // projektraden skrivs inte (Powerproject skriver heller ingen)
       const r = range(n);
       const days = r.s ? ppxWorkdays(r.s, r.e) : 1;
-      taskXml.push(ppxTask({ uid: n.uid, name: n.name, level: n.level, num: n.level === 0 ? "0" : n.num, start: r.s ? iso(r.s) : null, finish: r.s ? iso(r.e, true) : null, dur: r.s ? ppxDur(days) : "PT0H0M0S", summary: 1, milestone: 0, pct: 0, preds: "" }));
+      taskXml.push(ppxTask({ uid: n.uid, name: n.name, level: n.level, num: n.level === 0 ? "0" : n.num, start: iso(r.s || rootR0), finish: iso(r.e || rootR0, true), dur: ppxDur(days), summary: 1, milestone: 0, pct: 0, preds: "" }));
     } else {
       const a = o.act, end = a.endDate || a.startDate, days = ppxWorkdays(a.startDate, end);
       const num = o.num;
@@ -85,14 +86,15 @@ function buildMspXml(acts, opts = {}) {
     rs.forEach(r => {
       if (!r || !r.name) return;
       if (!resUid.has(r.name)) { resUid.set(r.name, resList.length + 1); resList.push(r.name); }
-      assign.push(`<Assignment><UID>${assign.length + 1}</UID><TaskUID>${uidOfAct.get(a)}</TaskUID><ResourceUID>${resUid.get(r.name)}</ResourceUID><Finish>${iso(a.endDate || a.startDate, true)}</Finish><Start>${iso(a.startDate)}</Start><Units>${Number(r.qty) || 1}</Units><Work>${ppxHours(r.hours)}</Work></Assignment>`);
+      assign.push(`<Assignment><UID>${assign.length + 1}</UID><TaskUID>${uidOfAct.get(a)}</TaskUID><ResourceUID>${resUid.get(r.name)}</ResourceUID><Units>${Number(r.qty) || 1}</Units><Work>${ppxHours(r.hours)}</Work></Assignment>`);
     });
   });
-  const rootR = range(root), now = new Date().toISOString().slice(0, 19);
-  const cal = `<Calendars><Calendar><UID>1</UID><Name>Standard</Name><IsBaseCalendar>1</IsBaseCalendar><WeekDays>${[1, 2, 3, 4, 5, 6, 7].map(d => d === 1 || d === 7 ? `<WeekDay><DayType>${d}</DayType><DayWorking>0</DayWorking></WeekDay>` : `<WeekDay><DayType>${d}</DayType><DayWorking>1</DayWorking><WorkingTimes><WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime><WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime></WorkingTimes></WeekDay>`).join("")}</WeekDays></Calendar></Calendars>`;
-  const hdr = `<SaveVersion>14</SaveVersion><BuildNumber>14.0.4760.1000</BuildNumber><UID>${ppxUid()}</UID><Name>${ppxEsc(project)}</Name><Title>${ppxEsc(project)}</Title><CreationDate>${now}</CreationDate><LastSaved>${now}</LastSaved><ScheduleFromStart>1</ScheduleFromStart>${rootR.s ? `<StartDate>${iso(rootR.s)}</StartDate><FinishDate>${iso(rootR.e, true)}</FinishDate>` : ""}<FYStartDate>1</FYStartDate><CriticalSlackLimit>0</CriticalSlackLimit><CurrencyDigits>2</CurrencyDigits><CurrencySymbol>kr</CurrencySymbol><CurrencySymbolPosition>1</CurrencySymbolPosition><CalendarUID>1</CalendarUID><DefaultStartTime>08:00:00</DefaultStartTime><DefaultFinishTime>17:00:00</DefaultFinishTime><MinutesPerDay>480</MinutesPerDay><MinutesPerWeek>2400</MinutesPerWeek><DaysPerMonth>20</DaysPerMonth><DefaultTaskType>0</DefaultTaskType><DefaultFixedCostAccrual>3</DefaultFixedCostAccrual><DefaultStandardRate>0</DefaultStandardRate><DefaultOvertimeRate>0</DefaultOvertimeRate><DurationFormat>7</DurationFormat><WorkFormat>2</WorkFormat><EditableActualCosts>0</EditableActualCosts><HonorConstraints>0</HonorConstraints><EarnedValueMethod>0</EarnedValueMethod><InsertedProjectsLikeSummary>0</InsertedProjectsLikeSummary><MultipleCriticalPaths>0</MultipleCriticalPaths><NewTasksEffortDriven>0</NewTasksEffortDriven><NewTasksEstimated>0</NewTasksEstimated><SplitsInProgressTasks>1</SplitsInProgressTasks><SpreadActualCost>0</SpreadActualCost><SpreadPercentComplete>0</SpreadPercentComplete><TaskUpdatesResource>1</TaskUpdatesResource><FiscalYearStart>0</FiscalYearStart><WeekStartDay>1</WeekStartDay><MoveCompletedEndsBack>0</MoveCompletedEndsBack><MoveRemainingStartsBack>0</MoveRemainingStartsBack><MoveRemainingStartsForward>0</MoveRemainingStartsForward><MoveCompletedEndsForward>0</MoveCompletedEndsForward><BaselineForEarnedValue>0</BaselineForEarnedValue><AutoAddNewResourcesAndTasks>1</AutoAddNewResourcesAndTasks><CurrentDate>${now}</CurrentDate><MicrosoftProjectServerURL>1</MicrosoftProjectServerURL><Autolink>0</Autolink><NewTaskStartDate>0</NewTaskStartDate><DefaultTaskEVMethod>0</DefaultTaskEVMethod><ProjectExternallyEdited>0</ProjectExternallyEdited><ActualsInSync>0</ActualsInSync><RemoveFileProperties>0</RemoveFileProperties><AdminProject>0</AdminProject>`;
-  const resXml = resList.length ? `<Resources><Resource><UID>0</UID><ID>0</ID><Type>1</Type><IsNull>0</IsNull></Resource>${resList.map((n, i) => `<Resource><UID>${i + 1}</UID><ID>${i + 1}</ID><Name>${ppxEsc(n)}</Name><Type>1</Type><IsNull>0</IsNull><MaxUnits>1</MaxUnits></Resource>`).join("")}</Resources><Assignments>${assign.join("")}</Assignments>` : "<Resources/>";
-  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  const rootR = range(root);
+  const dayW = d => d === 1 || d === 7 ? `<WeekDay><DayType>${d}</DayType><DayWorking>0</DayWorking></WeekDay>` : `<WeekDay><DayType>${d}</DayType><DayWorking>1</DayWorking><WorkingTimes><WorkingTime><FromTime>08:00:00</FromTime><ToTime>16:00:00</ToTime></WorkingTime></WorkingTimes></WeekDay>`;
+  const cal = `<Calendars><Calendar><UID>1</UID><Name>Standard</Name><IsBaseCalendar>1</IsBaseCalendar><BaseCalendarUID>-1</BaseCalendarUID><WeekDays>${[1, 2, 3, 4, 5, 6, 7].map(dayW).join("")}</WeekDays></Calendar></Calendars>`;
+  const hdr = `<Name>${ppxEsc(project)}</Name><Title>${ppxEsc(project)}</Title><Company></Company><Author></Author><ScheduleFromStart>1</ScheduleFromStart>${rootR.s ? `<StartDate>${iso(rootR.s)}</StartDate><FinishDate>${iso(rootR.e, true)}</FinishDate>` : ""}<FYStartDate>1</FYStartDate><CurrencyDigits>0</CurrencyDigits><CurrencySymbol>kr</CurrencySymbol><CurrencySymbolPosition>0</CurrencySymbolPosition><CalendarUID>1</CalendarUID><MinutesPerDay>480</MinutesPerDay><MinutesPerWeek>2400</MinutesPerWeek><DaysPerMonth>21</DaysPerMonth><DurationFormat>7</DurationFormat><WorkFormat>2</WorkFormat><FiscalYearStart>1</FiscalYearStart><WeekStartDay>1</WeekStartDay><ProjectExternallyEdited>0</ProjectExternallyEdited><ActualsInSync>0</ActualsInSync>`;
+  const resXml = resList.length ? `<Resources>${resList.map((n, i) => `<Resource><UID>${i + 1}</UID><ID>${i + 1}</ID><Name>${ppxEsc(n)}</Name><Type>1</Type><MaxUnits>1</MaxUnits><StandardRateFormat>2</StandardRateFormat><Cost>0</Cost><OvertimeRateFormat>2</OvertimeRateFormat><IsCostResource>0</IsCostResource><AccrueAt>3</AccrueAt><CalendarUID>1</CalendarUID><IsGeneric>0</IsGeneric></Resource>`).join("")}</Resources><Assignments>${assign.join("")}</Assignments>` : "<Resources/><Assignments/>";
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Project xmlns="http://schemas.microsoft.com/project">${hdr}${cal}<Tasks>${taskXml.join("")}</Tasks>${resXml}</Project>`;
   return { xml, tasks: list.length, links, droppedLinks, resources: resList.length };
 }
@@ -110,7 +112,7 @@ function openPpExportDialog() {
   pop.innerHTML = `<div class="board-pop-title">⇪ Exportera till Powerproject</div>
     <div class="hint">Skapar en Microsoft Project-XML-fil. Importera den i Powerproject: <b>Importera från Microsoft Project® (XML)</b>. Din Powerproject-fil ändras inte.</div>
     <div class="ppx-opts">${opts.map(([k, l, a]) => `<label class="ppx-opt${a.length ? "" : " off"}"><input type="radio" name="ppxScope" value="${k}"${k === first && a.length ? " checked" : ""}${a.length ? "" : " disabled"} /> ${l} <span class="hint">${a.length} st</span></label>`).join("")}</div>
-    <label class="na-temp"><input type="checkbox" id="ppxRes" checked /> <span>Med resurser (antal och timmar)</span></label>
+    <label class="na-temp"><input type="checkbox" id="ppxRes" /> <span>Med resurser (skapar nya resurser i Powerproject om namnen inte finns)</span></label>
     <div class="hint" id="ppxNote"></div>
     <div class="board-pop-actions"><button type="button" class="ppx-cancel">Avbryt</button><button type="button" class="ppx-go primary">Exportera</button></div>`;
   overlayHost().appendChild(pop);

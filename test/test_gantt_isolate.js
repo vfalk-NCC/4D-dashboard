@@ -294,9 +294,9 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   });
   if (px.err) fail('XML ska vara välformad');
   const nm = px.tasks.map(t => t.l + t.n + (t.s === '1' ? '*' : '')).join('|');
-  if (nm !== '0T*|1PRODUKTION*|2741 Sikthall*|3Grund|3Stomme') fail('Hierarkin från området: ' + nm);
-  if (px.tasks[3].dur !== 'PT40H0M0S' || px.tasks[3].pc !== '40') fail('Varaktighet och framdrift: ' + JSON.stringify(px.tasks[3]));
-  if (px.tasks[4].pred.join() !== '3:9600' || px.links !== 1 || px.dropped !== 1) fail('Väntar på med glapp (2 d = 9600) och utelämnad extern koppling: ' + JSON.stringify([px.tasks[4].pred, px.links, px.dropped]));
+  if (nm !== '1PRODUKTION*|2741 Sikthall*|3Grund|3Stomme') fail('Hierarkin från området: ' + nm);
+  if (px.tasks[2].dur !== 'PT40H0M0S' || px.tasks[2].pc !== '40') fail('Varaktighet och framdrift: ' + JSON.stringify(px.tasks[2]));
+  if (px.tasks[3].pred.join() !== '3:9600' || px.links !== 1 || px.dropped !== 1) fail('Väntar på med glapp (2 d = 9600) och utelämnad extern koppling: ' + JSON.stringify([px.tasks[3].pred, px.links, px.dropped]));
   if (px.res !== 1 || px.work !== 'PT160H0M0S') fail('Resurser: ' + JSON.stringify([px.res, px.work]));
   await page.evaluate(() => { ganttMultiSel.clear(); }); 
   await page.click('#ganttPpExportBtn'); await page.waitForSelector('.ppx-pop');
