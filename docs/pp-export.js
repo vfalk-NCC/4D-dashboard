@@ -100,6 +100,26 @@ function buildMspXml(acts, opts = {}) {
   return { xml, tasks: list.length, links, droppedLinks, resources: resList.length, taskXml: taskXml.join(""), assignList, rootR, hdrName: project };
 }
 
+/* Beroenden: hur många "Väntar på" som pekar på aktiviteter inom exporten (följer med) respektive utanför (kan inte följa med). */
+function ppxLinkStats(acts) {
+  const ids = new Set(); acts.forEach(a => (a.members || [a]).forEach(m => ids.add(String(m.id))));
+  let inside = 0, outside = 0;
+  acts.forEach(a => { const seen = new Set(); (a.members || [a]).forEach(m => (m.dependsOn || []).forEach(d => { d = String(d); if (own(a, d)) return; if (ids.has(d)) { if (!seen.has("i" + d)) { seen.add("i" + d); inside++; } } else if (!seen.has("o" + d)) { seen.add("o" + d); outside++; } })); });
+  function own(a, d) { return (a.members || [a]).some(m => String(m.id) === d); }
+  return { inside, outside };
+}
+/* Tar med aktiviteterna som de valda väntar på (så att kopplingarna kan följa med). Transitivt, högst 3 led. */
+function ppxWithPredecessors(acts, all) {
+  const byId = new Map(); all.forEach(a => (a.members || [a]).forEach(m => byId.set(String(m.id), a)));
+  const set = new Set(acts); let frontier = [...acts];
+  for (let lvl = 0; lvl < 3 && frontier.length; lvl++) {
+    const next = [];
+    frontier.forEach(a => (a.members || [a]).forEach(m => (m.dependsOn || []).forEach(d => { const p = byId.get(String(d)); if (p && !set.has(p) && p.startDate) { set.add(p); next.push(p); } })));
+    frontier = next;
+  }
+  return [...set];
+}
+
 /* Dialogen: vilka aktiviteter som ska med. */
 function openPpExportDialog() {
   const merged = mergeActivityGroups(items.filter(x => x.startDate));
@@ -116,11 +136,23 @@ function openPpExportDialog() {
     <div class="ppx-tpl"><b>Mall från Powerproject</b> <span class="hint" id="ppxTplState"></span><br><input type="file" id="ppxTplFile" accept=".xml" /> <button type="button" class="link-btn" id="ppxTplClear">Ta bort mall</button>
       <div class="hint">Exportera en liten tidplan från Powerproject (<i>Exportera till Microsoft Project® XML</i>) och välj den här. Filen byggs då på den, vilket Powerproject godtar. Sparas i din webbläsare.</div></div>
     <label class="na-temp"><input type="checkbox" id="ppxRes" /> <span>Med resurser (skapar nya resurser i Powerproject om namnen inte finns)</span></label>
+    <label class="na-temp"><input type="checkbox" id="ppxPreds" /> <span>Ta med aktiviteterna de väntar på (så att kopplingarna följer med)</span></label>
+    <div class="hint" id="ppxLinks"></div>
     <div class="hint" id="ppxNote"></div>
     <div class="board-pop-actions"><button type="button" class="ppx-cancel">Avbryt</button><button type="button" class="ppx-go primary">Exportera</button></div>`;
   overlayHost().appendChild(pop);
   pop.style.left = `${Math.max(8, (window.innerWidth - pop.offsetWidth) / 2)}px`; pop.style.top = `${Math.max(8, Math.min(120, (window.innerHeight - pop.offsetHeight) / 2))}px`;
   const close = () => pop.remove();
+  const scopeActs = () => {
+    const scope = (pop.querySelector('input[name="ppxScope"]:checked') || {}).value;
+    const acts = (opts.find(o => o[0] === scope) || [])[2] || [];
+    return pop.querySelector("#ppxPreds").checked ? ppxWithPredecessors(acts, merged) : acts;
+  };
+  const stats = () => {
+    const a = scopeActs(), st = ppxLinkStats(a);
+    pop.querySelector("#ppxLinks").textContent = a.length ? `${a.length} aktiviteter · beroenden som följer med: ${st.inside}${st.outside ? ` · pekar utanför exporten: ${st.outside} (kryssa i rutan ovan för att ta med dem)` : ""}` : "";
+  };
+  pop.addEventListener("change", stats); stats();
   const tplKey = "4ddash-pp-template";
   const tplGet = () => { try { return JSON.parse(localStorage.getItem(tplKey) || "null"); } catch (e) { return null; } };
   const tplShow = () => { const t = tplGet(); pop.querySelector("#ppxTplState").textContent = t ? `✓ ${t.name}` : "(ingen vald – enklare fil)"; };
@@ -135,8 +167,7 @@ function openPpExportDialog() {
   pop.querySelector("#ppxTplClear").onclick = () => { try { localStorage.removeItem(tplKey); } catch (e) {} window.__ppxTplTmp = null; tplShow(); };
   pop.querySelector(".ppx-cancel").onclick = close;
   pop.querySelector(".ppx-go").onclick = () => {
-    const scope = (pop.querySelector('input[name="ppxScope"]:checked') || {}).value;
-    const acts = (opts.find(o => o[0] === scope) || [])[2] || [];
+    const acts = scopeActs();
     if (!acts.length) { pop.querySelector("#ppxNote").textContent = "Inget att exportera i det valet."; return; }
     const tpl = tplGet() || window.__ppxTplTmp, ro = { project: `4D – ${todayISO()}`, resources: pop.querySelector("#ppxRes").checked };
     const r = (tpl && buildMspXmlFromTemplate(acts, tpl.xml, ro)) || buildMspXml(acts, ro);

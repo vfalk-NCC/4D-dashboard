@@ -312,6 +312,8 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
     return { err: d.getElementsByTagName('parsererror').length, tk, oc: r.xml.includes('<OutlineCodes>'), fa: r.xml.includes('<FieldName>Text1</FieldName>'), asg: [...d.getElementsByTagName('Assignment')].map(a => a.getElementsByTagName('ResourceUID')[0].textContent + ':' + a.getElementsByTagName('Units')[0].textContent), skipped: r.skippedResources, start: (d.getElementsByTagName('StartDate')[0] || {}).textContent, crlf: r.xml.includes('\r\n') };
   });
   if (tp.err || !tp.oc || !tp.fa || JSON.stringify(tp.tk) !== '[["PRODUKTION","s01"],["Grund","a07"]]' || tp.asg.join() !== '77:2' || tp.skipped !== 1 || !/^2026-10-05/.test(tp.start)) fail('Export på mall: ' + JSON.stringify(tp));
+  const lk = await page.evaluate(() => { const A = { id: 'q1', startDate: '2026-10-05', endDate: '2026-10-06', dependsOn: [] }, B = { id: 'q2', startDate: '2026-10-07', endDate: '2026-10-08', dependsOn: ['q1'] }, C = { id: 'q3', startDate: '2026-10-09', endDate: '2026-10-10', dependsOn: ['q2'] }; const all = [A, B, C]; return { alone: ppxLinkStats([C]), withPreds: ppxLinkStats(ppxWithPredecessors([C], all)), n: ppxWithPredecessors([C], all).length }; });
+  if (lk.alone.outside !== 1 || lk.alone.inside !== 0 || lk.withPreds.inside !== 2 || lk.withPreds.outside !== 0 || lk.n !== 3) fail('Beroenden i exporten: ' + JSON.stringify(lk));
   await page.evaluate(() => { ganttMultiSel.clear(); }); 
   await page.click('#ganttPpExportBtn'); await page.waitForSelector('.ppx-pop');
   const dlp = page.waitForEvent('download', { timeout: 10000 });
