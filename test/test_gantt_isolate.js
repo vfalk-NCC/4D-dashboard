@@ -273,7 +273,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.evaluate(() => { window.__mk = []; window.__mkRm = []; });
   await page.click('#bubbleBtn'); await page.waitForTimeout(1200);
   let mk = await page.evaluate(() => (window.__mk || []).slice(-1)[0]);
-  if (!mk || !mk.length || !/Framdrift \d+ %/.test(mk[0].text) || !/\d/.test(mk[0].text.split('\n')[1] || '') || mk[0].start.positionZ !== 3000) fail('Bubbla med datum och framdrift: ' + JSON.stringify(mk && mk[0]));
+  if (!mk || !mk.length || !/\d+ %/.test(mk[0].text) || !/\d/.test(mk[0].text.split('\n')[1] || '') || mk[0].start.positionZ !== 3000) fail('Bubbla med datum och framdrift: ' + JSON.stringify(mk && mk[0]));
   await page.evaluate(() => { ganttMultiSel.clear(); ganttMultiSel.add(String(items.find(x => x.objectId === 'G5').id)); applyGanttMultiSel(); }); await page.waitForTimeout(1500);
   mk = await page.evaluate(() => (window.__mk || []).slice(-1)[0]);
   if (!mk || mk.length !== 1 || !/Schakt/.test(mk[0].text)) fail('Bubbla bara för det markerade: ' + JSON.stringify(mk));

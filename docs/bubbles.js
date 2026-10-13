@@ -26,7 +26,7 @@ function bubbleText(a) {
   const f = bubbleCfg, L = [], fd = d => (d ? shortDateSv(parseDate(d)) : "");
   if (f.name) L.push(itemLabel(a));
   if (f.date && a.startDate) L.push(`${fd(a.startDate)} – ${fd(a.actualEndDate && a.actualEndDate > (a.endDate || "") ? a.actualEndDate : a.endDate || a.startDate)}`);
-  if (f.progress) L.push(`Framdrift ${Math.round(Number(a.progress) || 0)} %`);
+  if (f.progress) L.push(`${Math.round(Number(a.progress) || 0)} %${ganttPhaseAt(a, (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO()) === "forsenad" ? " · försenad" : ""}`); // samma text som bubblorna i 3D-editorn
   if (f.area && a.area) L.push(a.area);
   if (f.activity && a.activity && a.activity !== a.objectName) L.push(a.activity);
   return L.join("\n") || itemLabel(a);
