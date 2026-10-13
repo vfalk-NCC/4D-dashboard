@@ -18,6 +18,7 @@ seed('plan_items.json', [
   it('Gjutning', 'Linje J', 'Betong', 0, 5, { source_key: 'pp:1', origin: 'powerproject' }),            // i1 – okopplad
   it('Schakt', 'Linje K', 'Mark', 6, 9, { model_id: 'M1', object_id: 'G5' }),                           // i2 – kopplad
   it('Armering', 'Linje K', 'Betong', 3, 8, { model_id: 'M1', object_id: 'G7' }),                       // i3 – kopplad
+  it('Saknas', 'Linje K', 'Betong', 3, 8, { model_id: 'M1', object_id: 'BADOBJ' }),                      // i4b – objekt som saknas i modellversionen
   it('Gammal', 'Linje K', 'Betong', 3, 8, { model_id: 'BAD', object_id: 'G9' }),                        // i4 – modell som inte är inläst
 ]);
 seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form', start_date: day(0), end_date: day(2) }]);
@@ -36,7 +37,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `
     window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({
       project: { getProject: () => Promise.resolve({ id: '${PID}', name: 'Test' }) },
-      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
+      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : ids.includes('BADOBJ') ? Promise.reject(new Error('Objektet finns inte')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
     }) };` }));
   await page.route('https://api.github.com/repos/vfalk-NCC/4D-data/contents/**', r => {
     const req = r.request(), f = decodeURIComponent(new URL(req.url()).pathname.replace('/repos/vfalk-NCC/4D-data/contents/', ''));
@@ -62,10 +63,10 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('[data-gantt-weeks="4"]'); await page.waitForTimeout(300);
   const iso = () => page.evaluate(() => window.__iso || []), st = () => page.evaluate(() => window.__state || []);
   const ids = e => e.flatMap(m => m.entityIds).sort().join();
-  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(700);
+  await page.click('[data-gmode="isolate"]'); await page.waitForTimeout(700);
   let I = await iso();
   if (I.length !== 1 || ids(I[0]) !== 'G5,G7' || I[0][0].modelId !== 'M1') fail('Isolerar objekten som är kopplade till det som visas: ' + JSON.stringify(I));
-  if ((await page.getAttribute('#ganttIsolateBtn', 'aria-pressed')) !== 'true' || !/Visar endast kopplade/.test(await page.innerText('#ganttIsolateBtn'))) fail('Knappen ska visa att den är intryckt');
+  if ((await page.getAttribute('[data-gmode="isolate"]', 'aria-pressed')) !== 'true') fail('Knappen ska visa att den är intryckt');
   if (!/hoppades över/.test(await page.innerText('#modelToast'))) fail('Modell som inte är inläst ska hoppas över med besked: ' + await page.innerText('#modelToast'));
   // Följer schemat: sökning på Schakt → bara G5.
   await page.fill('#ganttSearch', 'Schakt'); await page.waitForTimeout(1000);
@@ -73,13 +74,13 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (I.length !== 2 || ids(I[1]) !== 'G5') fail('Följer sökningen i schemat: ' + JSON.stringify(I));
   // Sökning på bara okopplat: inget att isolera (modellen rörs inte), besked.
   await page.fill('#ganttSearch', 'Gjutning'); await page.waitForTimeout(1000);
-  if ((await iso()).length !== 2 || !/Inget av det som visas/.test(await page.innerText('#modelToast'))) fail('Okopplade aktiviteter: besked, ingen ny isolering');
+  if ((await iso()).length !== 2 || !/Inget av det som visas/.test(await page.innerText('#modelToast'))) fail('Okopplade aktiviteter: besked, ingen ny isolering ' + (await iso()).length + ' / ' + await page.innerText('#modelToast'));
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(1000);
   I = await iso();
   if (I.length !== 3 || ids(I[2]) !== 'G5,G7') fail('Tillbaka till alla: ' + JSON.stringify(I));
   // Av: hela modellen visas igen.
-  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(400);
-  if (!(await st()).some(x => x && x.visible === 'reset') || (await page.getAttribute('#ganttIsolateBtn', 'aria-pressed')) !== 'false') fail('Av: visible reset och knappen släpps: ' + JSON.stringify(await st()));
+  await page.click('[data-gmode="off"]'); await page.waitForTimeout(400);
+  if (!(await st()).some(x => x && x.visible === 'reset') || (await page.getAttribute('[data-gmode="isolate"]', 'aria-pressed')) !== 'false') fail('Av: visible reset och knappen släpps: ' + JSON.stringify(await st()));
   // Medan den är av händer inget när schemat ändras.
   await page.fill('#ganttSearch', 'Schakt'); await page.waitForTimeout(900);
   if ((await iso()).length !== 3) fail('Av: schemat ändras utan att modellen isoleras');
@@ -96,14 +97,14 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   });
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(500);
   if (await page.isVisible('#ganttTimeRow')) fail('Dragaren ska vara avstängd som standard');
-  await page.click('#ganttTimeBtn'); await page.waitForTimeout(400);
+  await page.evaluate(() => { window.__calls = []; });
+  await page.click('[data-gmode="time"]'); await page.waitForTimeout(400);
   if (!(await page.isVisible('#ganttTimeRow')) || !(await page.isVisible('#ganttTimeSlider'))) fail('Tidslinje-raden ska visas');
   await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(500);
   if (!(await page.$('.gantt-today-label.asof')) && !(await page.$('.board-week-today'))) fail('Markeringen i schemat ska följa datumet');
   const sum = await page.innerText('#ganttTimeSum');
   if (!/klara · \d+ pågår · \d+ kommande/.test(sum)) fail('Sammanfattning per datum: ' + sum);
-  await page.evaluate(() => { window.__calls = []; });
-  await page.check('#ganttTime3d'); await page.waitForTimeout(1200);
+  await page.waitForTimeout(1200);
   let R = await replay();
   if (R.shown !== 'G7') fail('Vid dag 4 ska bara G7 (hunnit starta) visas: ' + JSON.stringify(R));
   const pg = await page.evaluate(() => STATUS_COLORS.pagaende), hx = c => '#' + [c.r, c.g, c.b].map(v => v.toString(16).padStart(2, '0')).join('');
@@ -150,30 +151,29 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   R = await replay();
   if (R.shown !== 'G5,G7') fail('Visa kommande: båda i 3D: ' + R.shown);
   await page.uncheck('#ganttTimeFuture'); await page.waitForTimeout(800);
-  await page.click('#ganttTimeBtn'); await page.waitForTimeout(500);
+  await page.click('[data-gmode="off"]'); await page.waitForTimeout(600);
   if (await page.isVisible('#ganttTimeRow') || await page.$('.gantt-today-label.asof')) fail('Av: raden och datummarkeringen ska försvinna');
-  await page.evaluate(() => { document.getElementById('ganttTime3d').checked = false; document.getElementById('ganttTime3d').onchange(); }); await page.click('#ganttIsolateBtn'); await page.waitForTimeout(400);
+
   console.log('OK: tidslinje-dragare över schemat – datummarkering, realtid i 3D, färger/opacitet efter slut, intervall, kommande');
   // Avvisar Trimble Connect isolateEntities (fel utan text, som hos Victor): släck allt och tänd de kopplade i stället.
   await page.evaluate(() => { window.__state = []; API.viewer.isolateEntities = () => Promise.reject(undefined); });
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(600);
-  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(800);
+  await page.click('[data-gmode="isolate"]'); await page.waitForTimeout(800);
   const stt = await page.evaluate(() => window.__state.map(x => JSON.stringify(x)));
   if (stt[0] !== '{"visible":false}' || stt[1] !== '{"visible":true}') fail('Reserv när isolateEntities avvisas: ' + JSON.stringify(stt));
   if (/Kunde inte/.test(await page.innerText('#modelToast'))) fail('Inget felmeddelande när reserven fungerar: ' + await page.innerText('#modelToast'));
-  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(300);
+  await page.click('[data-gmode="off"]'); await page.waitForTimeout(300);
   console.log('OK: reserv (släck allt, tänd kopplade) när isolateEntities avvisas');
   // Dölj kopplade objekt: släcker alla kopplade (hela planeringen), av = hela modellen igen; utesluter Visa endast kopplade.
   await page.evaluate(() => { window.__calls = []; });
-  await page.click('#ganttHideCoupledBtn'); await page.waitForTimeout(700);
+  await page.click('[data-gmode="hide"]'); await page.waitForTimeout(700);
   const hc = await page.evaluate(() => window.__calls.filter(c => c.a && c.b.visible === false).flatMap(c => c.a.modelObjectIds.flatMap(m => m.objectRuntimeIds)).sort().join());
-  if (hc !== 'G5,G7' || (await page.getAttribute('#ganttHideCoupledBtn', 'aria-pressed')) !== 'true') fail('Dölj kopplade ska släcka G5 och G7 (inte den inte inlästa modellen): ' + hc);
-  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(600);
-  if ((await page.getAttribute('#ganttHideCoupledBtn', 'aria-pressed')) !== 'false') fail('Visa endast kopplade ska släppa Dölj kopplade');
-  await page.click('#ganttIsolateBtn'); await page.waitForTimeout(400);
-  await page.click('#ganttHideCoupledBtn'); await page.waitForTimeout(400); await page.click('#ganttHideCoupledBtn'); await page.waitForTimeout(500);
+  if (hc !== 'G5,G7' || (await page.getAttribute('[data-gmode="hide"]', 'aria-pressed')) !== 'true') fail('Dölj kopplade ska släcka G5 och G7 (inte den inte inlästa modellen): ' + hc);
+  await page.click('[data-gmode="isolate"]'); await page.waitForTimeout(700);
+  const pr = await page.evaluate(() => [...document.querySelectorAll('#ganttModeSeg [data-gmode]')].filter(b => b.getAttribute('aria-pressed') === 'true').map(b => b.dataset.gmode).join());
+  if (pr !== 'isolate') fail('Bara ett 3D-läge i taget: ' + pr);
+  await page.click('[data-gmode="off"]'); await page.waitForTimeout(500);
   if (!(await page.evaluate(() => window.__calls.some(c => !c.a && c.b.visible === 'reset')))) fail('Av: visible reset');
-  await page.click('#ganttHideCoupledBtn'); await page.waitForTimeout(400);
   console.log('OK: Dölj kopplade objekt – släcker kopplade, av/på, utesluter Visa endast kopplade');
   // Uppdatera-knappen i Gantt: snurrar medan den hämtar, visar "Uppdaterad" och går tillbaka.
   await page.evaluate(() => { window.__ref = 0; const o = window.refreshAll; window.refreshAll = async () => { window.__ref++; await new Promise(r => setTimeout(r, 300)); return o && o(); }; });

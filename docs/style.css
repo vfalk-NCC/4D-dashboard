@@ -2265,3 +2265,7 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .gantt-time-cols { display: inline-flex; gap: 8px; font-size: 12px; align-items: center; }
 .gantt-time-cols label { display: inline-flex; align-items: center; gap: 3px; }
 .gantt-time-cols input[type="color"] { width: 24px; height: 20px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; }
+
+.gantt-mode-seg { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel, #fff); }
+.gantt-mode-seg .gantt-seg-lbl { font-size: 11px; font-weight: 700; color: var(--muted); padding: 0 8px; }
+.gantt-mode-seg .gantt-toolbar-btn { border: 0; border-left: 1px solid var(--border); border-radius: 0; margin: 0; }

@@ -3417,6 +3417,24 @@ function ganttCoupledTargets() {
   return out;
 }
 let ganttColored = false;
+/* Runtime-id för objekt-id i en modell. Ett enda objekt som inte finns i den inlästa modellversionen får inte stoppa
+   resten (då blev hela modellen osynlig): vid fel provas objekten ett och ett. { map: id -> runtime-id|null, modelFailed } */
+async function dashRuntimeIds(V, modelId, ids) {
+  const map = new Map();
+  try {
+    const r = await V.convertToObjectRuntimeIds(modelId, ids);
+    ids.forEach((id, i) => map.set(id, r && r[i] !== undefined && r[i] !== null ? r[i] : null));
+    return { map, modelFailed: false };
+  } catch (e) {
+    if (/model id|not been loaded|not loaded/i.test(String((e && (e.message || e)) || ""))) return { map, modelFailed: true };
+    let ok = 0;
+    for (const id of ids) {
+      try { const [r] = await V.convertToObjectRuntimeIds(modelId, [id]); map.set(id, r !== undefined && r !== null ? r : null); ok++; }
+      catch (e2) { map.set(id, null); }
+    }
+    return { map, modelFailed: !ok && ids.length > 0 && /model/i.test(String((e && e.message) || "")) };
+  }
+}
 /* ---- Tidslinjen i 3D i realtid: omvandlingen till runtime-id görs en gång (cache) och vid varje datum ändras bara de
    objekt som byter läge – så att man kan dra i dragaren och se bygget växa. Anropen köas (ett i taget, senaste datumet vinner). */
 const ganttRidCache = new Map(); // "modell|objekt" -> runtime-id (eller null)
@@ -3426,14 +3444,14 @@ function ganttTimeColorOf(t) {
   if (t.phase === "klar") return hexToRgbaObj(t.doneColor || STATUS_COLORS.klar, (t.doneOpacity !== null ? t.doneOpacity : ganttDoneOp) / 100);
   return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, 1);
 }
-function ganttTimeReset() { ganttPhaseNow = new Map(); ganttTimeBase = false; }
+function ganttTimeReset() { ganttPhaseNow = new Map(); ganttTimeBase = false; isolateSig = ""; ganttRidCache.clear(); }
 async function ganttTimeApply3d() {
   if (!ganttIsolate || !ganttAsOf || !ganttTime3d) return;
   if (ganttTimeBusy) { ganttTimePending = true; return; }
   ganttTimeBusy = true;
   try {
     const V = API && API.viewer;
-    if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttIsolate(false, true); return; }
+    if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttMode("off", true); return; }
     const targets = ganttCoupledTargets();
     // Runtime-id för det som saknas i cachen (en omvandling per modell).
     const miss = {};
@@ -3441,10 +3459,9 @@ async function ganttTimeApply3d() {
     let skipped = 0;
     for (const modelId of Object.keys(miss)) {
       const ids = [...miss[modelId]];
-      try {
-        const rids = await V.convertToObjectRuntimeIds(modelId, ids);
-        ids.forEach((id, i) => ganttRidCache.set(`${modelId}|${id}`, rids && rids[i] !== undefined && rids[i] !== null ? rids[i] : null));
-      } catch (e) { console.warn("Hoppar över modell som inte är inläst", modelId, e); skipped++; ids.forEach(id => ganttRidCache.set(`${modelId}|${id}`, null)); }
+      const r = await dashRuntimeIds(V, modelId, ids);
+      if (r.modelFailed) { console.warn("Hoppar över modell som inte är inläst", modelId); skipped++; continue; } // ej cachad – provas igen nästa gång
+      r.map.forEach((rid, id) => ganttRidCache.set(`${modelId}|${id}`, rid));
     }
     // Första gången: släck allt (det som inte är kopplat ska inte stå kvar), därefter bara ändringarna.
     if (!ganttTimeBase) { try { await V.setObjectState(undefined, { visible: false }); await V.setObjectState(undefined, { color: "reset" }); } catch (e) { console.warn(e); } ganttPhaseNow = new Map(); ganttTimeBase = true; }
@@ -3475,10 +3492,10 @@ function ganttTimeInfo(t) { const el = document.getElementById("ganttTime3dInfo"
 async function applyGanttIsolate(force) {
   if (!ganttIsolate) return;
   if (ganttAsOf && ganttTime3d) return ganttTimeApply3d();
-  ganttTimeReset();
+  ganttPhaseNow = new Map(); ganttTimeBase = false; // lämnade tidslinjen: nästa gång börjar den om
   const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}|${t.phase}`).sort().join(",") + (ganttAsOf && ganttTime3d ? `#${STATUS_COLORS.klar}${STATUS_COLORS.pagaende}${STATUS_COLORS.planerad}` : "");
   if (!force && sig === isolateSig) return; // oförändrat urval
-  if (!API || !API.viewer || typeof API.viewer.isolateEntities !== "function" || typeof API.viewer.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttIsolate(false, true); return; }
+  if (!API || !API.viewer || typeof API.viewer.isolateEntities !== "function" || typeof API.viewer.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttMode("off", true); return; }
   if (!targets.length) { modelToast("Inget av det som visas i schemat är kopplat till modellen"); isolateSig = sig; return; }
   try {
     const byModel = {}; // modell -> fas -> objekt-id
@@ -3486,13 +3503,14 @@ async function applyGanttIsolate(force) {
     const entities = [], phaseGroups = []; let skippedModels = 0;
     for (const modelId of Object.keys(byModel)) {
       // En modell som inte är inläst i vyn (äldre version, avtänd) ger "Invalid model id" – hoppa över den, inte hela urvalet.
-      const all = [];
-      try {
-        for (const phase of Object.keys(byModel[modelId])) {
-          const rids = (await API.viewer.convertToObjectRuntimeIds(modelId, byModel[modelId][phase])).filter(id => id !== undefined && id !== null);
-          if (rids.length) { all.push(...rids); phaseGroups.push({ modelId, phase, rids }); }
-        }
-      } catch (e) { console.warn("Hoppar över modell som inte är inläst", modelId, e); skippedModels++; continue; }
+      const all = []; let failed = false;
+      for (const phase of Object.keys(byModel[modelId])) {
+        const r = await dashRuntimeIds(API.viewer, modelId, byModel[modelId][phase]);
+        if (r.modelFailed) { failed = true; break; }
+        const rids = [...r.map.values()].filter(id => id !== undefined && id !== null);
+        if (rids.length) { all.push(...rids); phaseGroups.push({ modelId, phase, rids }); }
+      }
+      if (failed) { console.warn("Hoppar över modell som inte är inläst", modelId); skippedModels++; continue; }
       if (all.length) entities.push({ modelId, entityIds: all });
     }
     if (!ganttIsolate) return; // avstängd medan vi väntade
@@ -3523,34 +3541,57 @@ async function applyGanttIsolate(force) {
    återstår i 3D är det som inte är kopplat – och kanske borde vara det. Gäller hela planeringen, inte bara det som visas. */
 let ganttHideCoupled = false;
 async function setGanttHideCoupled(on) {
-  const b = document.getElementById("ganttHideCoupledBtn");
   const V = API && API.viewer;
-  if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); return; }
+  if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttMode("off", true); return; }
   ganttHideCoupled = !!on;
-  if (b) { b.setAttribute("aria-pressed", String(ganttHideCoupled)); b.textContent = ganttHideCoupled ? "🙈 Visar bara okopplade" : "🙈 Dölj kopplade objekt"; }
   try {
-    if (ganttIsolate) await setGanttIsolate(false, true); // utesluter "Visa endast kopplade"
-    if (!ganttHideCoupled) { await V.setObjectState(undefined, { visible: "reset" }); modelToast("Hela modellen visas igen"); return; }
+    if (!ganttHideCoupled) { await V.setObjectState(undefined, { visible: "reset" }); return; }
     const byModel = {};
     items.flatMap(it => it.members || [it]).forEach(m => { if (m.modelId && m.objectId) (byModel[m.modelId] = byModel[m.modelId] || new Set()).add(String(m.objectId)); });
     let n = 0, skipped = 0; const sel = [];
     for (const modelId of Object.keys(byModel)) {
-      try {
-        const rids = (await V.convertToObjectRuntimeIds(modelId, [...byModel[modelId]])).filter(id => id !== undefined && id !== null);
-        if (rids.length) { sel.push({ modelId, objectRuntimeIds: rids }); n += rids.length; }
-      } catch (e) { console.warn("Hoppar över modell som inte är inläst", modelId, e); skipped++; }
+      const r = await dashRuntimeIds(V, modelId, [...byModel[modelId]]);
+      if (r.modelFailed) { console.warn("Hoppar över modell som inte är inläst", modelId); skipped++; continue; }
+      const rids = [...r.map.values()].filter(id => id !== undefined && id !== null);
+      if (rids.length) { sel.push({ modelId, objectRuntimeIds: rids }); n += rids.length; }
     }
-    if (!sel.length) { modelToast(skipped ? "Modellerna som aktiviteterna är kopplade till är inte inlästa i vyn" : "Inga kopplade objekt hittades i modellen"); ganttHideCoupled = false; if (b) { b.setAttribute("aria-pressed", "false"); b.textContent = "🙈 Dölj kopplade objekt"; } return; }
+    if (!ganttHideCoupled) return; // läget byttes medan vi väntade
+    if (!sel.length) { modelToast(skipped ? "Modellerna som aktiviteterna är kopplade till är inte inlästa i vyn" : "Inga kopplade objekt hittades i modellen"); setGanttMode("off", true); return; }
     await V.setObjectState(undefined, { visible: "reset" });
     await V.setObjectState({ modelObjectIds: sel }, { visible: false });
     modelToast(`${n} kopplade objekt dolda – det som syns är okopplat${skipped ? ` (${skipped} ${skipped === 1 ? "modell" : "modeller"} ej inlästa)` : ""}`);
   } catch (e) { console.warn("Kunde inte dölja kopplade", e); modelToast("Kunde inte dölja kopplade: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
 }
+/* ---- 3D-läge för schemat: ETT val som utesluter de andra (Victor 2026-10-13: knapparna påverkade varandra).
+   off = rör inte 3D · isolate = bara kopplade · hide = dölj kopplade · time = tidslinjen. */
+let ganttMode = "off", ganttModeSeq = 0;
+function syncGanttModeUi() {
+  document.querySelectorAll("#ganttModeSeg [data-gmode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.gmode === ganttMode)));
+  const row = document.getElementById("ganttTimeRow"); if (row) row.classList.toggle("hidden", ganttMode !== "time");
+}
+async function setGanttMode(mode, quiet) {
+  if (mode === ganttMode && mode !== "off") return;
+  const prev = ganttMode, seq = ++ganttModeSeq;
+  clearTimeout(isolateTimer); clearTimeout(ganttTimeTimer); ganttTimeTimer = null;
+  const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
+  // Lämna det förra läget helt (flaggor först, så inget hinner köra om det).
+  ganttMode = mode; ganttIsolate = false; ganttHideCoupled = false; ganttTime3d = false; isolateSig = ""; ganttTimeReset();
+  const hadAsOf = ganttAsOf; ganttAsOf = null;
+  syncGanttModeUi();
+  if (hadAsOf) renderGantt(getFilteredItems());
+  const V = API && API.viewer;
+  if (prev !== "off" && V && typeof V.setObjectState === "function") {
+    try { await V.setObjectState(undefined, { color: "reset" }); ganttColored = false; await V.setObjectState(undefined, { visible: "reset" }); } catch (e) { console.warn("Kunde inte återställa modellen", e); }
+  }
+  if (seq !== ganttModeSeq) return; // ett nyare val gjordes under tiden
+  if (mode === "off") { if (prev !== "off" && !quiet) modelToast("Hela modellen visas igen"); return; }
+  if (mode === "isolate") { ganttIsolate = true; await applyGanttIsolate(true); }
+  else if (mode === "hide") await setGanttHideCoupled(true);
+  else if (mode === "time") { ganttIsolate = true; ganttTime3d = true; setGanttTimeOn(true); }
+}
 function scheduleGanttIsolate() { clearTimeout(isolateTimer); isolateTimer = setTimeout(() => applyGanttIsolate(false), 500); }
 async function setGanttIsolate(on, quiet) {
   ganttIsolate = !!on; isolateSig = ""; ganttTimeReset();
-  if (ganttIsolate && ganttHideCoupled) { ganttHideCoupled = false; const hb = document.getElementById("ganttHideCoupledBtn"); if (hb) { hb.setAttribute("aria-pressed", "false"); hb.textContent = "🙈 Dölj kopplade objekt"; } }
-  const b = document.getElementById("ganttIsolateBtn"); if (b) { b.setAttribute("aria-pressed", String(ganttIsolate)); b.textContent = ganttIsolate ? "🧊 Visar endast kopplade" : "🧊 Visa endast kopplade"; }
   clearTimeout(isolateTimer);
   if (ganttIsolate) { await applyGanttIsolate(true); return; }
   try { if (ganttColored && API && API.viewer && typeof API.viewer.setObjectState === "function") { await API.viewer.setObjectState(undefined, { color: "reset" }); ganttColored = false; } } catch (e) { /* ignorera */ }
@@ -3593,21 +3634,17 @@ function setGanttAsOf(iso, opts = {}) {
   ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); updateGanttTimeUi(); }, opts.now ? 0 : 120);
 }
 function setGanttTimeOn(on) {
-  const row = document.getElementById("ganttTimeRow"), btn = document.getElementById("ganttTimeBtn");
-  if (row) row.classList.toggle("hidden", !on);
-  if (btn) btn.setAttribute("aria-pressed", String(!!on));
-  try { localStorage.setItem("4ddash-gantt-time", on ? "1" : "0"); } catch (e) {}
   clearTimeout(ganttTimeTimer); ganttTimeTimer = null;
   const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
-  if (!on) { const had = ganttAsOf; ganttAsOf = null; if (had) { renderGantt(getFilteredItems()); if (ganttIsolate && ganttTime3d) { ganttTimeReset(); scheduleGanttIsolate(); } } return; }
+  if (!on) return;
   const r = ganttTimeRange();
   setGanttAsOf(r && todayISO() >= r[0] && todayISO() <= r[1] ? todayISO() : (r ? r[0] : todayISO()), { now: true });
 }
 function initGanttTime() {
-  const btn = document.getElementById("ganttTimeBtn"); if (!btn || btn.dataset.wired) return;
-  btn.dataset.wired = "1";
-  btn.onclick = () => setGanttTimeOn(btn.getAttribute("aria-pressed") !== "true");
-  const sl = document.getElementById("ganttTimeSlider"), di = document.getElementById("ganttTimeDate"), pb = document.getElementById("ganttTimePlay"), td = document.getElementById("ganttTimeToday"), c3 = document.getElementById("ganttTime3d");
+  const seg = document.getElementById("ganttModeSeg"); if (!seg || seg.dataset.wired) return;
+  seg.dataset.wired = "1";
+  seg.querySelectorAll("[data-gmode]").forEach(b => { b.onclick = () => setGanttMode(b.dataset.gmode); });
+  const sl = document.getElementById("ganttTimeSlider"), di = document.getElementById("ganttTimeDate"), pb = document.getElementById("ganttTimePlay"), td = document.getElementById("ganttTimeToday");
   sl.oninput = () => { const r = ganttTimeRange(); if (r) setGanttAsOf(addDaysIso(r[0], Number(sl.value))); };
   di.onchange = () => { if (di.value) setGanttAsOf(di.value, { now: true }); };
   td.onclick = () => setGanttAsOf(todayISO(), { now: true });
@@ -3649,15 +3686,6 @@ function initGanttTime() {
   try { const v = localStorage.getItem("4ddash-gantt-time-doneop"); if (v !== null && v !== "") ganttDoneOp = Math.max(0, Math.min(100, Number(v))); } catch (e) {}
   dop.value = ganttDoneOp; dopv.textContent = ganttDoneOp;
   dop.oninput = () => { ganttDoneOp = Number(dop.value); dopv.textContent = dop.value; try { localStorage.setItem("4ddash-gantt-time-doneop", dop.value); } catch (e) {} if (ganttIsolate && ganttTime3d && ganttAsOf) { ganttTimeReset(); ganttTimeApply3d(); } };
-  c3.onchange = () => {
-    ganttTime3d = c3.checked;
-    try { localStorage.setItem("4ddash-gantt-time3d", ganttTime3d ? "1" : "0"); } catch (e) {}
-    if (ganttTime3d && !ganttIsolate) setGanttIsolate(true); else if (ganttIsolate) scheduleGanttIsolate();
-  };
-  try { ganttTime3d = localStorage.getItem("4ddash-gantt-time3d") === "1"; } catch (e) {}
-  c3.checked = ganttTime3d;
-  let on = false; try { on = localStorage.getItem("4ddash-gantt-time") === "1"; } catch (e) {}
-  if (on) setTimeout(() => setGanttTimeOn(true), 0);
 }
 function renderGantt(list, target) {
   // Resurskurvan följer Gantt-schemats urval (filter, sök, dolda områden, period) – ritas om efteråt.
@@ -5840,10 +5868,7 @@ function initGanttControls() {
     setTimeout(() => { refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdatera"; }, 1800);
   };
   initGanttTime();
-  const hideBtn = document.getElementById("ganttHideCoupledBtn");
-  if (hideBtn) hideBtn.onclick = () => setGanttHideCoupled(!ganttHideCoupled);
-  const isoBtn = document.getElementById("ganttIsolateBtn");
-  if (isoBtn) isoBtn.onclick = () => setGanttIsolate(!ganttIsolate);
+  syncGanttModeUi();
   const fullBtn = document.getElementById("ganttFullBtn");
   if (fullBtn) fullBtn.onclick = toggleGanttFullscreen;
   const fsTools = document.getElementById("ganttFsTools"), fsClose = document.getElementById("ganttFsClose");

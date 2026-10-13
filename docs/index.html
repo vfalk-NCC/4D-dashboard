@@ -157,9 +157,13 @@
             <button type="button" id="ganttZoomIn" class="gantt-toolbar-btn" title="Zooma in">+</button>
           </div>
           <button type="button" id="ganttRefreshBtn" class="gantt-toolbar-btn gantt-refresh-btn" title="Uppdatera – hämta senaste data (aktiviteter, framdrift, kopplingar)" aria-label="Uppdatera"><svg class="gantt-refresh-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.6L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.3 4.6L20 16"/><path d="M20 21v-5h-5"/></svg><span>Uppdatera</span></button>
-          <button type="button" id="ganttTimeBtn" class="gantt-toolbar-btn" aria-pressed="false" title="Visa en tidslinje-dragare över schemat: dra i den för att se läget ett visst datum – markeringen i schemat flyttas och (valfritt) visas bara de objekt i 3D som hunnit starta">⏱ Tidslinje</button>
-          <button type="button" id="ganttHideCoupledBtn" class="gantt-toolbar-btn" aria-pressed="false" title="Släck alla objekt som är kopplade till någon aktivitet – kvar i 3D blir det som inte är kopplat, så du ser vad som kanske borde kopplas. Tryck igen för att visa hela modellen.">🙈 Dölj kopplade objekt</button>
-          <button type="button" id="ganttIsolateBtn" class="gantt-toolbar-btn" aria-pressed="false" title="Visa bara objekten som är kopplade till aktiviteterna som visas i Gantt-schemat – allt annat i 3D-modellen släcks. Följer filter, sökning och dolda grupper. Tryck igen för att visa hela modellen.">🧊 Visa endast kopplade</button>
+          <div class="gantt-seg gantt-mode-seg" id="ganttModeSeg" role="group" aria-label="Vad som visas i 3D-modellen">
+            <span class="gantt-seg-lbl">3D</span>
+            <button type="button" data-gmode="off" aria-pressed="true" class="gantt-toolbar-btn" title="Rör inte 3D-modellen">Alla</button>
+            <button type="button" data-gmode="isolate" aria-pressed="false" class="gantt-toolbar-btn" title="Visa bara objekten som är kopplade till aktiviteterna som visas i schemat – allt annat släcks. Följer filter, sökning och dolda grupper.">🧊 Endast kopplade</button>
+            <button type="button" data-gmode="hide" aria-pressed="false" class="gantt-toolbar-btn" title="Släck alla objekt som är kopplade till någon aktivitet – kvar blir det som inte är kopplat, så du ser vad som kanske borde kopplas.">🙈 Dölj kopplade</button>
+            <button type="button" data-gmode="time" aria-pressed="false" class="gantt-toolbar-btn" title="Tidslinje: dra eller spela upp ett datum – schemat och 3D visar läget då (färdigt, pågående, kommande).">⏱ Tidslinje</button>
+          </div>
           <button type="button" id="ganttFullBtn" class="gantt-toolbar-btn" title="Visa Gantt-schemat i helskärm (Esc stänger)">⛶ Helskärm</button>
           <button type="button" id="ganttPrintBtn" class="gantt-toolbar-btn" title="Skriv ut Gantt-schemat eller spara det som PDF – med rubrik, förklaring och tidshuvud på varje sida">🖨 Skriv ut</button>
           <button type="button" id="ganttHelpBtn" class="gantt-toolbar-btn gantt-help-btn" title="Visa/dölj hjälp" aria-expanded="false">?</button>
@@ -184,9 +188,6 @@
           <span id="ganttTime3dInfo" class="hint gantt-time-sum"></span>
           <label class="gantt-pill" title="Visa även objekt som inte hunnit starta, i färgen för kommande (av: de är dolda i 3D)">
             <input type="checkbox" id="ganttTimeFuture" /> Visa kommande
-          </label>
-          <label class="gantt-pill" title="Visa i 3D-modellen bara objekten för aktiviteterna som hunnit starta vid valt datum (slår på Visa endast kopplade)">
-            <input type="checkbox" id="ganttTime3d" /> Visa i 3D
           </label>
         </div>
 
