@@ -959,7 +959,9 @@ function fromRow(row) {
     activityKey: row.group_id ? `g:${row.group_id}` : (row.source_key ? `s:${row.source_key}` : null),
     origin: row.origin || null,
     // Temporär (4D-planering, Victor 2026-10-09): t.ex. en mobilkran – syns i 3D bara mellan start och slut.
-    temporary: row.temporary === true
+    temporary: row.temporary === true,
+    // Rivning (Victor 2026-10-13): syns även före start, försvinner efter slut.
+    demolition: row.demolition === true
   };
 }
 
@@ -996,7 +998,7 @@ function mergeActivityGroups(list) {
         }));
         return Object.keys(out).length ? out : null;
       })(),
-      status: late ? "forsenad" : members[0].status, progress, members, temporary: members.some(m => m.temporary) });
+      status: late ? "forsenad" : members[0].status, progress, members, temporary: members.some(m => m.temporary), demolition: members.some(m => m.demolition) });
   });
   return out;
 }
@@ -2310,7 +2312,7 @@ function planSize(plan) { return plan.items.size + plan.acts.size + (plan.deps ?
 /* Glappet (dagar) på kopplingen pred -> succ, eller undefined om inget glapp är satt. */
 const lagLabel = lag => `${lag > 0 ? "+" : lag < 0 ? "−" : "±"}${Math.abs(lag)} d`;
 function lagOf(succ, predId) { const v = succ && succ.depLags ? succ.depLags[String(predId)] : undefined; return Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : undefined; }
-const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary" };
+const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary", demolition: "demolition" };
 function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
 function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
 
@@ -3291,6 +3293,7 @@ function ganttTooltipHtmlForItem(it, depById) {
   if (it.actualStartDate || it.actualEndDate) rows.push(row("Verkligt", e(`${it.actualStartDate ? tipDate(it.actualStartDate) : "?"} – ${it.actualEndDate ? tipDate(it.actualEndDate) : "pågår"}`)));
   if (it.contractor) rows.push(row("Entreprenör", e(it.contractor)));
   if (resOf(it).length) rows.push(row("Resurser", resOf(it).map(r => `${e(r.name)} <b>${(Math.round((Number(r.qty) || 0) * 10) / 10).toLocaleString("sv-SE")} pers</b> · ${Math.round(Number(r.hours) || 0).toLocaleString("sv-SE")} h`).join("<br>")));
+  if (it.demolition) rows.push(row("Rivning", `syns före start, tas bort efter ${e(tipDate(it.actualEndDate || it.endDate))}`));
   if (it.temporary) rows.push(row("Temporär", `syns i 3D ${e(tipRange(it.startDate, it.actualEndDate || it.endDate))} <span class="gantt-tip-dim">· tas bort sedan</span>`));
   if (it.origin === "manuell") rows.push(row("Källa", "Egen aktivitet <span class=\"gantt-tip-dim\">· finns inte i Powerproject</span>"));
   let html = `<div class="gantt-tooltip-title">${e(itemLabel(it))}</div>${rows.join("")}`;
@@ -4355,7 +4358,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     return [...m].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([v, n]) => ({ value: v, label: v, count: `${n} akt.` }));
   };
   // Startvärden.
-  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0, temp0 = false;
+  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0, temp0 = false, demo0 = false;
   // Resurser: samma för alla objekt i aktiviteten – den första som har några gäller.
   const res0 = edit ? ((members.find(m => m.resources && m.resources.length) || {}).resources || []).map(r => ({ ...r })) : [];
   const preds = []; // { entry, lag: "" | tal }
@@ -4363,7 +4366,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     name0 = itemLabel(edit) === "Okänt objekt" ? "" : (edit.objectName || "");
     area0 = edit.area || ""; act0 = edit.activity || ""; contr0 = edit.contractor || "";
     prog0 = Math.round(members.reduce((s, m) => s + (Number(m.progress) || 0), 0) / Math.max(1, members.length));
-    temp0 = members.some(m => m.temporary);
+    temp0 = members.some(m => m.temporary); demo0 = members.some(m => m.demolition);
     start0 = edit.startDate || todayISO(); end0 = edit.endDate || start0;
     const seen = new Set();
     members.flatMap(m => m.dependsOn || []).map(String).filter(id => !own.has(id)).forEach(id => {
@@ -4394,14 +4397,15 @@ function openActivityDialog({ after = null, edit = null } = {}) {
       : `<label>Aktivitet <input type="text" class="na-act" value="${escapeHtml(act0)}" /></label>`}
     <label>Entreprenör <input type="text" class="na-contr" value="${escapeHtml(contr0)}" /></label>
     <div class="na-row"><label>Start <input type="date" class="na-start" value="${start0}" /></label><label>Slut <input type="date" class="na-end" value="${end0}" /></label><label>Framdrift <input type="number" class="na-prog" min="0" max="100" step="5" value="${prog0}" /></label></div>
-    <label class="na-temp" title="T.ex. en mobilkran, stämp eller tillfällig vägg: syns i 3D bara från start till slut och försvinner sedan"><input type="checkbox" class="na-temp-chk" ${temp0 ? "checked" : ""} /> <span><b>Temporär</b> – syns i 3D bara mellan start och slut (t.ex. mobilkran)</span></label>
     <div class="na-dep">
       <div class="na-dep-h">Väntar på <span class="hint">· glapp i dagar: + väntar, − överlappar · tomt = inget fast glapp</span></div>
       <div class="na-preds"></div>
       <input type="text" class="na-pred-search" placeholder="＋ Sök aktivitet att vänta på…" />
       <input type="hidden" class="na-pred" />
     </div>
-    <details class="na-res"${res0.length && naResOpen() ? " open" : ""}><summary>Avancerat (resurser) <span class="hint na-res-sum"></span></summary>
+    <details class="na-res"${(res0.length && naResOpen()) || temp0 || demo0 ? " open" : ""}><summary>Avancerat (temporär, rivning, resurser) <span class="hint na-res-sum"></span></summary>
+      <label class="na-temp" title="T.ex. en mobilkran, stämp eller tillfällig vägg: syns i 3D bara från start till slut och försvinner sedan"><input type="checkbox" class="na-temp-chk" ${temp0 ? "checked" : ""} /> <span><b>Temporär</b> – syns i 3D bara mellan start och slut (t.ex. mobilkran)</span></label>
+      <label class="na-temp" title="Rivning: objektet syns hela tiden före start, färgas som vanligt under aktiviteten och försvinner efter slut"><input type="checkbox" class="na-demo-chk" ${demo0 ? "checked" : ""} /> <span><b>Rivning</b> – syns även före start, försvinner efter slut</span></label>
       <div class="na-res-rows"></div>
       <button type="button" class="na-res-add">＋ Resurs</button>
       <div class="hint">Antal = personer/maskiner samtidigt, timmar = totalt för aktiviteten. ${pp ? "Från Powerproject – har aktiviteten resurser där skrivs de över vid nästa import." : ""}</div>
@@ -4413,6 +4417,8 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">${edit ? "Spara" : "Lägg till"}</button></div>`;
   overlayHost().appendChild(pop);
   const q = c => pop.querySelector(c);
+  q(".na-temp-chk").onchange = e => { if (e.target.checked) q(".na-demo-chk").checked = false; };
+  q(".na-demo-chk").onchange = e => { if (e.target.checked) q(".na-temp-chk").checked = false; };
   const place = () => {
     pop.style.left = `${Math.max(8, (window.innerWidth - pop.offsetWidth) / 2)}px`;
     pop.style.top = `${Math.max(8, Math.min(100, (window.innerHeight - pop.offsetHeight) / 2))}px`;
@@ -4607,6 +4613,8 @@ function openActivityDialog({ after = null, edit = null } = {}) {
         if (resChanged()) f.resources = resOut();
         const tmp = q(".na-temp-chk").checked;
         if (tmp !== !!m.temporary) f.temporary = tmp;
+        const dem = q(".na-demo-chk").checked;
+        if (dem !== !!m.demolition) f.demolition = dem;
         if (Object.keys(f).length) plan.fields.set(m.id, f);
         const curDeps = (m.dependsOn || []).map(String);
         const nextDeps = [...new Set([...curDeps.filter(id => !initIds.has(id)), ...predIds])];
@@ -4637,7 +4645,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
       area: area || null, activity: activity || null, contractor: contractor || null, status: "planerad",
       start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress,
-      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
+      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), ...(q(".na-demo-chk").checked ? { demolition: true } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
       baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };
     const btn = q(".na-save");
     btn.disabled = true;

@@ -71,24 +71,35 @@ seed('plan_items.json', [
   await page.check('#ganttEditable'); await page.waitForTimeout(300);
   await page.dblclick('#ganttChart .pnote[data-item-id="i2"] .pnote-title'); await page.waitForTimeout(200);
   if (await page.isChecked('.na-temp-chk')) fail('Gjutningen ska inte vara ikryssad');
-  await page.check('.na-temp-chk'); await page.click('.na-save'); await page.waitForTimeout(900);
+  await page.evaluate(() => { document.querySelector('.na-res').open = true; }); await page.check('.na-temp-chk'); await page.click('.na-save'); await page.waitForTimeout(900);
   if (row('i2').temporary !== true) fail('Temporär ska sparas: ' + JSON.stringify(row('i2')));
   await page.dblclick('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(200);
   if (!(await page.isChecked('.na-temp-chk'))) fail('Mobilkranen ska vara ikryssad');
   await page.fill('.na-name', 'Mobilkran 60 t'); await page.click('.na-save'); await page.waitForTimeout(900);
   if (row('i1').temporary !== true || row('i1').object_name !== 'Mobilkran 60 t') fail('Annan ändring ska inte röra Temporär: ' + JSON.stringify(row('i1')));
   await page.dblclick('#ganttChart .pnote[data-item-id="i1"] .pnote-title'); await page.waitForTimeout(200);
-  await page.uncheck('.na-temp-chk'); await page.click('.na-save'); await page.waitForTimeout(900);
+  await page.evaluate(() => { document.querySelector('.na-res').open = true; }); await page.uncheck('.na-temp-chk'); await page.click('.na-save'); await page.waitForTimeout(900);
   if (row('i1').temporary !== false) fail('Urkryssad ska sparas som false');
   console.log('OK: Temporär i redigeringsdialogen');
 
   // 3. Ny aktivitet som temporär.
   await page.click('#ganttAddBtn'); await page.waitForTimeout(150);
-  await page.fill('.na-name', 'Stämp'); await page.check('.na-temp-chk');
+  await page.fill('.na-name', 'Stämp'); await page.evaluate(() => { document.querySelector('.na-res').open = true; }); await page.check('.na-temp-chk');
   await page.click('.na-save'); await page.waitForTimeout(900);
   const st = get('plan_items.json').find(r => r.object_name === 'Stämp');
   if (!st || st.temporary !== true) fail('Ny temporär aktivitet: ' + JSON.stringify(st));
   console.log('OK: ny temporär aktivitet');
+
+  // 4. Rivning ligger under Avancerat, utesluter Temporär och sparas.
+  await page.click('#ganttAddBtn'); await page.waitForTimeout(150);
+  if (await page.isVisible('.na-demo-chk')) fail('Rivning ska ligga gömd under Avancerat');
+  await page.fill('.na-name', 'Rivning vägg'); await page.evaluate(() => { document.querySelector('.na-res').open = true; });
+  await page.check('.na-temp-chk'); await page.check('.na-demo-chk');
+  if (await page.isChecked('.na-temp-chk')) fail('Rivning ska stänga av Temporär');
+  await page.click('.na-save'); await page.waitForTimeout(900);
+  const rv = get('plan_items.json').find(r => r.object_name === 'Rivning vägg');
+  if (!rv || rv.demolition !== true || rv.temporary === true) fail('Rivning: ' + JSON.stringify(rv));
+  console.log('OK: Rivning under Avancerat sparas');
 
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));
   console.log('OK test_gantt_temporary');
