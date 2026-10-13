@@ -37,7 +37,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `
     window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({
       project: { getProject: () => Promise.resolve({ id: '${PID}', name: 'Test' }) },
-      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); (window.__calls = window.__calls || []).push({ iso: e }); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getModels: () => Promise.resolve([{ id: 'M1', state: 'unloaded' }, { id: 'BAD', state: 'unloaded' }]), toggleModel: (id, on) => { (window.__tog = window.__tog || []).push([id, on]); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : ids.includes('BADOBJ') ? Promise.reject(new Error('Objektet finns inte')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
+      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); (window.__calls = window.__calls || []).push({ iso: e }); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getModels: () => Promise.resolve([{ id: 'M1', state: 'unloaded' }, { id: 'BAD', state: 'unloaded' }]), toggleModel: (id, on) => { (window.__tog = window.__tog || []).push([id, on]); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : ids.includes('BADOBJ') ? Promise.reject(new Error('Objektet finns inte')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: (sel, mode) => { (window.__setsel = window.__setsel || []).push(sel); return Promise.resolve(); } }
     }) };` }));
   await page.route('https://api.github.com/repos/vfalk-NCC/4D-data/contents/**', r => {
     const req = r.request(), f = decodeURIComponent(new URL(req.url()).pathname.replace('/repos/vfalk-NCC/4D-data/contents/', ''));
@@ -208,6 +208,22 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('[data-gmode="off"]'); await page.waitForTimeout(500);
   if (!(await page.evaluate(() => window.__calls.some(c => !c.a && c.b.visible === 'reset')))) fail('Av: visible reset');
   console.log('OK: Dölj kopplade objekt – släcker kopplade, av/på, utesluter Visa endast kopplade');
+  // Flera aktiviteter med Ctrl-klick: markeras, pushas till 3D, kan isoleras.
+  await page.fill('#ganttSearch', ''); await page.waitForTimeout(600);
+  const noteOf = txt => page.locator('.pnote', { hasText: txt }).first();
+  await noteOf('Schakt').click({ modifiers: ['Control'] });
+  await noteOf('Armering').click({ modifiers: ['Control'] }); await page.waitForTimeout(900);
+  if ((await page.locator('.pnote.gantt-multisel').count()) !== 2 || !/2 markerade/.test(await page.innerText('#ganttMultiBar'))) fail('Ctrl-klick ska markera flera: ' + await page.innerText('#ganttMultiBar').catch(() => '(ingen ruta)'));
+  const ss = await page.evaluate(() => (window.__setsel || []).slice(-1)[0]);
+  const ssIds = ss ? ss.modelObjectIds.flatMap(m => m.objectRuntimeIds).sort().join() : '';
+  if (ssIds !== 'G5,G7') fail('De markerade ska pushas till 3D samtidigt: ' + ssIds);
+  await page.click('#ganttMultiBar [data-mb="only"]'); await page.waitForTimeout(900);
+  const only = await page.evaluate(() => ({ mode: ganttMode, last: window.__iso.slice(-1)[0] }));
+  if (only.mode !== 'isolate' || only.last.flatMap(m => m.entityIds).sort().join() !== 'G5,G7') fail('Bara dessa: ' + JSON.stringify(only));
+  await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+  if (await page.$('#ganttMultiBar') || (await page.locator('.gantt-multisel').count())) fail('Esc rensar markeringen');
+  await page.click('[data-gmode="off"]'); await page.waitForTimeout(300);
+  console.log('OK: Ctrl-klick markerar flera aktiviteter – pushas till 3D, Bara dessa, Esc rensar');
   // Uppdatera-knappen i Gantt: snurrar medan den hämtar, visar "Uppdaterad" och går tillbaka.
   await page.evaluate(() => { window.__ref = 0; const o = window.refreshAll; window.refreshAll = async () => { window.__ref++; await new Promise(r => setTimeout(r, 300)); return o && o(); }; });
   await page.click('#ganttRefreshBtn'); await page.waitForTimeout(100);

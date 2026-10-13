@@ -3401,9 +3401,49 @@ async function selectGanttItemInModel(it) {
 let ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
 const ganttMarkerIso = () => todayISO(); // "Idag"-linjen står kvar; datumet för tidslinjen är dragstrecket (se renderGanttScrub)
 let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
+/* ---- Flera aktiviteter markerade med Ctrl/Cmd-klick (Victor 2026-10-13): visas samtidigt i 3D och kan isoleras. ---- */
+const ganttMultiSel = new Set(); // aktivitets-id (strängar)
+let ganttIsoOverride = null, ganttMultiTimer = null; // ganttIsoOverride: bara de markerade (objektlista) i läget Kopplade
+const ganttMultiItems = () => [...ganttMultiSel].map(id => ganttShownItems.find(x => String(x.id) === id) || items.find(x => String(x.id) === id)).filter(Boolean);
+const ganttMultiMembers = () => ganttMultiItems().flatMap(it => it.members || [it]);
+function applyGanttMultiSel() {
+  document.querySelectorAll("#ganttChart [data-item-id]").forEach(n => n.classList.toggle("gantt-multisel", ganttMultiSel.has(n.dataset.itemId)));
+  let bar = document.getElementById("ganttMultiBar");
+  if (!ganttMultiSel.size) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement("div"); bar.id = "ganttMultiBar"; bar.className = "gantt-multibar";
+    bar.innerHTML = `<b id="ganttMultiN"></b><button type="button" data-mb="show" title="Markera och zooma i 3D">Visa i 3D</button><button type="button" data-mb="only" title="Släck allt utom de markerade">Bara dessa</button><button type="button" data-mb="clear" title="Rensa (Esc)">✕</button>`;
+    (document.fullscreenElement || document.body).appendChild(bar);
+    bar.onclick = e => { const b = e.target.closest("[data-mb]"); if (!b) return; const a = b.dataset.mb;
+      if (a === "clear") clearGanttMulti(); else if (a === "show") pushGanttMulti(); else if (a === "only") isolateGanttMulti(); };
+  }
+  document.getElementById("ganttMultiN").textContent = `${ganttMultiSel.size} markerade`;
+}
+function clearGanttMulti() { ganttMultiSel.clear(); const had = ganttIsoOverride; ganttIsoOverride = null; applyGanttMultiSel(); if (had && ganttMode === "isolate") scheduleGanttIsolate(); }
+function pushGanttMulti() { const ms = ganttMultiMembers(); if (ms.length) selectActivityInModel({ members: ms }); }
+function isolateGanttMulti() {
+  ganttIsoOverride = ganttMultiMembers().filter(m => m.modelId && m.objectId);
+  if (!ganttIsoOverride.length) { ganttIsoOverride = null; modelToast("De markerade är inte kopplade till modellen"); return; }
+  if (ganttMode === "isolate") { isolateSig = ""; applyGanttIsolate(true); } else setGanttMode("isolate");
+}
+function initGanttMulti() {
+  const chart = document.getElementById("ganttChart"); if (!chart || chart.dataset.multi) return; chart.dataset.multi = "1";
+  chart.addEventListener("click", e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const n = e.target.closest(".pnote[data-item-id], .gantt-bar[data-item-id], .gantt-label[data-item-id]");
+    if (!n) return;
+    e.preventDefault(); e.stopPropagation();
+    const id = n.dataset.itemId;
+    if (ganttMultiSel.has(id)) ganttMultiSel.delete(id); else ganttMultiSel.add(id);
+    applyGanttMultiSel();
+    // "Pusha": markeringen i 3D följer direkt (kort fördröjning så att flera klick i rad blir en markering).
+    clearTimeout(ganttMultiTimer); ganttMultiTimer = setTimeout(() => { if (ganttMultiSel.size) pushGanttMulti(); }, 450);
+  }, true);
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && ganttMultiSel.size && !document.querySelector(".ui-dlg-wrap, .board-pop")) clearGanttMulti(); });
+}
 function ganttCoupledTargets() {
   const seen = new Set(), out = [], timed = !!(ganttAsOf && ganttTime3d);
-  ganttShownItems.flatMap(it => it.members || [it]).forEach(m => {
+  (ganttIsoOverride && !timed ? ganttIsoOverride : ganttShownItems.flatMap(it => it.members || [it])).forEach(m => {
     if (!m.modelId || !m.objectId) return;
     let phase = "";
     if (timed) {
@@ -3611,6 +3651,7 @@ async function setGanttMode(mode, quiet) {
   clearTimeout(isolateTimer); clearTimeout(ganttTimeTimer); ganttTimeTimer = null;
   const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
   // Lämna det förra läget helt (flaggor först, så inget hinner köra om det).
+  if (mode !== "isolate") ganttIsoOverride = null;
   ganttMode = mode; ganttIsolate = false; ganttHideCoupled = false; ganttTime3d = false; isolateSig = ""; ganttTimeReset();
   const hadAsOf = ganttAsOf; ganttAsOf = null; ganttScrubInfo = null;
   syncGanttModeUi();
@@ -3797,7 +3838,7 @@ function renderGantt(list, target) {
   // Dolda grupper (områden/entreprenörer/aktiviteter) – gäller också utskriften.
   const hiddenNow = ganttHiddenNow();
   list = ganttWithoutHidden(list);
-  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); if (ganttAsOf) setTimeout(updateGanttTimeUi, 0); } // "Visa endast kopplade" följer schemat
+  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); if (ganttAsOf) setTimeout(updateGanttTimeUi, 0); setTimeout(applyGanttMultiSel, 0); } // "Visa endast kopplade" följer schemat
   if (!target) renderGanttHiddenBar(el, hiddenNow);
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
@@ -5959,7 +6000,7 @@ function initGanttControls() {
     refBtn.classList.remove("spin");
     setTimeout(() => { refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdatera"; }, 1800);
   };
-  initGanttTime();
+  initGanttTime(); initGanttMulti();
   syncGanttModeUi();
   const lmBtn = document.getElementById("ganttLoadModelsBtn"); if (lmBtn) lmBtn.onclick = loadCoupledModelsDash;
   const fullBtn = document.getElementById("ganttFullBtn");
