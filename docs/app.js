@@ -3401,6 +3401,16 @@ async function selectGanttItemInModel(it) {
 let ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
 const ganttMarkerIso = () => todayISO(); // "Idag"-linjen står kvar; datumet för tidslinjen är dragstrecket (se renderGanttScrub)
 let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
+/* Läget för en aktivitet vid ett datum (samma regler som 4D-planering, Victor 2026-10-02/13): pågående kräver minst 1 % framdrift –
+   har startdatumet passerat utan det är aktiviteten försenad; efter planerat slut utan att vara klar är den också försenad. */
+function ganttPhaseAt(m, d) {
+  const prog = Number(m.progress) || 0, end = m.endDate;
+  const done = !!m.actualEndDate || prog >= 100 || m.status === "klar";
+  if (done && (m.actualEndDate || end) && (m.actualEndDate || end) < d) return "klar";
+  if (m.startDate && m.startDate > d && prog < 1) return "planerad";
+  if (end && end < d) return done ? "klar" : "forsenad";
+  return prog >= 1 ? "pagaende" : "forsenad";
+}
 /* ---- Flera aktiviteter markerade med Ctrl/Cmd-klick (Victor 2026-10-13): visas samtidigt i 3D och kan isoleras. ---- */
 const ganttMultiSel = new Set(); // aktivitets-id (strängar)
 let ganttIsoOverride = null, ganttMultiTimer = null; // ganttIsoOverride: bara de markerade (objektlista) i läget Kopplade
@@ -3455,7 +3465,7 @@ function ganttCoupledTargets() {
     if (timed) {
       // Läget vid valt datum: klar efter slutet, pågående mellan start och slut, annars kommande (dolt om inte "Visa kommande").
       const end = m.actualEndDate && m.actualEndDate > (m.endDate || "") ? m.actualEndDate : m.endDate;
-      phase = end && end < ganttAsOf ? "klar" : (!m.startDate || m.startDate <= ganttAsOf) ? "pagaende" : "planerad";
+      phase = ganttPhaseAt(m, ganttAsOf);
       // Temporär finns bara mellan start och slut; Rivning syns före start men försvinner efter slut (slutet = verkligt slut om det finns).
       const tEnd = m.actualEndDate || m.endDate;
       if (m.temporary && ((m.startDate && m.startDate > ganttAsOf) || (tEnd && tEnd < ganttAsOf))) phase = "dold";
@@ -3499,17 +3509,17 @@ let ganttVisSig = "";
 /* Pulserande ljus på pågående objekt (Victor 2026-10-13): färgen på det som pågår andas mellan statusfärgen och ett ljust gult –
    ett tydligt "här händer det nu" i Trimble Connect. Bara pågående objekt rörs, med några få anrop per steg. */
 /* Markera pågående i Trimble Connect (Victor 2026-10-13): de pågående objekten väljs med TC:s egen markering, så de "lyses upp". */
-let ganttSelAct = false, ganttSelActSig = "", ganttSelActOwn = false;
+let ganttSelAct = false, ganttSelActSig = "", ganttSelActOwn = false, ganttActiveGroups = [];
 async function ganttSelActSync() {
   const V = API && API.viewer; if (!V || typeof V.setSelection !== "function") return;
   if (!ganttSelAct || ganttMode !== "time" || !ganttAsOf) {
     if (ganttSelActOwn) { ganttSelActOwn = false; ganttSelActSig = ""; try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: [] }, "set"); } catch (e) { /* ignorera */ } }
     return;
   }
-  const sig = ganttPulseGroups.map(g => g.modelId + ":" + g.rids.slice().sort().join(".")).sort().join("|");
+  const sig = ganttActiveGroups.map(g => g.modelId + ":" + g.rids.slice().sort().join(".")).sort().join("|");
   if (sig === ganttSelActSig) return;
   ganttSelActSig = sig;
-  try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: ganttPulseGroups.map(g => ({ modelId: g.modelId, objectRuntimeIds: g.rids })) }, "set"); ganttSelActOwn = true; } catch (e) { console.warn("Kunde inte markera pågående", e); }
+  try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: ganttActiveGroups.map(g => ({ modelId: g.modelId, objectRuntimeIds: g.rids })) }, "set"); ganttSelActOwn = true; } catch (e) { console.warn("Kunde inte markera pågående", e); }
 }
 /* Inställningar för pulsen (färger, hastighet, stil, styrka) – sparas per användare. a tom = pågående-färgen. */
 const GANTT_PULSE_PRESETS = { gul: ["", "#fff7c2", "Gul (standard)"], rod: ["#e5484d", "#ffd6d6", "Röd ↔ ljusröd"], vit: ["#111827", "#ffffff", "Mörk ↔ vit"], bla: ["#2563eb", "#bfdbfe", "Blå ↔ ljusblå"], gron: ["#16a34a", "#bbf7d0", "Grön ↔ ljusgrön"], orange: ["#f5a623", "#e5484d", "Orange ↔ röd"] };
@@ -3619,6 +3629,8 @@ async function ganttTimeApply3d() {
     }
     for (const g of groups.values()) await V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: g.color });
     ganttPhaseNow = next; ganttColored = true;
+    { const am = new Map(); targets.forEach(t => { if (t.phase !== "pagaende" && t.phase !== "forsenad") return; const rid = ganttRidCache.get(`${t.modelId}|${t.objectId}`); if (rid !== null && rid !== undefined) (am.get(t.modelId) || am.set(t.modelId, []).get(t.modelId)).push(rid); });
+      ganttActiveGroups = [...am].map(([modelId, rids]) => ({ modelId, rids })); }
     { const pm = new Map(); targets.forEach(t => { if (t.phase !== "pagaende") return; const rid = ganttRidCache.get(`${t.modelId}|${t.objectId}`); if (rid !== null && rid !== undefined) (pm.get(t.modelId) || pm.set(t.modelId, []).get(t.modelId)).push(rid); });
       ganttPulseGroups = [...pm].map(([modelId, rids]) => ({ modelId, rids })); ganttPulseSync(); ganttSelActSync(); }
     const shown = [...next.values()].filter(v => !v.startsWith("dold")).length;
@@ -3631,7 +3643,7 @@ async function applyGanttIsolate(force) {
   if (!ganttIsolate) return;
   if (ganttAsOf && ganttTime3d) return ganttTimeApply3d();
   ganttPhaseNow = new Map(); ganttTimeBase = false; // lämnade tidslinjen: nästa gång börjar den om
-  const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}|${t.phase}`).sort().join(",") + (ganttAsOf && ganttTime3d ? `#${STATUS_COLORS.klar}${STATUS_COLORS.pagaende}${STATUS_COLORS.planerad}` : "");
+  const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}|${t.phase}`).sort().join(",") + (ganttAsOf && ganttTime3d ? `#${STATUS_COLORS.klar}${STATUS_COLORS.pagaende}${STATUS_COLORS.forsenad}${STATUS_COLORS.planerad}` : "");
   if (!force && sig === isolateSig) return; // oförändrat urval
   if (!API || !API.viewer || typeof API.viewer.isolateEntities !== "function" || typeof API.viewer.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttMode("off", true); return; }
   if (!targets.length) { modelToast("Inget av det som visas i schemat är kopplat till modellen"); isolateSig = sig; return; }
@@ -3821,9 +3833,9 @@ function ganttTimeRange() {
   return a && b ? [a, b] : null;
 }
 function ganttTimeCounts() {
-  let done = 0, going = 0, soon = 0;
-  ganttShownItems.forEach(it => { if (!it.startDate) return; if (ganttAsOf < it.startDate) soon++; else if (it.endDate && ganttAsOf > it.endDate) done++; else going++; });
-  return { done, going, soon };
+  const c = { done: 0, going: 0, late: 0, soon: 0 };
+  ganttShownItems.forEach(it => { if (!it.startDate) return; const ph = ganttPhaseAt(it, ganttAsOf); if (ph === "klar") c.done++; else if (ph === "pagaende") c.going++; else if (ph === "forsenad") c.late++; else c.soon++; });
+  return c;
 }
 function updateGanttTimeUi() {
   const row = document.getElementById("ganttTimeRow"); if (!row) return;
@@ -3836,7 +3848,7 @@ function updateGanttTimeUi() {
   sl.min = 0; sl.max = Math.max(1, n); sl.value = Math.min(Math.max(0, daysBetweenIso(r[0], ganttAsOf)), n);
   di.value = ganttAsOf;
   const c = ganttTimeCounts();
-  sum.textContent = `${c.done} klara · ${c.going} pågår · ${c.soon} kvar`;
+  sum.textContent = `${c.done} klara · ${c.going} pågår · ${c.late} försenade · ${c.soon} kvar`;
 }
 function setGanttAsOf(iso, opts = {}) {
   ganttAsOf = iso || null;

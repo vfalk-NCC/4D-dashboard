@@ -17,7 +17,7 @@ const it = (name, area, activity, s, e, extra = {}) => ({ ...base, id: 'i' + (++
 seed('plan_items.json', [
   it('Gjutning', 'Linje J', 'Betong', 0, 5, { source_key: 'pp:1', origin: 'powerproject' }),            // i1 – okopplad
   it('Schakt', 'Linje K', 'Mark', 6, 9, { model_id: 'M1', object_id: 'G5' }),                           // i2 – kopplad
-  it('Armering', 'Linje K', 'Betong', 3, 8, { model_id: 'M1', object_id: 'G7' }),                       // i3 – kopplad
+  it('Armering', 'Linje K', 'Betong', 3, 8, { model_id: 'M1', object_id: 'G7', progress: 20 }),                       // i3 – kopplad
   it('Saknas', 'Linje K', 'Betong', 3, 8, { model_id: 'M1', object_id: 'BADOBJ' }),                      // i4b – objekt som saknas i modellversionen
   it('Pelare A', 'Linje Z', 'Pelare', 4, 6, { group_id: 'g1', source_key: 'pp:g1', origin: 'powerproject' }),
   it('Pelare B', 'Linje Z', 'Pelare', 4, 6, { group_id: 'g1', source_key: 'pp:g1', origin: 'powerproject' }),
@@ -106,7 +106,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(500);
   if (!(await page.$('.gantt-scrub'))) fail('Dragstrecket ska ligga ovanpå schemat');
   const sum = await page.innerText('#ganttTimeSum');
-  if (!/klara · \d+ pågår · \d+ kvar/.test(sum)) fail('Sammanfattning per datum: ' + sum);
+  if (!/klara · \d+ pågår · \d+ försenade · \d+ kvar/.test(sum)) fail('Sammanfattning per datum: ' + sum);
   await page.waitForTimeout(1200);
   let R = await replay();
   if (R.shown !== 'G7') fail('Vid dag 4 ska bara G7 (hunnit starta) visas: ' + JSON.stringify(R));
@@ -120,6 +120,10 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   R = await replay();
   if (R.shown !== 'G5,G7') fail('Vid dag 7 ska båda visas: ' + R.shown);
   // Färdigt arbete (G7 slutar dag 8): efter slut genomskinligt – opacitet från skjutreglaget.
+  // Pågående kräver minst 1 % framdrift; utan det är den försenad (börjat enligt startdatum). Efter slut utan klar = försenad.
+  const phs = await page.evaluate(([d4, d8]) => { const m = { startDate: d4, endDate: d8 }; return [ganttPhaseAt({ ...m, progress: 0 }, d4), ganttPhaseAt({ ...m, progress: 0.5 }, d4), ganttPhaseAt({ ...m, progress: 1 }, d4), ganttPhaseAt({ ...m, progress: 20 }, d8), ganttPhaseAt({ ...m, progress: 20 }, d8 + 'x'), ganttPhaseAt({ ...m, progress: 100 }, '9999-01-01'), ganttPhaseAt({ ...m, progress: 0 }, '2000-01-01')].join(); }, [day(4), day(8)]);
+  if (phs !== 'forsenad,forsenad,pagaende,pagaende,forsenad,klar,planerad') fail('Faser (försenad < 1 %): ' + phs);
+  await page.evaluate(() => { const g = items.find(x => x.objectId === 'G7'); g.progress = 100; ganttShownItems.forEach(x => { if (x.objectId === 'G7') x.progress = 100; }); ganttTimeReset(); });
   await page.fill('#ganttTimeDate', day(10)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(900);
   R = await replay();
   if (!R.col.G7 || Math.abs(R.col.G7.a - Math.round(0.30 * 255)) > 1) fail('Klart ska få klart-opaciteten (30 %): ' + JSON.stringify(R.col.G7));
@@ -190,15 +194,15 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   const tdp = await page.evaluate(([d0, d1, d3, d4, d6, d7]) => {
     const keep = [ganttShownItems, ganttAsOf, ganttTime3d];
     ganttShownItems = [{ members: [
-      { modelId: 'M1', objectId: 'T1', temporary: true, startDate: d1, endDate: d3 },
-      { modelId: 'M1', objectId: 'D1', demolition: true, startDate: d4, endDate: d6 }] }];
+      { modelId: 'M1', objectId: 'T1', temporary: true, startDate: d1, endDate: d3, progress: 10 },
+      { modelId: 'M1', objectId: 'D1', demolition: true, startDate: d4, endDate: d6, progress: 0 }] }];
     ganttTime3d = true;
     const at = d => { ganttAsOf = d; return ganttCoupledTargets().map(t => t.objectId + ':' + t.phase).join(); };
     const r = [at(d0), at(d1), at(d4), at(d7)];
     [ganttShownItems, ganttAsOf, ganttTime3d] = keep;
     return r;
   }, [day(0), day(1), day(3), day(4), day(6), day(7)]);
-  if (tdp[0] !== 'T1:dold,D1:planerad' || tdp[1] !== 'T1:pagaende,D1:planerad' || tdp[2] !== 'T1:dold,D1:pagaende' || tdp[3] !== 'T1:dold,D1:dold') fail('Temporär/Rivning i tidslinjen: ' + JSON.stringify(tdp));
+  if (tdp[0] !== 'T1:dold,D1:planerad' || tdp[1] !== 'T1:pagaende,D1:planerad' || tdp[2] !== 'T1:dold,D1:forsenad' || tdp[3] !== 'T1:dold,D1:dold') fail('Temporär/Rivning i tidslinjen: ' + JSON.stringify(tdp));
   // Uppspelning: 3D uppdateras medan det spelas (inte först vid paus).
   await page.fill('#ganttTimeDate', day(2)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(600);
   const nPlay = await page.evaluate(() => window.__calls.length);
