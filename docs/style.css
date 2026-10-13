@@ -2326,3 +2326,10 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 
 .ppx-tpl { font-size: 12px; margin: 6px 0; padding: 6px 8px; border: 1px dashed var(--border); border-radius: 6px; }
 .ppx-tpl input[type=file] { max-width: 100%; font-size: 11px; }
+
+.ppx-pop .ppx-opts { margin: 8px 0; }
+.ppx-pop label.ppx-opt { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; font-size: 13px; font-weight: 400; margin: 0; padding: 3px 0; color: inherit; }
+.ppx-pop label.ppx-opt input { width: auto; margin: 0; flex: none; }
+.ppx-pop label.ppx-opt.off { opacity: .5; }
+.ppx-pop label.na-temp { flex-direction: row; align-items: center; gap: 8px; }
+.ppx-pop label.na-temp input { width: auto; flex: none; }
