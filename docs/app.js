@@ -3385,6 +3385,47 @@ async function selectGanttItemInModel(it) {
   return selectActivityInModel(it);
 }
 
+/* ----- Visa endast kopplade (Victor 2026-10-13): släcker allt i 3D-modellen utom objekten som är kopplade till
+   aktiviteterna som visas i Gantt-schemat just nu (efter filter, sökning och dolda grupper). Följer schemat medan
+   knappen är intryckt; ett tryck till visar hela modellen igen. Trimble Connects egen isolering (isolateEntities). */
+let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
+function ganttCoupledTargets() {
+  const seen = new Set(), out = [];
+  ganttShownItems.flatMap(it => it.members || [it]).forEach(m => { if (!m.modelId || !m.objectId) return; const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId) }); } });
+  return out;
+}
+async function applyGanttIsolate(force) {
+  if (!ganttIsolate) return;
+  const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}`).sort().join(",");
+  if (!force && sig === isolateSig) return; // oförändrat urval
+  if (!API || !API.viewer || typeof API.viewer.isolateEntities !== "function" || typeof API.viewer.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttIsolate(false, true); return; }
+  if (!targets.length) { modelToast("Inget av det som visas i schemat är kopplat till modellen"); isolateSig = sig; return; }
+  try {
+    const byModel = {};
+    targets.forEach(t => { (byModel[t.modelId] = byModel[t.modelId] || []).push(t.objectId); });
+    const entities = [];
+    for (const modelId of Object.keys(byModel)) {
+      const rids = (await API.viewer.convertToObjectRuntimeIds(modelId, byModel[modelId])).filter(id => id !== undefined && id !== null);
+      if (rids.length) entities.push({ modelId, entityIds: rids });
+    }
+    if (!ganttIsolate) return; // avstängd medan vi väntade
+    if (!entities.length) { modelToast("Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); isolateSig = sig; return; }
+    await API.viewer.isolateEntities(entities);
+    isolateSig = sig;
+    const n = entities.reduce((a, m) => a + m.entityIds.length, 0);
+    modelToast(`Visar endast ${n} kopplade objekt${document.fullscreenElement ? " – stäng helskärmen för att se modellen" : ""}`);
+  } catch (e) { console.warn("Kunde inte isolera kopplade objekt", e); modelToast("Kunde inte visa endast kopplade: " + e.message); }
+}
+function scheduleGanttIsolate() { clearTimeout(isolateTimer); isolateTimer = setTimeout(() => applyGanttIsolate(false), 500); }
+async function setGanttIsolate(on, quiet) {
+  ganttIsolate = !!on; isolateSig = "";
+  const b = document.getElementById("ganttIsolateBtn"); if (b) { b.setAttribute("aria-pressed", String(ganttIsolate)); b.textContent = ganttIsolate ? "🧊 Visar endast kopplade" : "🧊 Visa endast kopplade"; }
+  clearTimeout(isolateTimer);
+  if (ganttIsolate) { await applyGanttIsolate(true); return; }
+  if (quiet) return;
+  try { if (API && API.viewer && typeof API.viewer.setObjectState === "function") await API.viewer.setObjectState(undefined, { visible: "reset" }); modelToast("Hela modellen visas igen"); }
+  catch (e) { console.warn("Kunde inte visa hela modellen", e); }
+}
 function renderGantt(list, target) {
   // Resurskurvan följer Gantt-schemats urval (filter, sök, dolda områden, period) – ritas om efteråt.
   if (!target && typeof renderResourceCurve === "function") setTimeout(renderResourceCurve, 0);
@@ -3405,6 +3446,7 @@ function renderGantt(list, target) {
   // Dolda grupper (områden/entreprenörer/aktiviteter) – gäller också utskriften.
   const hiddenNow = ganttHiddenNow();
   list = ganttWithoutHidden(list);
+  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); } // "Visa endast kopplade" följer schemat
   if (!target) renderGanttHiddenBar(el, hiddenNow);
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
@@ -5543,6 +5585,8 @@ function initGanttControls() {
     searchEl.oninput = () => { clearTimeout(tmr); tmr = setTimeout(() => { ganttSearch = searchEl.value.trim(); renderGantt(getFilteredItems()); }, 150); };
     searchEl.onkeydown = e => { if (e.key === "Escape" && searchEl.value) { e.stopPropagation(); searchEl.value = ""; ganttSearch = ""; renderGantt(getFilteredItems()); } };
   }
+  const isoBtn = document.getElementById("ganttIsolateBtn");
+  if (isoBtn) isoBtn.onclick = () => setGanttIsolate(!ganttIsolate);
   const fullBtn = document.getElementById("ganttFullBtn");
   if (fullBtn) fullBtn.onclick = toggleGanttFullscreen;
   const fsTools = document.getElementById("ganttFsTools"), fsClose = document.getElementById("ganttFsClose");
