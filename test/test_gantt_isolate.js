@@ -290,7 +290,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
     const r = buildMspXml([A, B], { project: 'T' });
     const d = new DOMParser().parseFromString(r.xml, 'application/xml');
     const tasks = [...d.getElementsByTagName('Task')].map(t => ({ n: t.getElementsByTagName('Name')[0].textContent, l: t.getElementsByTagName('OutlineLevel')[0].textContent, s: t.getElementsByTagName('Summary')[0].textContent, dur: (t.getElementsByTagName('Duration')[0] || {}).textContent, pc: t.getElementsByTagName('PercentComplete')[0].textContent, pred: [...t.getElementsByTagName('PredecessorLink')].map(p => p.getElementsByTagName('PredecessorUID')[0].textContent + ':' + p.getElementsByTagName('LinkLag')[0].textContent) }));
-    return { err: d.getElementsByTagName('parsererror').length, tasks, links: r.links, dropped: r.droppedLinks, res: d.getElementsByTagName('Assignment').length, work: (d.getElementsByTagName('Work')[0] || {}).textContent };
+    return { err: d.getElementsByTagName('parsererror').length, tasks, links: r.links, dropped: r.droppedLinks, res: d.getElementsByTagName('Assignment').length, work: (d.getElementsByTagName('Assignment')[0].getElementsByTagName('Work')[0] || {}).textContent };
   });
   if (px.err) fail('XML ska vara välformad');
   const nm = px.tasks.map(t => t.l + t.n + (t.s === '1' ? '*' : '')).join('|');
