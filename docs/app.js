@@ -3511,11 +3511,46 @@ async function ganttSelActSync() {
   ganttSelActSig = sig;
   try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: ganttPulseGroups.map(g => ({ modelId: g.modelId, objectRuntimeIds: g.rids })) }, "set"); ganttSelActOwn = true; } catch (e) { console.warn("Kunde inte markera pågående", e); }
 }
+/* Inställningar för pulsen (färger, hastighet, stil, styrka) – sparas per användare. a tom = pågående-färgen. */
+const GANTT_PULSE_PRESETS = { gul: ["", "#fff7c2", "Gul (standard)"], rod: ["#e5484d", "#ffd6d6", "Röd ↔ ljusröd"], vit: ["#111827", "#ffffff", "Mörk ↔ vit"], bla: ["#2563eb", "#bfdbfe", "Blå ↔ ljusblå"], gron: ["#16a34a", "#bbf7d0", "Grön ↔ ljusgrön"], orange: ["#f5a623", "#e5484d", "Orange ↔ röd"] };
+let ganttPulseCfg = { preset: "gul", a: "", b: "#fff7c2", period: 1.5, style: "mjuk", amp: 85 };
+try { Object.assign(ganttPulseCfg, JSON.parse(localStorage.getItem("4ddash-pulse-cfg") || "{}")); } catch (e) { /* standard */ }
+const ganttPulseSave = () => { try { localStorage.setItem("4ddash-pulse-cfg", JSON.stringify(ganttPulseCfg)); } catch (e) {} };
+/* Hur långt mellan färg A (0) och B (1) vid fasen ph (0..1): mjuk andning, blink eller hjärtslag (två snabba slag och paus). */
+function ganttPulseK(ph) {
+  const st = ganttPulseCfg.style;
+  if (st === "blink") return ph < 0.5 ? 1 : 0;
+  if (st === "slag") { const g = (c, w) => Math.exp(-Math.pow((ph - c) / w, 2)); return Math.min(1, g(0.12, 0.06) + 0.75 * g(0.32, 0.06)); }
+  return (1 - Math.cos(ph * 2 * Math.PI)) / 2;
+}
 let ganttPulse = false, ganttPulseTimer = null, ganttPulseGroups = [], ganttPulseBusy = false;
 function ganttPulseStop(restore) {
   clearInterval(ganttPulseTimer); ganttPulseTimer = null;
   const V = API && API.viewer;
   if (restore && V && typeof V.setObjectState === "function") ganttPulseGroups.forEach(g => V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: hexToRgbaObj(STATUS_COLORS.pagaende, 1) }).catch(() => {}));
+}
+function openPulseCfg(anchor) {
+  const old = document.getElementById("ganttPulsePop"); if (old) { old.remove(); return; }
+  const c = ganttPulseCfg, pop = document.createElement("div"); pop.id = "ganttPulsePop"; pop.className = "board-pop gantt-pulse-pop";
+  pop.innerHTML = `<div class="board-pop-title">Pulsera pågående</div>
+    <label>Färger <select class="pp-preset">${Object.entries(GANTT_PULSE_PRESETS).map(([k, v]) => `<option value="${k}"${c.preset === k ? " selected" : ""}>${v[2]}</option>`).join("")}<option value="egen"${c.preset === "egen" ? " selected" : ""}>Egna färger</option></select></label>
+    <div class="pp-cols"><label>Från <input type="color" class="pp-a" value="${c.a || STATUS_COLORS.pagaende}" /></label><label>Till <input type="color" class="pp-b" value="${c.b}" /></label></div>
+    <label>Hastighet <span><input type="range" class="pp-per" min="0.4" max="4" step="0.1" value="${c.period}" /> <b class="pp-perv">${c.period}</b> s</span></label>
+    <label>Stil <select class="pp-style"><option value="mjuk"${c.style === "mjuk" ? " selected" : ""}>Mjuk andning</option><option value="blink"${c.style === "blink" ? " selected" : ""}>Blink</option><option value="slag"${c.style === "slag" ? " selected" : ""}>Hjärtslag</option></select></label>
+    <label>Styrka <span><input type="range" class="pp-amp" min="10" max="100" step="5" value="${c.amp}" /> <b class="pp-ampv">${c.amp}</b> %</span></label>
+    <div class="board-pop-actions"><button type="button" class="pp-reset">Återställ</button><button type="button" class="pp-close primary">Klar</button></div>`;
+  overlayHost().appendChild(pop);
+  const r = anchor.getBoundingClientRect(); pop.style.left = `${Math.max(8, Math.min(window.innerWidth - 270, r.left))}px`; pop.style.top = `${Math.min(window.innerHeight - 340, r.bottom + 6)}px`; pop.style.width = "260px";
+  const q = s => pop.querySelector(s);
+  const restart = () => { ganttPulseSave(); if (ganttPulseTimer) { ganttPulseStop(false); ganttPulseSync(); } };
+  q(".pp-preset").onchange = e => { const v = e.target.value; ganttPulseCfg.preset = v; if (GANTT_PULSE_PRESETS[v]) { ganttPulseCfg.a = GANTT_PULSE_PRESETS[v][0]; ganttPulseCfg.b = GANTT_PULSE_PRESETS[v][1]; q(".pp-a").value = ganttPulseCfg.a || STATUS_COLORS.pagaende; q(".pp-b").value = ganttPulseCfg.b; } restart(); };
+  q(".pp-a").oninput = e => { ganttPulseCfg.a = e.target.value; ganttPulseCfg.preset = "egen"; q(".pp-preset").value = "egen"; ganttPulseSave(); };
+  q(".pp-b").oninput = e => { ganttPulseCfg.b = e.target.value; ganttPulseCfg.preset = "egen"; q(".pp-preset").value = "egen"; ganttPulseSave(); };
+  q(".pp-per").oninput = e => { ganttPulseCfg.period = Number(e.target.value); q(".pp-perv").textContent = e.target.value; restart(); };
+  q(".pp-style").onchange = e => { ganttPulseCfg.style = e.target.value; ganttPulseSave(); };
+  q(".pp-amp").oninput = e => { ganttPulseCfg.amp = Number(e.target.value); q(".pp-ampv").textContent = e.target.value; ganttPulseSave(); };
+  q(".pp-reset").onclick = () => { ganttPulseCfg = { preset: "gul", a: "", b: "#fff7c2", period: 1.5, style: "mjuk", amp: 85 }; ganttPulseSave(); pop.remove(); restart(); openPulseCfg(anchor); };
+  q(".pp-close").onclick = () => pop.remove();
 }
 function ganttPulseSync() {
   const want = ganttPulse && ganttMode === "time" && ganttAsOf && ganttPulseGroups.length;
@@ -3527,11 +3562,13 @@ function ganttPulseSync() {
     if (!ganttPulse || ganttMode !== "time" || ganttTimeBusy || ganttPulseBusy || !ganttPulseGroups.length || !V) return;
     ganttPulseBusy = true;
     try {
-      const k = (1 - Math.cos(((performance.now() - t0) / 1500) * 2 * Math.PI)) / 2 * 0.85, b = hexToRgbaObj(STATUS_COLORS.pagaende, 1), L = [255, 247, 194];
-      const c = { r: Math.round(b.r + (L[0] - b.r) * k), g: Math.round(b.g + (L[1] - b.g) * k), b: Math.round(b.b + (L[2] - b.b) * k), a: 255 };
+      const cf = ganttPulseCfg, per = Math.max(0.3, Number(cf.period) || 1.5) * 1000;
+      const ph = (((performance.now() - t0) % per) / per), k = ganttPulseK(ph) * (Math.max(0, Math.min(100, Number(cf.amp))) / 100);
+      const b = hexToRgbaObj(cf.a || STATUS_COLORS.pagaende, 1), B = hexToRgbaObj(cf.b || "#fff7c2", 1);
+      const c = { r: Math.round(b.r + (B.r - b.r) * k), g: Math.round(b.g + (B.g - b.g) * k), b: Math.round(b.b + (B.b - b.b) * k), a: 255 };
       for (const g of ganttPulseGroups) await V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: c });
     } catch (e) { /* nästa steg */ } finally { ganttPulseBusy = false; }
-  }, 180);
+  }, Math.max(90, Math.min(200, (Math.max(0.3, Number(ganttPulseCfg.period) || 1.5) * 1000) / 10)));
 }
 function ganttTimeReset() { ganttPhaseNow = new Map(); ganttTimeBase = false; ganttVisSig = ""; isolateSig = ""; ganttRidCache.clear(); }
 async function ganttTimeApply3d() {
@@ -3862,6 +3899,7 @@ function initGanttTime() {
   const pul = document.getElementById("ganttTimePulse");
   try { ganttPulse = localStorage.getItem("4ddash-gantt-pulse") === "1"; } catch (e) {}
   if (pul) { pul.checked = ganttPulse; pul.onchange = () => { ganttPulse = pul.checked; try { localStorage.setItem("4ddash-gantt-pulse", ganttPulse ? "1" : "0"); } catch (e) {} if (ganttPulse) ganttPulseSync(); else ganttPulseStop(true); }; }
+  const pcb = document.getElementById("ganttPulseCfgBtn"); if (pcb) pcb.onclick = () => openPulseCfg(pcb);
   const sa = document.getElementById("ganttTimeSelAct");
   if (sa) sa.onchange = () => { ganttSelAct = sa.checked; ganttSelActSig = ""; ganttSelActSync(); };
   const dop = document.getElementById("ganttTimeDoneOp"), dopv = document.getElementById("ganttTimeDoneOpVal");

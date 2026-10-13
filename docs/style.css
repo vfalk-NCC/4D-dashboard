@@ -2316,3 +2316,10 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 
 /* Långt fönster: rullar när det går utanför bilden, med knapparna kvar längst ner. */
 .new-act-pop .board-pop-actions { position: sticky; bottom: -10px; background: #fff; padding: 8px 0 4px; margin-top: 4px; border-top: 1px solid var(--border); z-index: 3; }
+
+.gantt-pulse-pop { z-index: 3200; gap: 8px; }
+.gantt-pulse-pop label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.gantt-pulse-pop .pp-cols { display: flex; gap: 12px; }
+.gantt-pulse-pop input[type="color"] { width: 34px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 4px; }
+.gantt-pulse-pop select { font: inherit; font-size: 12px; max-width: 150px; }
+.gantt-pulse-pop input[type="range"] { width: 100px; }

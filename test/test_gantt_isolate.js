@@ -161,6 +161,17 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.check('#ganttTimePulse'); await page.waitForTimeout(2200);
   const pcols = await page.evaluate(() => [...new Set(window.__calls.filter(c => c.a && c.b.color && c.b.color !== 'reset').map(c => JSON.stringify(c.b.color)))]);
   if (pcols.length < 3) fail('Pågående ska pulsera (flera färgsteg): ' + pcols.length);
+  // Inställningar: färger (förval Röd), hastighet och stil.
+  await page.click('#ganttPulseCfgBtn'); await page.waitForSelector('#ganttPulsePop');
+  await page.selectOption('#ganttPulsePop .pp-preset', 'rod'); await page.evaluate(() => { window.__calls = []; }); await page.waitForTimeout(1800);
+  const rcols = await page.evaluate(() => [...new Set(window.__calls.filter(c => c.a && c.b.color && c.b.color !== 'reset').map(c => c.b.color))]);
+  if (rcols.length < 3 || !rcols.every(c => c.r >= 0xe5 && c.g <= 0xd6 + 1)) fail('Röd förinställning (e5484d ↔ ffd6d6): ' + JSON.stringify(rcols.slice(0, 3)));
+  await page.fill('#ganttPulsePop .pp-per', '0.5').catch(() => {}); await page.evaluate(() => { const i = document.querySelector('#ganttPulsePop .pp-per'); i.value = 0.5; i.dispatchEvent(new Event('input')); });
+  await page.selectOption('#ganttPulsePop .pp-style', 'blink'); await page.evaluate(() => { window.__calls = []; }); await page.waitForTimeout(1500);
+  const bl = await page.evaluate(() => [...new Set(window.__calls.filter(c => c.a && c.b.color && c.b.color !== 'reset').map(c => JSON.stringify(c.b.color)))]);
+  if (bl.length !== 2) fail('Blink ger exakt två färger: ' + bl.length);
+  if ((await page.evaluate(() => ganttPulseCfg.period)) !== 0.5 || (await page.evaluate(() => JSON.parse(localStorage.getItem('4ddash-pulse-cfg')).style)) !== 'blink') fail('Pulsinställningarna sparas');
+  await page.click('#ganttPulsePop .pp-reset'); await page.click('#ganttPulsePop .pp-close');
   await page.uncheck('#ganttTimePulse'); await page.waitForTimeout(500);
   const restored = await page.evaluate(() => JSON.stringify(window.__calls.filter(c => c.a && c.b.color && c.b.color !== 'reset').slice(-1)[0].b.color));
   const baseC = await page.evaluate(() => JSON.stringify(hexToRgbaObj(STATUS_COLORS.pagaende, 1)));
