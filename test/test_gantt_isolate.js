@@ -267,6 +267,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   // Ta bort ett objekt ur en aktivitet (redigeringsdialogen): bara det objektet, aktiviteten finns kvar.
   const mergedG1 = () => page.evaluate(() => { const m = mergeActivityGroups(items.filter(x => x.activityKey === 'g:g1'))[0]; return m && m.members ? m.members.length : 0; });
   if ((await mergedG1()) !== 2) fail('Testdata: aktiviteten ska ha två objekt: ' + await mergedG1());
+  await page.setViewportSize({ width: 1400, height: 520 }); // litet fönster: dialogen ska rulla, inte hamna utanför
   await page.evaluate(() => { ganttEditable = true; openActivityDialog({ edit: mergeActivityGroups(items.filter(x => x.activityKey === 'g:g1'))[0] }); });
   await page.click('.na-objs summary'); await page.waitForTimeout(150);
   if ((await page.locator('.na-obj').count()) !== 2) fail('Objektlistan ska visa två objekt');
@@ -278,7 +279,9 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.locator('.na-obj', { hasText: 'Pelare B' }).locator('.na-obj-x').click(); await page.waitForTimeout(900);
   if (get('plan_items.json').some(r => r.object_name === 'Pelare B') || !get('plan_items.json').some(r => r.object_name === 'Pelare A')) fail('Bara Pelare B ska tas bort ur aktiviteten');
   if (await page.$('.na-objs')) fail('Med ett objekt kvar ska listan försvinna');
-  await page.click('.na-cancel'); await page.evaluate(() => { ganttEditable = false; });
+  const fit = await page.evaluate(() => { const r = document.querySelector('.new-act-pop').getBoundingClientRect(); return { top: r.top, bottom: r.bottom, vh: window.innerHeight }; });
+  if (fit.top < 0 || fit.bottom > fit.vh + 1) fail('Fönstret ska rymmas i bilden: ' + JSON.stringify(fit));
+  await page.click('.na-cancel'); await page.setViewportSize({ width: 1400, height: 1000 }); await page.evaluate(() => { ganttEditable = false; });
   console.log('OK: ett objekt kan tas bort ur aktiviteten (redigeringsdialogen)');
   // Export till Powerproject (MS Project-XML): hierarki från området, kopplingar med glapp, resurser.
   const px = await page.evaluate(() => {

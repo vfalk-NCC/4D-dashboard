@@ -4921,12 +4921,18 @@ function openActivityDialog({ after = null, edit = null } = {}) {
   q(".na-done-col").oninput = () => { q(".na-done-chk").checked = true; };
   q(".na-temp-chk").onchange = e => { if (e.target.checked) q(".na-demo-chk").checked = false; };
   q(".na-demo-chk").onchange = e => { if (e.target.checked) q(".na-temp-chk").checked = false; };
+  // Fönstret får aldrig hamna utanför bilden: höjden begränsas till det som finns under toppen och resten rullar.
   const place = () => {
+    pop.style.maxHeight = "none";
+    const h = pop.offsetHeight, top = Math.max(8, Math.min(100, (window.innerHeight - h) / 2));
     pop.style.left = `${Math.max(8, (window.innerWidth - pop.offsetWidth) / 2)}px`;
-    pop.style.top = `${Math.max(8, Math.min(100, (window.innerHeight - pop.offsetHeight) / 2))}px`;
+    pop.style.top = `${top}px`;
+    pop.style.maxHeight = `${Math.max(200, window.innerHeight - top - 8)}px`;
   };
   place();
-  const close = () => { pop.remove(); document.removeEventListener("keydown", onKey, true); };
+  window.addEventListener("resize", place);
+  pop.addEventListener("toggle", place, true); // när en hopfälld del öppnas eller stängs
+  const close = () => { pop.remove(); window.removeEventListener("resize", place); document.removeEventListener("keydown", onKey, true); };
   const onKey = e => {
     if (e.key !== "Escape") return;
     e.stopPropagation();
