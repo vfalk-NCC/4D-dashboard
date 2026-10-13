@@ -4865,10 +4865,14 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     const list = q(".na-objs-list"); if (!list) return;
     const sec = q(".na-objs");
     if (members.length < 2) { if (sec) sec.remove(); return; }
-    list.innerHTML = members.map(m => `<div class="na-obj"><span class="na-obj-name" title="${escapeHtml(String(m.objectId || ""))}">${escapeHtml(m.objectName || m.objectId || "Objekt")}${m.modelId ? ' <span class="hint">· 3D-kopplad</span>' : ""}</span><button type="button" class="na-obj-x" data-mid="${escapeHtml(String(m.id))}" title="Ta bort objektet ur aktiviteten" aria-label="Ta bort objektet">✕</button></div>`).join("");
+    list.innerHTML = members.map(m => `<div class="na-obj" data-mid="${escapeHtml(String(m.id))}" title="${m.modelId ? "Klicka för att markera och zooma till objektet i 3D" : ""}"><span class="na-obj-name" title="${escapeHtml(String(m.objectId || ""))}">${escapeHtml(m.objectName || m.objectId || "Objekt")}${m.modelId ? ` <span class="hint">· ${escapeHtml(String(m.objectId || "").slice(-6))} · 3D-kopplad</span>` : ""}</span><button type="button" class="na-obj-x" data-mid="${escapeHtml(String(m.id))}" title="Ta bort objektet ur aktiviteten" aria-label="Ta bort objektet">✕</button></div>`).join("");
     q(".na-objs-n").textContent = `(${members.length})`;
+    // Klick på ett objekt: markeras och zoomas in i 3D, så du vet vilket det är.
+    const pick = m => { list.querySelectorAll(".na-obj").forEach(r => r.classList.toggle("on", r.dataset.mid === String(m.id))); if (m.modelId) selectActivityInModel({ members: [m] }); };
+    list.querySelectorAll(".na-obj").forEach(row => { row.onclick = e => { if (e.target.closest(".na-obj-x")) return; const m = members.find(x => String(x.id) === row.dataset.mid); if (m) pick(m); }; });
     list.querySelectorAll(".na-obj-x").forEach(b => { b.onclick = async () => {
       const m = members.find(x => String(x.id) === b.dataset.mid); if (!m) return;
+      pick(m); // visa vilket objekt det gäller innan frågan
       const nm = m.objectName || m.objectId || "objektet", act = itemLabel(edit);
       const ok = await deleteActivity(m, { ok: "Ta bort objektet", msg: `Ta bort "${nm}" ur aktiviteten "${act}"?\n\nAktiviteten finns kvar med de ${members.length - 1} andra objekten.${m.modelId ? "\n⚠ Objektets 3D-koppling försvinner." : ""}${m.origin !== "manuell" ? `\n⚠ Objektet kommer från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen och kommer tillbaka vid nästa import.` : ""}` });
       if (ok) { const i = members.indexOf(m); if (i >= 0) members.splice(i, 1); own.delete(String(m.id)); renderObjs(); }

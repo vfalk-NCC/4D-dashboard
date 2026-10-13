@@ -259,6 +259,11 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.evaluate(() => { ganttEditable = true; openActivityDialog({ edit: mergeActivityGroups(items.filter(x => x.activityKey === 'g:g1'))[0] }); });
   await page.click('.na-objs summary'); await page.waitForTimeout(150);
   if ((await page.locator('.na-obj').count()) !== 2) fail('Objektlistan ska visa två objekt');
+  await page.evaluate(() => { window.__setsel = []; const b = items.find(x => x.objectName === 'Pelare B'); b.modelId = 'M1'; b.objectId = 'GB'; });
+  await page.locator('.na-obj', { hasText: 'Pelare B' }).click(); await page.waitForTimeout(500);
+  const pk = await page.evaluate(() => (window.__setsel || []).slice(-1)[0]);
+  if (!pk || pk.modelObjectIds.flatMap(m => m.objectRuntimeIds).join() !== 'GB') fail('Klick på objektet ska markera och zooma i 3D: ' + JSON.stringify(pk));
+  if (!(await page.locator('.na-obj.on', { hasText: 'Pelare B' }).count())) fail('Klickat objekt ska markeras i listan');
   await page.locator('.na-obj', { hasText: 'Pelare B' }).locator('.na-obj-x').click(); await page.waitForTimeout(900);
   if (get('plan_items.json').some(r => r.object_name === 'Pelare B') || !get('plan_items.json').some(r => r.object_name === 'Pelare A')) fail('Bara Pelare B ska tas bort ur aktiviteten');
   if (await page.$('.na-objs')) fail('Med ett objekt kvar ska listan försvinna');

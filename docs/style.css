@@ -2050,7 +2050,7 @@ svg.gantt-arrows.has-hot path.ga.ga-late.hot { stroke: #e5484d; }
 .pnote.pnote-editable:not(.pnote-one):not(:has(> .pnote-bl-d)) .pnote-title { padding-right: 22px; }
 
 /* ----- Aktivitetsdialogen: förslagslistor, Väntar på med glapp, redigering (Victor 2026-10-07) ----- */
-.new-act-pop { width: 460px; max-height: calc(100vh - 16px); overflow: visible; }
+.new-act-pop { width: 460px; max-height: calc(100vh - 16px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 .new-act-pop .cb-input { padding-right: 22px !important; background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239ca3af' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 8px center; border: 1px solid var(--border); border-radius: 6px; transition: border-color .12s, box-shadow .12s; }
 .new-act-pop input[type="text"], .new-act-pop input[type="number"], .new-act-pop input[type="date"] { border: 1px solid var(--border); border-radius: 6px; }
 .new-act-pop input:focus { outline: none; border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37,99,235,.14); }
@@ -2310,3 +2310,9 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .ppx-opts { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .ppx-opt { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .ppx-opt.off { opacity: .5; }
+
+.new-act-pop .na-obj { cursor: pointer; }
+.new-act-pop .na-obj.on { background: #dbeafe; outline: 1px solid #93c5fd; }
+
+/* Långt fönster: rullar när det går utanför bilden, med knapparna kvar längst ner. */
+.new-act-pop .board-pop-actions { position: sticky; bottom: -10px; background: #fff; padding: 8px 0 4px; margin-top: 4px; border-top: 1px solid var(--border); z-index: 3; }
