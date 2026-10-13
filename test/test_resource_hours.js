@@ -23,7 +23,7 @@ const PROJECT_ID = 'test-project';
 function startServer() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      const filePath = path.join(DOCS_DIR, req.url === '/' ? 'index.html' : req.url);
+      const filePath = path.join(DOCS_DIR, (req.url.split('?')[0]) === '/' ? 'index.html' : decodeURIComponent(req.url.split('?')[0]));
       fs.readFile(filePath, (err, data) => {
         if (err) { res.writeHead(404); res.end('not found'); return; }
         res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream' });
