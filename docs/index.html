@@ -178,7 +178,9 @@
             <label>Klart <input type="color" data-tcol="klar" aria-label="Färg klart" /></label>
             <label>Kommande <input type="color" data-tcol="planerad" aria-label="Färg kommande" /></label>
           </span>
+          <label class="gantt-toolbar-field gantt-time-lim" title="Hur synligt färdigt arbete är i 3D (0 = osynligt, 100 = helt täckande). Så ser man arbetet innanför färdiga delar. Egen färg/opacitet per aktivitet: Redigera aktivitet → Avancerat.">Klart synligt <input type="range" id="ganttTimeDoneOp" min="0" max="100" step="5" value="30" /> <b id="ganttTimeDoneOpVal">30</b> %</label>
           <span id="ganttTimeSum" class="hint gantt-time-sum"></span>
+          <span id="ganttTime3dInfo" class="hint gantt-time-sum"></span>
           <label class="gantt-pill" title="Visa även objekt som inte hunnit starta, i färgen för kommande (av: de är dolda i 3D)">
             <input type="checkbox" id="ganttTimeFuture" /> Visa kommande
           </label>

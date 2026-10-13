@@ -960,6 +960,9 @@ function fromRow(row) {
     origin: row.origin || null,
     // Temporär (4D-planering, Victor 2026-10-09): t.ex. en mobilkran – syns i 3D bara mellan start och slut.
     temporary: row.temporary === true,
+    // Egen färg/opacitet efter slut (Victor 2026-10-13): så att färdigt arbete inte blir ett skal som döljer det innanför.
+    doneColor: /^#[0-9a-f]{6}$/i.test(String(row.done_color || "")) ? row.done_color : null,
+    doneOpacity: Number.isFinite(Number(row.done_opacity)) && row.done_opacity !== null && row.done_opacity !== "" ? Math.max(0, Math.min(100, Number(row.done_opacity))) : null,
     // Rivning (Victor 2026-10-13): syns även före start, försvinner efter slut.
     demolition: row.demolition === true
   };
@@ -2314,7 +2317,7 @@ function planSize(plan) { return plan.items.size + plan.acts.size + (plan.deps ?
 /* Glappet (dagar) på kopplingen pred -> succ, eller undefined om inget glapp är satt. */
 const lagLabel = lag => `${lag > 0 ? "+" : lag < 0 ? "−" : "±"}${Math.abs(lag)} d`;
 function lagOf(succ, predId) { const v = succ && succ.depLags ? succ.depLags[String(predId)] : undefined; return Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : undefined; }
-const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary", demolition: "demolition" };
+const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary", demolition: "demolition", doneColor: "done_color", doneOpacity: "done_opacity" };
 function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
 function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
 
@@ -3407,15 +3410,72 @@ function ganttCoupledTargets() {
       // Läget vid valt datum: klar efter slutet, pågående mellan start och slut, annars kommande (dolt om inte "Visa kommande").
       const end = m.actualEndDate && m.actualEndDate > (m.endDate || "") ? m.actualEndDate : m.endDate;
       phase = end && end < ganttAsOf ? "klar" : (!m.startDate || m.startDate <= ganttAsOf) ? "pagaende" : "planerad";
-      if (phase === "planerad" && !ganttTimeFuture) return;
+      if (phase === "planerad" && !ganttTimeFuture) phase = "dold"; // släckt i 3D vid det här datumet
     }
-    const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase }); }
+    const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase, doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity }); }
   });
   return out;
 }
 let ganttColored = false;
+/* ---- Tidslinjen i 3D i realtid: omvandlingen till runtime-id görs en gång (cache) och vid varje datum ändras bara de
+   objekt som byter läge – så att man kan dra i dragaren och se bygget växa. Anropen köas (ett i taget, senaste datumet vinner). */
+const ganttRidCache = new Map(); // "modell|objekt" -> runtime-id (eller null)
+let ganttPhaseNow = new Map(), ganttTimeBusy = false, ganttTimePending = false, ganttTimeBase = false, ganttDoneOp = 30;
+const hexToRgbaObj = (hex, op) => ({ r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16), a: Math.round(Math.max(0, Math.min(1, op)) * 255) });
+function ganttTimeColorOf(t) {
+  if (t.phase === "klar") return hexToRgbaObj(t.doneColor || STATUS_COLORS.klar, (t.doneOpacity !== null ? t.doneOpacity : ganttDoneOp) / 100);
+  return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, 1);
+}
+function ganttTimeReset() { ganttPhaseNow = new Map(); ganttTimeBase = false; }
+async function ganttTimeApply3d() {
+  if (!ganttIsolate || !ganttAsOf || !ganttTime3d) return;
+  if (ganttTimeBusy) { ganttTimePending = true; return; }
+  ganttTimeBusy = true;
+  try {
+    const V = API && API.viewer;
+    if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttIsolate(false, true); return; }
+    const targets = ganttCoupledTargets();
+    // Runtime-id för det som saknas i cachen (en omvandling per modell).
+    const miss = {};
+    targets.forEach(t => { const k = `${t.modelId}|${t.objectId}`; if (!ganttRidCache.has(k)) (miss[t.modelId] = miss[t.modelId] || new Set()).add(t.objectId); });
+    let skipped = 0;
+    for (const modelId of Object.keys(miss)) {
+      const ids = [...miss[modelId]];
+      try {
+        const rids = await V.convertToObjectRuntimeIds(modelId, ids);
+        ids.forEach((id, i) => ganttRidCache.set(`${modelId}|${id}`, rids && rids[i] !== undefined && rids[i] !== null ? rids[i] : null));
+      } catch (e) { console.warn("Hoppar över modell som inte är inläst", modelId, e); skipped++; ids.forEach(id => ganttRidCache.set(`${modelId}|${id}`, null)); }
+    }
+    // Första gången: släck allt (det som inte är kopplat ska inte stå kvar), därefter bara ändringarna.
+    if (!ganttTimeBase) { try { await V.setObjectState(undefined, { visible: false }); await V.setObjectState(undefined, { color: "reset" }); } catch (e) { console.warn(e); } ganttPhaseNow = new Map(); ganttTimeBase = true; }
+    const groups = new Map(); // modell|fas|färg -> runtime-id
+    const next = new Map();
+    targets.forEach(t => {
+      const k = `${t.modelId}|${t.objectId}`, rid = ganttRidCache.get(k);
+      if (rid === null || rid === undefined) return;
+      const sig = `${t.phase}|${t.phase === "klar" ? JSON.stringify(ganttTimeColorOf(t)) : STATUS_COLORS[t.phase] || ""}`;
+      next.set(k, sig);
+      if (ganttPhaseNow.get(k) === sig) return;
+      const gk = `${t.modelId}\u0001${sig}`;
+      if (!groups.has(gk)) groups.set(gk, { modelId: t.modelId, phase: t.phase, color: t.phase === "dold" ? null : ganttTimeColorOf(t), rids: [] });
+      groups.get(gk).rids.push(rid);
+    });
+    for (const g of groups.values()) {
+      const sel = { modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] };
+      if (g.phase === "dold") await V.setObjectState(sel, { visible: false });
+      else await V.setObjectState(sel, { visible: true, color: g.color });
+    }
+    ganttPhaseNow = next; ganttColored = true;
+    const shown = [...next.values()].filter(v => !v.startsWith("dold")).length;
+    ganttTimeInfo(`${shown} objekt visas i 3D${skipped ? ` · ${skipped} ${skipped === 1 ? "modell" : "modeller"} ej inlästa` : ""}`);
+  } catch (e) { console.warn("Tidslinjen i 3D", e); modelToast("Kunde inte uppdatera 3D: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
+  finally { ganttTimeBusy = false; if (ganttTimePending) { ganttTimePending = false; ganttTimeApply3d(); } }
+}
+function ganttTimeInfo(t) { const el = document.getElementById("ganttTime3dInfo"); if (el) el.textContent = t; }
 async function applyGanttIsolate(force) {
   if (!ganttIsolate) return;
+  if (ganttAsOf && ganttTime3d) return ganttTimeApply3d();
+  ganttTimeReset();
   const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}|${t.phase}`).sort().join(",") + (ganttAsOf && ganttTime3d ? `#${STATUS_COLORS.klar}${STATUS_COLORS.pagaende}${STATUS_COLORS.planerad}` : "");
   if (!force && sig === isolateSig) return; // oförändrat urval
   if (!API || !API.viewer || typeof API.viewer.isolateEntities !== "function" || typeof API.viewer.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttIsolate(false, true); return; }
@@ -3461,7 +3521,7 @@ async function applyGanttIsolate(force) {
 }
 function scheduleGanttIsolate() { clearTimeout(isolateTimer); isolateTimer = setTimeout(() => applyGanttIsolate(false), 500); }
 async function setGanttIsolate(on, quiet) {
-  ganttIsolate = !!on; isolateSig = "";
+  ganttIsolate = !!on; isolateSig = ""; ganttTimeReset();
   const b = document.getElementById("ganttIsolateBtn"); if (b) { b.setAttribute("aria-pressed", String(ganttIsolate)); b.textContent = ganttIsolate ? "🧊 Visar endast kopplade" : "🧊 Visa endast kopplade"; }
   clearTimeout(isolateTimer);
   if (ganttIsolate) { await applyGanttIsolate(true); return; }
@@ -3500,17 +3560,18 @@ function updateGanttTimeUi() {
 function setGanttAsOf(iso, opts = {}) {
   ganttAsOf = iso || null;
   updateGanttTimeUi();
+  if (ganttAsOf && ganttIsolate && ganttTime3d) ganttTimeApply3d(); // 3D följer direkt medan man drar
   clearTimeout(ganttTimeRender);
-  ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); updateGanttTimeUi(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); }, opts.now ? 0 : 90);
+  ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); updateGanttTimeUi(); }, opts.now ? 0 : 120);
 }
 function setGanttTimeOn(on) {
   const row = document.getElementById("ganttTimeRow"), btn = document.getElementById("ganttTimeBtn");
   if (row) row.classList.toggle("hidden", !on);
   if (btn) btn.setAttribute("aria-pressed", String(!!on));
   try { localStorage.setItem("4ddash-gantt-time", on ? "1" : "0"); } catch (e) {}
-  clearInterval(ganttTimeTimer); ganttTimeTimer = null;
+  clearTimeout(ganttTimeTimer); ganttTimeTimer = null;
   const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
-  if (!on) { const had = ganttAsOf; ganttAsOf = null; if (had) { renderGantt(getFilteredItems()); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); } return; }
+  if (!on) { const had = ganttAsOf; ganttAsOf = null; if (had) { renderGantt(getFilteredItems()); if (ganttIsolate && ganttTime3d) { ganttTimeReset(); scheduleGanttIsolate(); } } return; }
   const r = ganttTimeRange();
   setGanttAsOf(r && todayISO() >= r[0] && todayISO() <= r[1] ? todayISO() : (r ? r[0] : todayISO()), { now: true });
 }
@@ -3523,14 +3584,20 @@ function initGanttTime() {
   di.onchange = () => { if (di.value) setGanttAsOf(di.value, { now: true }); };
   td.onclick = () => setGanttAsOf(todayISO(), { now: true });
   pb.onclick = () => {
-    if (ganttTimeTimer) { clearInterval(ganttTimeTimer); ganttTimeTimer = null; pb.textContent = "▶"; return; }
+    if (ganttTimeTimer) { clearTimeout(ganttTimeTimer); ganttTimeTimer = null; pb.textContent = "▶"; return; }
     const r = ganttTimeRange(); if (!r) return;
     if (!ganttAsOf || ganttAsOf >= r[1]) ganttAsOf = r[0];
     pb.textContent = "⏸";
-    ganttTimeTimer = setInterval(() => {
-      const rr = ganttTimeRange(); if (!rr || ganttAsOf >= rr[1]) { clearInterval(ganttTimeTimer); ganttTimeTimer = null; pb.textContent = "▶"; return; }
-      setGanttAsOf(addDaysIso(ganttAsOf, 1), { now: true });
-    }, 250);
+    // Ett steg i taget: nästa dag först när 3D hunnit uppdateras (annars hinner Trimble Connect aldrig rita om medan det spelas).
+    const tick = async () => {
+      if (!ganttTimeTimer) return;
+      const rr = ganttTimeRange(); if (!rr || ganttAsOf >= rr[1]) { ganttTimeTimer = null; pb.textContent = "▶"; return; }
+      setGanttAsOf(addDaysIso(ganttAsOf, 1));
+      await new Promise(r => setTimeout(r, 30));
+      for (let i = 0; ganttTimeBusy && i < 200; i++) await new Promise(r => setTimeout(r, 30));
+      if (ganttTimeTimer) ganttTimeTimer = setTimeout(tick, 180);
+    };
+    ganttTimeTimer = setTimeout(tick, 0);
   };
   const fi = document.getElementById("ganttTimeFrom"), ti = document.getElementById("ganttTimeTo"), auto = document.getElementById("ganttTimeAuto"), fut = document.getElementById("ganttTimeFuture");
   const saveRange = () => { try { localStorage.setItem("4ddash-gantt-time-range", JSON.stringify([ganttTimeFrom, ganttTimeTo])); } catch (e) {} };
@@ -3550,6 +3617,10 @@ function initGanttTime() {
       clearTimeout(ganttTimeRender); ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); if (typeof initStatusColorControls === "function") initStatusColorControls(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); }, 200);
     };
   });
+  const dop = document.getElementById("ganttTimeDoneOp"), dopv = document.getElementById("ganttTimeDoneOpVal");
+  try { const v = localStorage.getItem("4ddash-gantt-time-doneop"); if (v !== null && v !== "") ganttDoneOp = Math.max(0, Math.min(100, Number(v))); } catch (e) {}
+  dop.value = ganttDoneOp; dopv.textContent = ganttDoneOp;
+  dop.oninput = () => { ganttDoneOp = Number(dop.value); dopv.textContent = dop.value; try { localStorage.setItem("4ddash-gantt-time-doneop", dop.value); } catch (e) {} if (ganttIsolate && ganttTime3d && ganttAsOf) { ganttTimeReset(); ganttTimeApply3d(); } };
   c3.onchange = () => {
     ganttTime3d = c3.checked;
     try { localStorage.setItem("4ddash-gantt-time3d", ganttTime3d ? "1" : "0"); } catch (e) {}
@@ -4489,7 +4560,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     return [...m].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([v, n]) => ({ value: v, label: v, count: `${n} akt.` }));
   };
   // Startvärden.
-  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0, temp0 = false, demo0 = false;
+  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0, temp0 = false, demo0 = false, doneCol0 = "", doneOp0 = 30;
   // Resurser: samma för alla objekt i aktiviteten – den första som har några gäller.
   const res0 = edit ? ((members.find(m => m.resources && m.resources.length) || {}).resources || []).map(r => ({ ...r })) : [];
   const preds = []; // { entry, lag: "" | tal }
@@ -4497,7 +4568,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     name0 = itemLabel(edit) === "Okänt objekt" ? "" : (edit.objectName || "");
     area0 = edit.area || ""; act0 = edit.activity || ""; contr0 = edit.contractor || "";
     prog0 = Math.round(members.reduce((s, m) => s + (Number(m.progress) || 0), 0) / Math.max(1, members.length));
-    temp0 = members.some(m => m.temporary); demo0 = members.some(m => m.demolition);
+    temp0 = members.some(m => m.temporary); demo0 = members.some(m => m.demolition); { const dm = members.find(m => m.doneColor || m.doneOpacity !== null); if (dm) { doneCol0 = dm.doneColor || ""; doneOp0 = dm.doneOpacity !== null ? dm.doneOpacity : 30; } }
     start0 = edit.startDate || todayISO(); end0 = edit.endDate || start0;
     const seen = new Set();
     members.flatMap(m => m.dependsOn || []).map(String).filter(id => !own.has(id)).forEach(id => {
@@ -4534,9 +4605,10 @@ function openActivityDialog({ after = null, edit = null } = {}) {
       <input type="text" class="na-pred-search" placeholder="＋ Sök aktivitet att vänta på…" />
       <input type="hidden" class="na-pred" />
     </div>
-    <details class="na-res"${(res0.length && naResOpen()) || temp0 || demo0 ? " open" : ""}><summary>Avancerat (temporär, rivning, resurser) <span class="hint na-res-sum"></span></summary>
+    <details class="na-res"${(res0.length && naResOpen()) || temp0 || demo0 || doneCol0 ? " open" : ""}><summary>Avancerat (temporär, rivning, resurser) <span class="hint na-res-sum"></span></summary>
       <label class="na-temp" title="T.ex. en mobilkran, stämp eller tillfällig vägg: syns i 3D bara från start till slut och försvinner sedan"><input type="checkbox" class="na-temp-chk" ${temp0 ? "checked" : ""} /> <span><b>Temporär</b> – syns i 3D bara mellan start och slut (t.ex. mobilkran)</span></label>
       <label class="na-temp" title="Rivning: objektet syns hela tiden före start, färgas som vanligt under aktiviteten och försvinner efter slut"><input type="checkbox" class="na-demo-chk" ${demo0 ? "checked" : ""} /> <span><b>Rivning</b> – syns även före start, försvinner efter slut</span></label>
+      <label class="na-temp na-done" title="Efter slutdatum visas objektet i den här färgen och genomskinligheten i 3D-tidslinjen – så att man ser arbeten innanför färdiga delar"><input type="checkbox" class="na-done-chk" ${doneCol0 || doneOp0 !== 30 ? "checked" : ""} /> <span><b>Egen färg efter slut</b> – <input type="color" class="na-done-col" value="${doneCol0 || "#3fb950"}" /> opacitet <input type="range" class="na-done-op" min="0" max="100" step="5" value="${doneOp0}" /> <b class="na-done-val">${doneOp0}</b> %</span></label>
       <div class="na-res-rows"></div>
       <button type="button" class="na-res-add">＋ Resurs</button>
       <div class="hint">Antal = personer/maskiner samtidigt, timmar = totalt för aktiviteten. ${pp ? "Från Powerproject – har aktiviteten resurser där skrivs de över vid nästa import." : ""}</div>
@@ -4548,6 +4620,8 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">${edit ? "Spara" : "Lägg till"}</button></div>`;
   overlayHost().appendChild(pop);
   const q = c => pop.querySelector(c);
+  q(".na-done-op").oninput = e => { q(".na-done-val").textContent = e.target.value; q(".na-done-chk").checked = true; };
+  q(".na-done-col").oninput = () => { q(".na-done-chk").checked = true; };
   q(".na-temp-chk").onchange = e => { if (e.target.checked) q(".na-demo-chk").checked = false; };
   q(".na-demo-chk").onchange = e => { if (e.target.checked) q(".na-temp-chk").checked = false; };
   const place = () => {
@@ -4746,6 +4820,9 @@ function openActivityDialog({ after = null, edit = null } = {}) {
         if (tmp !== !!m.temporary) f.temporary = tmp;
         const dem = q(".na-demo-chk").checked;
         if (dem !== !!m.demolition) f.demolition = dem;
+        const dOn = q(".na-done-chk").checked, dCol = dOn ? q(".na-done-col").value : null, dOp = dOn ? Number(q(".na-done-op").value) : null;
+        if ((dCol || null) !== (m.doneColor || null)) f.doneColor = dCol;
+        if (dOp !== (m.doneOpacity === undefined ? null : m.doneOpacity)) f.doneOpacity = dOp;
         if (Object.keys(f).length) plan.fields.set(m.id, f);
         const curDeps = (m.dependsOn || []).map(String);
         const nextDeps = [...new Set([...curDeps.filter(id => !initIds.has(id)), ...predIds])];
@@ -4776,7 +4853,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
       area: area || null, activity: activity || null, contractor: contractor || null, status: "planerad",
       start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress,
-      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), ...(q(".na-demo-chk").checked ? { demolition: true } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
+      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), ...(q(".na-demo-chk").checked ? { demolition: true } : {}), ...(q(".na-done-chk").checked ? { done_color: q(".na-done-col").value, done_opacity: Number(q(".na-done-op").value) } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
       baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };
     const btn = q(".na-save");
     btn.disabled = true;

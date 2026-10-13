@@ -36,7 +36,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `
     window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({
       project: { getProject: () => Promise.resolve({ id: '${PID}', name: 'Test' }) },
-      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
+      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
     }) };` }));
   await page.route('https://api.github.com/repos/vfalk-NCC/4D-data/contents/**', r => {
     const req = r.request(), f = decodeURIComponent(new URL(req.url()).pathname.replace('/repos/vfalk-NCC/4D-data/contents/', ''));
@@ -84,7 +84,16 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.fill('#ganttSearch', 'Schakt'); await page.waitForTimeout(900);
   if ((await iso()).length !== 3) fail('Av: schemat ändras utan att modellen isoleras');
   console.log('OK: Visa endast kopplade – isolerar objekten för det som visas i Gantt, följer sökningen, av = hela modellen igen');
-  // Tidslinje-dragaren: valfri rad med dragare + datum; markeringen följer datumet, "Visa i 3D" visar bara objekt som hunnit starta.
+  // Tidslinje-dragaren: valfri rad med dragare + datum; markeringen följer datumet, "Visa i 3D" visar bara objekt som hunnit starta
+  // och uppdaterar 3D direkt (bara de som byter läge), färdigt arbete får egen opacitet.
+  const replay = () => page.evaluate(() => {
+    const vis = new Map(), col = new Map();
+    (window.__calls || []).forEach(({ a, b }) => {
+      if (!a) { if (b.visible === false) vis.clear(); if (b.color === 'reset') col.clear(); return; }
+      a.modelObjectIds.forEach(m => m.objectRuntimeIds.forEach(r => { if (b.visible !== undefined) vis.set(r, b.visible); if (b.color && b.color !== 'reset') col.set(r, b.color); }));
+    });
+    return { shown: [...vis].filter(([, v]) => v).map(([r]) => r).sort().join(), col: Object.fromEntries(col) };
+  });
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(500);
   if (await page.isVisible('#ganttTimeRow')) fail('Dragaren ska vara avstängd som standard');
   await page.click('#ganttTimeBtn'); await page.waitForTimeout(400);
@@ -93,15 +102,43 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (!(await page.$('.gantt-today-label.asof')) && !(await page.$('.board-week-today'))) fail('Markeringen i schemat ska följa datumet');
   const sum = await page.innerText('#ganttTimeSum');
   if (!/klara · \d+ pågår · \d+ kommande/.test(sum)) fail('Sammanfattning per datum: ' + sum);
-  const n0 = (await iso()).length;
-  await page.check('#ganttTime3d'); await page.waitForTimeout(1000);
-  let T = await iso();
-  if (T.length <= n0 || ids(T[T.length - 1]) !== 'G7') fail('Vid dag 4 ska bara G7 (hunnit starta) visas: ' + JSON.stringify(T.slice(n0)));
-  const cols = await page.evaluate(() => window.__state.filter(x => x && x.color && x.color !== 'reset').map(x => x.color));
-  if (cols.length !== 1 || cols[0] !== await page.evaluate(() => STATUS_COLORS.pagaende)) fail('G7 pågår vid dag 4 – ska få pågående-färgen: ' + JSON.stringify(cols));
-  // Egen färg på Pågående slår igenom i 3D.
+  await page.evaluate(() => { window.__calls = []; });
+  await page.check('#ganttTime3d'); await page.waitForTimeout(1200);
+  let R = await replay();
+  if (R.shown !== 'G7') fail('Vid dag 4 ska bara G7 (hunnit starta) visas: ' + JSON.stringify(R));
+  const pg = await page.evaluate(() => STATUS_COLORS.pagaende), hx = c => '#' + [c.r, c.g, c.b].map(v => v.toString(16).padStart(2, '0')).join('');
+  if (hx(R.col.G7) !== pg || R.col.G7.a !== 255) fail('G7 pågår – pågående-färgen, helt täckande: ' + JSON.stringify(R.col));
+  // Realtid: ett steg i dragaren ändrar bara de objekt som byter läge (inget "släck allt" igen).
+  const n7 = await page.evaluate(() => window.__calls.length);
+  await page.fill('#ganttTimeDate', day(7)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(900);
+  const calls = await page.evaluate(n => window.__calls.slice(n).map(c => !!c.a), n7);
+  if (calls.some(x => !x)) fail('Vid ett steg ska inte hela modellen släckas om: ' + JSON.stringify(calls));
+  R = await replay();
+  if (R.shown !== 'G5,G7') fail('Vid dag 7 ska båda visas: ' + R.shown);
+  // Färdigt arbete (G7 slutar dag 8): efter slut genomskinligt – opacitet från skjutreglaget.
+  await page.fill('#ganttTimeDate', day(10)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(900);
+  R = await replay();
+  if (!R.col.G7 || Math.abs(R.col.G7.a - Math.round(0.30 * 255)) > 1) fail('Klart ska få klart-opaciteten (30 %): ' + JSON.stringify(R.col.G7));
+  await page.evaluate(() => { const i = document.getElementById('ganttTimeDoneOp'); i.value = 60; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(900);
+  R = await replay();
+  if (Math.abs(R.col.G7.a - Math.round(0.60 * 255)) > 1) fail('Skjutreglaget för klart synligt ska slå igenom: ' + JSON.stringify(R.col.G7));
+  // Egen färg/opacitet per aktivitet.
+  await page.evaluate(() => { const m = ganttShownItems.flatMap(i => i.members || [i]).find(x => x.objectId === 'G7'); m.doneColor = '#112233'; m.doneOpacity = 10; ganttTimeApply3d(); }); await page.waitForTimeout(500);
+  await page.evaluate(() => { ganttTimeReset(); ganttTimeApply3d(); }); await page.waitForTimeout(800);
+  R = await replay();
+  if (hx(R.col.G7) !== '#112233' || Math.abs(R.col.G7.a - Math.round(0.10 * 255)) > 1) fail('Aktivitetens egen färg efter slut: ' + JSON.stringify(R.col.G7));
+  // Färg på Pågående slår igenom.
+  await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(600);
   await page.evaluate(() => { const i = document.querySelector('[data-tcol="pagaende"]'); i.value = '#123456'; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
-  if (!(await page.evaluate(() => window.__state.some(x => x && x.color === '#123456')))) fail('Vald färg för pågående ska användas i 3D');
+  R = await replay();
+  if (hx(R.col.G7) !== '#123456') fail('Vald färg för pågående ska användas i 3D: ' + JSON.stringify(R.col.G7));
+  // Uppspelning: 3D uppdateras medan det spelas (inte först vid paus).
+  await page.fill('#ganttTimeDate', day(2)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(600);
+  const nPlay = await page.evaluate(() => window.__calls.length);
+  await page.click('#ganttTimePlay'); await page.waitForTimeout(700);
+  const mid = await page.evaluate(n => ({ grew: window.__calls.length > n, playing: document.getElementById('ganttTimePlay').textContent }), nPlay);
+  if (!mid.grew) fail('3D ska uppdateras under uppspelning: ' + JSON.stringify(mid));
+  if (mid.playing === '⏸') await page.click('#ganttTimePlay');
   // Intervall: Från/Till styr dragarens spann.
   await page.fill('#ganttTimeFrom', day(2)); await page.dispatchEvent('#ganttTimeFrom', 'change');
   await page.fill('#ganttTimeTo', day(10)); await page.dispatchEvent('#ganttTimeTo', 'change'); await page.waitForTimeout(400);
@@ -109,18 +146,14 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('#ganttTimeAuto'); await page.waitForTimeout(300);
   if ((await page.getAttribute('#ganttTimeSlider', 'max')) === '8') fail('Auto ska ge hela spannet');
   // Visa kommande: G5 (startar dag 6) syns i kommande-färgen redan vid dag 4.
-  await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(600);
   await page.check('#ganttTimeFuture'); await page.waitForTimeout(1200);
-  T = await iso();
-  if (ids(T[T.length - 1]) !== 'G5,G7') fail('Visa kommande: båda i 3D: ' + JSON.stringify(T[T.length - 1]));
+  R = await replay();
+  if (R.shown !== 'G5,G7') fail('Visa kommande: båda i 3D: ' + R.shown);
   await page.uncheck('#ganttTimeFuture'); await page.waitForTimeout(800);
-  await page.fill('#ganttTimeDate', day(7)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(1000);
-  T = await iso();
-  if (ids(T[T.length - 1]) !== 'G5,G7') fail('Vid dag 7 ska båda visas: ' + JSON.stringify(T[T.length - 1]));
-  await page.click('#ganttTimeBtn'); await page.waitForTimeout(300);
+  await page.click('#ganttTimeBtn'); await page.waitForTimeout(500);
   if (await page.isVisible('#ganttTimeRow') || await page.$('.gantt-today-label.asof')) fail('Av: raden och datummarkeringen ska försvinna');
   await page.evaluate(() => { document.getElementById('ganttTime3d').checked = false; document.getElementById('ganttTime3d').onchange(); }); await page.click('#ganttIsolateBtn'); await page.waitForTimeout(400);
-  console.log('OK: tidslinje-dragare över schemat – datummarkering, per-datum-summering, Visa i 3D följer datumet');
+  console.log('OK: tidslinje-dragare över schemat – datummarkering, realtid i 3D, färger/opacitet efter slut, intervall, kommande');
   // Avvisar Trimble Connect isolateEntities (fel utan text, som hos Victor): släck allt och tänd de kopplade i stället.
   await page.evaluate(() => { window.__state = []; API.viewer.isolateEntities = () => Promise.reject(undefined); });
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(600);
