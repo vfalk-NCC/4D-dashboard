@@ -5593,6 +5593,16 @@ function initGanttControls() {
     searchEl.oninput = () => { clearTimeout(tmr); tmr = setTimeout(() => { ganttSearch = searchEl.value.trim(); renderGantt(getFilteredItems()); }, 150); };
     searchEl.onkeydown = e => { if (e.key === "Escape" && searchEl.value) { e.stopPropagation(); searchEl.value = ""; ganttSearch = ""; renderGantt(getFilteredItems()); } };
   }
+  const refBtn = document.getElementById("ganttRefreshBtn");
+  if (refBtn) refBtn.onclick = async () => {
+    if (refBtn.classList.contains("spin")) return;
+    const lbl = refBtn.querySelector("span");
+    refBtn.classList.add("spin"); refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdaterar…";
+    try { await refreshAll(); if (lbl) lbl.textContent = "Uppdaterad"; refBtn.classList.add("done"); }
+    catch (e) { console.warn("Gantt: uppdatera", e); if (lbl) lbl.textContent = "Misslyckades"; }
+    refBtn.classList.remove("spin");
+    setTimeout(() => { refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdatera"; }, 1800);
+  };
   const isoBtn = document.getElementById("ganttIsolateBtn");
   if (isoBtn) isoBtn.onclick = () => setGanttIsolate(!ganttIsolate);
   const fullBtn = document.getElementById("ganttFullBtn");
