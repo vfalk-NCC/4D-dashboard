@@ -2259,3 +2259,9 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .gantt-time-slider { flex: 1 1 240px; min-width: 120px; accent-color: #f59e0b; }
 .gantt-time-sum { white-space: nowrap; }
 .gantt-today-label.asof { background: #f59e0b; color: #1f2937; }
+
+.gantt-time-row { flex-wrap: wrap; }
+.gantt-time-lim { font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+.gantt-time-cols { display: inline-flex; gap: 8px; font-size: 12px; align-items: center; }
+.gantt-time-cols label { display: inline-flex; align-items: center; gap: 3px; }
+.gantt-time-cols input[type="color"] { width: 24px; height: 20px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; }

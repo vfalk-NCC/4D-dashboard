@@ -170,7 +170,18 @@
           <input type="range" id="ganttTimeSlider" class="gantt-time-slider" min="0" max="1" value="0" aria-label="Datum – dra för att se framdriften" />
           <label class="gantt-toolbar-field"><input type="date" id="ganttTimeDate" aria-label="Datum" /></label>
           <button type="button" id="ganttTimeToday" class="gantt-toolbar-btn" title="Tillbaka till idag">Idag</button>
+          <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens början – tomt = tidigaste start">Från <input type="date" id="ganttTimeFrom" aria-label="Tidslinje från" /></label>
+          <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens slut – tomt = senaste slut">Till <input type="date" id="ganttTimeTo" aria-label="Tidslinje till" /></label>
+          <button type="button" id="ganttTimeAuto" class="gantt-toolbar-btn" title="Hela spannet (tidigaste start – senaste slut)">Auto</button>
+          <span class="gantt-time-cols" title="Färger i schemat och i 3D vid valt datum – samma som i Inställningar">
+            <label>Pågående <input type="color" data-tcol="pagaende" aria-label="Färg pågående" /></label>
+            <label>Klart <input type="color" data-tcol="klar" aria-label="Färg klart" /></label>
+            <label>Kommande <input type="color" data-tcol="planerad" aria-label="Färg kommande" /></label>
+          </span>
           <span id="ganttTimeSum" class="hint gantt-time-sum"></span>
+          <label class="gantt-pill" title="Visa även objekt som inte hunnit starta, i färgen för kommande (av: de är dolda i 3D)">
+            <input type="checkbox" id="ganttTimeFuture" /> Visa kommande
+          </label>
           <label class="gantt-pill" title="Visa i 3D-modellen bara objekten för aktiviteterna som hunnit starta vid valt datum (slår på Visa endast kopplade)">
             <input type="checkbox" id="ganttTime3d" /> Visa i 3D
           </label>

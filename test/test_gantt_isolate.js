@@ -97,6 +97,23 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.check('#ganttTime3d'); await page.waitForTimeout(1000);
   let T = await iso();
   if (T.length <= n0 || ids(T[T.length - 1]) !== 'G7') fail('Vid dag 4 ska bara G7 (hunnit starta) visas: ' + JSON.stringify(T.slice(n0)));
+  const cols = await page.evaluate(() => window.__state.filter(x => x && x.color && x.color !== 'reset').map(x => x.color));
+  if (cols.length !== 1 || cols[0] !== await page.evaluate(() => STATUS_COLORS.pagaende)) fail('G7 pågår vid dag 4 – ska få pågående-färgen: ' + JSON.stringify(cols));
+  // Egen färg på Pågående slår igenom i 3D.
+  await page.evaluate(() => { const i = document.querySelector('[data-tcol="pagaende"]'); i.value = '#123456'; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
+  if (!(await page.evaluate(() => window.__state.some(x => x && x.color === '#123456')))) fail('Vald färg för pågående ska användas i 3D');
+  // Intervall: Från/Till styr dragarens spann.
+  await page.fill('#ganttTimeFrom', day(2)); await page.dispatchEvent('#ganttTimeFrom', 'change');
+  await page.fill('#ganttTimeTo', day(10)); await page.dispatchEvent('#ganttTimeTo', 'change'); await page.waitForTimeout(400);
+  if ((await page.getAttribute('#ganttTimeSlider', 'max')) !== '8') fail('Dragaren ska spänna Från–Till (8 dagar): ' + await page.getAttribute('#ganttTimeSlider', 'max'));
+  await page.click('#ganttTimeAuto'); await page.waitForTimeout(300);
+  if ((await page.getAttribute('#ganttTimeSlider', 'max')) === '8') fail('Auto ska ge hela spannet');
+  // Visa kommande: G5 (startar dag 6) syns i kommande-färgen redan vid dag 4.
+  await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(600);
+  await page.check('#ganttTimeFuture'); await page.waitForTimeout(1200);
+  T = await iso();
+  if (ids(T[T.length - 1]) !== 'G5,G7') fail('Visa kommande: båda i 3D: ' + JSON.stringify(T[T.length - 1]));
+  await page.uncheck('#ganttTimeFuture'); await page.waitForTimeout(800);
   await page.fill('#ganttTimeDate', day(7)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(1000);
   T = await iso();
   if (ids(T[T.length - 1]) !== 'G5,G7') fail('Vid dag 7 ska båda visas: ' + JSON.stringify(T[T.length - 1]));
