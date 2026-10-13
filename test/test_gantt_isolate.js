@@ -37,7 +37,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `
     window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({
       project: { getProject: () => Promise.resolve({ id: '${PID}', name: 'Test' }) },
-      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getModels: () => Promise.resolve([{ id: 'M1', state: 'unloaded' }, { id: 'BAD', state: 'unloaded' }]), toggleModel: (id, on) => { (window.__tog = window.__tog || []).push([id, on]); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : ids.includes('BADOBJ') ? Promise.reject(new Error('Objektet finns inte')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
+      viewer: { isolateEntities: e => { (window.__iso = window.__iso || []).push(e); (window.__calls = window.__calls || []).push({ iso: e }); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__state = window.__state || []).push(b); (window.__calls = window.__calls || []).push({ a, b }); return Promise.resolve(); }, getModels: () => Promise.resolve([{ id: 'M1', state: 'unloaded' }, { id: 'BAD', state: 'unloaded' }]), toggleModel: (id, on) => { (window.__tog = window.__tog || []).push([id, on]); return Promise.resolve(); }, getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'G' + x)), convertToObjectRuntimeIds: (m, ids) => m === 'BAD' ? Promise.reject(new Error('Invalid model id')) : ids.includes('BADOBJ') ? Promise.reject(new Error('Objektet finns inte')) : Promise.resolve(ids), getObjectProperties: () => Promise.resolve([]), setSelection: () => Promise.resolve() }
     }) };` }));
   await page.route('https://api.github.com/repos/vfalk-NCC/4D-data/contents/**', r => {
     const req = r.request(), f = decodeURIComponent(new URL(req.url()).pathname.replace('/repos/vfalk-NCC/4D-data/contents/', ''));
@@ -89,7 +89,8 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   // och uppdaterar 3D direkt (bara de som byter läge), färdigt arbete får egen opacitet.
   const replay = () => page.evaluate(() => {
     const vis = new Map(), col = new Map();
-    (window.__calls || []).forEach(({ a, b }) => {
+    (window.__calls || []).forEach(({ a, b, iso }) => {
+      if (iso) { vis.clear(); iso.forEach(m => m.entityIds.forEach(r => vis.set(r, true))); return; }
       if (!a) { if (b.visible === false) vis.clear(); if (b.color === 'reset') col.clear(); return; }
       a.modelObjectIds.forEach(m => m.objectRuntimeIds.forEach(r => { if (b.visible !== undefined) vis.set(r, b.visible); if (b.color && b.color !== 'reset') col.set(r, b.color); }));
     });
@@ -112,7 +113,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   // Realtid: ett steg i dragaren ändrar bara de objekt som byter läge (inget "släck allt" igen).
   const n7 = await page.evaluate(() => window.__calls.length);
   await page.fill('#ganttTimeDate', day(7)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(900);
-  const calls = await page.evaluate(n => window.__calls.slice(n).map(c => !!c.a), n7);
+  const calls = await page.evaluate(n => window.__calls.slice(n).map(c => !!(c.a || c.iso)), n7);
   if (calls.some(x => !x)) fail('Vid ett steg ska inte hela modellen släckas om: ' + JSON.stringify(calls));
   R = await replay();
   if (R.shown !== 'G5,G7') fail('Vid dag 7 ska båda visas: ' + R.shown);

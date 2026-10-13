@@ -3444,7 +3444,8 @@ function ganttTimeColorOf(t) {
   if (t.phase === "klar") return hexToRgbaObj(t.doneColor || STATUS_COLORS.klar, (t.doneOpacity !== null ? t.doneOpacity : ganttDoneOp) / 100);
   return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, 1);
 }
-function ganttTimeReset() { ganttPhaseNow = new Map(); ganttTimeBase = false; isolateSig = ""; ganttRidCache.clear(); }
+let ganttVisSig = "";
+function ganttTimeReset() { ganttPhaseNow = new Map(); ganttTimeBase = false; ganttVisSig = ""; isolateSig = ""; ganttRidCache.clear(); }
 async function ganttTimeApply3d() {
   if (!ganttIsolate || !ganttAsOf || !ganttTime3d) return;
   if (ganttTimeBusy) { ganttTimePending = true; return; }
@@ -3463,25 +3464,35 @@ async function ganttTimeApply3d() {
       if (r.modelFailed) { console.warn("Hoppar över modell som inte är inläst", modelId); skipped++; continue; } // ej cachad – provas igen nästa gång
       r.map.forEach((rid, id) => ganttRidCache.set(`${modelId}|${id}`, rid));
     }
-    // Första gången: släck allt (det som inte är kopplat ska inte stå kvar), därefter bara ändringarna.
-    if (!ganttTimeBase) { try { await V.setObjectState(undefined, { visible: false }); await V.setObjectState(undefined, { color: "reset" }); } catch (e) { console.warn(e); } ganttPhaseNow = new Map(); ganttTimeBase = true; }
-    const groups = new Map(); // modell|fas|färg -> runtime-id
-    const next = new Map();
+    // Vilka objekt som ska synas vid datumet. Själva synligheten sätts med Trimble Connects egen isolering (tillförlitlig),
+    // bara när mängden ändrats; färgerna ändras bara för de som byter läge.
+    const next = new Map(), vis = new Map(), groups = new Map();
     targets.forEach(t => {
       const k = `${t.modelId}|${t.objectId}`, rid = ganttRidCache.get(k);
       if (rid === null || rid === undefined) return;
       const sig = `${t.phase}|${t.phase === "klar" ? JSON.stringify(ganttTimeColorOf(t)) : STATUS_COLORS[t.phase] || ""}`;
       next.set(k, sig);
-      if (ganttPhaseNow.get(k) === sig) return;
+      if (t.phase !== "dold") (vis.get(t.modelId) || vis.set(t.modelId, []).get(t.modelId)).push(rid);
+      if (t.phase === "dold" || (ganttTimeBase && ganttPhaseNow.get(k) === sig)) return;
       const gk = `${t.modelId}\u0001${sig}`;
-      if (!groups.has(gk)) groups.set(gk, { modelId: t.modelId, phase: t.phase, color: t.phase === "dold" ? null : ganttTimeColorOf(t), rids: [] });
+      if (!groups.has(gk)) groups.set(gk, { modelId: t.modelId, color: ganttTimeColorOf(t), rids: [] });
       groups.get(gk).rids.push(rid);
     });
-    for (const g of groups.values()) {
-      const sel = { modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] };
-      if (g.phase === "dold") await V.setObjectState(sel, { visible: false });
-      else await V.setObjectState(sel, { visible: true, color: g.color });
+    const visSig = [...vis].map(([m, r]) => m + ":" + r.slice().sort().join(".")).sort().join("|");
+    if (!ganttTimeBase || visSig !== ganttVisSig) {
+      const entities = [...vis].map(([modelId, entityIds]) => ({ modelId, entityIds }));
+      try {
+        if (!entities.length) await V.setObjectState(undefined, { visible: false });
+        else await V.isolateEntities(entities);
+      } catch (e1) {
+        console.warn("isolateEntities misslyckades, släcker allt och tänder de synliga i stället", e1);
+        await V.setObjectState(undefined, { visible: false });
+        if (entities.length) await V.setObjectState({ modelObjectIds: entities.map(m => ({ modelId: m.modelId, objectRuntimeIds: m.entityIds })) }, { visible: true });
+      }
+      if (!ganttTimeBase) { try { await V.setObjectState(undefined, { color: "reset" }); } catch (e) { console.warn(e); } for (const g of groups.values()) { /* färger sätts nedan */ } }
+      ganttVisSig = visSig; ganttTimeBase = true;
     }
+    for (const g of groups.values()) await V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: g.color });
     ganttPhaseNow = next; ganttColored = true;
     const shown = [...next.values()].filter(v => !v.startsWith("dold")).length;
     ganttTimeInfo(`${shown} i 3D${skipped ? ` · ${skipped} mod. ej inlästa` : ""}`);
