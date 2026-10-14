@@ -61,6 +61,16 @@ seed('plan_items.json', [
     const mid = await page.evaluate(day3 => vidCamAt(day3).position.x, day(1.5 | 0));
     const cams = await page.evaluate(() => [vidCamAt(addDaysIso(todayISO(), -30)).position.x, vidCamAt(addDaysIso(todayISO(), 30)).position.x]);
     if (cams[0] !== 0 || cams[1] !== 100 || !(mid > 0 && mid < 100)) fail('Kameran står still före första och efter sista vyn, och glider emellan: ' + JSON.stringify({ cams, mid }));
+    // Reglaget hoppar TC-vyn till bildens kamera och datum.
+    await page.evaluate(() => { window.__cams = []; const r = document.getElementById('vidFrame'); r.value = r.max; r.dispatchEvent(new Event('input')); });
+    await page.waitForTimeout(800);
+    const jmp = await page.evaluate(() => ({ x: window.__cam.position.x, d: ganttAsOf, last: vidRange()[1] }));
+    if (jmp.x !== 100 || jmp.d !== jmp.last) fail('Reglaget ska flytta TC-vyn till sista bilden (kamera och datum): ' + JSON.stringify(jmp));
+    await page.evaluate(() => { const r = document.getElementById('vidFrame'); r.value = 0; r.dispatchEvent(new Event('input')); }); await page.waitForTimeout(800);
+    if ((await page.evaluate(() => window.__cam.position.x)) !== 0) fail('Första bilden: kameran på första vyn');
+    // Kameran glider jämnt mellan hela dagar (decimaldagar), inte i dagssteg.
+    const sm = await page.evaluate(() => { const [from, to] = vidRange(), n = 300, xs = []; for (let i = 0; i <= n; i += 1) xs.push(vidCamAtFrame(i, n, from, to).position.x); const uniq = new Set(xs.map(v => v.toFixed(3))).size; return { uniq }; });
+    if (sm.uniq < 250) fail('Kameran ska ha ett eget läge för (nästan) varje bild, inte stå still mellan dagarna: ' + JSON.stringify(sm));
     // Provbild med grafik.
     await page.fill('#vidSec', '3'); await page.selectOption('#vidFps', '10'); await page.fill('#vidWait', '0'); await page.dispatchEvent('#vidWait', 'change');
     await page.evaluate(() => { const r = document.getElementById('vidFrame'); r.value = 7; r.dispatchEvent(new Event('input')); });
@@ -76,6 +86,7 @@ seed('plan_items.json', [
     await page.dispatchEvent('#vidSec', 'change');
     if ((await page.$$('#vidShotBox .vid-card')).length !== 3 || !(await page.$('#vidShotBox .vc-save'))) fail('Provbilderna ska ligga kvar med Spara-knapp');
     // Rendera: 3 s × 10 bilder/s = 31 bilder; videon sparas som fil.
+    const camBefore = await page.evaluate(() => window.__cam.position.x);
     const dl = page.waitForEvent('download', { timeout: 120000 });
     await page.click('#vidRender');
     await dl; // nedladdningen startade (headless ger blobben namnet 'download' – namnet kontrolleras via vid.last)
@@ -84,7 +95,7 @@ seed('plan_items.json', [
     if (R.shots < 31 || !R.last || R.last.frames < 31 || R.last.size < 1000 || R.last.W !== 640 || !/^4D-film .*\.(mp4|webm)$/.test(R.last.name)) fail('Rendering: ' + JSON.stringify(R));
     // Kameran är tillbaka där den var.
     const camNow = await page.evaluate(() => window.__cam.position.x);
-    if (camNow !== 100) fail('Kameran ska återställas efter filmen: ' + camNow);
+    if (camNow !== camBefore) fail('Kameran ska återställas efter filmen: ' + camNow);
     // Förhandsvisning och stopp.
     await page.click('#vidPreview'); await page.waitForTimeout(500); await page.click('#vidStop'); await page.waitForFunction(() => !vid.run, null, { timeout: 10000 });
     console.log('OK: Video editor – kameravyer, provbild med grafik, rendering till videofil, förhandsvisning och stopp');
