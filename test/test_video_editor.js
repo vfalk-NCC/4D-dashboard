@@ -75,6 +75,12 @@ seed('plan_items.json', [
     await page.fill('#vidSec', '3'); await page.selectOption('#vidFps', '10'); await page.fill('#vidWait', '0'); await page.dispatchEvent('#vidWait', 'change');
     await page.evaluate(() => { const r = document.getElementById('vidFrame'); r.value = 7; r.dispatchEvent(new Event('input')); });
     if (!/bild 8 av 31/.test(await page.innerText('#vidFrameLbl'))) fail('Valet av bild: ' + await page.innerText('#vidFrameLbl'));
+    // Tidslinjen: dra på den väljer bild, huvudet och datumet följer, kameramarkörer finns.
+    { const fr0 = await page.evaluate(() => document.getElementById('vidFrame').value); const bb = await page.locator('#vidTlTrack').boundingBox(); await page.mouse.move(bb.x + bb.width * 0.5, bb.y + 20); await page.mouse.down(); await page.mouse.up();
+      const tl = await page.evaluate(() => ({ lbl: document.getElementById('vidFrameLbl').textContent, date: document.getElementById('vidTlDate').textContent, head: document.getElementById('vidTlHead').style.left, keys: document.querySelectorAll('.vtl-key').length, ticks: document.querySelectorAll('.vtl-axis span').length }));
+      if (!/bild 1[5-7] av 31/.test(tl.lbl) || !/^v\.\d+ · \d+ \w+ \d{4}$/.test(tl.date) || parseFloat(tl.head) < 45 || parseFloat(tl.head) > 55 || tl.ticks < 1) fail('Tidslinjen i videoeditorn: ' + JSON.stringify(tl));
+      if (process.env.SHOT) await page.locator('#vidTl, .vtl').first().screenshot({ path: process.env.SHOT + '/vtl.png' });
+      await page.evaluate(v => { const r = document.getElementById('vidFrame'); r.value = v; r.dispatchEvent(new Event('input')); }, fr0); }
     await page.click('#vidShot'); await page.waitForSelector('#vidShotBox canvas', { timeout: 15000 }).catch(async () => fail('Provbild: ' + await page.innerText('#vidMsg') + ' | ' + errors.join(' | ')));
     if (!/Provbild .*640×360/.test(await page.innerText('#vidMsg'))) fail('Provbild: ' + await page.innerText('#vidMsg'));
     if (process.env.VID_PNG) fs.writeFileSync(process.env.VID_PNG, Buffer.from((await page.evaluate(() => document.querySelector('#vidShotBox canvas').toDataURL('image/png'))).split(',')[1], 'base64'));

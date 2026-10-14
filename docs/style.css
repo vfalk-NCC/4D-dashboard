@@ -2412,3 +2412,19 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 @media print { .gantt-time-menu-wrap, .gantt-step { display: none !important; } }
 
 .gantt-step { font-size: 18px; line-height: 1; padding: 1px 8px 3px; }
+
+/* Tidslinjen i videoeditorn (som i 4D-planeringens 3D-editor). */
+.vid-frame-in { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+.vtl { margin: 6px 0 4px; user-select: none; touch-action: none; }
+.vtl-info { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; } .vtl-info b { font-size: 15px; color: #111827; } .vtl-info span { font-size: 11px; color: #6b7280; }
+.vtl-track { position: relative; height: 62px; margin: 0 8px; }
+.vtl-days { position: absolute; left: 0; right: 0; top: 4px; height: 20px; background: linear-gradient(#f8fafc, #eef2f7); border-radius: 4px; overflow: hidden; }
+.vtl-days i { position: absolute; top: 0; bottom: 0; border-left: 1px solid rgba(100,116,139,.12); } .vtl-days i.we { background: rgba(99,102,241,.13); }
+.vtl-axis { position: absolute; left: 0; right: 0; top: 0; bottom: 0; cursor: ew-resize; }
+.vtl-axis::before { content: ""; position: absolute; left: 0; right: 0; top: 14px; height: 2px; background: #475569; border-radius: 1px; }
+.vtl-axis span { position: absolute; top: 30px; font-size: 10px; color: #94a3b8; padding-left: 4px; border-left: 1px solid #cbd5e1; line-height: 24px; height: 24px; white-space: nowrap; transform: none; }
+.vtl-axis span.m { top: 17px; border-left: 2px solid #475569; color: #111827; font-weight: 700; font-size: 11px; height: 30px; line-height: 14px; padding-top: 2px; }
+.vtl-axis span.w { top: 34px; }
+.vtl-key { position: absolute; top: 0; width: 24px; height: 24px; margin-left: -12px; border: 0; background: #fff; border-radius: 50%; box-shadow: 0 1px 4px rgba(15,23,42,.35); font-size: 13px; padding: 0; cursor: pointer; z-index: 2; }
+.vtl-head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #6d5efc; z-index: 3; cursor: ew-resize; }
+.vtl-head::before { content: ""; position: absolute; left: -7px; top: 8px; width: 16px; height: 16px; border-radius: 50%; background: #6d5efc; box-shadow: 0 0 0 3px rgba(255,255,255,.9), 0 1px 6px rgba(79,70,229,.5); }

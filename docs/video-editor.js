@@ -224,6 +224,19 @@ function vidRender() {
 }
 
 /* ---- Gränssnittet ---------------------------------------------------------------------------------- */
+/* Tidslinjen (som i 4D-planeringens 3D-editor): dagar, veckor och månader, ett lila huvud att dra, och kameravyerna som markörer. */
+function vidTlHtml(from, to, keys, width) {
+  const t0 = vgxDate(from).getTime(), t1 = Math.max(vgxDate(to).getTime(), t0 + VGX_DAY), span = t1 - t0, U = t => Math.max(0, Math.min(1, (t - t0) / span)) * 100;
+  const days = Math.round(span / VGX_DAY), W = Math.max(300, width), dayPx = W / Math.max(1, days);
+  const dayCells = []; if (dayPx >= 3) for (let k = 0; k <= days; k++) { const d = new Date(t0 + k * VGX_DAY), we = d.getUTCDay() === 6 || d.getUTCDay() === 0; dayCells.push(`<i class="${we ? "we" : ""}" style="left:${(k / Math.max(1, days) * 100).toFixed(3)}%;width:${(100 / Math.max(1, days)).toFixed(3)}%"></i>`); }
+  const ticks = [], d = new Date(t0); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + 1);
+  for (; d.getTime() <= t1; d.setUTCMonth(d.getUTCMonth() + 1)) ticks.push(`<span class="m" style="left:${U(d.getTime()).toFixed(3)}%">${VGX_MON[d.getUTCMonth()].toUpperCase()}${d.getUTCMonth() === 0 ? " " + d.getUTCFullYear() : ""}</span>`);
+  const wkPx = W * 7 / Math.max(1, days), every = wkPx > 30 ? 1 : wkPx > 15 ? 2 : wkPx > 7 ? 4 : 0;
+  if (every) { const w = new Date(t0); w.setUTCDate(w.getUTCDate() - ((w.getUTCDay() + 6) % 7)); for (w.setUTCDate(w.getUTCDate() + 7); w.getTime() <= t1; w.setUTCDate(w.getUTCDate() + 7)) { const no = vgxWeekNo(w); if (every === 1 || no % every === 0) ticks.push(`<span class="w" style="left:${U(w.getTime()).toFixed(3)}%">v${no}</span>`); } }
+  const marks = keys.map((k, i) => `<button type="button" class="vtl-key" data-k="${i}" style="left:${U(vgxDate(k.date).getTime()).toFixed(3)}%" title="${vidEsc(k.name || "Vy")} · ${vidEsc(k.date)} – tryck: gå dit · dra: flytta · högerklick: ta bort">&#127909;</button>`).join("");
+  return `<div class="vtl"><div class="vtl-info"><b id="vidTlDate"></b><span>${vidEsc(vgxDate(from).getUTCDate() + " " + VGX_MON[vgxDate(from).getUTCMonth()] + " " + vgxDate(from).getUTCFullYear())} – ${vidEsc(vgxDate(to).getUTCDate() + " " + VGX_MON[vgxDate(to).getUTCMonth()] + " " + vgxDate(to).getUTCFullYear())}</span></div>
+    <div class="vtl-track" id="vidTlTrack"><div class="vtl-days">${dayCells.join("")}</div><div class="vtl-axis">${ticks.join("")}${marks}</div><div class="vtl-head" id="vidTlHead"></div></div></div>`;
+}
 function vidRender2() {
   const host = document.getElementById("videoEditor"); if (!host) return;
   const kept = [...host.querySelectorAll("#vidShotBox .vid-card")]; // provbilderna ligger kvar när blocket ritas om
@@ -241,7 +254,8 @@ function vidRender2() {
         <label title="Hur mycket data per bildpunkt videon får. Högre = mindre blockigt men större fil.">Kvalitet <select id="vidQ">${Object.entries(VID_Q).map(([k, v]) => `<option value="${k}"${(C.q || "high") === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select></label>
         <label title="Hur länge TC får rita om efter att datum och kamera ändrats, innan bilden tas. Längre = säkrare men långsammare.">Väntetid <input type="number" id="vidWait" min="0" max="5000" step="50" value="${C.wait}" /> ms</label></div>
       <div class="vid-row vid-checks"><label><input type="checkbox" id="vidTitle"${C.title ? " checked" : ""} /> Datumskylt</label><label><input type="checkbox" id="vidNow"${C.now ? " checked" : ""} /> Pågår nu-ruta</label><label><input type="checkbox" id="vidMeter"${C.meter ? " checked" : ""} /> Förloppsmätare</label><label><input type="checkbox" id="vidMiles"${C.miles !== false ? " checked" : ""} /> Milstolpar</label><label><input type="checkbox" id="vidPearls"${C.pearls ? " checked" : ""} /> Tidslinje</label></div>
-      <div class="vid-row vid-frame"><label>Bild <input type="range" id="vidFrame" min="0" max="${n}" value="${vid.frame == null ? 0 : Math.min(n, vid.frame)}" /></label><label class="vid-follow" title="Flytta TC-vyn till kameran och datumet för bilden när du drar i reglaget"><input type="checkbox" id="vidFollow"${C.follow !== false ? " checked" : ""} /> Visa i TC</label><button type="button" id="vidPrev" title="Föregående bild">◀</button><button type="button" id="vidNext" title="Nästa bild">▶</button><span id="vidFrameLbl" class="hint"></span></div>
+      ${vidTlHtml(from, to, keys, (host.clientWidth || 900) - 40)}
+      <div class="vid-row vid-frame"><input type="range" id="vidFrame" class="vid-frame-in" min="0" max="${n}" value="${vid.frame == null ? 0 : Math.min(n, vid.frame)}" aria-label="Bild" /><label class="vid-follow" title="Flytta TC-vyn till kameran och datumet för bilden när du drar på tidslinjen"><input type="checkbox" id="vidFollow"${C.follow !== false ? " checked" : ""} /> Visa i TC</label><button type="button" id="vidPrev" title="Föregående bild">◀</button><button type="button" id="vidNext" title="Nästa bild">▶</button><button type="button" id="vidAddKey2" title="Spara kamerans nuvarande läge som en vy på datumet där huvudet står">＋ Vy här</button><span id="vidFrameLbl" class="hint"></span></div>
       <div class="vid-row"><button type="button" id="vidShot" title="Tar en provbild på vald bild: samma kamera, datum och grafik som i filmen">Provbild på vald bild</button><button type="button" id="vidShotKeys" title="En provbild på varje kameravy">Provbild på varje vy</button><button type="button" id="vidPreview" title="Kamera och datum i TC utan att spela in">▶ Förhandsvisa</button><button type="button" id="vidRender" class="primary" title="Tar alla bilder och sparar videon på datorn">⏺ Rendera video</button><button type="button" id="vidStop" class="hidden" title="Avbryt">■ Stoppa</button>
         <span class="hint">${n + 1} bilder · ${vidMime() ? (/mp4/.test(vidMime()) ? "MP4" : "WebM") : "video stöds inte"} · tar ungefär ${Math.max(1, Math.round((n + 1) * ((Number(C.wait) || 300) + 500) / 60000))} min</span></div>
       <div id="vidMsg" class="hint vid-msg"></div><div id="vidShotBox" class="vid-shotbox"></div></div>`;
@@ -267,13 +281,50 @@ function vidRender2() {
   q("#vidFps").onchange = e => { put("fps", Number(e.target.value)); vidRender2(); };
   q("#vidWait").onchange = e => { put("wait", Math.max(0, Math.min(5000, Number(e.target.value) || 300))); vidRender2(); };
   [["vidTitle", "title"], ["vidNow", "now"], ["vidMeter", "meter"], ["vidMiles", "miles"], ["vidPearls", "pearls"]].forEach(([id, k]) => { q("#" + id).onchange = e => put(k, e.target.checked); });
-  const fl = () => { const i = vidFrameSel(); vid.frame = i; q("#vidFrameLbl").textContent = `bild ${i + 1} av ${n + 1} · ${vidDateOfFrame(i, n, from, to)} · ${(i / Math.max(5, Number(C.fps) || 15)).toFixed(1).replace(".", ",")} s`; };
+  const fl = () => { const i = vidFrameSel(); vid.frame = i; vidTlUpdate(host, i, n, from, to); q("#vidFrameLbl").textContent = `bild ${i + 1} av ${n + 1} · ${vidDateOfFrame(i, n, from, to)} · ${(i / Math.max(5, Number(C.fps) || 15)).toFixed(1).replace(".", ",")} s`; };
   q("#vidFollow").onchange = e => { put("follow", e.target.checked); if (e.target.checked) vidGoFrame(vidFrameSel()); };
   q("#vidFrame").oninput = () => { fl(); vidGoFrameSoon(); }; q("#vidPrev").onclick = () => { q("#vidFrame").value = Math.max(0, vidFrameSel() - 1); fl(); vidGoFrameSoon(); }; q("#vidNext").onclick = () => { q("#vidFrame").value = Math.min(n, vidFrameSel() + 1); fl(); vidGoFrameSoon(); }; fl();
+  vidTlBind(host, q, n, from, to, keys, fl);
+  q("#vidAddKey2").onclick = async () => { const i = vidFrameSel(); q("#vidKeyDate").value = vidDateOfFrame(i, n, from, to); q("#vidAddKey").click(); };
   q("#vidShotKeys").onclick = vidShotKeys;
   q("#vidShot").onclick = vidShot; q("#vidPreview").onclick = vidPreview; q("#vidRender").onclick = vidRender;
   q("#vidStop").onclick = () => { if (vid.run) vid.run.stop = true; };
   if (vid.run) vidBusyUi(true);
+}
+function vidTlUpdate(host, i, n, from, to) {
+  const h = host.querySelector("#vidTlHead"), dl = host.querySelector("#vidTlDate"); if (!h || !dl) return;
+  h.style.left = (n ? Math.max(0, Math.min(1, i / n)) * 100 : 0) + "%";
+  const d = vgxDate(vidDateOfFrame(i, n, from, to));
+  dl.textContent = `v.${vgxWeekNo(d)} · ${d.getUTCDate()} ${VGX_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+/* Dra på tidslinjen = välj bild (reglaget är dolt men styr). Kameramarkörerna: tryck = gå dit, dra = nytt datum, högerklick = ta bort. */
+function vidTlBind(host, q, n, from, to, keys, fl) {
+  const track = host.querySelector("#vidTlTrack"); if (!track) return;
+  const frameAt = cx => { const r = track.getBoundingClientRect(); return Math.round(Math.max(0, Math.min(1, (cx - r.left) / Math.max(1, r.width))) * n); };
+  const setFrame = i => { q("#vidFrame").value = i; fl(); vidGoFrameSoon(); };
+  const axis = track.querySelector(".vtl-axis");
+  axis.onpointerdown = e => {
+    if (e.target.closest(".vtl-key")) return;
+    e.preventDefault(); axis.setPointerCapture && axis.setPointerCapture(e.pointerId); setFrame(frameAt(e.clientX));
+    axis.onpointermove = ev => setFrame(frameAt(ev.clientX));
+    axis.onpointerup = axis.onpointercancel = () => { axis.onpointermove = axis.onpointerup = axis.onpointercancel = null; };
+  };
+  track.querySelector("#vidTlHead").onpointerdown = e => axis.onpointerdown(e);
+  const total = Math.max(1, daysBetweenIso(from, to));
+  track.querySelectorAll(".vtl-key").forEach(b => {
+    const k = keys[Number(b.dataset.k)];
+    b.onpointerdown = e => {
+      e.preventDefault(); e.stopPropagation(); b.setPointerCapture && b.setPointerCapture(e.pointerId);
+      const x0 = e.clientX; let moved = false;
+      b.onpointermove = ev => { if (Math.abs(ev.clientX - x0) > 3) moved = true; if (moved) b.style.left = (frameAt(ev.clientX) / n * 100) + "%"; };
+      b.onpointerup = ev => {
+        b.onpointermove = b.onpointerup = null;
+        if (moved) { k.date = vidDateOfFrame(frameAt(ev.clientX), n, from, to); vidSave(); vidRender2(); }
+        else { setFrame(Math.round(Math.max(0, Math.min(1, daysBetweenIso(from, k.date) / total)) * n)); vidSetCamUi(k.cam); }
+      };
+    };
+    b.oncontextmenu = e => { e.preventDefault(); vid.keys.splice(vid.keys.indexOf(k), 1); vidSave(); vidRender2(); };
+  });
 }
 async function vidSetCamUi(cam) { if (API && API.viewer && typeof API.viewer.setCamera === "function") { try { await API.viewer.setCamera(cam, { animationTime: 600 }); } catch (e) { modelToast("Kunde inte flytta kameran"); } } }
 /* Gantt-schemat har ritats om (nytt urval/period): fälten Från/Till följer med, om inget pågår och ingen skriver i blocket. */
