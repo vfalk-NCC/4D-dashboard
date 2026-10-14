@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=20261014064905" />
+<link rel="stylesheet" href="style.css?v=20261014065253" />
 <script src="error-guard.js"></script>
 <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
 </head>
@@ -29,6 +29,26 @@
   </div>
 
   <div id="app">
+
+    <details id="appGuide" class="app-guide">
+      <summary><span class="app-guide-ic">📚</span> Guide – alla funktioner <span class="app-guide-sub">(klicka för att öppna)</span></summary>
+      <div class="app-guide-body">
+        <p>Kort översikt. <a href="guide.html" target="_blank" rel="noopener">Öppna hela guiden →</a></p>
+        <ul>
+          <li><b>Gantt-schema</b>: <i>Staplar</i>/<i>Tavla</i>, period, gruppera, färga, filter och sök (🔍), baseline och verkligt, pilar, <b>Uppdatera</b>, <b>Helskärm</b> (⛶) och <b>Dölj knappar</b>. <a href="guide.html#gantt" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>3D-lägen</b> (raden <i>3D</i> över Gantten): <b>Alla</b> · <b>Kopplade</b> · <b>Okopplade</b> · <b>⏱ Tid</b>. <b>Läs in modeller</b> läser in modellerna aktiviteterna är kopplade till. <a href="guide.html#tid" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>⏱ Tid</b>: dragstreck över Gantten, spelare, Från/Till/Auto, färger och <b>opacitet per status</b> (0 = osynligt), <i>Klart</i>-opacitet, <i>Kommande</i>, <b>Pulsera pågående</b> (▾), <b>Markera pågående</b>. Tidslinje-ikonen vid Helskärm slår på dragaren även med dolda knappar.</li>
+          <li><b>Ctrl-klick</b> på flera aktiviteter: <i>Visa i 3D</i> / <i>Bara dessa</i>. <b>💬 Bubblor</b>: info-bubbla vid objekten i TC.</li>
+          <li><b>Redigera</b>: dra/dubbelklicka, <i>Väntar på</i> med glapp, <b>＋ Aktivitet</b>, <b>Temporär</b>, <b>Rivning</b>, <b>Egen färg efter slut</b>, <b>Objekt i aktiviteten</b> (✕ tar bort ett objekt). <a href="guide.html#redigera" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>⇪ Exportera till Powerproject</b>: MS Project-XML (på en mall från Powerproject), med valfria beroenden och resurser.</li>
+          <li><b>Video editor</b> (block under Resurskurvan): kameravyer på datum, provbilder (reglaget hoppar TC-vyn), förhandsvisning och rendering upp till 4K med grafik. <a href="guide.html#video" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>Mängdavtagning</b> (block under Video editor): betong (m³), form (m²), längd, vikt ur modellen för klara objekt enligt Ganttens regel; jämför mot mängdförteckningen (Excel) per post och byggnad; CSV. <a href="guide.html#mangd" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>Övriga block</b>: Översikt, Statusfördelning, Framdrift, Kommande veckor, Försenade, S-kurva, Cykeltid, <b>Resurskurva</b>, Milstolpar, Bemanning, Leveranser, Säkerhet, Kvalitet, Hinder, Väder. <a href="guide.html#ovrigt" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>Samspel med 4D-planering</b>: dashboardens Gantt har företräde i TC:s 3D-vy. Medan ett 3D-läge är på ändrar 4D-planering inget i modellen, och dess reglage flyttar Tid-lägets datum här.</li>
+          <li><b>Export</b>: Excel, Kalender (.ics), PDF och <b>🖨 Skriv ut</b> Gantt-schemat (A4/A3).</li>
+        </ul>
+      </div>
+    </details>
 
     <!-- ===== Header ===== -->
     <header>
@@ -408,15 +428,15 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=20261014064905"></script>
-  <script src="app.js?v=20261014064905"></script>
-  <script src="resource-curve.js?v=20261014064905"></script>
-  <script src="pp-export.js?v=20261014064905"></script>
-  <script src="bubbles.js?v=20261014064905"></script>
-  <script src="video-gfx.js?v=20261014064905"></script>
-  <script src="video-editor.js?v=20261014064905"></script>
-  <script src="quantities.js?v=20261014064905"></script>
-  <script src="quantities-mf.js?v=20261014064905"></script>
-  <script src="planning-link.js?v=20261014064905"></script>
+  <script src="ui-dialog.js?v=20261014065253"></script>
+  <script src="app.js?v=20261014065253"></script>
+  <script src="resource-curve.js?v=20261014065253"></script>
+  <script src="pp-export.js?v=20261014065253"></script>
+  <script src="bubbles.js?v=20261014065253"></script>
+  <script src="video-gfx.js?v=20261014065253"></script>
+  <script src="video-editor.js?v=20261014065253"></script>
+  <script src="quantities.js?v=20261014065253"></script>
+  <script src="quantities-mf.js?v=20261014065253"></script>
+  <script src="planning-link.js?v=20261014065253"></script>
 </body>
 </html>

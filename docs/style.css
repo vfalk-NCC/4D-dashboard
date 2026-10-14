@@ -2385,3 +2385,14 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .qmf-table td.qmf-warn { background: #fff7ed; color: #c2410c; } .qmf-table td.qmf-bad { background: #fef2f2; color: #b91c1c; font-weight: 600; }
 .gantt-fs-bar button#ganttFsTime { display: inline-flex; align-items: center; padding: 3px 7px; }
 .gantt-fs-bar button#ganttFsTime[aria-pressed="true"] { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+/* Guide längst upp */
+.app-guide { margin: 8px 0 10px; border: 1px solid #c7d2fe; border-radius: 10px; background: #eef2ff; font-size: 13px; }
+.app-guide > summary { cursor: pointer; list-style: none; padding: 9px 14px; font-weight: 700; color: #1e3a8a; display: flex; align-items: center; gap: 8px; }
+.app-guide > summary::-webkit-details-marker { display: none; }
+.app-guide[open] > summary { border-bottom: 1px solid #c7d2fe; }
+.app-guide-sub { font-weight: 400; color: #64748b; font-size: 12px; }
+.app-guide-body { padding: 8px 16px 12px; max-height: 60vh; overflow-y: auto; }
+.app-guide-body ul { margin: 6px 0 0; padding-left: 18px; } .app-guide-body li { margin: 5px 0; line-height: 1.45; }
+.app-guide-body a { color: #1d4ed8; }
+@media print { .app-guide { display: none !important; } }

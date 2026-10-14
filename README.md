@@ -10,6 +10,22 @@ besiktningar, hinder) via små formulär i respektive panel – se "Vad det
 gör" nedan för detaljer. Bygger på **Trimble Connect Workspace API**
 (https://developer.trimble.com/docs/connect/workspace-api/).
 
+## Snabbguide – alla funktioner
+
+En kort översikt över vad du hittar var. Samma lista finns överst i appen (📚 *Guide – alla funktioner*) och i en längre guide (`docs/guide.html`, öppnas med länken i guiden). Detaljer finns i avsnitten "Vad det gör" och "Nyare funktioner" längre ner.
+
+| Område | Funktioner |
+| --- | --- |
+| **Gantt-schema** | Staplar/Tavla, period (2 v/4 v/3 mån/Allt/eget), gruppera, färga efter, filter, sök, baseline, verkligt, pilar, hovring, Ctrl-markering, Uppdatera, Helskärm, Dölj knappar, utskrift (A4/A3) |
+| **3D i Trimble Connect** | Lägen **Alla · Kopplade · Okopplade · ⏱ Tid**, dragstreck över Gantten, färger och opacitet per status, Klart-opacitet, Kommande, Pulsera pågående, Markera pågående, Läs in modeller, Bubblor |
+| **Redigera** | Dra/dubbelklicka, Väntar på med glapp, ＋ Aktivitet, Temporär, Rivning, Egen färg efter slut, Objekt i aktiviteten, resurser, ångra |
+| **Powerproject** | Import i 4D-planering; **Exportera till Powerproject** (MS Project-XML med mall) |
+| **Video editor** | Kameravyer på datum, provbilder, förhandsvisning, rendering upp till 4K med grafik |
+| **Mängdavtagning** | Betong (m³), form (m²), längd, vikt ur modellen; jämförelse mot mängdförteckningen (Excel); CSV |
+| **Övriga block** | Översikt, Statusfördelning, Framdrift, Kommande veckor, Försenade, S-kurva, Cykeltid, Resurskurva, Milstolpar, Bemanning, Leveranser, Säkerhet, Kvalitet, Hinder, Väder, Kommentarer |
+| **Export** | Excel, Kalender (.ics), PDF |
+| **Samspel** | Dashboardens Gantt har företräde i TC:s 3D-vy mot 4D-planering |
+
 ## Vad det gör
 
 - **Översikt**: en KPI-rad högst upp – totalt antal objekt, andel klara,
@@ -260,6 +276,54 @@ binärfiler i samma privata repo, under
 `projects/<projekt-id>/attachments/<safety|inspections>/` – ingen
 separat uppsättning krävs, det fungerar med samma GitHub-token som
 resten av datan.
+
+## Nyare funktioner (oktober 2026) – så använder du dem
+
+### 3D-lägen i Gantten
+Raden **3D** ovanför Gantten styr vad som visas i Trimble Connects modell (ett läge i taget):
+- **Alla** – modellen rörs inte.
+- **Kopplade** – bara det som är kopplat till de aktiviteter som visas (följer sök och filter). *Bara dessa* i Ctrl-raden visar bara de markerade.
+- **Okopplade** – det kopplade döljs, bara det okopplade visas.
+- **⏱ Tid** – läget ett visst datum. Det som inte startat är släckt (kryssa *Kommande* för att visa det i kommande-färgen).
+**Läs in modeller** läser in alla modeller som aktiviteterna är kopplade till. **Uppdatera** läser om data (ikonen snurrar).
+
+### Tidsraden (⏱ Tid)
+- **Dragstreck** över Gantten: dra det, eller använd reglaget, datumet, *Idag* och ▶. **Från/Till/Auto** sätter spannet. 3D uppdateras i realtid.
+- **Färger** för pågående, försenad, klart och kommande, och **opacitet per status** (reglage bredvid färgen, 0 = osynligt). **Klart** styr hur synligt färdigt arbete är. Aktiviteter kan ha *Egen färg efter slut*.
+- **Pulsera pågående** (▾: färger, hastighet, stil, styrka) och **Markera pågående** (TC:s egen markering).
+- **Sammanfattning**: *N klara · N pågår · N försenade · N kvar* och *N i 3D*.
+- Tidslinje-ikonen vid *Helskärm*/*Dölj knappar* slår på dragaren även när knapparna är dolda.
+- **Fasreglerna** (samma som 4D-planering): pågående kräver minst 1 % framdrift, annars försenad; före planerad start är aktiviteten *planerad* (även om den har framdrift idag, för tidigare datum); Temporär syns bara mellan start och slut; Rivning syns före start och försvinner efter slut.
+
+### Markera flera, bubblor
+- **Ctrl/Cmd-klick** på flera aktiviteter markerar dem (alla objekt i varje aktivitet). Raden *Visa i 3D* / *Bara dessa* / ✕ visas; Esc rensar.
+- **💬 Bubblor**: en info-bubbla per aktivitet vid dess objekt (namn, datum, framdrift, område, aktivitet). TC ritar bara text utan ruta, så raderna är korta och färgade efter läge, med en linje ner till objektet. ⚙ väljer vilka och vilka fält.
+
+### Redigera aktivitet
+Dubbelklicka en lapp/stapel. Förutom namn, område, entreprenör, datum, framdrift och *Väntar på*: under **Avancerat** finns resurser, **Temporär**, **Rivning** och **Egen färg efter slut** (färg + opacitet). **Objekt i aktiviteten** listar objekten – klick markerar och zoomar i TC, ✕ tar bort bara det objektet (efter fråga). Fönstret scrollar och ryms i bilden.
+
+### Exportera till Powerproject
+⇪ i Gantt-raden: välj *egna*, *markerade*, *de som visas* eller *alla* aktiviteter. Området blir sammanfattningsrader. Powerproject godtar bara en fil byggd på en mall från Powerproject: exportera en liten tidplan där (*Exportera till Microsoft Project® XML*) och välj den som mall – den sparas i webbläsaren. *Ta med föregångare* låter beroenden följa med (länkar utanför exporten utelämnas). Resurser är valfria. Din Powerproject-fil ändras aldrig.
+
+### Video editor
+Blocket under Resurskurvan gör en film av tidplanen på TC-modellen:
+1. **Kameravyer**: flytta kameran i TC, välj datum, *＋ Lägg till vy från kameran*. Kameran glider mellan vyerna (jämnt per bild); före första och efter sista står den still.
+2. **Film**: Från/Till, Längd, Bilder/s, **Upplösning** (som TC-vyn, 1080p, 1440p, 4K), **Kvalitet** (Normal/Hög/Max), Väntetid (minst 100 ms). Grafik: datumskylt (veckan rullar), Pågår nu per område, förloppsring, milstolpsrubrik, tidslinje med månader/veckor/dagar – samma som i 3D-editorn.
+3. **Provbild**: reglaget *Bild* (och ◀ ▶) hoppar TC-vyn till bildens kamera och datum (*Visa i TC*). *Provbild på vald bild* eller *på varje vy*; samlas, kan förstoras och sparas som PNG.
+4. **Förhandsvisa** och **Rendera video**: bilderna tas en i taget (tar minuter) och sätts ihop till en MP4/WebM som sparas på datorn. Bäst resultat med en stor TC-vy.
+
+### Mängdavtagning
+Blocket under Video editor tar fram mängder ur modellen (TC:s egenskaper via `getObjectProperties`, t.ex. *Calculated Geometry Values → Volume*):
+- **Urval**: det som visas i Gantten / hela planen / markering i TC. **Läge**: *Klara* vid ett datum (Ganttens regel) eller alla.
+- **Mängdslag**: Betong (m³), Form (m²), Längd (m), Armering (kg). Enheten (m³/mm³, m²/mm²) kontrolleras mot objektens mått.
+- **Summera** rader efter valfri egenskap (t.ex. *Product Object Type*), område, aktivitet eller entreprenör; kolumner valfritt; textfilter. Klick på en rad markerar i TC. **CSV** exporteras för Excel.
+- **Jämför mot mängdförteckningen**: välj Excel-filen (läses i webbläsaren, ändras aldrig). Koppla *typ → post* (förslag, t.ex. Basic Wall → ESE.21) och *område → byggnad* (förslag efter namn och områdeskod); valen sparas. Tabellen visar Kontrakt, Prognos, Modell klar, Modell totalt, Klart av prognos och Kvar per post och byggnad, med färgmarkering vid avvikelse. "Modell totalt" är objekten som är kopplade i planen.
+
+### Samspel med 4D-planering
+Dashboardens Gantt har högsta prioritet i TC:s 3D-vy. Medan ett 3D-läge (Kopplade, Okopplade, Tid) är på skriver 4D-planering inget automatiskt till modellen, och dess tidslinjereglage flyttar Tid-lägets datum här. Kommunikationen sker via en gemensam kanal (`BroadcastChannel "4d-gantt-link"`, filen `planning-link.js`) och kräver att båda ligger på samma adress.
+
+### Opacitet, Resurskurva m.m.
+Resurskurvan (resurser per vecka) och övriga block finns kvar som tidigare. Se `docs/guide.html` för en sida per område.
 
 ## Arkitektur
 
