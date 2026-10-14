@@ -195,6 +195,12 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   });
   if (!gs.btn || gs.c0.r !== 255 || gs.c0.b !== 0 || gs.c1.b !== 255 || gs.c1.r !== 0 || gs.own.r !== 17 || gs.temp !== 'reset' || gs.std.r === 255 && gs.std.b === 0) fail('Färgskala efter datum: ' + JSON.stringify(gs));
   console.log('OK: Färgskala efter datum – egna färger, egen färg efter slut och temporära oförändrade');
+  // Temporära objekt utan bubbla när det är avstängt för dem (markerade visas ändå).
+  const bt = await page.evaluate(() => { const g = items.find(x => x.objectId === 'G7'); const keep = [g.temporary, g.bubbleOff]; g.temporary = true; g.bubbleOff = false; bubbleCfg.scope = 'all';
+    const on = bubbleActs().acts.some(a => (a.members || [a]).some(m => m.objectId === 'G7')); g.bubbleOff = true; const off = bubbleActs().acts.some(a => (a.members || [a]).some(m => m.objectId === 'G7'));
+    g.temporary = false; const normal = bubbleActs().acts.some(a => (a.members || [a]).some(m => m.objectId === 'G7')); [g.temporary, g.bubbleOff] = keep; bubbleCfg.scope = 'auto'; return { on, off, normal, hasBox: false }; });
+  if (!bt.on || bt.off || !bt.normal) fail('Bubbla för temporära objekt av/på: ' + JSON.stringify(bt));
+  console.log('OK: bubblan kan stängas av för temporära objekt (kryssruta i redigeringen)');
   // Dragstrecket: dra i greppet med musen – datumet ändras och 3D följer.
   await page.fill('#ganttTimeDate', day(2)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(700);
   const hb = await (await page.$('.gantt-scrub-handle')).boundingBox();
@@ -352,6 +358,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (!(await page.locator('.na-obj.on', { hasText: 'Pelare B' }).count())) fail('Klickat objekt ska markeras i listan');
   await page.locator('.na-obj', { hasText: 'Pelare B' }).locator('.na-obj-x').click(); await page.waitForTimeout(900);
   if (get('plan_items.json').some(r => r.object_name === 'Pelare B') || !get('plan_items.json').some(r => r.object_name === 'Pelare A')) fail('Bara Pelare B ska tas bort ur aktiviteten');
+  if (!(await page.$('.na-bub-chk'))) fail('Kryssrutan för bubbla på temporära objekt saknas i redigeringsfönstret');
   if (!(await page.$('.na-objs')) || (await page.locator('.na-obj').count()) !== 1) fail('Med ett objekt kvar ska listan finnas kvar (så att det går att ta bort kopplingen)');
   // Andra rader som pekar på samma 3D-objekt visas (kan annars göra att objektet verkar kopplat fast det inte syns här).
   await page.evaluate(() => { const a = items.find(x => x.objectName === 'Pelare A'); a.modelId = 'M1'; a.objectId = 'GA'; items.push({ ...a, id: 'dupA', objectName: 'Pelare A (äldre rad)', activityKey: 'i:dupA', groupId: null, sourceKey: null }); });

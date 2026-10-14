@@ -2431,3 +2431,4 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 
 #ganttStrictBtn.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
 #ganttScaleBtn.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+.new-act-pop .na-temp-sub { margin-left: 22px; padding: 3px 8px; font-size: 12px; background: #fffaf3; }

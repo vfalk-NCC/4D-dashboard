@@ -1020,6 +1020,7 @@ function fromRow(row) {
     origin: row.origin || null,
     // Temporär (4D-planering, Victor 2026-10-09): t.ex. en mobilkran – syns i 3D bara mellan start och slut.
     temporary: row.temporary === true,
+    bubbleOff: row.bubble_off === true, // ingen bubbla för det här temporära objektet
     // Egen färg/opacitet efter slut (Victor 2026-10-13): så att färdigt arbete inte blir ett skal som döljer det innanför.
     doneColor: /^#[0-9a-f]{6}$/i.test(String(row.done_color || "")) ? row.done_color : null,
     doneOpacity: Number.isFinite(Number(row.done_opacity)) && row.done_opacity !== null && row.done_opacity !== "" ? Math.max(0, Math.min(100, Number(row.done_opacity))) : null,
@@ -1061,7 +1062,7 @@ function mergeActivityGroups(list) {
         }));
         return Object.keys(out).length ? out : null;
       })(),
-      status: late ? "forsenad" : members[0].status, progress, members, temporary: members.some(m => m.temporary), demolition: members.some(m => m.demolition) });
+      status: late ? "forsenad" : members[0].status, progress, members, temporary: members.some(m => m.temporary), bubbleOff: members.some(m => m.bubbleOff), demolition: members.some(m => m.demolition) });
   });
   return out;
 }
@@ -2377,7 +2378,7 @@ function planSize(plan) { return plan.items.size + plan.acts.size + (plan.deps ?
 /* Glappet (dagar) på kopplingen pred -> succ, eller undefined om inget glapp är satt. */
 const lagLabel = lag => `${lag > 0 ? "+" : lag < 0 ? "−" : "±"}${Math.abs(lag)} d`;
 function lagOf(succ, predId) { const v = succ && succ.depLags ? succ.depLags[String(predId)] : undefined; return Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : undefined; }
-const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary", demolition: "demolition", doneColor: "done_color", doneOpacity: "done_opacity" };
+const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary", bubbleOff: "bubble_off", demolition: "demolition", doneColor: "done_color", doneOpacity: "done_opacity" };
 function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
 function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
 
@@ -4988,7 +4989,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     return [...m].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([v, n]) => ({ value: v, label: v, count: `${n} akt.` }));
   };
   // Startvärden.
-  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0, temp0 = false, demo0 = false, doneCol0 = "", doneOp0 = 30;
+  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0, temp0 = false, bubOff0 = false, demo0 = false, doneCol0 = "", doneOp0 = 30;
   // Resurser: samma för alla objekt i aktiviteten – den första som har några gäller.
   const res0 = edit ? ((members.find(m => m.resources && m.resources.length) || {}).resources || []).map(r => ({ ...r })) : [];
   const preds = []; // { entry, lag: "" | tal }
@@ -4996,7 +4997,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     name0 = itemLabel(edit) === "Okänt objekt" ? "" : (edit.objectName || "");
     area0 = edit.area || ""; act0 = edit.activity || ""; contr0 = edit.contractor || "";
     prog0 = Math.round(members.reduce((s, m) => s + (Number(m.progress) || 0), 0) / Math.max(1, members.length));
-    temp0 = members.some(m => m.temporary); demo0 = members.some(m => m.demolition); { const dm = members.find(m => m.doneColor || m.doneOpacity !== null); if (dm) { doneCol0 = dm.doneColor || ""; doneOp0 = dm.doneOpacity !== null ? dm.doneOpacity : 30; } }
+    temp0 = members.some(m => m.temporary); bubOff0 = members.some(m => m.bubbleOff); demo0 = members.some(m => m.demolition); { const dm = members.find(m => m.doneColor || m.doneOpacity !== null); if (dm) { doneCol0 = dm.doneColor || ""; doneOp0 = dm.doneOpacity !== null ? dm.doneOpacity : 30; } }
     start0 = edit.startDate || todayISO(); end0 = edit.endDate || start0;
     const seen = new Set();
     members.flatMap(m => m.dependsOn || []).map(String).filter(id => !own.has(id)).forEach(id => {
@@ -5036,6 +5037,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     ${edit && members.length >= 1 ? `<details class="na-objs" open><summary>Objekt i aktiviteten <span class="hint na-objs-n">(${members.length})</span></summary><div class="na-objs-list"></div><div class="hint">✕ tar bort bara det objektet ur aktiviteten – aktiviteten och de andra objekten finns kvar. På det sista objektet tas bara 3D-kopplingen bort (aktiviteten finns kvar).</div></details><details class="na-dups hidden" open><summary>Andra rader kopplade till samma 3D-objekt <span class="hint na-dups-n"></span></summary><div class="na-dups-list"></div><div class="hint">Dessa kommer från en annan aktivitet (t.ex. en äldre import) men pekar på samma objekt – därför kan objektet verka kopplat trots att det inte syns i listan ovan. ✕ tar bort raden.</div></details>` : ""}
     <details class="na-res"${(res0.length && naResOpen()) || temp0 || demo0 || doneCol0 ? " open" : ""}><summary>Avancerat (temporär, rivning, resurser) <span class="hint na-res-sum"></span></summary>
       <label class="na-temp" title="T.ex. en mobilkran, stämp eller tillfällig vägg: syns i 3D bara från start till slut och försvinner sedan"><input type="checkbox" class="na-temp-chk" ${temp0 ? "checked" : ""} /> <span><b>Temporär</b> – syns i 3D bara mellan start och slut (t.ex. mobilkran)</span></label>
+      <label class="na-temp na-temp-sub" title="Av = ingen bubbla med info för det här temporära objektet (t.ex. långvariga mobilkranar). Markerar du det visas bubblan ändå."><input type="checkbox" class="na-bub-chk" ${bubOff0 ? "" : "checked"} /> <span>Visa bubbla med info för det temporära objektet</span></label>
       <label class="na-temp" title="Rivning: objektet syns hela tiden före start, färgas som vanligt under aktiviteten och försvinner efter slut"><input type="checkbox" class="na-demo-chk" ${demo0 ? "checked" : ""} /> <span><b>Rivning</b> – syns även före start, försvinner efter slut</span></label>
       <label class="na-temp na-done" title="Efter slutdatum visas objektet i den här färgen och genomskinligheten i 3D-tidslinjen – så att man ser arbeten innanför färdiga delar"><input type="checkbox" class="na-done-chk" ${doneCol0 || doneOp0 !== 30 ? "checked" : ""} /> <span><b>Egen färg efter slut</b> – <input type="color" class="na-done-col" value="${doneCol0 || "#3fb950"}" /> opacitet <input type="range" class="na-done-op" min="0" max="100" step="5" value="${doneOp0}" /> <b class="na-done-val">${doneOp0}</b> %</span></label>
       <div class="na-res-rows"></div>
@@ -5293,6 +5295,8 @@ function openActivityDialog({ after = null, edit = null } = {}) {
         if (resChanged()) f.resources = resOut();
         const tmp = q(".na-temp-chk").checked;
         if (tmp !== !!m.temporary) f.temporary = tmp;
+        const bub = q(".na-bub-chk").checked;
+        if (bub === !!m.bubbleOff) f.bubbleOff = !bub; // sparas bara när det ändras
         const dem = q(".na-demo-chk").checked;
         if (dem !== !!m.demolition) f.demolition = dem;
         const dOn = q(".na-done-chk").checked, dCol = dOn ? q(".na-done-col").value : null, dOp = dOn ? Number(q(".na-done-op").value) : null;
@@ -5328,7 +5332,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
       area: area || null, activity: activity || null, contractor: contractor || null, status: "planerad",
       start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress,
-      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), ...(q(".na-demo-chk").checked ? { demolition: true } : {}), ...(q(".na-done-chk").checked ? { done_color: q(".na-done-col").value, done_opacity: Number(q(".na-done-op").value) } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
+      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), ...(q(".na-temp-chk").checked && !q(".na-bub-chk").checked ? { bubble_off: true } : {}), ...(q(".na-demo-chk").checked ? { demolition: true } : {}), ...(q(".na-done-chk").checked ? { done_color: q(".na-done-col").value, done_opacity: Number(q(".na-done-op").value) } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
       baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };
     const btn = q(".na-save");
     btn.disabled = true;

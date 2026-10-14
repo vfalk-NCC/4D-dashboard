@@ -18,6 +18,7 @@ function bubbleActs() {
   let scope = bubbleCfg.scope;
   if (scope === "auto") scope = marked.length ? "marked" : "active";
   let acts = scope === "marked" ? marked : scope === "all" ? shown : shown.filter(a => { const ph = ganttPhaseAt(a, at); return ph === "pagaende" || ph === "forsenad"; });
+  if (scope !== "marked") acts = acts.filter(a => !(a.temporary && a.bubbleOff)); // långvariga temporära objekt (t.ex. mobilkranar) utan bubbla när det är avstängt för dem
   // Tidslinjen: det som inte startat är släckt i 3D och får ingen bubbla.
   if (typeof ganttMode !== "undefined" && ganttMode === "time" && typeof ganttAsOf !== "undefined" && ganttAsOf && !ganttTimeFuture) acts = acts.filter(a => ganttPhaseAt(a, ganttAsOf) !== "planerad");
   return { acts: acts.filter(a => (a.members || [a]).some(m => m.modelId && m.objectId)).slice(0, Math.max(1, Math.min(100, Number(bubbleCfg.max) || 30))), scope };
