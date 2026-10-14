@@ -55,8 +55,16 @@ seed('plan_items.json', [
   await page.click('#filterContractorBtn');
   const opts = await page.evaluate(() => [...document.querySelectorAll('#contractorFilterPop .ggp-row')].map(o => o.textContent.trim()));
   if (opts.join() !== 'Utan entreprenör,NCC') fail('Valen: ' + opts);
-  const areaOpts = await page.evaluate(() => [...document.querySelectorAll('#filterArea option')].map(o => o.textContent));
+  await page.click('#filterAreaBtn');
+  const areaOpts = await page.evaluate(() => [...document.querySelectorAll('#areaFilterPop .ggp-row')].map(o => o.textContent.trim()));
   if (areaOpts.includes('Utan område')) fail('"Utan område" ska bara visas när det finns sådana: ' + areaOpts);
+  { const n2 = await page.evaluate(() => [...new Set(items.map(i => i.area).filter(Boolean))].length);
+    if (n2 >= 2) { const exp = await page.evaluate(() => { const as = [...new Set(items.map(i => i.area).filter(Boolean))].slice(0, 2); return { as, n: items.filter(i => as.includes(i.area)).length }; });
+      for (const a of exp.as) await page.check(`#areaFilterPop .ggp-row[title="${a}"] input`);
+      await page.waitForTimeout(300); const got = await page.evaluate(() => ({ n: getFilteredItems().length, lbl: document.getElementById('filterAreaBtn').textContent.trim() }));
+      if (got.n !== exp.n || got.lbl !== '2 områden ▾') fail('Flera områden samtidigt: ' + JSON.stringify({ exp, got }));
+      await page.evaluate(() => { filters.area = []; renderAreaFilter(); renderAll(); }); } }
+  await page.click('#filterAreaBtn'); await page.click('#filterContractorBtn'); // stäng områdeslistan, öppna entreprenörslistan igen
   await page.check('#contractorFilterPop .ggp-row >> nth=0'); await page.waitForTimeout(300);
   let shown = await page.evaluate(() => getFilteredItems().map(it => it.objectName).sort().join());
   if (shown !== 'C1,C2' || (await page.textContent('#filterContractorBtn')).trim() !== 'Utan entreprenör ▾') fail('Utan entreprenör ska visa C1 och C2: ' + shown);

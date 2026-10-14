@@ -78,7 +78,7 @@ let settings = {
 };
 // Aktiv filtrering – tomt värde ("") betyder "alla" för respektive fält.
 let filters = {
-  area: "",
+  area: [],
   activity: "",
   contractor: []   // flera entreprenörer (Victor 2026-10-08); tom = alla
 };
@@ -363,7 +363,7 @@ function bindUI() {
   document.getElementById("settingsWatchDays").value = Number.isFinite(settings.watchMilestoneDays) ? settings.watchMilestoneDays : 7;
   updateConnectionWarning();
 
-  document.getElementById("filterArea").onchange = onFilterChange;
+  initAreaFilter();
   document.getElementById("filterActivity").onchange = onFilterChange;
   initContractorFilter();
   document.getElementById("btnResetFilters").onclick = onResetFilters;
@@ -578,16 +578,14 @@ function initStatusColorControls() {
    Filtrering (område / aktivitet / entreprenör)
    ------------------------------------------------------------------- */
 function onFilterChange() {
-  filters.area = document.getElementById("filterArea").value;
   filters.activity = document.getElementById("filterActivity").value;
   renderAll();
 }
 
 function onResetFilters() {
-  filters = { area: "", activity: "", contractor: [] };
-  document.getElementById("filterArea").value = "";
+  filters = { area: [], activity: "", contractor: [] };
   document.getElementById("filterActivity").value = "";
-  renderContractorFilter();
+  renderAreaFilter(); renderContractorFilter();
   renderAll();
 }
 
@@ -595,15 +593,16 @@ function onResetFilters() {
 const FILTER_NONE = "__utan__";
 const filterHit = (want, v) => !want || (want === FILTER_NONE ? !v : v === want);
 function getFilteredItems() {
-  const cs = filters.contractor || [];
-  return items.filter(it => filterHit(filters.area, it.area) && filterHit(filters.activity, it.activity) && (!cs.length || cs.some(w => filterHit(w, it.contractor))));
+  const cs = filters.contractor || [], as = filters.area || [];
+  return items.filter(it => (!as.length || as.some(w => filterHit(w, it.area))) && filterHit(filters.activity, it.activity) && (!cs.length || cs.some(w => filterHit(w, it.contractor))));
 }
 
 // Fyller filtrets tre <select>-fält med de värden som faktiskt finns i
 // datan just nu. Behåller vald filtrering om värdet fortfarande finns
 // kvar i listan efter en omhämtning, annars nollställs det.
 function populateFilterOptions() {
-  fillSelect("filterArea", "area", uniqueValues(it => it.area), "Alla områden", items.some(it => !it.area) ? NO_AREA_LABEL : "");
+  // Område: flera kan väljas – val som inte längre finns i datan släpps.
+  { const av = new Set(uniqueValues(it => it.area)), hasNoneA = items.some(it => !it.area); filters.area = (filters.area || []).filter(v => v === FILTER_NONE ? hasNoneA : av.has(v)); renderAreaFilter(); }
   fillSelect("filterActivity", "activity", uniqueValues(it => it.activity), "Alla aktiviteter", items.some(it => !it.activity) ? NO_ACTIVITY_LABEL : "");
   // Entreprenör: flera kan väljas – val som inte längre finns i datan släpps.
   const cv = new Set(uniqueValues(it => it.contractor)), hasNone = items.some(it => !it.contractor);
@@ -678,6 +677,67 @@ function closeContractorPop() {
   document.getElementById("contractorFilterPop")?.remove();
   document.removeEventListener("mousedown", contractorPopOutside, true);
   document.removeEventListener("keydown", contractorPopKey, true);
+}
+
+/* Områdesfiltret med flera val (Victor 2026-10-14): en knapp som öppnar en lista med en liten ruta framför varje område, med sök, "Utan område" och Alla. */
+function areaFilterLabel() {
+  const as = filters.area || [];
+  if (!as.length) return "Alla områden";
+  if (as.length === 1) return as[0] === FILTER_NONE ? NO_AREA_LABEL : as[0];
+  return `${as.length} områden`;
+}
+function renderAreaFilter() {
+  const b = document.getElementById("filterAreaBtn");
+  if (b) { b.textContent = areaFilterLabel() + " ▾"; b.classList.toggle("on", !!(filters.area || []).length); b.title = (filters.area || []).map(v => v === FILTER_NONE ? NO_AREA_LABEL : v).join("\n") || "Alla områden"; }
+  const p = document.getElementById("areaFilterPop");
+  if (p) fillAreaPop(p);
+}
+function initAreaFilter() {
+  const b = document.getElementById("filterAreaBtn"); if (!b) return;
+  b.onclick = e => { e.stopPropagation(); if (document.getElementById("areaFilterPop")) closeAreaPop(); else openAreaPop(b); };
+  renderAreaFilter();
+}
+function areaOptions() { return [...(items.some(it => !it.area) ? [{ value: FILTER_NONE, label: NO_AREA_LABEL, none: true }] : []), ...uniqueValues(it => it.area).map(v => ({ value: v, label: v }))]; }
+function openAreaPop(btn) {
+  closeAreaPop(); closeContractorPop();
+  const p = document.createElement("div");
+  p.id = "areaFilterPop"; p.className = "gantt-group-picker cf-pop";
+  p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök område…" />
+    <div class="ggp-acts"><button type="button" data-af="all">Alla</button><button type="button" data-af="match" class="hidden">Välj träffarna</button></div>
+    <div class="ggp-list"></div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(4, Math.min(r.left, innerWidth - 360)) + "px"; p.style.top = (r.bottom + 4) + "px"; p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px"; p.style.minWidth = "320px";
+  const search = p.querySelector(".ggp-search");
+  search.oninput = () => fillAreaPop(p);
+  p.querySelector(".ggp-acts").onclick = e => {
+    const a = e.target.closest("[data-af]"); if (!a) return;
+    if (a.dataset.af === "all") filters.area = [];
+    else filters.area = [...new Set([...(filters.area || []), ...areaOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)])];
+    renderAreaFilter(); renderAll();
+  };
+  p.querySelector(".ggp-list").onchange = e => {
+    const c = e.target.closest("input[data-v]"); if (!c) return;
+    const set = new Set(filters.area || []); if (c.checked) set.add(c.dataset.v); else set.delete(c.dataset.v);
+    filters.area = [...set]; renderAreaFilter(); renderAll();
+  };
+  fillAreaPop(p);
+  setTimeout(() => document.addEventListener("mousedown", areaPopOutside, true), 0);
+  document.addEventListener("keydown", areaPopKey, true);
+  search.focus();
+}
+function fillAreaPop(p) {
+  const q = p.querySelector(".ggp-search").value.trim().toLowerCase(), sel = new Set(filters.area || []);
+  const opts = areaOptions().filter(o => !q || o.label.toLowerCase().includes(q));
+  p.querySelector('[data-af="match"]').classList.toggle("hidden", !q);
+  p.querySelector(".ggp-list").innerHTML = opts.map(o => `<label class="ggp-row" title="${escapeHtml(o.label)}"><input type="checkbox" data-v="${escapeHtml(o.value)}"${sel.has(o.value) ? " checked" : ""} /><span${o.none ? ' class="cf-none"' : ""}>${escapeHtml(o.label)}</span></label>`).join("") || `<div class="hint">Inga träffar.</div>`;
+}
+function areaPopOutside(e) { const p = document.getElementById("areaFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterAreaBtn") closeAreaPop(); }
+function areaPopKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeAreaPop(); } }
+function closeAreaPop() {
+  document.getElementById("areaFilterPop")?.remove();
+  document.removeEventListener("mousedown", areaPopOutside, true);
+  document.removeEventListener("keydown", areaPopKey, true);
 }
 
 function uniqueValues(keyFn) {
@@ -863,9 +923,9 @@ async function setPlanSource(src) {
   try { localStorage.setItem(planSourceKey(), src); } catch (e) {}
   renderPlanSourceUi();
   // Filtren och ångra-stacken hör till den förra planeringen.
-  filters = { area: "", activity: "", contractor: [] };
-  ["filterArea", "filterActivity"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
-  renderContractorFilter();
+  filters = { area: [], activity: "", contractor: [] };
+  ["filterActivity"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  renderAreaFilter(); renderContractorFilter();
   if (typeof scheduleUndo !== "undefined") { scheduleUndo.length = 0; scheduleRedo.length = 0; updateUndoButtons(); }
   ganttBoardScrolled = false;
   await refreshAll();
@@ -6077,7 +6137,8 @@ function printGantt(opts) {
   const colorText = { area: "område", contractor: "entreprenör", activity: "aktivitet" }[ganttColorBy];
   const sub = [(planSource === "pp" ? "Powerproject · " : "") + viewText + (groupText ? `, grupperat på ${groupText}` : "") + (ganttView === "board" ? `, färg efter ${colorText}` : ""),
     ganttPrintPeriodText(domain.start, domain.end)];
-  const filterParts = [["Område", filters.area, NO_AREA_LABEL], ["Aktivitet", filters.activity, NO_ACTIVITY_LABEL]].filter(([, v]) => v).map(([k, v, none]) => v === FILTER_NONE ? none : `${k}: ${v}`)
+  const filterParts = [["Aktivitet", filters.activity, NO_ACTIVITY_LABEL]].filter(([, v]) => v).map(([k, v, none]) => v === FILTER_NONE ? none : `${k}: ${v}`)
+    .concat((filters.area || []).length ? [`Område: ${filters.area.map(v => v === FILTER_NONE ? NO_AREA_LABEL : v).join(", ")}`] : [])
     .concat((filters.contractor || []).length ? [`Entreprenör: ${filters.contractor.map(v => v === FILTER_NONE ? NO_CONTRACTOR_LABEL : v).join(", ")}`] : []);
   const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")
     + (ganttView === "bars" && ganttShowActual ? `<span class="gp-leg"><i class="gp-leg-actual"></i>Verkligt</span>` : "")

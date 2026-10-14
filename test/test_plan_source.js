@@ -46,13 +46,13 @@ seed('plan_milestones.json', [{ id: 'm1', project_id: PID, name: 'Gemensam milst
   const state = () => page.evaluate(() => ({ src: planSource, active: document.querySelector('#planSourceBar .active').dataset.src, names: items.map(i => i.objectName).sort(), ms: (typeof milestones !== 'undefined' ? milestones : []).length }));
   const a = await state();
   if (a.src !== 'excel' || a.active !== 'excel' || JSON.stringify(a.names) !== '["Excel A"]') fail('Excel från början: ' + JSON.stringify(a));
-  await page.selectOption('#filterArea', 'Hus A');
+  await page.click('#filterAreaBtn'); await page.check('#areaFilterPop .ggp-row:has-text("Hus A") input'); await page.click('#filterAreaBtn');
   reads.length = 0;
   await page.click('#planSourceBar [data-src="pp"]'); await page.waitForTimeout(600);
   const b = await state();
   if (b.src !== 'pp' || JSON.stringify(b.names) !== '["Montage stomme","Tätt hus"]' || b.ms !== 1) fail('Powerproject-planeringen (milstolparna gemensamma): ' + JSON.stringify(b));
   if (!reads.includes(`projects/${PID}/pp/plan_items.json`) || reads.includes(`projects/${PID}/pp/plan_milestones.json`)) fail('Bara planeringens tabeller ska läsas från pp/: ' + JSON.stringify(reads));
-  if ((await page.inputValue('#filterArea')) !== '') fail('Filtret ska nollställas vid byte');
+  if ((await page.evaluate(() => filters.area)).length) fail('Filtret ska nollställas vid byte');
   if (!(await page.textContent('#ganttChart')).includes('Montage stomme')) fail('Gantt-schemat ska visa Powerproject-aktiviteterna');
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
   if ((await state()).src !== 'pp') fail('Valet ska sparas');
