@@ -3889,7 +3889,10 @@ function initGanttTime() {
   // Färger & visning i en rullgardin (stängs vid klick utanför) och stegknappar ◀ ▶ vid tidslidern.
   const tmb = document.getElementById("ganttTimeMenuBtn"), tmm = document.getElementById("ganttTimeMenu");
   if (tmb && tmm) {
-    const setMenu = on => { tmm.classList.toggle("hidden", !on); tmb.setAttribute("aria-expanded", String(on)); };
+    // Menyn ligger fast (fixed) vid knappen så att den inte klipps av Gantt-rubrikens överkant/överflöde.
+    const place = () => { const r = tmb.getBoundingClientRect(), w = Math.min(tmm.offsetWidth || 320, innerWidth - 16); tmm.style.position = "fixed"; tmm.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + "px"; tmm.style.top = Math.min(r.bottom + 4, innerHeight - 120) + "px"; tmm.style.maxHeight = Math.max(160, innerHeight - r.bottom - 16) + "px"; tmm.style.overflowY = "auto"; };
+    const setMenu = on => { tmm.classList.toggle("hidden", !on); tmb.setAttribute("aria-expanded", String(on)); if (on) place(); };
+    addEventListener("resize", () => { if (!tmm.classList.contains("hidden")) place(); });
     tmb.onclick = e => { e.stopPropagation(); setMenu(tmm.classList.contains("hidden")); };
     document.addEventListener("pointerdown", e => { if (tmm.classList.contains("hidden")) return; if (tmm.contains(e.target) || tmb.contains(e.target) || e.target.closest("#ganttPulsePop")) return; setMenu(false); }, true);
     document.addEventListener("keydown", e => { if (e.key === "Escape" && !tmm.classList.contains("hidden") && !document.getElementById("ganttPulsePop")) setMenu(false); });
