@@ -78,7 +78,7 @@ seed('plan_items.json', [
     await page.click('#vidShot'); await page.waitForSelector('#vidShotBox canvas', { timeout: 15000 }).catch(async () => fail('Provbild: ' + await page.innerText('#vidMsg') + ' | ' + errors.join(' | ')));
     if (!/Provbild .*640×360/.test(await page.innerText('#vidMsg'))) fail('Provbild: ' + await page.innerText('#vidMsg'));
     if (process.env.VID_PNG) fs.writeFileSync(process.env.VID_PNG, Buffer.from((await page.evaluate(() => document.querySelector('#vidShotBox canvas').toDataURL('image/png'))).split(',')[1], 'base64'));
-    const px = await page.evaluate(() => { const c = document.querySelector('#vidShotBox canvas'), d = c.getContext('2d').getImageData(14, 14, 1, 1).data; return [...d]; });
+    const px = await page.evaluate(() => { const c = document.querySelector('#vidShotBox canvas'), d = c.getContext('2d').getImageData(40, 90, 1, 1).data; return [...d]; });
     if (px[0] > 120 || px[2] > 140) fail('Datumskylten ska vara ritad (mörk ruta uppe till vänster): ' + px);
     if (!/Provbild bild 8 av 31/.test(await page.innerText('#vidMsg'))) fail('Provbild på vald bild: ' + await page.innerText('#vidMsg'));
     await page.click('#vidShotKeys'); await page.waitForFunction(() => document.querySelectorAll('#vidShotBox .vid-card').length === 3 && !vid.run, null, { timeout: 20000 });
@@ -92,7 +92,7 @@ seed('plan_items.json', [
     await dl; // nedladdningen startade (headless ger blobben namnet 'download' – namnet kontrolleras via vid.last)
     await page.waitForFunction(() => !vid.run, null, { timeout: 15000 });
     const R = await page.evaluate(() => ({ shots: window.__shots, last: vid.last, msg: document.getElementById('vidMsg').textContent, mode: ganttMode }));
-    if (R.shots < 31 || !R.last || R.last.frames < 31 || R.last.size < 1000 || R.last.W !== 640 || !/^4D-film .*\.(mp4|webm)$/.test(R.last.name)) fail('Rendering: ' + JSON.stringify(R));
+    if (R.shots < 31 || !R.last || R.last.frames < 31 || R.last.size < 1000 || R.last.H !== 1080 || R.last.W !== 1920 || !/^4D-film .*\.(mp4|webm)$/.test(R.last.name)) fail('Rendering: ' + JSON.stringify(R));
     // Kameran är tillbaka där den var.
     const camNow = await page.evaluate(() => window.__cam.position.x);
     if (camNow !== camBefore) fail('Kameran ska återställas efter filmen: ' + camNow);

@@ -7,7 +7,7 @@
    Inget sparas i tidplanen eller i TC. Kameravyer och val sparas i webbläsaren. */
 
 const VID_KEY = "4ddash-video";
-const vid = { keys: [], cfg: { from: "", to: "", sec: 20, fps: 15, wait: 300, title: true, now: true, meter: true, miles: true, pearls: true }, run: null, shot: "" };
+const vid = { keys: [], cfg: { from: "", to: "", sec: 20, fps: 15, wait: 300, res: "1080", q: "high", title: true, now: true, meter: true, miles: true, pearls: true }, run: null, shot: "" };
 try { const s = JSON.parse(localStorage.getItem(VID_KEY) || "{}"); if (Array.isArray(s.keys)) vid.keys = s.keys.filter(k => k && k.date && k.cam); Object.assign(vid.cfg, s.cfg || {}); } catch (e) { /* standard */ }
 const vidSave = () => { try { localStorage.setItem(VID_KEY, JSON.stringify({ keys: vid.keys, cfg: vid.cfg })); } catch (e) { /* ingen lagring */ } };
 const vidSleep = ms => new Promise(r => setTimeout(r, ms));
@@ -83,6 +83,15 @@ function vidMime() {
   if (typeof MediaRecorder === "undefined") return null;
   return ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(t => MediaRecorder.isTypeSupported(t)) || "";
 }
+/* Filmens storlek och kvalitet (Victor 2026-10-14: "lite pixlig"). Stillbilden från TC har vyns storlek; ett högre val förstorar den med jämn
+   skalning och ritar grafiken skarpt i den större bilden. Bitraten räknas per bildpunkt (högre = mindre blockigt, större fil). */
+const VID_RES = { auto: "Som TC-vyn", 1080: "1080p (Full HD)", 1440: "1440p", 2160: "2160p (4K)" };
+const VID_Q = { normal: ["Normal", 0.2], high: ["Hög", 0.5], max: ["Max", 1.0] };
+function vidOutSize(w, h) {
+  const r = String(vid.cfg.res || "auto"), H = r === "auto" ? h : Number(r), W = Math.round(w * H / h);
+  return [W & ~1, H & ~1];
+}
+function vidBitrate(W, H, fps) { const bpp = (VID_Q[vid.cfg.q || "high"] || VID_Q.high)[1]; return Math.min(80e6, Math.max(2e6, Math.round(W * H * fps * bpp))); }
 function vidFrames() { const C = vid.cfg; return Math.max(2, Math.round(Math.max(3, Number(C.sec) || 20) * Math.max(5, Number(C.fps) || 15))); }
 function vidDateOfFrame(i, n, from, to) { return addDaysIso(from, Math.round(daysBetweenIso(from, to) * (i / n))); }
 function vidMsg(t) { const el = document.getElementById("vidMsg"); if (el) el.textContent = t; }
@@ -124,7 +133,7 @@ async function vidShotFrame(run, i, label) {
   const [from, to] = vidRange(), n = vidFrames(), fps = Math.max(5, Number(vid.cfg.fps) || 15), d = vidDateOfFrame(i, n, from, to);
   await vidSetDate(d); await vidSetCam(vidCamAtFrame(i, n, from, to), true); await vidSleep(Math.max(100, Number(vid.cfg.wait) || 300)); // minst 100 ms: TC ritar om efter datum och kamera
   const blob = await vidSnapshot(), img = await createImageBitmap(blob), c = document.createElement("canvas");
-  c.width = img.width; c.height = img.height;
+  const [ow, oh] = vidOutSize(img.width, img.height); c.width = ow; c.height = oh; c.getContext("2d").imageSmoothingQuality = "high";
   // Grafikens läge byggs upp från de närmaste bilderna före (utan nya stillbilder), så att animationerna står som i filmen.
   const fx = vgxStart(from, to, vidFxOpts()), t0ms = vgxDate(from).getTime(), t1ms = vgxDate(to).getTime() + VGX_DAY, j0 = Math.max(0, i - fps * 4);
   for (let j = j0; j <= i; j++) vgxFrame(fx, vidDateOfFrame(j, n, from, to), (j - j0) / fps, t0ms + (t1ms - t0ms) * (j / n));
@@ -191,10 +200,10 @@ function vidRender() {
     if (run.stop && frames.length < 2) { vidMsg("Stoppad."); return; }
     // Spela in: bilderna ritas med grafik i takt med bildfrekvensen.
     vidMsg("Spelar in videon…");
-    const img0 = await createImageBitmap(frames[0].blob), W = img0.width & ~1, H = img0.height & ~1;
-    const cv = document.createElement("canvas"); cv.width = W; cv.height = H; const ctx = cv.getContext("2d");
+    const img0 = await createImageBitmap(frames[0].blob), [W, H] = vidOutSize(img0.width, img0.height);
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H; const ctx = cv.getContext("2d"); ctx.imageSmoothingQuality = "high";
     const stream = cv.captureStream(0), track = stream.getVideoTracks()[0], chunks = [];
-    const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: Math.round(W * H * fps * 0.12) });
+    const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: vidBitrate(W, H, fps) });
     rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
     rec.start(1000);
     const start = performance.now(), fx = vgxStart(from, to, vidFxOpts()), t0ms = vgxDate(from).getTime(), t1ms = vgxDate(to).getTime() + VGX_DAY;
@@ -228,6 +237,8 @@ function vidRender2() {
       <div class="vid-row"><label>Från <input type="date" id="vidFrom" value="${vidEsc(C.from || from)}" /></label><label>Till <input type="date" id="vidTo" value="${vidEsc(C.to || to)}" /></label><button type="button" id="vidAuto" title="Hela tidplanens spann">Auto</button>
         <label>Längd <input type="number" id="vidSec" min="3" max="600" value="${C.sec}" /> s</label>
         <label>Bilder/s <select id="vidFps">${[10, 15, 24, 30].map(v => `<option value="${v}"${Number(C.fps) === v ? " selected" : ""}>${v}</option>`).join("")}</select></label>
+        <label title="Filmens storlek. Stillbilden från TC har vyns storlek – ett högre val förstorar den och ritar grafiken skarpt. Bäst blir det om TC-vyn är stor (stäng sidopaneler eller maximera fönstret).">Upplösning <select id="vidRes">${Object.entries(VID_RES).map(([k, t]) => `<option value="${k}"${String(C.res || "1080") === k ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+        <label title="Hur mycket data per bildpunkt videon får. Högre = mindre blockigt men större fil.">Kvalitet <select id="vidQ">${Object.entries(VID_Q).map(([k, v]) => `<option value="${k}"${(C.q || "high") === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select></label>
         <label title="Hur länge TC får rita om efter att datum och kamera ändrats, innan bilden tas. Längre = säkrare men långsammare.">Väntetid <input type="number" id="vidWait" min="0" max="5000" step="50" value="${C.wait}" /> ms</label></div>
       <div class="vid-row vid-checks"><label><input type="checkbox" id="vidTitle"${C.title ? " checked" : ""} /> Datumskylt</label><label><input type="checkbox" id="vidNow"${C.now ? " checked" : ""} /> Pågår nu-ruta</label><label><input type="checkbox" id="vidMeter"${C.meter ? " checked" : ""} /> Förloppsmätare</label><label><input type="checkbox" id="vidMiles"${C.miles !== false ? " checked" : ""} /> Milstolpar</label><label><input type="checkbox" id="vidPearls"${C.pearls ? " checked" : ""} /> Tidslinje</label></div>
       <div class="vid-row vid-frame"><label>Bild <input type="range" id="vidFrame" min="0" max="${n}" value="${vid.frame == null ? 0 : Math.min(n, vid.frame)}" /></label><label class="vid-follow" title="Flytta TC-vyn till kameran och datumet för bilden när du drar i reglaget"><input type="checkbox" id="vidFollow"${C.follow !== false ? " checked" : ""} /> Visa i TC</label><button type="button" id="vidPrev" title="Föregående bild">◀</button><button type="button" id="vidNext" title="Nästa bild">▶</button><span id="vidFrameLbl" class="hint"></span></div>
@@ -252,6 +263,7 @@ function vidRender2() {
   q("#vidFrom").onchange = e => { put("from", e.target.value); vidRender2(); }; q("#vidTo").onchange = e => { put("to", e.target.value); vidRender2(); };
   q("#vidAuto").onclick = () => { put("from", ""); put("to", ""); vidRender2(); };
   q("#vidSec").onchange = e => { put("sec", Math.max(3, Math.min(600, Number(e.target.value) || 20))); vidRender2(); };
+  q("#vidRes").onchange = e => put("res", e.target.value); q("#vidQ").onchange = e => put("q", e.target.value);
   q("#vidFps").onchange = e => { put("fps", Number(e.target.value)); vidRender2(); };
   q("#vidWait").onchange = e => { put("wait", Math.max(0, Math.min(5000, Number(e.target.value) || 300))); vidRender2(); };
   [["vidTitle", "title"], ["vidNow", "now"], ["vidMeter", "meter"], ["vidMiles", "miles"], ["vidPearls", "pearls"]].forEach(([id, k]) => { q("#" + id).onchange = e => put(k, e.target.checked); });
