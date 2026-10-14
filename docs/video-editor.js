@@ -14,11 +14,24 @@ const vidSleep = ms => new Promise(r => setTimeout(r, ms));
 const vidEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 /* ---- Kameran mellan vyerna ------------------------------------------------------------------------ */
-function vidLerp(a, b, k) {
-  if (typeof a === "number" && typeof b === "number") return a + (b - a) * k;
-  if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a)) { const o = {}; Object.keys(a).forEach(key => { o[key] = key in b ? vidLerp(a[key], b[key], k) : a[key]; }); return o; }
+/* Vinklar (grader) tas den korta vägen: 170° → −170° är 20°, inte ett helt varv (annars snurrar kameran runt mellan två vyer). */
+const VID_ANG = new Set(["yaw", "roll", "heading", "azimuth"]);
+const vidShortDelta = (a, b) => { let d = (b - a) % 360; if (d > 180) d -= 360; else if (d < -180) d += 360; return d; };
+function vidLerp(a, b, k, key) {
+  if (typeof a === "number" && typeof b === "number") return VID_ANG.has(key) ? a + vidShortDelta(a, b) * k : a + (b - a) * k;
+  if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a)) { const o = {}; Object.keys(a).forEach(kk => { o[kk] = kk in b ? vidLerp(a[kk], b[kk], k, kk) : a[kk]; }); return o; }
   if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) return a.map((v, i) => vidLerp(v, b[i], k));
   return a;
+}
+/* Mål-kameran med vinklarna "avrullade" mot nuvarande kamera, så att Trimble Connects egen glidning tar den korta vägen. */
+function vidUnwrap(cur, cam) {
+  if (!cur || !cam || typeof cam !== "object") return cam;
+  const o = Array.isArray(cam) ? cam.slice() : { ...cam };
+  Object.keys(o).forEach(key => {
+    if (typeof o[key] === "number" && typeof cur[key] === "number" && VID_ANG.has(key)) o[key] = cur[key] + vidShortDelta(cur[key], o[key]);
+    else if (o[key] && typeof o[key] === "object" && cur[key] && typeof cur[key] === "object") o[key] = vidUnwrap(cur[key], o[key]);
+  });
+  return o;
 }
 /* Kamerans läge vid en tidpunkt f = dagar efter Från (decimaltal – kameran glider jämnt bild för bild, inte i hela dagssteg). */
 function vidCamAtDays(f, from) {
@@ -162,7 +175,7 @@ async function vidGoFrame(i) {
   const seq = ++vidGoSeq, [from, to] = vidRange(), n = vidFrames(), d = vidDateOfFrame(i, n, from, to);
   try {
     const cam = vidCamAtFrame(i, n, from, to);
-    if (cam && API && API.viewer && typeof API.viewer.setCamera === "function") await API.viewer.setCamera(cam, { animationTime: 150 });
+    if (cam && API && API.viewer && typeof API.viewer.setCamera === "function") { let to = cam; try { if (typeof API.viewer.getCamera === "function") to = vidUnwrap(await API.viewer.getCamera(), cam); } catch (e0) { /* */ } await API.viewer.setCamera(to, { animationTime: 150 }); }
     if (seq !== vidGoSeq || vid.run) return; // ett nyare hopp har gjorts
     await vidSetDate(d);
   } catch (e) { console.warn("Visa bilden i TC", e); }
@@ -326,7 +339,7 @@ function vidTlBind(host, q, n, from, to, keys, fl) {
     b.oncontextmenu = e => { e.preventDefault(); vid.keys.splice(vid.keys.indexOf(k), 1); vidSave(); vidRender2(); };
   });
 }
-async function vidSetCamUi(cam) { if (API && API.viewer && typeof API.viewer.setCamera === "function") { try { await API.viewer.setCamera(cam, { animationTime: 600 }); } catch (e) { modelToast("Kunde inte flytta kameran"); } } }
+async function vidSetCamUi(cam) { if (API && API.viewer && typeof API.viewer.setCamera === "function") { try { let to = cam; try { if (typeof API.viewer.getCamera === "function") to = vidUnwrap(await API.viewer.getCamera(), cam); } catch (e0) { /* okänd nuvarande kamera */ } await API.viewer.setCamera(to, { animationTime: 600 }); } catch (e) { modelToast("Kunde inte flytta kameran"); } } }
 /* Gantt-schemat har ritats om (nytt urval/period): fälten Från/Till följer med, om inget pågår och ingen skriver i blocket. */
 function vidRefresh() { const host = document.getElementById("videoEditor"); if (!host || vid.run || host.contains(document.activeElement)) return; const sig = vidRange().join(); if (sig !== vid.sig) { vid.sig = sig; vidRender2(); } }
 function initVideoEditor() { if (!document.getElementById("videoEditor")) return; vidRender2(); }

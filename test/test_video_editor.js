@@ -75,6 +75,9 @@ seed('plan_items.json', [
     await page.fill('#vidSec', '3'); await page.selectOption('#vidFps', '10'); await page.fill('#vidWait', '0'); await page.dispatchEvent('#vidWait', 'change');
     await page.evaluate(() => { const r = document.getElementById('vidFrame'); r.value = 7; r.dispatchEvent(new Event('input')); });
     if (!/bild 8 av 31/.test(await page.innerText('#vidFrameLbl'))) fail('Valet av bild: ' + await page.innerText('#vidFrameLbl'));
+    // Vinklarna tas den korta vägen (ingen 360° mellan vyer).
+    { const w = await page.evaluate(() => ({ mid: vidLerp({ yaw: 170, pitch: -10, position: { x: 0 } }, { yaw: -170, pitch: 10, position: { x: 10 } }, 0.5), un: vidUnwrap({ yaw: 170 }, { yaw: -170 }), same: vidLerp({ yaw: 10 }, { yaw: 50 }, 0.5) }));
+      if (Math.abs(w.mid.yaw - 180) > 1e-9 || w.mid.pitch !== 0 || w.mid.position.x !== 5 || Math.abs(w.un.yaw - 190) > 1e-9 || w.same.yaw !== 30) fail('Kameravinklar den korta vägen: ' + JSON.stringify(w)); }
     // Tidslinjen: dra på den väljer bild, huvudet och datumet följer, kameramarkörer finns.
     { const fr0 = await page.evaluate(() => document.getElementById('vidFrame').value); const bb = await page.locator('#vidTlTrack').boundingBox(); await page.mouse.move(bb.x + bb.width * 0.5, bb.y + 20); await page.mouse.down(); await page.mouse.up();
       const tl = await page.evaluate(() => ({ lbl: document.getElementById('vidFrameLbl').textContent, date: document.getElementById('vidTlDate').textContent, head: document.getElementById('vidTlHead').style.left, keys: document.querySelectorAll('.vtl-key').length, ticks: document.querySelectorAll('.vtl-axis span').length }));
