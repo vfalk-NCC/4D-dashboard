@@ -63,11 +63,18 @@ seed('plan_items.json', [
     if (cams[0] !== 0 || cams[1] !== 100 || !(mid > 0 && mid < 100)) fail('Kameran står still före första och efter sista vyn, och glider emellan: ' + JSON.stringify({ cams, mid }));
     // Provbild med grafik.
     await page.fill('#vidSec', '3'); await page.selectOption('#vidFps', '10'); await page.fill('#vidWait', '0'); await page.dispatchEvent('#vidWait', 'change');
+    await page.evaluate(() => { const r = document.getElementById('vidFrame'); r.value = 7; r.dispatchEvent(new Event('input')); });
+    if (!/bild 8 av 31/.test(await page.innerText('#vidFrameLbl'))) fail('Valet av bild: ' + await page.innerText('#vidFrameLbl'));
     await page.click('#vidShot'); await page.waitForSelector('#vidShotBox canvas', { timeout: 15000 }).catch(async () => fail('Provbild: ' + await page.innerText('#vidMsg') + ' | ' + errors.join(' | ')));
     if (!/Provbild .*640×360/.test(await page.innerText('#vidMsg'))) fail('Provbild: ' + await page.innerText('#vidMsg'));
     if (process.env.VID_PNG) fs.writeFileSync(process.env.VID_PNG, Buffer.from((await page.evaluate(() => document.querySelector('#vidShotBox canvas').toDataURL('image/png'))).split(',')[1], 'base64'));
     const px = await page.evaluate(() => { const c = document.querySelector('#vidShotBox canvas'), d = c.getContext('2d').getImageData(14, 14, 1, 1).data; return [...d]; });
     if (px[0] > 120 || px[2] > 140) fail('Datumskylten ska vara ritad (mörk ruta uppe till vänster): ' + px);
+    if (!/Provbild bild 8 av 31/.test(await page.innerText('#vidMsg'))) fail('Provbild på vald bild: ' + await page.innerText('#vidMsg'));
+    await page.click('#vidShotKeys'); await page.waitForFunction(() => document.querySelectorAll('#vidShotBox .vid-card').length === 3 && !vid.run, null, { timeout: 20000 });
+    await page.fill('#vidSec', '3'); // ritar om blocket – provbilderna ska ligga kvar
+    await page.dispatchEvent('#vidSec', 'change');
+    if ((await page.$$('#vidShotBox .vid-card')).length !== 3 || !(await page.$('#vidShotBox .vc-save'))) fail('Provbilderna ska ligga kvar med Spara-knapp');
     // Rendera: 3 s × 10 bilder/s = 31 bilder; videon sparas som fil.
     const dl = page.waitForEvent('download', { timeout: 120000 });
     await page.click('#vidRender');

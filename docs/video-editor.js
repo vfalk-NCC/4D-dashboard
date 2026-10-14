@@ -67,7 +67,7 @@ function vidFrames() { const C = vid.cfg; return Math.max(2, Math.round(Math.max
 function vidDateOfFrame(i, n, from, to) { return addDaysIso(from, Math.round(daysBetweenIso(from, to) * (i / n))); }
 function vidMsg(t) { const el = document.getElementById("vidMsg"); if (el) el.textContent = t; }
 function vidBusyUi(on) {
-  ["vidRender", "vidPreview", "vidShot", "vidAddKey"].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = on; });
+  ["vidRender", "vidPreview", "vidShot", "vidShotKeys", "vidAddKey"].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = on; });
   const st = document.getElementById("vidStop"); if (st) st.classList.toggle("hidden", !on);
 }
 async function vidSession(fn) {
@@ -98,16 +98,44 @@ function vidPreview() {
   });
 }
 /* En bild (med grafik) för att kontrollera upplösning och utseende. */
-function vidShot() {
+/* Provbilder (Victor 2026-10-14: "ta en specifik sparad provbild … en i taget"): välj en bild i filmen (reglaget eller ◀ ▶) och ta just den,
+   eller en på varje kameravy. Bilden har samma kamera, datum och grafik som i den färdiga filmen. De samlas nedan, kan förstoras och sparas. */
+async function vidShotFrame(run, i, label) {
+  const [from, to] = vidRange(), n = vidFrames(), fps = Math.max(5, Number(vid.cfg.fps) || 15), d = vidDateOfFrame(i, n, from, to);
+  await vidSetCam(vidCamAt(d)); await vidSetDate(d); await vidSleep(Number(vid.cfg.wait) || 300);
+  const blob = await vidSnapshot(), img = await createImageBitmap(blob), c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  // Grafikens läge byggs upp från de närmaste bilderna före (utan nya stillbilder), så att animationerna står som i filmen.
+  const fx = vgxStart(from, to, vidFxOpts()), t0ms = vgxDate(from).getTime(), t1ms = vgxDate(to).getTime() + VGX_DAY, j0 = Math.max(0, i - fps * 4);
+  for (let j = j0; j <= i; j++) vgxFrame(fx, vidDateOfFrame(j, n, from, to), (j - j0) / fps, t0ms + (t1ms - t0ms) * (j / n));
+  vidDraw(c.getContext("2d"), img, c.width, c.height, fx, d, (i - j0) / fps);
+  vidAddShot(c, `${label || `Bild ${i + 1} av ${n + 1}`} · ${d}`, i, d);
+  vidMsg(`Provbild ${label || `bild ${i + 1} av ${n + 1}`} (${d}): ${img.width}×${img.height} px.`);
+}
+function vidAddShot(c, caption, i, d) {
+  const box = document.getElementById("vidShotBox"); if (!box) return;
+  const card = document.createElement("div"); card.className = "vid-card";
+  c.className = "vid-shot";
+  card.innerHTML = `<div class="vid-card-h"><span></span><span class="vid-card-b"><button type="button" class="vc-big" title="Förstora / förminska">⤢</button><button type="button" class="vc-save" title="Spara bilden som PNG på datorn">⬇ Spara</button><button type="button" class="vc-del" title="Ta bort">✕</button></span></div>`;
+  card.querySelector(".vid-card-h span").textContent = caption;
+  card.insertBefore(c, card.firstChild.nextSibling);
+  card.querySelector(".vc-big").onclick = () => card.classList.toggle("big"); c.onclick = () => card.classList.toggle("big");
+  card.querySelector(".vc-del").onclick = () => card.remove();
+  card.querySelector(".vc-save").onclick = () => c.toBlob(b => { if (!b) return; const u = URL.createObjectURL(b), a = document.createElement("a"); a.href = u; a.download = `4D-provbild ${d} (bild ${i + 1}).png`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); }, "image/png");
+  box.insertBefore(card, box.firstChild);
+  while (box.children.length > 24) box.lastChild.remove();
+}
+function vidFrameSel() { const el = document.getElementById("vidFrame"); return el ? Math.max(0, Math.min(vidFrames(), Number(el.value) || 0)) : 0; }
+function vidShot() { const i = vidFrameSel(); return vidSession(run => vidShotFrame(run, i)); }
+/* En provbild på varje kameravy (närmaste bild till vyns datum), en i taget. */
+function vidShotKeys() {
   return vidSession(async run => {
-    const [from, to] = vidRange(), d = ganttAsOf && ganttAsOf >= from && ganttAsOf <= to ? ganttAsOf : from;
-    await vidSetCam(vidCamAt(d)); await vidSetDate(d); await vidSleep(Number(vid.cfg.wait) || 300);
-    const blob = await vidSnapshot(), img = await createImageBitmap(blob), c = document.createElement("canvas"), fx = vgxStart(from, to, vidFxOpts()), tms = vgxDate(d).getTime() + VGX_DAY / 2;
-    c.width = img.width; c.height = img.height;
-    vgxFrame(fx, d, 0, tms); vgxFrame(fx, d, 2, tms); // två steg så att det som glider in syns på plats
-    vidDraw(c.getContext("2d"), img, c.width, c.height, fx, d, 2);
-    const box = document.getElementById("vidShotBox"); if (box) { box.innerHTML = ""; c.className = "vid-shot"; box.appendChild(c); }
-    vidMsg(`Provbild ${d}: ${img.width}×${img.height} px.`);
+    const [from, to] = vidRange(), n = vidFrames(), keys = vid.keys.slice().sort((a, b) => a.date.localeCompare(b.date));
+    if (!keys.length) { vidMsg("Inga kameravyer att ta provbilder på."); return; }
+    for (let k = 0; k < keys.length && !run.stop; k++) {
+      const span = Math.max(1, daysBetweenIso(from, to)), i = Math.max(0, Math.min(n, Math.round(daysBetweenIso(from, keys[k].date) / span * n)));
+      await vidShotFrame(run, i, `Vy ${k + 1}${keys[k].name ? " – " + keys[k].name : ""}`);
+    }
   });
 }
 /* Rendera: samla stillbilder, spela sedan in dem till en videofil. */
@@ -156,6 +184,7 @@ function vidRender() {
 /* ---- Gränssnittet ---------------------------------------------------------------------------------- */
 function vidRender2() {
   const host = document.getElementById("videoEditor"); if (!host) return;
+  const kept = [...host.querySelectorAll("#vidShotBox .vid-card")]; // provbilderna ligger kvar när blocket ritas om
   const C = vid.cfg, [from, to] = vidRange(), n = vidFrames();
   const keys = vid.keys.slice().sort((a, b) => a.date.localeCompare(b.date));
   host.innerHTML = `<div class="vid-hint">Gör en film av tidplanen på modellen i Trimble Connect. Lägg kameravyer på datum – kameran glider mellan dem medan datumet räknas fram och objekten färgas efter läget. Bilderna tas en i taget (det tar en stund) och sätts sedan ihop till en videofil som sparas på datorn. Inget ändras i tidplanen eller i modellen.</div>
@@ -168,9 +197,11 @@ function vidRender2() {
         <label>Bilder/s <select id="vidFps">${[10, 15, 24, 30].map(v => `<option value="${v}"${Number(C.fps) === v ? " selected" : ""}>${v}</option>`).join("")}</select></label>
         <label title="Hur länge TC får rita om efter att datum och kamera ändrats, innan bilden tas. Längre = säkrare men långsammare.">Väntetid <input type="number" id="vidWait" min="0" max="5000" step="50" value="${C.wait}" /> ms</label></div>
       <div class="vid-row vid-checks"><label><input type="checkbox" id="vidTitle"${C.title ? " checked" : ""} /> Datumskylt</label><label><input type="checkbox" id="vidNow"${C.now ? " checked" : ""} /> Pågår nu-ruta</label><label><input type="checkbox" id="vidMeter"${C.meter ? " checked" : ""} /> Förloppsmätare</label><label><input type="checkbox" id="vidMiles"${C.miles !== false ? " checked" : ""} /> Milstolpar</label><label><input type="checkbox" id="vidPearls"${C.pearls ? " checked" : ""} /> Tidslinje</label></div>
-      <div class="vid-row"><button type="button" id="vidShot" title="Tar en bild med grafik så att du ser utseendet och upplösningen">Provbild</button><button type="button" id="vidPreview" title="Kamera och datum i TC utan att spela in">▶ Förhandsvisa</button><button type="button" id="vidRender" class="primary" title="Tar alla bilder och sparar videon på datorn">⏺ Rendera video</button><button type="button" id="vidStop" class="hidden" title="Avbryt">■ Stoppa</button>
+      <div class="vid-row vid-frame"><label>Bild <input type="range" id="vidFrame" min="0" max="${n}" value="${vid.frame == null ? 0 : Math.min(n, vid.frame)}" /></label><button type="button" id="vidPrev" title="Föregående bild">◀</button><button type="button" id="vidNext" title="Nästa bild">▶</button><span id="vidFrameLbl" class="hint"></span></div>
+      <div class="vid-row"><button type="button" id="vidShot" title="Tar en provbild på vald bild: samma kamera, datum och grafik som i filmen">Provbild på vald bild</button><button type="button" id="vidShotKeys" title="En provbild på varje kameravy">Provbild på varje vy</button><button type="button" id="vidPreview" title="Kamera och datum i TC utan att spela in">▶ Förhandsvisa</button><button type="button" id="vidRender" class="primary" title="Tar alla bilder och sparar videon på datorn">⏺ Rendera video</button><button type="button" id="vidStop" class="hidden" title="Avbryt">■ Stoppa</button>
         <span class="hint">${n + 1} bilder · ${vidMime() ? (/mp4/.test(vidMime()) ? "MP4" : "WebM") : "video stöds inte"} · tar ungefär ${Math.max(1, Math.round((n + 1) * ((Number(C.wait) || 300) + 500) / 60000))} min</span></div>
       <div id="vidMsg" class="hint vid-msg"></div><div id="vidShotBox" class="vid-shotbox"></div></div>`;
+  { const bx = host.querySelector("#vidShotBox"); if (bx) kept.forEach(k => bx.appendChild(k)); }
   const q = s => host.querySelector(s), put = (k, v) => { vid.cfg[k] = v; vidSave(); };
   host.querySelectorAll(".vid-key").forEach(row => {
     const k = keys[Number(row.dataset.i)], upd = () => { vidSave(); };
@@ -191,6 +222,9 @@ function vidRender2() {
   q("#vidFps").onchange = e => { put("fps", Number(e.target.value)); vidRender2(); };
   q("#vidWait").onchange = e => { put("wait", Math.max(0, Math.min(5000, Number(e.target.value) || 300))); vidRender2(); };
   [["vidTitle", "title"], ["vidNow", "now"], ["vidMeter", "meter"], ["vidMiles", "miles"], ["vidPearls", "pearls"]].forEach(([id, k]) => { q("#" + id).onchange = e => put(k, e.target.checked); });
+  const fl = () => { const i = vidFrameSel(); vid.frame = i; q("#vidFrameLbl").textContent = `bild ${i + 1} av ${n + 1} · ${vidDateOfFrame(i, n, from, to)} · ${(i / Math.max(5, Number(C.fps) || 15)).toFixed(1).replace(".", ",")} s`; };
+  q("#vidFrame").oninput = fl; q("#vidPrev").onclick = () => { q("#vidFrame").value = Math.max(0, vidFrameSel() - 1); fl(); }; q("#vidNext").onclick = () => { q("#vidFrame").value = Math.min(n, vidFrameSel() + 1); fl(); }; fl();
+  q("#vidShotKeys").onclick = vidShotKeys;
   q("#vidShot").onclick = vidShot; q("#vidPreview").onclick = vidPreview; q("#vidRender").onclick = vidRender;
   q("#vidStop").onclick = () => { if (vid.run) vid.run.stop = true; };
   if (vid.run) vidBusyUi(true);

@@ -2356,3 +2356,10 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .vid-msg { min-height: 1.2em; }
 .vid-shotbox { max-width: 100%; overflow: auto; }
 .vid-shot { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid #d1d5db; }
+.vid-frame input[type=range] { width: 320px; }
+.vid-shotbox { display: flex; flex-wrap: wrap; gap: 10px; }
+.vid-card { width: 260px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.vid-card.big { width: 100%; max-width: 1100px; }
+.vid-card-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: #374151; }
+.vid-card-b button { border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
+.vid-card .vid-shot { width: 100%; height: auto; display: block; cursor: zoom-in; }
