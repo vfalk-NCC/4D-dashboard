@@ -3886,6 +3886,16 @@ function initGanttTime() {
   const seg = document.getElementById("ganttModeSeg"); if (!seg || seg.dataset.wired) return;
   seg.dataset.wired = "1";
   seg.querySelectorAll("[data-gmode]").forEach(b => { b.onclick = () => setGanttMode(b.dataset.gmode); });
+  // Färger & visning i en rullgardin (stängs vid klick utanför) och stegknappar ◀ ▶ vid tidslidern.
+  const tmb = document.getElementById("ganttTimeMenuBtn"), tmm = document.getElementById("ganttTimeMenu");
+  if (tmb && tmm) {
+    const setMenu = on => { tmm.classList.toggle("hidden", !on); tmb.setAttribute("aria-expanded", String(on)); };
+    tmb.onclick = e => { e.stopPropagation(); setMenu(tmm.classList.contains("hidden")); };
+    document.addEventListener("pointerdown", e => { if (tmm.classList.contains("hidden")) return; if (tmm.contains(e.target) || tmb.contains(e.target) || e.target.closest("#ganttPulsePop")) return; setMenu(false); }, true);
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && !tmm.classList.contains("hidden") && !document.getElementById("ganttPulsePop")) setMenu(false); });
+  }
+  const stepDay = d => { const r = ganttTimeRange(); if (!r || !ganttAsOf) return; clearTimeout(ganttTimeTimer); ganttTimeTimer = null; const pb0 = document.getElementById("ganttTimePlay"); if (pb0) pb0.textContent = "▶"; const n = addDaysIso(ganttAsOf, d); setGanttAsOf(n < r[0] ? r[0] : n > r[1] ? r[1] : n, { now: true }); };
+  { const pv = document.getElementById("ganttTimePrev"), nx = document.getElementById("ganttTimeNext"); if (pv) pv.onclick = () => stepDay(-1); if (nx) nx.onclick = () => stepDay(1); }
   const fsTime = document.getElementById("ganttFsTime"); if (fsTime) fsTime.onclick = () => setGanttMode(ganttMode === "time" ? "off" : "time");
   const sl = document.getElementById("ganttTimeSlider"), di = document.getElementById("ganttTimeDate"), pb = document.getElementById("ganttTimePlay"), td = document.getElementById("ganttTimeToday");
   sl.oninput = () => { const r = ganttTimeRange(); if (r) setGanttAsOf(addDaysIso(r[0], Number(sl.value))); };

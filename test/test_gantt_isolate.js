@@ -90,6 +90,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   console.log('OK: Visa endast kopplade – isolerar objekten för det som visas i Gantt, följer sökningen, av = hela modellen igen');
   // Tidslinje-dragaren: valfri rad med dragare + datum; markeringen följer datumet, "Visa i 3D" visar bara objekt som hunnit starta
   // och uppdaterar 3D direkt (bara de som byter läge), färdigt arbete får egen opacitet.
+  const openMenu = async () => { if (await page.isVisible('#ganttTimeMenu')) return; await page.click('#ganttTimeMenuBtn'); await page.waitForSelector('#ganttTimeMenu', { state: 'visible' }); };
   const replay = () => page.evaluate(() => {
     const vis = new Map(), col = new Map();
     (window.__calls || []).forEach(({ a, b, iso }) => {
@@ -155,6 +156,14 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if ((await page.evaluate(() => ganttMode)) !== 'off' && wasTime === 'time') { /* tillbaka till av */ }
   await page.evaluate(() => setGanttFsClean(false)); await page.waitForTimeout(200);
   if ((await page.evaluate(() => ganttMode)) !== wasTime) { await page.evaluate(m => setGanttMode(m, true), wasTime); await page.waitForTimeout(600); }
+  // Stegknapparna: en dag fram/bak (stannar vid spannets ände).
+  const st0 = await page.evaluate(() => ganttAsOf);
+  await page.click('#ganttTimeNext'); await page.waitForTimeout(300);
+  const st1 = await page.evaluate(() => ganttAsOf); await page.click('#ganttTimePrev'); await page.click('#ganttTimePrev'); await page.waitForTimeout(300);
+  const st2 = await page.evaluate(() => ganttAsOf);
+  const ddays = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+  if (ddays(st0, st1) !== 1 || ddays(st1, st2) !== -1) fail('Stegknapparna ska flytta en dag och stanna vid spannets början: ' + [st0, st1, st2]);
+  await page.click('#ganttTimeMenuBtn'); await page.waitForTimeout(150); if (await page.isVisible('#ganttTimeMenu')) { /* öppnades/stängdes */ }
   // Opacitet per status: pågående 50 % ger alfa 128; 0 = osynligt (släcks).
   await page.evaluate(() => { const i = document.querySelector('[data-topc="pagaende"]'); i.value = 50; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
   R = await replay();
@@ -186,11 +195,11 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   // Pulserande ljus på pågående objekt (valfritt).
   await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(800);
   await page.evaluate(() => { window.__calls = []; });
-  await page.check('#ganttTimePulse'); await page.waitForTimeout(2200);
+  await openMenu(); await page.check('#ganttTimePulse'); await page.waitForTimeout(2200);
   const pcols = await page.evaluate(() => [...new Set(window.__calls.filter(c => c.a && c.b.color && c.b.color !== 'reset').map(c => JSON.stringify(c.b.color)))]);
   if (pcols.length < 3) fail('Pågående ska pulsera (flera färgsteg): ' + pcols.length);
   // Inställningar: färger (förval Röd), hastighet och stil.
-  await page.click('#ganttPulseCfgBtn'); await page.waitForSelector('#ganttPulsePop');
+  await openMenu(); await page.click('#ganttPulseCfgBtn'); await page.waitForSelector('#ganttPulsePop');
   await page.selectOption('#ganttPulsePop .pp-preset', 'rod'); await page.evaluate(() => { window.__calls = []; }); await page.waitForTimeout(1800);
   const rcols = await page.evaluate(() => [...new Set(window.__calls.filter(c => c.a && c.b.color && c.b.color !== 'reset').map(c => c.b.color))]);
   if (rcols.length < 3 || !rcols.every(c => c.r >= 0xe5 && c.g <= 0xd6 + 1)) fail('Röd förinställning (e5484d ↔ ffd6d6): ' + JSON.stringify(rcols.slice(0, 3)));
@@ -200,7 +209,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (bl.length !== 2) fail('Blink ger exakt två färger: ' + bl.length);
   if ((await page.evaluate(() => ganttPulseCfg.period)) !== 0.5 || (await page.evaluate(() => JSON.parse(localStorage.getItem('4ddash-pulse-cfg')).style)) !== 'blink') fail('Pulsinställningarna sparas');
   await page.click('#ganttPulsePop .pp-reset'); await page.click('#ganttPulsePop .pp-close');
-  await page.uncheck('#ganttTimePulse'); await page.waitForTimeout(500);
+  await openMenu(); await page.uncheck('#ganttTimePulse'); await page.waitForTimeout(500);
   const restored = await page.evaluate(() => JSON.stringify(window.__calls.filter(c => c.a && c.b.color && c.b.color !== 'reset').slice(-1)[0].b.color));
   const baseC = await page.evaluate(() => JSON.stringify(hexToRgbaObj(STATUS_COLORS.pagaende, 1)));
   if (restored !== baseC) fail('Av: pågående-färgen ska återställas: ' + restored + ' vs ' + baseC);
@@ -208,10 +217,10 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if ((await page.evaluate(() => window.__calls.length)) !== nCalls) fail('Pulsen ska stanna när rutan släpps');
   // Markera pågående med TC:s egen markering (och släpp den igen).
   await page.evaluate(() => { window.__setsel = []; });
-  await page.check('#ganttTimeSelAct'); await page.waitForTimeout(800);
+  await openMenu(); await page.check('#ganttTimeSelAct'); await page.waitForTimeout(800);
   const sel1 = await page.evaluate(() => (window.__setsel || []).slice(-1)[0]);
   if (!sel1 || sel1.modelObjectIds.flatMap(m => m.objectRuntimeIds).join() !== 'G7') fail('Pågående (G7 vid dag 4) ska markeras: ' + JSON.stringify(sel1));
-  await page.uncheck('#ganttTimeSelAct'); await page.waitForTimeout(600);
+  await openMenu(); await page.uncheck('#ganttTimeSelAct'); await page.waitForTimeout(600);
   const sel2 = await page.evaluate(() => (window.__setsel || []).slice(-1)[0]);
   if (!sel2 || sel2.modelObjectIds.length !== 0) fail('Av: markeringen släpps: ' + JSON.stringify(sel2));
   // Temporär försvinner efter slut, Rivning syns före start men försvinner efter slut.
@@ -241,10 +250,10 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('#ganttTimeAuto'); await page.waitForTimeout(300);
   if ((await page.getAttribute('#ganttTimeSlider', 'max')) === '8') fail('Auto ska ge hela spannet');
   // Visa kommande: G5 (startar dag 6) syns i kommande-färgen redan vid dag 4.
-  await page.check('#ganttTimeFuture'); await page.waitForTimeout(1200);
+  await openMenu(); await page.check('#ganttTimeFuture'); await page.waitForTimeout(1200);
   R = await replay();
   if (R.shown !== 'G5,G7') fail('Visa kommande: båda i 3D: ' + R.shown);
-  await page.uncheck('#ganttTimeFuture'); await page.waitForTimeout(800);
+  await openMenu(); await page.uncheck('#ganttTimeFuture'); await page.waitForTimeout(800);
   await page.click('[data-gmode="off"]'); await page.waitForTimeout(600);
   if (await page.isVisible('#ganttTimeRow') || await page.$('.gantt-scrub')) fail('Av: raden och dragstrecket ska försvinna');
 

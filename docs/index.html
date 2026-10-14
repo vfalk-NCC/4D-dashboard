@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=20261014065253" />
+<link rel="stylesheet" href="style.css?v=20261014065848" />
 <script src="error-guard.js"></script>
 <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
 </head>
@@ -195,19 +195,26 @@
 
         <div class="gantt-head-row gantt-head-sub gantt-time-row hidden" id="ganttTimeRow">
           <button type="button" id="ganttTimePlay" class="gantt-toolbar-btn" title="Spela upp">▶</button>
+          <button type="button" id="ganttTimePrev" class="gantt-toolbar-btn gantt-step" title="Backa en dag" aria-label="Backa en dag">‹</button>
           <input type="range" id="ganttTimeSlider" class="gantt-time-slider" min="0" max="1" value="0" aria-label="Datum" />
+          <button type="button" id="ganttTimeNext" class="gantt-toolbar-btn gantt-step" title="Fram en dag" aria-label="Fram en dag">›</button>
           <label class="gantt-toolbar-field"><input type="date" id="ganttTimeDate" aria-label="Datum" /></label>
           <button type="button" id="ganttTimeToday" class="gantt-toolbar-btn" title="Till idag">Idag</button>
           <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens start">Från <input type="date" id="ganttTimeFrom" aria-label="Från" /></label>
           <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens slut">Till <input type="date" id="ganttTimeTo" aria-label="Till" /></label>
           <button type="button" id="ganttTimeAuto" class="gantt-toolbar-btn" title="Hela spannet">Auto</button>
-          <span class="gantt-time-cols">
-            <span class="gantt-tc"><input type="color" data-tcol="pagaende" title="Färg: pågående" aria-label="Färg pågående" /><input type="range" class="gantt-tc-op" data-topc="pagaende" min="0" max="100" step="5" value="100" aria-label="Opacitet pågående" /></span>
-            <span class="gantt-tc"><input type="color" data-tcol="forsenad" title="Färg: försenad (har börjat men mindre än 1 % framdrift)" aria-label="Färg försenad" /><input type="range" class="gantt-tc-op" data-topc="forsenad" min="0" max="100" step="5" value="100" aria-label="Opacitet försenad" /></span>
-            <input type="color" data-tcol="klar" title="Färg: klart (opaciteten styrs av Klart-reglaget)" aria-label="Färg klart" />
-            <span class="gantt-tc"><input type="color" data-tcol="planerad" title="Färg: kommande" aria-label="Färg kommande" /><input type="range" class="gantt-tc-op" data-topc="planerad" min="0" max="100" step="5" value="100" aria-label="Opacitet kommande" /></span>
-          </span>
-          <label class="gantt-toolbar-field gantt-time-lim" title="Hur synligt färdigt arbete är (0 = osynligt)">Klart <input type="range" id="ganttTimeDoneOp" min="0" max="100" step="5" value="30" /> <b id="ganttTimeDoneOpVal">30</b>%</label>
+          <div class="gantt-time-menu-wrap">
+            <button type="button" id="ganttTimeMenuBtn" class="gantt-toolbar-btn" aria-expanded="false" aria-haspopup="true" title="Färger, opacitet, Kommande, Pulsera och Markera pågående">Färger &amp; visning ▾</button>
+            <div id="ganttTimeMenu" class="gantt-time-menu hidden" role="dialog" aria-label="Färger och visning">
+              <div class="gtm-title">Färger och opacitet</div>
+          <div class="gtm-grid">
+            <span class="gtm-h"></span><span class="gtm-h">Färg</span><span class="gtm-h">Opacitet</span>
+            <span>Pågående</span><input type="color" data-tcol="pagaende" title="Färg: pågående" aria-label="Färg pågående" /><input type="range" class="gantt-tc-op" data-topc="pagaende" min="0" max="100" step="5" value="100" aria-label="Opacitet pågående" />
+            <span>Försenad</span><input type="color" data-tcol="forsenad" title="Färg: försenad (har börjat men mindre än 1 % framdrift)" aria-label="Färg försenad" /><input type="range" class="gantt-tc-op" data-topc="forsenad" min="0" max="100" step="5" value="100" aria-label="Opacitet försenad" />
+            <span>Klart</span><input type="color" data-tcol="klar" title="Färg: klart" aria-label="Färg klart" /><span class="gtm-doneop"><input type="range" id="ganttTimeDoneOp" min="0" max="100" step="5" value="30" aria-label="Opacitet klart" /> <b id="ganttTimeDoneOpVal">30</b>%</span>
+            <span>Kommande</span><input type="color" data-tcol="planerad" title="Färg: kommande" aria-label="Färg kommande" /><input type="range" class="gantt-tc-op" data-topc="planerad" min="0" max="100" step="5" value="100" aria-label="Opacitet kommande" />
+          </div>
+          <div class="gtm-title">Visning</div>
           <label class="gantt-pill" title="Visa det som inte startat, i kommande-färgen">
             <input type="checkbox" id="ganttTimeFuture" /> Kommande
           </label>
@@ -218,6 +225,8 @@
           <label class="gantt-pill" title="Markera de pågående objekten med Trimble Connects egen markering – de lyses upp. Ett klick i modellen byter markering.">
             <input type="checkbox" id="ganttTimeSelAct" /> Markera pågående
           </label>
+            </div>
+          </div>
           <span id="ganttTimeSum" class="hint gantt-time-sum"></span>
           <span id="ganttTime3dInfo" class="hint gantt-time-sum"></span>
         </div>
@@ -428,15 +437,15 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=20261014065253"></script>
-  <script src="app.js?v=20261014065253"></script>
-  <script src="resource-curve.js?v=20261014065253"></script>
-  <script src="pp-export.js?v=20261014065253"></script>
-  <script src="bubbles.js?v=20261014065253"></script>
-  <script src="video-gfx.js?v=20261014065253"></script>
-  <script src="video-editor.js?v=20261014065253"></script>
-  <script src="quantities.js?v=20261014065253"></script>
-  <script src="quantities-mf.js?v=20261014065253"></script>
-  <script src="planning-link.js?v=20261014065253"></script>
+  <script src="ui-dialog.js?v=20261014065848"></script>
+  <script src="app.js?v=20261014065848"></script>
+  <script src="resource-curve.js?v=20261014065848"></script>
+  <script src="pp-export.js?v=20261014065848"></script>
+  <script src="bubbles.js?v=20261014065848"></script>
+  <script src="video-gfx.js?v=20261014065848"></script>
+  <script src="video-editor.js?v=20261014065848"></script>
+  <script src="quantities.js?v=20261014065848"></script>
+  <script src="quantities-mf.js?v=20261014065848"></script>
+  <script src="planning-link.js?v=20261014065848"></script>
 </body>
 </html>

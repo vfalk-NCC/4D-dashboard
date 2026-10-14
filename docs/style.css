@@ -2396,3 +2396,19 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .app-guide-body ul { margin: 6px 0 0; padding-left: 18px; } .app-guide-body li { margin: 5px 0; line-height: 1.45; }
 .app-guide-body a { color: #1d4ed8; }
 @media print { .app-guide { display: none !important; } }
+
+/* Färger & visning i en rullgardin + stegknappar vid tidslidern */
+.gantt-time-menu-wrap { position: relative; display: inline-block; }
+.gantt-time-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 60; min-width: 300px; background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 10px 28px rgba(15,23,42,.22); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.gantt-time-menu.hidden { display: none; }
+.gtm-title { font-weight: 700; font-size: 12px; color: #334155; text-transform: uppercase; letter-spacing: .03em; }
+.gtm-grid { display: grid; grid-template-columns: auto 38px 1fr; gap: 6px 10px; align-items: center; font-size: 12.5px; }
+.gtm-h { font-size: 11px; color: #64748b; }
+.gtm-grid input[type="color"] { width: 30px; height: 22px; padding: 0; border: 1px solid #cbd5e1; border-radius: 4px; background: none; }
+.gtm-grid input[type="range"] { width: 130px; }
+.gtm-doneop { display: inline-flex; align-items: center; gap: 4px; }
+.gantt-time-menu .gantt-pill { align-self: flex-start; }
+.gantt-step { min-width: 28px; padding: 2px 6px; }
+@media print { .gantt-time-menu-wrap, .gantt-step { display: none !important; } }
+
+.gantt-step { font-size: 18px; line-height: 1; padding: 1px 8px 3px; }
