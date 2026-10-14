@@ -3477,6 +3477,7 @@ function ganttCoupledTargets() {
       // Temporär finns bara mellan start och slut; Rivning syns före start men försvinner efter slut (slutet = verkligt slut om det finns).
       const tEnd = m.actualEndDate || m.endDate;
       if (m.temporary && ((m.startDate && m.startDate > ganttAsOf) || (tEnd && tEnd < ganttAsOf))) phase = "dold";
+      else if (m.temporary) phase = "tempon"; // temporär mellan start och slut: modellens originalfärg
       else if (m.demolition) { if (tEnd && tEnd < ganttAsOf) phase = "dold"; else if (phase === "planerad") phase = "planerad_syns"; }
       if (phase === "planerad" && !ganttTimeFuture) phase = "dold"; // släckt i 3D vid det här datumet
       if (phase === "planerad_syns") phase = "planerad"; // rivning före start: syns alltid
@@ -3511,6 +3512,7 @@ const ganttRidCache = new Map(); // "modell|objekt" -> runtime-id (eller null)
 let ganttPhaseNow = new Map(), ganttTimeBusy = false, ganttTimePending = false, ganttTimeBase = false, ganttDoneOp = 30;
 const hexToRgbaObj = (hex, op) => ({ r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16), a: Math.round(Math.max(0, Math.min(1, op)) * 255) });
 function ganttTimeColorOf(t) {
+  if (t.phase === "tempon") return "reset";
   if (t.phase === "klar") return hexToRgbaObj(t.doneColor || STATUS_COLORS.klar, (t.doneOpacity !== null ? t.doneOpacity : ganttDoneOp) / 100);
   return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase]) / 100);
 }
@@ -3692,7 +3694,7 @@ async function applyGanttIsolate(force) {
     if (typeof API.viewer.setObjectState === "function") {
       if (ganttAsOf && ganttTime3d) {
         await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {});
-        for (const g of phaseGroups) if (g.phase) await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: STATUS_COLORS[g.phase] });
+        for (const g of phaseGroups) if (g.phase && STATUS_COLORS[g.phase]) await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: STATUS_COLORS[g.phase] });
         ganttColored = true;
       } else if (ganttColored) { await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {}); ganttColored = false; }
     }
