@@ -164,6 +164,8 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   const ddays = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
   if (ddays(st0, st1) !== 1 || ddays(st1, st2) !== -1) fail('Stegknapparna ska flytta en dag och stanna vid spannets början: ' + [st0, st1, st2]);
   await page.click('#ganttTimeMenuBtn'); await page.waitForTimeout(150); if (await page.isVisible('#ganttTimeMenu')) { /* öppnades/stängdes */ }
+  // Tidslinjen börjar nu vid spannets början (inte dagens datum): gå till en dag där G7 pågår innan opaciteterna provas.
+  await page.evaluate(() => { const g = items.find(x => x.objectId === 'G7'); setGanttAsOf(addDaysIso(g.startDate, 1), { now: true }); }); await page.waitForTimeout(800);
   // Opacitet per status: pågående 50 % ger alfa 128; 0 = osynligt (släcks).
   await page.evaluate(() => { const i = document.querySelector('[data-topc="pagaende"]'); i.value = 50; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
   R = await replay();
@@ -235,7 +237,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
     [ganttShownItems, ganttAsOf, ganttTime3d] = keep;
     return r;
   }, [day(0), day(1), day(3), day(4), day(6), day(7)]);
-  if (tdp[0] !== 'T1:dold,D1:planerad' || tdp[1] !== 'T1:pagaende,D1:planerad' || tdp[2] !== 'T1:dold,D1:forsenad' || tdp[3] !== 'T1:dold,D1:dold') fail('Temporär/Rivning i tidslinjen: ' + JSON.stringify(tdp));
+  if (tdp[0] !== 'T1:dold,D1:planerad' || tdp[1] !== 'T1:tempon,D1:planerad' || tdp[2] !== 'T1:dold,D1:forsenad' || tdp[3] !== 'T1:dold,D1:dold') fail('Temporär/Rivning i tidslinjen: ' + JSON.stringify(tdp));
   // Uppspelning: 3D uppdateras medan det spelas (inte först vid paus).
   await page.fill('#ganttTimeDate', day(2)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(600);
   const nPlay = await page.evaluate(() => window.__calls.length);
@@ -302,7 +304,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('[data-gmode="off"]'); await page.waitForTimeout(300);
   console.log('OK: Ctrl-klick markerar flera aktiviteter – pushas till 3D, Bara dessa, Esc rensar');
   // Info-bubblor i 3D: en per aktivitet med namn, datum, framdrift, område och aktivitet; följer Ctrl-markeringen; av = borttagna.
-  await page.evaluate(() => { window.__mk = []; window.__mkRm = []; });
+  await page.evaluate(() => { window.__mk = []; window.__mkRm = []; ganttAsOf = addDaysIso(items.find(x => x.objectId === 'G7').startDate, 1); }); // datumet är inte längre dagens: sätt ett där aktiviteterna pågår
   await page.click('#bubbleBtn'); await page.waitForTimeout(1200);
   let mk = await page.evaluate(() => (window.__mk || []).slice(-1)[0]);
   if (!mk || !mk.length || !/\d+ %/.test(mk[0].text) || !/\d/.test(mk[0].text.split('\n')[1] || '') || mk[0].start.positionZ !== 5200 || !/^#[0-9a-f]{6}$/i.test(mk[0].color || '') || mk[0].text.split('\n').some(l => l.length > 30)) fail('Bubbla med datum och framdrift: ' + JSON.stringify(mk && mk[0]));

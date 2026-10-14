@@ -3407,12 +3407,9 @@ function ganttPhaseAt(m, d) {
   const prog = Number(m.progress) || 0, end = m.endDate, start = m.startDate;
   const done = !!m.actualEndDate || prog >= 100 || m.status === "klar";
   if (done && (m.actualEndDate || end) && (m.actualEndDate || end) < d) return "klar";
-  // Påbörjad (samma som computeItemPhase i 4D-planering): framdrift minst 1 % betyder att arbetet är igång från verklig start – saknas den,
-  // från planerad start eller dagens datum om starten ligger framåt. Ett datum FÖRE det är "planerad", även om aktiviteten har framdrift nu
-  // (Victor 2026-10-14: objekt syntes i 3D fast tidslinjen inte nått dem).
-  const today = todayISO();
-  let aStart = null;
-  if (prog >= 1) aStart = m.actualStartDate && m.actualStartDate <= today ? m.actualStartDate : (start && start < today ? start : today);
+  // Påbörjad (samma som computeItemPhase i 4D-planering): framdrift minst 1 % betyder att arbetet är igång från verklig start, annars från
+  // planerad start. Dagens datum spelar ingen roll. Ett datum FÖRE det är "planerad" (objekt ska inte synas före tidslinjen nått dem).
+  const aStart = prog >= 1 ? (m.actualStartDate || start || null) : null;
   const started = !!aStart && aStart <= d;
   if (start && start > d && !started) return "planerad";
   if (end && end < d) return done ? "klar" : "forsenad";
@@ -3882,7 +3879,7 @@ function setGanttTimeOn(on) {
   const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
   if (!on) return;
   const r = ganttTimeRange();
-  setGanttAsOf(r && todayISO() >= r[0] && todayISO() <= r[1] ? todayISO() : (r ? r[0] : todayISO()), { now: true });
+  setGanttAsOf(r ? r[0] : todayISO(), { now: true });
 }
 function initGanttTime() {
   const seg = document.getElementById("ganttModeSeg"); if (!seg || seg.dataset.wired) return;
