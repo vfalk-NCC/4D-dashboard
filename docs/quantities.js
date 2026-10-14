@@ -1,0 +1,172 @@
+/* Mängdavtagning (Victor 2026-10-14): mängder ur modellen i Trimble Connect för de objekt som Ganttens regel räknar som klara
+   (eller alla, eller markeringen i TC), summerade per egenskap – t.ex. betong (m³) per typ, område eller byggnad – för att jämföra
+   med mängdförteckningen. Allt läses ur TC:s egna egenskaper (getObjectProperties), bl.a. "Calculated Geometry Values → Volume".
+   Inget sparas någonstans; resultatet kan exporteras som CSV (öppnas i Excel). */
+
+const QTY_KEY = "4ddash-qty";
+const qty = { cfg: { scope: "gantt", phase: "klar", date: "", rowKey: "", colKey: "", valKey: "", filter: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
+try { Object.assign(qty.cfg, JSON.parse(localStorage.getItem(QTY_KEY) || "{}")); } catch (e) { /* standard */ }
+const qtySave = () => { try { localStorage.setItem(QTY_KEY, JSON.stringify(qty.cfg)); } catch (e) { /* ingen lagring */ } };
+const qtyEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const qtyNum = v => { if (typeof v === "number") return Number.isFinite(v) ? v : null; if (typeof v !== "string") return null; const n = parseFloat(v.replace(/\s/g, "").replace(",", ".")); return Number.isFinite(n) && /^[-+]?[\d\s.,]+(e[-+]?\d+)?\s*[a-zA-Zµ²³°%/]*$/i.test(v.trim()) ? n : null; };
+const qtyFmt = (n, d = 1) => (Number.isFinite(n) ? n.toLocaleString("sv-SE", { minimumFractionDigits: 0, maximumFractionDigits: d }) : "–");
+/* Specialnycklar som kommer från aktiviteten i Gantt-schemat i stället för från modellen. */
+const QTY_ACT_KEYS = { "◆ Område (hela)": o => o.item.area || "", "◆ Område (sista ledet)": o => String(o.item.area || "").split("/").map(x => x.trim()).filter(Boolean).pop() || "", "◆ Aktivitet": o => o.item.activity || o.item.objectName || "", "◆ Entreprenör": o => o.item.contractor || "", "◆ Modell": o => o.modelId };
+
+/* Alla egenskaper hos ett objekt som en platt lista "Egenskapsgrupp / Egenskap" → värde. */
+function qtyFlat(obj) {
+  const f = {};
+  if (obj.product && obj.product.name) f["Produkt / Namn"] = obj.product.name;
+  if (obj.class) f["IFC-klass"] = obj.class;
+  (obj.properties || []).forEach(ps => (ps.properties || []).forEach(p => { if (p && p.name !== undefined && p.value !== undefined && p.value !== null && typeof p.value !== "object") f[`${ps.name || "Övrigt"} / ${p.name}`] = p.value; }));
+  return f;
+}
+function qtyObjects() {
+  const base = qty.cfg.scope === "all" ? items : (typeof ganttShownItems !== "undefined" ? ganttShownItems : items).flatMap(it => it.members || [it]);
+  const at = qty.cfg.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO(), seen = new Set(), out = [];
+  base.forEach(m => {
+    if (!m.modelId || !m.objectId) return;
+    if (qty.cfg.phase === "klar" && ganttPhaseAt(m, at) !== "klar") return;
+    const k = `${m.modelId}|${m.objectId}`; if (seen.has(k)) return; seen.add(k);
+    out.push({ modelId: m.modelId, objectId: String(m.objectId), item: m });
+  });
+  return out;
+}
+async function qtySelectionObjects() {
+  const V = API && API.viewer, sel = await V.getSelection(), out = [];
+  (sel || []).forEach(s => (s.objectRuntimeIds || []).forEach(rid => out.push({ modelId: s.modelId, rid, objectId: "", item: {} })));
+  return out;
+}
+async function qtyRead() {
+  if (qty.busy) return;
+  const V = API && API.viewer;
+  if (!V || typeof V.getObjectProperties !== "function") { qtyMsg("Mängdavtagning kräver Trimble Connect-vyn."); return; }
+  qty.busy = true; qtyBusyUi(true);
+  try {
+    const targets = qty.cfg.scope === "sel" ? await qtySelectionObjects() : qtyObjects();
+    if (!targets.length) { qtyMsg(qty.cfg.scope === "sel" ? "Inget är markerat i TC." : "Inga objekt matchar urvalet (kolla datum och Ganttens filter)."); qty.objs = []; qtyRender(); return; }
+    const byModel = new Map(); targets.forEach(t => (byModel.get(t.modelId) || byModel.set(t.modelId, []).get(t.modelId)).push(t));
+    const objs = []; let missing = 0, n = 0;
+    for (const [modelId, list] of byModel) {
+      if (qty.cfg.scope !== "sel") {
+        const r = await dashRuntimeIds(V, modelId, list.map(t => t.objectId));
+        if (r.modelFailed) { missing += list.length; continue; }
+        list.forEach(t => { t.rid = r.map.get(t.objectId); });
+      }
+      const ok = list.filter(t => t.rid !== null && t.rid !== undefined); missing += list.length - ok.length;
+      for (let i = 0; i < ok.length; i += 150) {
+        const chunk = ok.slice(i, i + 150), props = await V.getObjectProperties(modelId, chunk.map(t => t.rid)), byId = new Map((props || []).map(p => [p.id, p]));
+        chunk.forEach(t => { const p = byId.get(t.rid); if (!p) { missing++; return; } objs.push({ ...t, flat: qtyFlat(p) }); });
+        n += chunk.length; qtyMsg(`Läser egenskaper: ${n} av ${targets.length}…`);
+      }
+    }
+    qty.objs = objs; qty.missing = missing;
+    // Vilka egenskaper som finns (och hur många objekt som har dem) – för valen nedan.
+    const keys = new Map(); objs.forEach(o => Object.entries(o.flat).forEach(([k, v]) => { const e = keys.get(k) || { n: 0, num: 0, sample: v }; e.n++; if (qtyNum(v) !== null) e.num++; keys.set(k, e); }));
+    qty.keys = keys;
+    qtyPickDefaults();
+    await qtyUnitCheck();
+    qtyMsg(`${objs.length} objekt lästa${missing ? ` · ${missing} hittades inte i de inlästa modellerna` : ""}.`);
+  } catch (e) { console.warn("Mängdavtagning", e); qtyMsg("Kunde inte läsa egenskaper: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
+  finally { qty.busy = false; qtyBusyUi(false); qtyRender(); }
+}
+function qtyNumKeys() { return [...qty.keys].filter(([, e]) => e.num >= Math.max(1, e.n * 0.8)).map(([k]) => k); }
+function qtyPickDefaults() {
+  const nk = qtyNumKeys(), all = [...qty.keys.keys()];
+  if (!qty.keys.has(qty.cfg.valKey)) qty.cfg.valKey = nk.find(k => /calculated\s*geometry\s*values\s*\/\s*volume$/i.test(k)) || nk.find(k => /volume|volym/i.test(k)) || nk[0] || "";
+  const okRow = k => k === "" || qty.keys.has(k) || QTY_ACT_KEYS[k];
+  if (!okRow(qty.cfg.rowKey) || !qty.cfg.rowKey) qty.cfg.rowKey = all.find(k => /product\s*object\s*type$/i.test(k)) || all.find(k => /produkt \/ namn/i.test(k)) || "◆ Område (sista ledet)";
+  if (!okRow(qty.cfg.colKey)) qty.cfg.colKey = "";
+}
+/* Enheten i rådata: volym i TC:s egenskaper kan vara m³ eller mm³. Jämförs med objektens omslutande låda (i meter) om det går. */
+async function qtyUnitCheck() {
+  qty.factor = 1; qty.unitNote = "";
+  const u = qty.cfg.unit;
+  if (u !== "auto") { qty.factor = Number(u) || 1; qty.unitNote = `Enhet vald: ÷ ${qty.factor.toLocaleString("sv-SE")}.`; return; }
+  if (!/volume|volym/i.test(qty.cfg.valKey)) return;
+  const V = API && API.viewer; if (!V || typeof V.getObjectBoundingBoxes !== "function") return;
+  const sample = qty.objs.filter(o => qtyNum(o.flat[qty.cfg.valKey]) > 0).slice(0, 40), ratios = [];
+  const byModel = new Map(); sample.forEach(o => (byModel.get(o.modelId) || byModel.set(o.modelId, []).get(o.modelId)).push(o));
+  for (const [modelId, list] of byModel) {
+    try { const bb = await V.getObjectBoundingBoxes(modelId, list.map(o => o.rid)), by = new Map(bb.map(b => [b.id, b.boundingBox])); list.forEach(o => { const b = by.get(o.rid); if (!b) return; const v = (b.max.x - b.min.x) * (b.max.y - b.min.y) * (b.max.z - b.min.z); if (v > 0) ratios.push(qtyNum(o.flat[qty.cfg.valKey]) / v); }); } catch (e) { /* ingen kontroll */ }
+  }
+  if (!ratios.length) return;
+  ratios.sort((a, b) => a - b); const med = ratios[ratios.length >> 1];
+  if (med > 1e4) { qty.factor = 1e9; qty.unitNote = "Volymen verkar vara i mm³ (jämförd med objektens mått) – räknas om till m³."; }
+  else qty.unitNote = "Volymen verkar vara i m³ (jämförd med objektens mått).";
+}
+/* Summering: rader × kolumner. */
+function qtyPivot() {
+  const C = qty.cfg, f = qty.factor || 1, text = String(C.filter || "").toLowerCase().trim();
+  const val = o => { const raw = C.valKey ? qtyNum(o.flat[C.valKey]) : null; return raw === null ? null : raw / f; };
+  const get = (o, k) => (!k ? "" : QTY_ACT_KEYS[k] ? QTY_ACT_KEYS[k](o) : (o.flat[k] === undefined ? "(saknas)" : String(o.flat[k])));
+  const rows = new Map(), cols = new Set(); let total = 0, nObj = 0, nNo = 0;
+  qty.objs.forEach(o => {
+    if (text && !Object.values(o.flat).some(v => String(v).toLowerCase().includes(text))) return;
+    const v = val(o); if (v === null) { nNo++; }
+    const rk = get(o, C.rowKey) || "(tomt)", ck = C.colKey ? (get(o, C.colKey) || "(tomt)") : "";
+    cols.add(ck);
+    const r = rows.get(rk) || { key: rk, n: 0, sum: 0, cells: new Map(), objs: [] };
+    r.n++; r.objs.push(o); if (v !== null) { r.sum += v; r.cells.set(ck, (r.cells.get(ck) || 0) + v); }
+    rows.set(rk, r); if (v !== null) total += v; nObj++;
+  });
+  return { rows: [...rows.values()].sort((a, b) => b.sum - a.sum), cols: [...cols].sort((a, b) => a.localeCompare(b, "sv", { numeric: true })), total, nObj, nNo };
+}
+function qtyUnitLabel() { const k = qty.cfg.valKey; return /volume|volym/i.test(k) ? "m³" : /area|yta/i.test(k) ? "m²" : /weight|vikt|mass/i.test(k) ? "kg" : /length|längd/i.test(k) ? "m" : ""; }
+function qtyMsg(t) { const el = document.getElementById("qtyMsg"); if (el) el.textContent = t; }
+function qtyBusyUi(on) { const b = document.getElementById("qtyRead"); if (b) { b.disabled = on; b.textContent = on ? "Läser…" : "Läs mängder"; } }
+async function qtySelectRows(objs) {
+  const V = API && API.viewer; if (!V || typeof V.setSelection !== "function") return;
+  const by = new Map(); objs.forEach(o => (by.get(o.modelId) || by.set(o.modelId, []).get(o.modelId)).push(o.rid));
+  try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: [...by].map(([modelId, objectRuntimeIds]) => ({ modelId, objectRuntimeIds })) }, "set"); if (typeof V.setCamera === "function") V.setCamera({ modelObjectIds: [...by].map(([modelId, objectRuntimeIds]) => ({ modelId, objectRuntimeIds })) }, { animationTime: 400 }).catch(() => {}); } catch (e) { modelToast("Kunde inte markera i TC"); }
+}
+function qtyCsv() {
+  const P = qtyPivot(), u = qtyUnitLabel(), d = v => (Number.isFinite(v) ? String(Math.round(v * 1000) / 1000).replace(".", ",") : "");
+  const head = [qty.cfg.rowKey || "Rad", ...(qty.cfg.colKey ? P.cols : []), `Summa${u ? " " + u : ""}`, "Antal objekt"];
+  const lines = [head, ...P.rows.map(r => [r.key, ...(qty.cfg.colKey ? P.cols.map(c => d(r.cells.get(c) || 0)) : []), d(r.sum), r.n]), ["Totalt", ...(qty.cfg.colKey ? P.cols.map(c => d(P.rows.reduce((s, r) => s + (r.cells.get(c) || 0), 0))) : []), d(P.total), P.nObj]];
+  return "﻿" + lines.map(l => l.map(x => `"${String(x).replace(/"/g, '""')}"`).join(";")).join("\r\n");
+}
+function qtyExport() {
+  const blob = new Blob([qtyCsv()], { type: "text/csv;charset=utf-8" }), url = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = url; a.download = `Mängder ${todayISO()}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+function qtyRender() {
+  const host = document.getElementById("qtyBox"); if (!host) return;
+  const C = qty.cfg, E = qtyEsc, hasData = qty.objs.length > 0;
+  const keyOpts = (sel, withNone, acts) => `${withNone ? `<option value="">(ingen)</option>` : ""}${acts ? Object.keys(QTY_ACT_KEYS).map(k => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)}</option>`).join("") : ""}${[...qty.keys].map(([k, e]) => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)} (${e.n})</option>`).join("")}`;
+  host.innerHTML = `<div class="qty-hint">Tar fram mängder ur modellen för de objekt som <b>Ganttens regel</b> räknar som klara (eller alla), så att du kan jämföra mot mängdförteckningen. Mängderna läses ur TC:s egna egenskaper, t.ex. <i>Calculated Geometry Values → Volume</i>. Inget ändras eller sparas.</div>
+    <div class="qty-row">
+      <label>Urval <select id="qtyScope"><option value="gantt"${C.scope === "gantt" ? " selected" : ""}>Det som visas i Gantt-schemat</option><option value="all"${C.scope === "all" ? " selected" : ""}>Hela planen</option><option value="sel"${C.scope === "sel" ? " selected" : ""}>Markerat i TC</option></select></label>
+      ${C.scope !== "sel" ? `<label>Läge <select id="qtyPhase"><option value="klar"${C.phase === "klar" ? " selected" : ""}>Klara</option><option value="all"${C.phase === "all" ? " selected" : ""}>Alla (oavsett läge)</option></select></label>
+      ${C.phase === "klar" ? `<label title="Klara enligt Ganttens regel vid det här datumet">Datum <input type="date" id="qtyDate" value="${E(C.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO())}" /></label><button type="button" id="qtyToday" title="Använd dagens datum">Idag</button>` : ""}` : ""}
+      <button type="button" id="qtyRead" class="primary">Läs mängder</button><span id="qtyMsg" class="hint"></span></div>
+    ${hasData ? `<div class="qty-row">
+      <label>Mängd <select id="qtyVal">${qtyNumKeys().map(k => `<option value="${E(k)}"${C.valKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>
+      <label>Rader efter <select id="qtyRowKey">${keyOpts(C.rowKey, false, true)}</select></label>
+      <label>Kolumner efter <select id="qtyColKey">${keyOpts(C.colKey, true, true)}</select></label>
+      <label title="Visa bara objekt där någon egenskap innehåller texten (t.ex. Concrete)">Innehåller <input type="text" id="qtyFilter" value="${E(C.filter)}" placeholder="t.ex. Concrete" /></label>
+      <label title="Enheten på mängden i modellen. Auto jämför volymen med objektens mått.">Enhet <select id="qtyUnit">${[["auto", "Auto"], ["1", "som i modellen"], ["1000", "÷ 1 000"], ["1000000", "÷ 1 000 000 (mm² → m²)"], ["1000000000", "÷ 1 000 000 000 (mm³ → m³)"]].map(([v, t]) => `<option value="${v}"${String(C.unit) === v ? " selected" : ""}>${t}</option>`).join("")}</select></label></div>
+      <div class="hint">${E(qty.unitNote || "")}</div>
+      <div id="qtyTable"></div>
+      <div class="qty-row"><button type="button" id="qtyCsv">Exportera CSV (Excel)</button><button type="button" id="qtyAllSel" title="Markera alla objekt i tabellen i TC">Markera alla i TC</button></div>
+      <details class="qty-props"><summary>Egenskaper som hittades (${qty.keys.size})</summary><div class="qty-proplist">${[...qty.keys].map(([k, e]) => `<div><b>${E(k)}</b> <span class="hint">${e.n} obj · ex: ${E(String(e.sample).slice(0, 60))}</span></div>`).join("")}</div></details>` : ""}`;
+  const q = s => host.querySelector(s), put = (k, v) => { qty.cfg[k] = v; qtySave(); };
+  q("#qtyScope").onchange = e => { put("scope", e.target.value); qtyRender(); };
+  if (q("#qtyPhase")) q("#qtyPhase").onchange = e => { put("phase", e.target.value); qtyRender(); };
+  if (q("#qtyDate")) q("#qtyDate").onchange = e => put("date", e.target.value);
+  if (q("#qtyToday")) q("#qtyToday").onclick = () => { put("date", todayISO()); qtyRender(); };
+  q("#qtyRead").onclick = qtyRead;
+  if (!hasData) return;
+  q("#qtyVal").onchange = async e => { put("valKey", e.target.value); await qtyUnitCheck(); qtyRender(); };
+  q("#qtyRowKey").onchange = e => { put("rowKey", e.target.value); qtyRender(); };
+  q("#qtyColKey").onchange = e => { put("colKey", e.target.value); qtyRender(); };
+  q("#qtyFilter").onchange = e => { put("filter", e.target.value); qtyRender(); };
+  q("#qtyUnit").onchange = async e => { put("unit", e.target.value); await qtyUnitCheck(); qtyRender(); };
+  q("#qtyCsv").onclick = qtyExport;
+  const P = qtyPivot(), u = qtyUnitLabel(), tb = q("#qtyTable");
+  tb.innerHTML = `<table class="qty-table"><thead><tr><th>${E(C.rowKey || "Rad")}</th>${C.colKey ? P.cols.map(c => `<th class="num">${E(c || "")}</th>`).join("") : ""}<th class="num">Summa${u ? " " + u : ""}</th><th class="num">Objekt</th></tr></thead><tbody>${P.rows.map((r, i) => `<tr data-r="${i}" title="Klicka för att markera objekten i TC"><td>${E(r.key)}</td>${C.colKey ? P.cols.map(c => `<td class="num">${qtyFmt(r.cells.get(c) || 0)}</td>`).join("") : ""}<td class="num"><b>${qtyFmt(r.sum)}</b></td><td class="num">${r.n}</td></tr>`).join("")}</tbody><tfoot><tr><td><b>Totalt</b></td>${C.colKey ? P.cols.map(c => `<td class="num"><b>${qtyFmt(P.rows.reduce((s, r) => s + (r.cells.get(c) || 0), 0))}</b></td>`).join("") : ""}<td class="num"><b>${qtyFmt(P.total)}</b></td><td class="num"><b>${P.nObj}</b></td></tr></tfoot></table>${P.nNo ? `<div class="hint">${P.nNo} objekt saknar värde för vald mängd och räknas inte med i summan.</div>` : ""}`;
+  tb.querySelectorAll("tr[data-r]").forEach(tr => { tr.onclick = () => { const r = P.rows[Number(tr.dataset.r)]; if (r) qtySelectRows(r.objs); }; });
+  q("#qtyAllSel").onclick = () => qtySelectRows(P.rows.flatMap(r => r.objs));
+}
+function initQuantities() { if (document.getElementById("qtyBox")) qtyRender(); }
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initQuantities); else setTimeout(initQuantities, 0);
