@@ -124,6 +124,9 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   // Pågående kräver minst 1 % framdrift; utan det är den försenad (börjat enligt startdatum). Efter slut utan klar = försenad.
   const phs = await page.evaluate(([d4, d8]) => { const m = { startDate: d4, endDate: d8 }; return [ganttPhaseAt({ ...m, progress: 0 }, d4), ganttPhaseAt({ ...m, progress: 0.5 }, d4), ganttPhaseAt({ ...m, progress: 1 }, d4), ganttPhaseAt({ ...m, progress: 20 }, d8), ganttPhaseAt({ ...m, progress: 20 }, d8 + 'x'), ganttPhaseAt({ ...m, progress: 100 }, '9999-01-01'), ganttPhaseAt({ ...m, progress: 0 }, '2000-01-01')].join(); }, [day(4), day(8)]);
   if (phs !== 'forsenad,forsenad,pagaende,pagaende,forsenad,klar,planerad') fail('Faser (försenad < 1 %): ' + phs);
+  // Datum före planerad start är "planerad" även om aktiviteten har framdrift nu (objekt ska inte synas före tidslinjen nått dem).
+  const early = await page.evaluate(([d2, d10, d11, d15, d5]) => { const m = { startDate: d10, endDate: d15, progress: 30 }; return [ganttPhaseAt(m, d2), ganttPhaseAt(m, d11), ganttPhaseAt({ ...m, progress: 100 }, d2), ganttPhaseAt({ ...m, actualStartDate: d5 }, d2)]; }, [day(-3), day(10), day(11), day(15), day(-5)]);
+  if (early.join() !== 'planerad,pagaende,planerad,pagaende') fail('Före planerad start ska vara planerad, med verklig start pågående: ' + early.join());
   await page.evaluate(() => { const g = items.find(x => x.objectId === 'G7'); g.progress = 100; ganttShownItems.forEach(x => { if (x.objectId === 'G7') x.progress = 100; }); ganttTimeReset(); });
   await page.fill('#ganttTimeDate', day(10)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(900);
   R = await replay();

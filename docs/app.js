@@ -3404,12 +3404,19 @@ let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = 
 /* Läget för en aktivitet vid ett datum (samma regler som 4D-planering, Victor 2026-10-02/13): pågående kräver minst 1 % framdrift –
    har startdatumet passerat utan det är aktiviteten försenad; efter planerat slut utan att vara klar är den också försenad. */
 function ganttPhaseAt(m, d) {
-  const prog = Number(m.progress) || 0, end = m.endDate;
+  const prog = Number(m.progress) || 0, end = m.endDate, start = m.startDate;
   const done = !!m.actualEndDate || prog >= 100 || m.status === "klar";
   if (done && (m.actualEndDate || end) && (m.actualEndDate || end) < d) return "klar";
-  if (m.startDate && m.startDate > d && prog < 1) return "planerad";
+  // Påbörjad (samma som computeItemPhase i 4D-planering): framdrift minst 1 % betyder att arbetet är igång från verklig start – saknas den,
+  // från planerad start eller dagens datum om starten ligger framåt. Ett datum FÖRE det är "planerad", även om aktiviteten har framdrift nu
+  // (Victor 2026-10-14: objekt syntes i 3D fast tidslinjen inte nått dem).
+  const today = todayISO();
+  let aStart = null;
+  if (prog >= 1) aStart = m.actualStartDate && m.actualStartDate <= today ? m.actualStartDate : (start && start < today ? start : today);
+  const started = !!aStart && aStart <= d;
+  if (start && start > d && !started) return "planerad";
   if (end && end < d) return done ? "klar" : "forsenad";
-  return prog >= 1 ? "pagaende" : "forsenad";
+  return started ? "pagaende" : "forsenad";
 }
 /* ---- Flera aktiviteter markerade med Ctrl/Cmd-klick (Victor 2026-10-13): visas samtidigt i 3D och kan isoleras. ---- */
 const ganttMultiSel = new Set(); // aktivitets-id (strängar)
