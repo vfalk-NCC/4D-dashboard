@@ -144,6 +144,17 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.evaluate(() => { const i = document.querySelector('[data-tcol="pagaende"]'); i.value = '#123456'; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
   R = await replay();
   if (hx(R.col.G7) !== '#123456') fail('Vald färg för pågående ska användas i 3D: ' + JSON.stringify(R.col.G7));
+  // Ikonen vid Helskärm: tidslinjedragaren av/på även när knapparna är dolda.
+  await page.evaluate(() => setGanttFsClean(true)); await page.waitForTimeout(300);
+  if (!(await page.isVisible('#ganttFsTime'))) fail('Tidslinje-ikonen ska synas även med dolda knappar');
+  const wasTime = await page.evaluate(() => ganttMode);
+  await page.click('#ganttFsTime'); await page.waitForTimeout(600);
+  const m2 = await page.evaluate(() => ganttMode);
+  if (m2 === wasTime || (await page.getAttribute('#ganttFsTime', 'aria-pressed')) !== String(m2 === 'time')) fail('Ikonen ska växla Tid-läget: ' + wasTime + ' → ' + m2);
+  await page.click('#ganttFsTime'); await page.waitForTimeout(600);
+  if ((await page.evaluate(() => ganttMode)) !== 'off' && wasTime === 'time') { /* tillbaka till av */ }
+  await page.evaluate(() => setGanttFsClean(false)); await page.waitForTimeout(200);
+  if ((await page.evaluate(() => ganttMode)) !== wasTime) { await page.evaluate(m => setGanttMode(m, true), wasTime); await page.waitForTimeout(600); }
   // Opacitet per status: pågående 50 % ger alfa 128; 0 = osynligt (släcks).
   await page.evaluate(() => { const i = document.querySelector('[data-topc="pagaende"]'); i.value = 50; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
   R = await replay();

@@ -3752,6 +3752,7 @@ let ganttMode = "off", ganttModeSeq = 0;
 function syncGanttModeUi() {
   document.querySelectorAll("#ganttModeSeg [data-gmode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.gmode === ganttMode)));
   const row = document.getElementById("ganttTimeRow"); if (row) row.classList.toggle("hidden", ganttMode !== "time");
+  const tb = document.getElementById("ganttFsTime"); if (tb) tb.setAttribute("aria-pressed", String(ganttMode === "time"));
 }
 async function setGanttMode(mode, quiet) {
   if (mode === ganttMode && mode !== "off") return;
@@ -3885,6 +3886,7 @@ function initGanttTime() {
   const seg = document.getElementById("ganttModeSeg"); if (!seg || seg.dataset.wired) return;
   seg.dataset.wired = "1";
   seg.querySelectorAll("[data-gmode]").forEach(b => { b.onclick = () => setGanttMode(b.dataset.gmode); });
+  const fsTime = document.getElementById("ganttFsTime"); if (fsTime) fsTime.onclick = () => setGanttMode(ganttMode === "time" ? "off" : "time");
   const sl = document.getElementById("ganttTimeSlider"), di = document.getElementById("ganttTimeDate"), pb = document.getElementById("ganttTimePlay"), td = document.getElementById("ganttTimeToday");
   sl.oninput = () => { const r = ganttTimeRange(); if (r) setGanttAsOf(addDaysIso(r[0], Number(sl.value))); };
   di.onchange = () => { if (di.value) setGanttAsOf(di.value, { now: true }); };

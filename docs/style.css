@@ -2383,3 +2383,5 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .qmf-map summary { cursor: pointer; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
 .qmf-map select { max-width: 420px; }
 .qmf-table td.qmf-warn { background: #fff7ed; color: #c2410c; } .qmf-table td.qmf-bad { background: #fef2f2; color: #b91c1c; font-weight: 600; }
+.gantt-fs-bar button#ganttFsTime { display: inline-flex; align-items: center; padding: 3px 7px; }
+.gantt-fs-bar button#ganttFsTime[aria-pressed="true"] { background: #2563eb; color: #fff; border-color: #2563eb; }
