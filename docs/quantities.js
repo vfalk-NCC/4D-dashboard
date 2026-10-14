@@ -4,8 +4,11 @@
    Inget sparas någonstans; resultatet kan exporteras som CSV (öppnas i Excel). */
 
 const QTY_KEY = "4ddash-qty";
-const qty = { cfg: { scope: "gantt", phase: "klar", date: "", rowKey: "", colKey: "", valKey: "", filter: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
+const qty = { cfg: { scope: "gantt", phase: "klar", date: "", kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
 try { Object.assign(qty.cfg, JSON.parse(localStorage.getItem(QTY_KEY) || "{}")); } catch (e) { /* standard */ }
+/* Mängdslag: Betong (volym m³), Form (yta m²), Kantform/längd (m), Armering/vikt (kg). Varje slag minns sin egenskap. */
+const QTY_KINDS = { vol: ["Betong – volym (m³)", "m³", /calculated\s*geometry\s*values\s*\/\s*volume$/i, /volume|volym/i], form: ["Form – yta (m²)", "m²", /calculated\s*geometry\s*values\s*\/\s*(total\s*)?surface\s*area$/i, /surface|side\s*area|form|area|yta/i], len: ["Längd (m)", "m", /calculated\s*geometry\s*values\s*\/\s*length$/i, /length|längd/i], kg: ["Armering/vikt (kg)", "kg", /calculated\s*geometry\s*values\s*\/\s*weight$/i, /weight|vikt|mass/i] };
+const qtyKind = () => QTY_KINDS[qty.cfg.kind] ? qty.cfg.kind : "vol";
 const qtySave = () => { try { localStorage.setItem(QTY_KEY, JSON.stringify(qty.cfg)); } catch (e) { /* ingen lagring */ } };
 const qtyEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const qtyNum = v => { if (typeof v === "number") return Number.isFinite(v) ? v : null; if (typeof v !== "string") return null; const n = parseFloat(v.replace(/\s/g, "").replace(",", ".")); return Number.isFinite(n) && /^[-+]?[\d\s.,]+(e[-+]?\d+)?\s*[a-zA-Zµ²³°%/]*$/i.test(v.trim()) ? n : null; };
@@ -75,8 +78,9 @@ async function qtyRead() {
 }
 function qtyNumKeys() { return [...qty.keys].filter(([, e]) => e.num >= Math.max(1, e.n * 0.8)).map(([k]) => k); }
 function qtyPickDefaults() {
-  const nk = qtyNumKeys(), all = [...qty.keys.keys()];
-  if (!qty.keys.has(qty.cfg.valKey)) qty.cfg.valKey = nk.find(k => /calculated\s*geometry\s*values\s*\/\s*volume$/i.test(k)) || nk.find(k => /volume|volym/i.test(k)) || nk[0] || "";
+  const nk = qtyNumKeys(), all = [...qty.keys.keys()], K = QTY_KINDS[qtyKind()];
+  const want = qty.cfg.valKeys && qty.cfg.valKeys[qtyKind()];
+  qty.cfg.valKey = want && qty.keys.has(want) ? want : (nk.find(k => K[2].test(k)) || nk.find(k => K[3].test(k)) || nk[0] || "");
   const okRow = k => k === "" || qty.keys.has(k) || QTY_ACT_KEYS[k];
   if (!okRow(qty.cfg.rowKey) || !qty.cfg.rowKey) qty.cfg.rowKey = all.find(k => /product\s*object\s*type$/i.test(k)) || all.find(k => /produkt \/ namn/i.test(k)) || "◆ Område (sista ledet)";
   if (!okRow(qty.cfg.colKey)) qty.cfg.colKey = "";
@@ -84,19 +88,19 @@ function qtyPickDefaults() {
 /* Enheten i rådata: volym i TC:s egenskaper kan vara m³ eller mm³. Jämförs med objektens omslutande låda (i meter) om det går. */
 async function qtyUnitCheck() {
   qty.factor = 1; qty.unitNote = "";
-  const u = qty.cfg.unit;
+  const u = qty.cfg.unit, kind = qtyKind();
   if (u !== "auto") { qty.factor = Number(u) || 1; qty.unitNote = `Enhet vald: ÷ ${qty.factor.toLocaleString("sv-SE")}.`; return; }
-  if (!/volume|volym/i.test(qty.cfg.valKey)) return;
+  if (kind !== "vol" && kind !== "form") return;
   const V = API && API.viewer; if (!V || typeof V.getObjectBoundingBoxes !== "function") return;
   const sample = qty.objs.filter(o => qtyNum(o.flat[qty.cfg.valKey]) > 0).slice(0, 40), ratios = [];
   const byModel = new Map(); sample.forEach(o => (byModel.get(o.modelId) || byModel.set(o.modelId, []).get(o.modelId)).push(o));
   for (const [modelId, list] of byModel) {
-    try { const bb = await V.getObjectBoundingBoxes(modelId, list.map(o => o.rid)), by = new Map(bb.map(b => [b.id, b.boundingBox])); list.forEach(o => { const b = by.get(o.rid); if (!b) return; const v = (b.max.x - b.min.x) * (b.max.y - b.min.y) * (b.max.z - b.min.z); if (v > 0) ratios.push(qtyNum(o.flat[qty.cfg.valKey]) / v); }); } catch (e) { /* ingen kontroll */ }
+    try { const bb = await V.getObjectBoundingBoxes(modelId, list.map(o => o.rid)), by = new Map(bb.map(b => [b.id, b.boundingBox])); list.forEach(o => { const b = by.get(o.rid); if (!b) return; const x = b.max.x - b.min.x, y = b.max.y - b.min.y, z = b.max.z - b.min.z, ref = kind === "vol" ? x * y * z : 2 * (x * y + y * z + x * z); if (ref > 0) ratios.push(qtyNum(o.flat[qty.cfg.valKey]) / ref); }); } catch (e) { /* ingen kontroll */ }
   }
   if (!ratios.length) return;
-  ratios.sort((a, b) => a - b); const med = ratios[ratios.length >> 1];
-  if (med > 1e4) { qty.factor = 1e9; qty.unitNote = "Volymen verkar vara i mm³ (jämförd med objektens mått) – räknas om till m³."; }
-  else qty.unitNote = "Volymen verkar vara i m³ (jämförd med objektens mått).";
+  ratios.sort((a, b) => a - b); const med = ratios[ratios.length >> 1], big = kind === "vol" ? 1e4 : 1e3, F = kind === "vol" ? 1e9 : 1e6;
+  if (med > big) { qty.factor = F; qty.unitNote = `${kind === "vol" ? "Volymen" : "Ytan"} verkar vara i mm${kind === "vol" ? "³" : "²"} (jämförd med objektens mått) – räknas om till ${kind === "vol" ? "m³" : "m²"}.`; }
+  else qty.unitNote = `${kind === "vol" ? "Volymen" : "Ytan"} verkar vara i ${kind === "vol" ? "m³" : "m²"} (jämförd med objektens mått).`;
 }
 /* Summering: rader × kolumner. */
 function qtyPivot() {
@@ -116,7 +120,7 @@ function qtyPivot() {
   });
   return { rows: [...rows.values()].sort((a, b) => b.sum - a.sum), cols: [...cols].sort((a, b) => a.localeCompare(b, "sv", { numeric: true })), total, nObj, nNo };
 }
-function qtyUnitLabel() { const k = qty.cfg.valKey; return /volume|volym/i.test(k) ? "m³" : /area|yta/i.test(k) ? "m²" : /weight|vikt|mass/i.test(k) ? "kg" : /length|längd/i.test(k) ? "m" : ""; }
+function qtyUnitLabel() { return QTY_KINDS[qtyKind()][1]; }
 function qtyMsg(t) { const el = document.getElementById("qtyMsg"); if (el) el.textContent = t; }
 function qtyBusyUi(on) { const b = document.getElementById("qtyRead"); if (b) { b.disabled = on; b.textContent = on ? "Läser…" : "Läs mängder"; } }
 async function qtySelectRows(objs) {
@@ -146,6 +150,7 @@ function qtyRender0() {
       ${C.phase === "klar" ? `<label title="Klara enligt Ganttens regel vid det här datumet">Datum <input type="date" id="qtyDate" value="${E(C.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO())}" /></label><button type="button" id="qtyToday" title="Använd dagens datum">Idag</button>` : ""}` : ""}
       <button type="button" id="qtyRead" class="primary">Läs mängder</button><span id="qtyMsg" class="hint"></span></div>
     ${hasData ? `<div class="qty-row">
+      <label title="Vad som ska summeras: betong (volym), form (yta), längd eller vikt">Mängdslag <select id="qtyKind">${Object.entries(QTY_KINDS).map(([k, v]) => `<option value="${k}"${qtyKind() === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select></label>
       <label>Mängd <select id="qtyVal">${qtyNumKeys().map(k => `<option value="${E(k)}"${C.valKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>
       <label>Rader efter <select id="qtyRowKey">${keyOpts(C.rowKey, false, true)}</select></label>
       <label>Kolumner efter <select id="qtyColKey">${keyOpts(C.colKey, true, true)}</select></label>
@@ -162,7 +167,8 @@ function qtyRender0() {
   if (q("#qtyToday")) q("#qtyToday").onclick = () => { put("date", todayISO()); qtyRender(); };
   q("#qtyRead").onclick = qtyRead;
   if (!hasData) return;
-  q("#qtyVal").onchange = async e => { put("valKey", e.target.value); await qtyUnitCheck(); qtyRender(); };
+  q("#qtyKind").onchange = async e => { put("kind", e.target.value); qtyPickDefaults(); qtySave(); await qtyUnitCheck(); if (typeof qmfAutoMap === "function" && typeof qmf !== "undefined" && qmf.posts.length) qmfAutoMap(); qtyRender(); };
+  q("#qtyVal").onchange = async e => { put("valKey", e.target.value); qty.cfg.valKeys = { ...(qty.cfg.valKeys || {}), [qtyKind()]: e.target.value }; qtySave(); await qtyUnitCheck(); qtyRender(); };
   q("#qtyRowKey").onchange = e => { put("rowKey", e.target.value); qtyRender(); };
   q("#qtyColKey").onchange = e => { put("colKey", e.target.value); qtyRender(); };
   q("#qtyFilter").onchange = e => { put("filter", e.target.value); qtyRender(); };

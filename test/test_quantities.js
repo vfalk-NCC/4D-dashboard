@@ -38,7 +38,7 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
         setSelection: s => { window.__sel.push(s); return Promise.resolve(); }, getSelection: () => Promise.resolve([]),
         getObjectBoundingBoxes: (m, rids) => Promise.resolve(rids.map(r => { const v = P[ids[r - 1]][0]; const s = Math.cbrt(v * 1.5); return { id: r, boundingBox: { min: { x: 0, y: 0, z: 0 }, max: { x: s, y: s, z: s } } }; })),
         getObjectProperties: (m, rids) => Promise.resolve(rids.map(r => ({ id: r, class: 'IfcSlab', product: { name: P[ids[r - 1]][1] + ':' + r }, properties: [
-          { name: 'CalculatedGeometryValues', properties: [{ name: 'Volume', value: P[ids[r - 1]][0] * 1e9 }, { name: 'CenterOfGravityX', value: 1000 }] },
+          { name: 'CalculatedGeometryValues', properties: [{ name: 'Volume', value: P[ids[r - 1]][0] * 1e9 }, { name: 'Surface Area', value: 6 * Math.pow(P[ids[r - 1]][0], 2 / 3) * 1e6 }, { name: 'CenterOfGravityX', value: 1000 }] },
           { name: 'Product', properties: [{ name: 'Product Object Type', value: P[ids[r - 1]][1] }] },
           { name: 'Reference Object', properties: [{ name: 'Layer', value: 'S-FNDN' }] } ] }))) },
       ui: {}, extension: {}, embed: { setTokenRefresh: () => {} } }) };` }));
@@ -80,7 +80,7 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     const M = await page.evaluate(() => ({ posts: qmf.posts.length, builds: qmf.builds.join(), ese21: qmf.posts.find(p => p.ref === 'ESE.21'), types: qmf.map.types, areas: qmf.map.areas, sub: qmf.posts.some(p => /tillägg för anläggningscement/.test(p.label) && p.unit === 'm³') }));
     if (M.posts < 5 || M.builds !== 'Sektionsfickor,Sikthall,Krosshall,Fläkthus,Förtjockarhus,Ställverk,Personal' || !M.ese21 || M.ese21.k.Krosshall !== 2575 || M.ese21.p.Krosshall !== 2600 || !M.sub) fail('Läsning av mängdförteckningen: ' + JSON.stringify(M));
     if (M.areas['743 Krosshall'] !== 'Krosshall' || M.areas['744 Fläkthuset'] !== 'Fläkthus') fail('Byggnad föreslås efter områdets namn: ' + JSON.stringify(M.areas));
-    const tv = Object.entries(M.types).map(([k, v]) => k.split(':')[0] + '=' + v.split('|')[0]).sort().join();
+    const tv = Object.entries(M.types.vol).map(([k, v]) => k.split(':')[0] + '=' + v.split('|')[0]).sort().join();
     if (tv !== 'Foundation Slab=ESE.15,Wall=ESE.21') fail('Typ → post föreslås: ' + tv);
     const cmp = b => page.evaluate(b => { qmf.build = b; qmfRender(); const c = qmfCompare(); return Object.fromEntries(c.list.map(r => [r.p.ref, [r.k, r.pr, Math.round(r.klar * 100) / 100, Math.round(r.tot * 100) / 100]])); }, b);
     let K = await cmp('Krosshall');
@@ -91,8 +91,17 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     if (K['ESE.21'][2] !== 2.5 || K['ESE.15'][2] !== 10) fail('Jämförelse alla byggnader: ' + JSON.stringify(K));
     const csv = await page.evaluate(() => qmfCsv(qmfCompare())); if (!/ESE\.21/.test(csv)) fail('CSV för jämförelsen');
     // Ändrad koppling slår igenom: Wall → ESE.1 ger ESE.21 noll.
-    await page.evaluate(() => { const t = Object.keys(qmf.map.types).find(k => /^Wall/.test(k)); qmf.map.types[t] = qmf.posts.find(p => p.ref === 'ESE.1').key; qmfRender(); });
+    await page.evaluate(() => { const t = Object.keys(qmf.map.types.vol).find(k => /^Wall/.test(k)); qmf.map.types.vol[t] = qmf.posts.find(p => p.ref === 'ESE.1').key; qmfRender(); });
     K = await cmp('Fläkthus'); if (K['ESE.1'][2] !== 2.5) fail('Ändrad typ→post ska slå igenom: ' + JSON.stringify(K));
+    // Form (m²): mängdslaget byter egenskap, enhet och poster; typ → ESB-post föreslås.
+    await page.selectOption('#qtyKind', 'form'); await page.waitForTimeout(400);
+    const FM = await page.evaluate(() => ({ key: qty.cfg.valKey, f: qty.factor, u: qtyUnitLabel(), types: Object.fromEntries(Object.entries(qmf.map.types.form || {}).map(([k, v]) => [k.split(':')[0], (qmf.posts.find(p => p.key === v) || {}).label])), posts: qmfPosts().length }));
+    if (!/Surface Area$/.test(FM.key) || FM.f !== 1e6 || FM.u !== 'm²' || !/väggar/.test(FM.types.Wall || '') || !/grundsulor/.test(FM.types['Foundation Slab'] || '') || FM.posts < 2) fail('Mängdslag Form: ' + JSON.stringify(FM));
+    const A = v => 6 * Math.pow(v, 2 / 3);
+    const fk = await page.evaluate(b => { qmf.build = b; qmfRender(); const c = qmfCompare(); return c.list.map(r => [r.p.label.split(' › ').pop().slice(0, 12), r.k, r.pr, Math.round(r.klar * 100) / 100]); }, 'Krosshall');
+    const fg = fk.find(r => r[1] === 750); if (!fg || fg[1] !== 750 || Math.abs(fg[3] - Math.round((A(6) + A(4)) * 100) / 100) > 0.02) fail('Form per byggnad (grundsulor Krosshall): ' + JSON.stringify(fk));
+    await page.selectOption('#qtyKind', 'vol'); await page.waitForTimeout(300);
+    if ((await page.evaluate(() => qty.cfg.valKey)).match(/Surface/)) fail('Tillbaka till betong ska välja volym igen');
     // Klick på en rad markerar objekten i TC.
     await page.evaluate(() => { window.__sel = []; }); await page.click('#qtyTable tbody tr'); await page.waitForTimeout(300);
     if (!(await page.evaluate(() => window.__sel.length))) fail('Klick på rad ska markera i TC');
