@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=20261014052147" />
+<link rel="stylesheet" href="style.css?v=20261014052912" />
 <script src="error-guard.js"></script>
 <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
 </head>
@@ -181,10 +181,10 @@
           <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens slut">Till <input type="date" id="ganttTimeTo" aria-label="Till" /></label>
           <button type="button" id="ganttTimeAuto" class="gantt-toolbar-btn" title="Hela spannet">Auto</button>
           <span class="gantt-time-cols">
-            <input type="color" data-tcol="pagaende" title="Färg: pågående" aria-label="Färg pågående" />
-            <input type="color" data-tcol="forsenad" title="Färg: försenad (har börjat men mindre än 1 % framdrift)" aria-label="Färg försenad" />
-            <input type="color" data-tcol="klar" title="Färg: klart" aria-label="Färg klart" />
-            <input type="color" data-tcol="planerad" title="Färg: kommande" aria-label="Färg kommande" />
+            <span class="gantt-tc"><input type="color" data-tcol="pagaende" title="Färg: pågående" aria-label="Färg pågående" /><input type="range" class="gantt-tc-op" data-topc="pagaende" min="0" max="100" step="5" value="100" aria-label="Opacitet pågående" /></span>
+            <span class="gantt-tc"><input type="color" data-tcol="forsenad" title="Färg: försenad (har börjat men mindre än 1 % framdrift)" aria-label="Färg försenad" /><input type="range" class="gantt-tc-op" data-topc="forsenad" min="0" max="100" step="5" value="100" aria-label="Opacitet försenad" /></span>
+            <input type="color" data-tcol="klar" title="Färg: klart (opaciteten styrs av Klart-reglaget)" aria-label="Färg klart" />
+            <span class="gantt-tc"><input type="color" data-tcol="planerad" title="Färg: kommande" aria-label="Färg kommande" /><input type="range" class="gantt-tc-op" data-topc="planerad" min="0" max="100" step="5" value="100" aria-label="Opacitet kommande" /></span>
           </span>
           <label class="gantt-toolbar-field gantt-time-lim" title="Hur synligt färdigt arbete är (0 = osynligt)">Klart <input type="range" id="ganttTimeDoneOp" min="0" max="100" step="5" value="30" /> <b id="ganttTimeDoneOpVal">30</b>%</label>
           <label class="gantt-pill" title="Visa det som inte startat, i kommande-färgen">
@@ -401,12 +401,12 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=20261014052147"></script>
-  <script src="app.js?v=20261014052147"></script>
-  <script src="resource-curve.js?v=20261014052147"></script>
-  <script src="pp-export.js?v=20261014052147"></script>
-  <script src="bubbles.js?v=20261014052147"></script>
-  <script src="video-gfx.js?v=20261014052147"></script>
-  <script src="video-editor.js?v=20261014052147"></script>
+  <script src="ui-dialog.js?v=20261014052912"></script>
+  <script src="app.js?v=20261014052912"></script>
+  <script src="resource-curve.js?v=20261014052912"></script>
+  <script src="pp-export.js?v=20261014052912"></script>
+  <script src="bubbles.js?v=20261014052912"></script>
+  <script src="video-gfx.js?v=20261014052912"></script>
+  <script src="video-editor.js?v=20261014052912"></script>
 </body>
 </html>

@@ -2363,3 +2363,5 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .vid-card-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: #374151; }
 .vid-card-b button { border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
 .vid-card .vid-shot { width: 100%; height: auto; display: block; cursor: zoom-in; }
+.gantt-tc { display: inline-flex; align-items: center; gap: 3px; }
+.gantt-tc-op { width: 52px; }

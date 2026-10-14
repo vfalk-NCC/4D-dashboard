@@ -141,6 +141,15 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.evaluate(() => { const i = document.querySelector('[data-tcol="pagaende"]'); i.value = '#123456'; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
   R = await replay();
   if (hx(R.col.G7) !== '#123456') fail('Vald färg för pågående ska användas i 3D: ' + JSON.stringify(R.col.G7));
+  // Opacitet per status: pågående 50 % ger alfa 128; 0 = osynligt (släcks).
+  await page.evaluate(() => { const i = document.querySelector('[data-topc="pagaende"]'); i.value = 50; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
+  R = await replay();
+  if (!R.col.G7 || Math.abs(R.col.G7.a - Math.round(0.5 * 255)) > 1) fail('Opacitet för pågående: ' + JSON.stringify(R.col.G7));
+  await page.evaluate(() => { const i = document.querySelector('[data-topc="pagaende"]'); i.value = 0; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
+  R = await replay();
+  if (R.shown.split(',').includes('G7')) fail('Opacitet 0 för pågående ska släcka objektet: ' + R.shown);
+  await page.evaluate(() => { const i = document.querySelector('[data-topc="pagaende"]'); i.value = 100; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1000);
+  console.log('OK: opacitet per status i tidslinjen (pågående 50 % och 0 = osynligt)');
   // Dragstrecket: dra i greppet med musen – datumet ändras och 3D följer.
   await page.fill('#ganttTimeDate', day(2)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(700);
   const hb = await (await page.$('.gantt-scrub-handle')).boundingBox();

@@ -3473,6 +3473,7 @@ function ganttCoupledTargets() {
       else if (m.demolition) { if (tEnd && tEnd < ganttAsOf) phase = "dold"; else if (phase === "planerad") phase = "planerad_syns"; }
       if (phase === "planerad" && !ganttTimeFuture) phase = "dold"; // släckt i 3D vid det här datumet
       if (phase === "planerad_syns") phase = "planerad"; // rivning före start: syns alltid
+      if ((phase === "pagaende" || phase === "forsenad" || phase === "planerad") && Number(ganttOp[phase]) <= 0) phase = "dold"; // opacitet 0 = osynligt
     }
     const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase, doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity }); }
   });
@@ -3504,8 +3505,12 @@ let ganttPhaseNow = new Map(), ganttTimeBusy = false, ganttTimePending = false, 
 const hexToRgbaObj = (hex, op) => ({ r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16), a: Math.round(Math.max(0, Math.min(1, op)) * 255) });
 function ganttTimeColorOf(t) {
   if (t.phase === "klar") return hexToRgbaObj(t.doneColor || STATUS_COLORS.klar, (t.doneOpacity !== null ? t.doneOpacity : ganttDoneOp) / 100);
-  return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, 1);
+  return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase]) / 100);
 }
+/* Opacitet per status i 3D-tidslinjen (Victor 2026-10-14): pågående, försenad och kommande (klart har sitt eget "Klart"-reglage ovan). 0 = osynligt. */
+const LBL_OP = { pagaende: "pågående", forsenad: "försenad", planerad: "kommande" };
+const ganttOp = { pagaende: 100, forsenad: 100, planerad: 100 };
+try { Object.assign(ganttOp, JSON.parse(localStorage.getItem("4ddash-gantt-time-ops") || "{}")); } catch (e) { /* standard */ }
 let ganttVisSig = "";
 /* Pulserande ljus på pågående objekt (Victor 2026-10-13): färgen på det som pågår andas mellan statusfärgen och ett ljust gult –
    ett tydligt "här händer det nu" i Trimble Connect. Bara pågående objekt rörs, med några få anrop per steg. */
@@ -3606,7 +3611,7 @@ async function ganttTimeApply3d() {
     targets.forEach(t => {
       const k = `${t.modelId}|${t.objectId}`, rid = ganttRidCache.get(k);
       if (rid === null || rid === undefined) return;
-      const sig = `${t.phase}|${t.phase === "klar" ? JSON.stringify(ganttTimeColorOf(t)) : STATUS_COLORS[t.phase] || ""}`;
+      const sig = `${t.phase}|${JSON.stringify(ganttTimeColorOf(t))}`;
       next.set(k, sig);
       if (t.phase !== "dold") (vis.get(t.modelId) || vis.set(t.modelId, []).get(t.modelId)).push(rid);
       if (t.phase === "dold" || (ganttTimeBase && ganttPhaseNow.get(k) === sig)) return;
@@ -3910,6 +3915,11 @@ function initGanttTime() {
       STATUS_COLORS[inp.dataset.tcol] = inp.value; saveStatusColorOverrides();
       clearTimeout(ganttTimeRender); ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); if (typeof initStatusColorControls === "function") initStatusColorControls(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); }, 200);
     };
+  });
+  document.querySelectorAll("#ganttTimeRow [data-topc]").forEach(inp => {
+    const k = inp.dataset.topc; inp.value = ganttOp[k] === undefined ? 100 : ganttOp[k];
+    inp.oninput = () => { ganttOp[k] = Number(inp.value); inp.title = `Opacitet ${LBL_OP[k]}: ${inp.value} %${Number(inp.value) <= 0 ? " (osynligt)" : ""}`; try { localStorage.setItem("4ddash-gantt-time-ops", JSON.stringify(ganttOp)); } catch (e) {} if (ganttIsolate && ganttTime3d && ganttAsOf) { ganttTimeReset(); ganttTimeApply3d(); } };
+    inp.title = `Opacitet ${LBL_OP[k]}: ${inp.value} %`;
   });
   const pul = document.getElementById("ganttTimePulse");
   try { ganttPulse = localStorage.getItem("4ddash-gantt-pulse") === "1"; } catch (e) {}
