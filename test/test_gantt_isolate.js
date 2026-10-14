@@ -175,6 +175,26 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (R.shown.split(',').includes('G7')) fail('Opacitet 0 för pågående ska släcka objektet: ' + R.shown);
   await page.evaluate(() => { const i = document.querySelector('[data-topc="pagaende"]'); i.value = 100; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1000);
   console.log('OK: opacitet per status i tidslinjen (pågående 50 % och 0 = osynligt)');
+  // Följ datum: bara start/slut avgör (procent och status ignoreras).
+  const sp = await page.evaluate(() => { const A = { startDate: '2026-10-05', endDate: '2026-10-09', progress: 0 }, B = { startDate: '2026-10-05', endDate: '2026-10-09', progress: 100, status: 'klar' };
+    const norm = [ganttPhaseAt(A, '2026-10-07'), ganttPhaseAt(B, '2026-10-07')];
+    document.getElementById('ganttStrictBtn').click(); const on = ganttStrict;
+    const strict = ['2026-10-04', '2026-10-05', '2026-10-09', '2026-10-10'].map(d => ganttPhaseAt(A, d) + '/' + ganttPhaseAt(B, d));
+    document.getElementById('ganttStrictBtn').click(); return { norm, on, strict, off: ganttStrict }; });
+  if (sp.norm.join() !== 'forsenad,pagaende' && sp.norm.join() !== 'forsenad,klar' && !sp.norm.length) fail('Förkontroll: ' + JSON.stringify(sp));
+  if (!sp.on || sp.off || sp.strict.join() !== 'planerad/planerad,pagaende/pagaende,pagaende/pagaende,klar/klar') fail('Följ datum: ' + JSON.stringify(sp));
+  console.log('OK: Följ datum – färgen följer start- och slutdatumen strikt, procent ignoreras');
+  // Färgskala efter datum med egna färger: tidigast = färg A, senast = färg B; egen färg efter slut går före.
+  const gs = await page.evaluate(() => {
+    const ds = items.map(x => x.startDate).filter(Boolean).sort(), lo = ds[0], hi = ds[ds.length - 1];
+    ganttScale = { on: true, by: 'start', a: '#ff0000', b: '#0000ff' }; ganttScaleR = null;
+    const c0 = ganttTimeColorOf({ phase: 'pagaende', startDate: lo, endDate: lo, doneColor: null, doneOpacity: null }), c1 = ganttTimeColorOf({ phase: 'pagaende', startDate: hi, endDate: hi, doneColor: null, doneOpacity: null });
+    const own = ganttTimeColorOf({ phase: 'klar', startDate: lo, endDate: lo, doneColor: '#112233', doneOpacity: 10 }), temp = ganttTimeColorOf({ phase: 'tempon', startDate: lo });
+    ganttScale.on = false; const std = ganttTimeColorOf({ phase: 'pagaende', startDate: lo, endDate: lo, doneColor: null, doneOpacity: null });
+    return { c0, c1, own, temp, std, btn: !!document.getElementById('ganttScaleBtn') };
+  });
+  if (!gs.btn || gs.c0.r !== 255 || gs.c0.b !== 0 || gs.c1.b !== 255 || gs.c1.r !== 0 || gs.own.r !== 17 || gs.temp !== 'reset' || gs.std.r === 255 && gs.std.b === 0) fail('Färgskala efter datum: ' + JSON.stringify(gs));
+  console.log('OK: Färgskala efter datum – egna färger, egen färg efter slut och temporära oförändrade');
   // Dragstrecket: dra i greppet med musen – datumet ändras och 3D följer.
   await page.fill('#ganttTimeDate', day(2)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(700);
   const hb = await (await page.$('.gantt-scrub-handle')).boundingBox();

@@ -3398,12 +3398,30 @@ async function selectGanttItemInModel(it) {
    knappen är intryckt; ett tryck till visar hela modellen igen. Trimble Connects egen isolering (isolateEntities). */
 /* Tidslinje-dragaren över schemat (Victor 2026-10-13): ett valfritt datum som ersätter "Idag"-markeringen och
    styr vilka objekt som visas i 3D (de som hunnit starta). null = av. */
-let ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
+/* Färgskala efter datum: objektens färg från tidig till sen start (eller slut) mellan två färger man väljer. */
+let ganttScale = { on: false, by: "start", a: "#2563eb", b: "#dc2626" }, ganttScaleR = null;
+function ganttScaleHex(t) {
+  const iso = ganttScale.by === "end" ? t.endDate : t.startDate; if (!iso) return null;
+  if (!ganttScaleR || ganttScaleR.by !== ganttScale.by || ganttScaleR.n !== items.length) {
+    const ds = items.map(x => (ganttScale.by === "end" ? x.endDate : x.startDate)).filter(Boolean).map(x => Date.parse(x.slice(0, 10) + "T00:00:00Z")).filter(Number.isFinite);
+    ganttScaleR = { by: ganttScale.by, n: items.length, t0: ds.length ? Math.min(...ds) : 0, t1: ds.length ? Math.max(...ds) : 0 };
+  }
+  const R = ganttScaleR, v = Date.parse(iso.slice(0, 10) + "T00:00:00Z"), k = R.t1 > R.t0 ? Math.max(0, Math.min(1, (v - R.t0) / (R.t1 - R.t0))) : 0;
+  const h = x => [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16)), A = h(ganttScale.a), B = h(ganttScale.b);
+  return "#" + A.map((c, i) => Math.round(c + (B[i] - c) * k).toString(16).padStart(2, "0")).join("");
+}
+let ganttStrict = false, ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
 const ganttMarkerIso = () => todayISO(); // "Idag"-linjen står kvar; datumet för tidslinjen är dragstrecket (se renderGanttScrub)
 let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
 /* Läget för en aktivitet vid ett datum (samma regler som 4D-planering, Victor 2026-10-02/13): pågående kräver minst 1 % framdrift –
    har startdatumet passerat utan det är aktiviteten försenad; efter planerat slut utan att vara klar är den också försenad. */
 function ganttPhaseAt(m, d) {
+  if (ganttStrict) { // Följ datum: bara start- och slutdatum – framdriften (procent) och status ignoreras
+    const s = m.startDate || "", e = m.endDate || "";
+    if (s && d < s) return "planerad";
+    if (e && d > e) return "klar";
+    return "pagaende";
+  }
   const prog = Number(m.progress) || 0, end = m.endDate, start = m.startDate;
   const done = !!m.actualEndDate || prog >= 100 || m.status === "klar";
   if (done && (m.actualEndDate || end) && (m.actualEndDate || end) < d) return "klar";
@@ -3480,7 +3498,7 @@ function ganttCoupledTargets() {
       if (phase === "planerad_syns") phase = "planerad"; // rivning före start: syns alltid
       if ((phase === "pagaende" || phase === "forsenad" || phase === "planerad") && Number(ganttOp[phase]) <= 0) phase = "dold"; // opacitet 0 = osynligt
     }
-    const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase, doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity }); }
+    const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase, startDate: m.startDate || "", endDate: m.endDate || "", doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity }); }
   });
   return out;
 }
@@ -3510,6 +3528,9 @@ let ganttPhaseNow = new Map(), ganttTimeBusy = false, ganttTimePending = false, 
 const hexToRgbaObj = (hex, op) => ({ r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16), a: Math.round(Math.max(0, Math.min(1, op)) * 255) });
 function ganttTimeColorOf(t) {
   if (t.phase === "tempon") return "reset";
+  if (ganttScale.on && !(t.phase === "klar" && (t.doneColor || t.doneOpacity !== null))) { // egen färg efter slut ligger överst
+    const hx = ganttScaleHex(t); if (hx) return hexToRgbaObj(hx, (t.phase === "klar" ? ganttDoneOp : (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase])) / 100);
+  }
   if (t.phase === "klar") return hexToRgbaObj(t.doneColor || STATUS_COLORS.klar, (t.doneOpacity !== null ? t.doneOpacity : ganttDoneOp) / 100);
   return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase]) / 100);
 }
@@ -3928,6 +3949,29 @@ function initGanttTime() {
   try { const sv = JSON.parse(localStorage.getItem("4ddash-gantt-time-range") || "null"); if (Array.isArray(sv)) { ganttTimeFrom = sv[0] || ""; ganttTimeTo = sv[1] || ""; } } catch (e) {}
   fut.onchange = () => { ganttTimeFuture = fut.checked; try { localStorage.setItem("4ddash-gantt-time-future", ganttTimeFuture ? "1" : "0"); } catch (e) {} if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); };
   try { ganttTimeFuture = localStorage.getItem("4ddash-gantt-time-future") === "1"; } catch (e) {}
+  { const gb = document.getElementById("ganttScaleBtn"); if (gb) {
+    try { Object.assign(ganttScale, JSON.parse(localStorage.getItem("4ddash-gantt-scale") || "{}")); } catch (e) {}
+    const paint = () => gb.classList.toggle("on", !!ganttScale.on), save = () => { try { localStorage.setItem("4ddash-gantt-scale", JSON.stringify(ganttScale)); } catch (e) {} paint(); ganttScaleR = null; if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); };
+    paint();
+    gb.onclick = e => {
+      e.stopPropagation(); const old = document.getElementById("ganttScalePop"); if (old) { old.remove(); return; }
+      const pop = document.createElement("div"); pop.id = "ganttScalePop"; pop.className = "gantt-time-menu"; pop.style.cssText = "position:fixed;min-width:260px;z-index:70";
+      pop.innerHTML = `<div class="gtm-title">Färgskala efter datum</div><label><input type="checkbox" id="gsOn" ${ganttScale.on ? "checked" : ""} /> Färga objekten efter datum</label>
+        <div class="gtm-grid"><span>Efter</span><select id="gsBy"><option value="start" ${ganttScale.by !== "end" ? "selected" : ""}>Startdatum</option><option value="end" ${ganttScale.by === "end" ? "selected" : ""}>Slutdatum</option></select><span>Tidigast</span><input type="color" id="gsA" value="${ganttScale.a}" /><span>Senast</span><input type="color" id="gsB" value="${ganttScale.b}" /></div>
+        <div id="gsBar" style="height:10px;border-radius:5px;margin:6px 0 2px"></div><div class="hint">Egen färg efter slut (aktivitetens redigering) går före. Gäller läget Tid.</div>`;
+      document.body.appendChild(pop); const r = gb.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 280)) + "px"; pop.style.top = (r.bottom + 4) + "px";
+      const q = x => pop.querySelector(x), bar = () => { q("#gsBar").style.background = `linear-gradient(90deg,${ganttScale.a},${ganttScale.b})`; }; bar();
+      const apply = () => { ganttScale.on = q("#gsOn").checked; ganttScale.by = q("#gsBy").value; ganttScale.a = q("#gsA").value; ganttScale.b = q("#gsB").value; bar(); save(); };
+      ["#gsOn", "#gsBy"].forEach(i => { q(i).onchange = apply; }); ["#gsA", "#gsB"].forEach(i => { q(i).oninput = apply; });
+      const off = ev => { if (pop.contains(ev.target) || gb.contains(ev.target)) return; pop.remove(); document.removeEventListener("pointerdown", off, true); }; setTimeout(() => document.addEventListener("pointerdown", off, true), 0);
+    };
+  } }
+  { const sb = document.getElementById("ganttStrictBtn"); if (sb) {
+    try { ganttStrict = localStorage.getItem("4ddash-gantt-strict") === "1"; } catch (e) {}
+    const paint = () => { sb.classList.toggle("on", ganttStrict); sb.setAttribute("aria-pressed", String(ganttStrict)); };
+    paint();
+    sb.onclick = () => { ganttStrict = !ganttStrict; try { localStorage.setItem("4ddash-gantt-strict", ganttStrict ? "1" : "0"); } catch (e) {} paint(); ganttTimeReset(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); if (typeof renderGanttTimeSum === "function") renderGanttTimeSum(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); modelToast(ganttStrict ? "Följer datumen strikt – framdriften i procent ignoreras" : "Följer framdriften igen"); };
+  } }
   fut.checked = ganttTimeFuture;
   // Färger på Pågående / Klar / Kommande – samma färger som i Inställningar och schemat.
   document.querySelectorAll("#ganttTimeRow [data-tcol]").forEach(inp => {

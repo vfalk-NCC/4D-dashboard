@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=20261014111303" />
+<link rel="stylesheet" href="style.css?v=20261014113332" />
 <script src="error-guard.js"></script>
 <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
 </head>
@@ -203,6 +203,8 @@
           <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens start">Från <input type="date" id="ganttTimeFrom" aria-label="Från" /></label>
           <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens slut">Till <input type="date" id="ganttTimeTo" aria-label="Till" /></label>
           <button type="button" id="ganttTimeAuto" class="gantt-toolbar-btn" title="Hela spannet">Auto</button>
+          <button type="button" id="ganttScaleBtn" class="gantt-toolbar-btn" aria-haspopup="true" title="Färgskala efter datum: objekten färgas från tidig till sen start (eller slut) mellan två färger du väljer">Färgskala ▾</button>
+          <button type="button" id="ganttStrictBtn" class="gantt-toolbar-btn" aria-pressed="false" title="Följ datum: färgen följer strikt start- och slutdatumen (planerad före start, pågående mellan, klar efter slut) och struntar i framdriften i procent">Följ datum</button>
           <div class="gantt-time-menu-wrap">
             <button type="button" id="ganttTimeMenuBtn" class="gantt-toolbar-btn" aria-expanded="false" aria-haspopup="true" title="Färger, opacitet, Kommande, Pulsera och Markera pågående">Färger &amp; visning ▾</button>
             <div id="ganttTimeMenu" class="gantt-time-menu hidden" role="dialog" aria-label="Färger och visning">
@@ -437,15 +439,15 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=20261014111303"></script>
-  <script src="app.js?v=20261014111303"></script>
-  <script src="resource-curve.js?v=20261014111303"></script>
-  <script src="pp-export.js?v=20261014111303"></script>
-  <script src="bubbles.js?v=20261014111303"></script>
-  <script src="video-gfx.js?v=20261014111303"></script>
-  <script src="video-editor.js?v=20261014111303"></script>
-  <script src="quantities.js?v=20261014111303"></script>
-  <script src="quantities-mf.js?v=20261014111303"></script>
-  <script src="planning-link.js?v=20261014111303"></script>
+  <script src="ui-dialog.js?v=20261014113332"></script>
+  <script src="app.js?v=20261014113332"></script>
+  <script src="resource-curve.js?v=20261014113332"></script>
+  <script src="pp-export.js?v=20261014113332"></script>
+  <script src="bubbles.js?v=20261014113332"></script>
+  <script src="video-gfx.js?v=20261014113332"></script>
+  <script src="video-editor.js?v=20261014113332"></script>
+  <script src="quantities.js?v=20261014113332"></script>
+  <script src="quantities-mf.js?v=20261014113332"></script>
+  <script src="planning-link.js?v=20261014113332"></script>
 </body>
 </html>

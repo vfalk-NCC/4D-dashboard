@@ -2428,3 +2428,6 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .vtl-key { position: absolute; top: 0; width: 24px; height: 24px; margin-left: -12px; border: 0; background: #fff; border-radius: 50%; box-shadow: 0 1px 4px rgba(15,23,42,.35); font-size: 13px; padding: 0; cursor: pointer; z-index: 2; }
 .vtl-head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #6d5efc; z-index: 3; cursor: ew-resize; }
 .vtl-head::before { content: ""; position: absolute; left: -7px; top: 8px; width: 16px; height: 16px; border-radius: 50%; background: #6d5efc; box-shadow: 0 0 0 3px rgba(255,255,255,.9), 0 1px 6px rgba(79,70,229,.5); }
+
+#ganttStrictBtn.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+#ganttScaleBtn.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
