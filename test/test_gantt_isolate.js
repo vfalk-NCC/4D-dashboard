@@ -323,7 +323,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if ((await mergedG1()) !== 2) fail('Testdata: aktiviteten ska ha två objekt: ' + await mergedG1());
   await page.setViewportSize({ width: 1400, height: 520 }); // litet fönster: dialogen ska rulla, inte hamna utanför
   await page.evaluate(() => { ganttEditable = true; openActivityDialog({ edit: mergeActivityGroups(items.filter(x => x.activityKey === 'g:g1'))[0] }); });
-  await page.click('.na-objs summary'); await page.waitForTimeout(150);
+  await page.waitForTimeout(150); // listan är öppen från början
   if ((await page.locator('.na-obj').count()) !== 2) fail('Objektlistan ska visa två objekt');
   await page.evaluate(() => { window.__setsel = []; const b = items.find(x => x.objectName === 'Pelare B'); b.modelId = 'M1'; b.objectId = 'GB'; });
   await page.locator('.na-obj', { hasText: 'Pelare B' }).click(); await page.waitForTimeout(500);
@@ -332,7 +332,17 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (!(await page.locator('.na-obj.on', { hasText: 'Pelare B' }).count())) fail('Klickat objekt ska markeras i listan');
   await page.locator('.na-obj', { hasText: 'Pelare B' }).locator('.na-obj-x').click(); await page.waitForTimeout(900);
   if (get('plan_items.json').some(r => r.object_name === 'Pelare B') || !get('plan_items.json').some(r => r.object_name === 'Pelare A')) fail('Bara Pelare B ska tas bort ur aktiviteten');
-  if (await page.$('.na-objs')) fail('Med ett objekt kvar ska listan försvinna');
+  if (!(await page.$('.na-objs')) || (await page.locator('.na-obj').count()) !== 1) fail('Med ett objekt kvar ska listan finnas kvar (så att det går att ta bort kopplingen)');
+  // Andra rader som pekar på samma 3D-objekt visas (kan annars göra att objektet verkar kopplat fast det inte syns här).
+  await page.evaluate(() => { const a = items.find(x => x.objectName === 'Pelare A'); a.modelId = 'M1'; a.objectId = 'GA'; items.push({ ...a, id: 'dupA', objectName: 'Pelare A (äldre rad)', activityKey: 'i:dupA', groupId: null, sourceKey: null }); });
+  await page.evaluate(() => { ganttEditable = true; document.querySelector('.na-cancel').click(); openActivityDialog({ edit: items.find(x => x.objectName === 'Pelare A') }); });
+  await page.waitForTimeout(200);
+  if ((await page.locator('.na-dups:not(.hidden) .na-obj').count()) !== 1) fail('Andra rader med samma objekt ska listas');
+  await page.evaluate(() => { items = items.filter(x => x.id !== 'dupA'); });
+  // Sista objektet: ✕ tar bara bort 3D-kopplingen, aktiviteten finns kvar.
+  await page.locator('.na-objs .na-obj-x').click(); await page.waitForTimeout(900);
+  const pa = get('plan_items.json').find(r => r.object_name === 'Pelare A');
+  if (!pa || pa.model_id) fail('Sista objektet: bara kopplingen ska tas bort, raden ska finnas kvar: ' + JSON.stringify(pa));
   const fit = await page.evaluate(() => { const r = document.querySelector('.new-act-pop').getBoundingClientRect(); return { top: r.top, bottom: r.bottom, vh: window.innerHeight }; });
   if (fit.top < 0 || fit.bottom > fit.vh + 1) fail('Fönstret ska rymmas i bilden: ' + JSON.stringify(fit));
   await page.click('.na-cancel'); await page.setViewportSize({ width: 1400, height: 1000 }); await page.evaluate(() => { ganttEditable = false; });
