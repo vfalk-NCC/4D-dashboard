@@ -59,8 +59,8 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     if (order.indexOf('quantities') !== order.indexOf('video-editor') + 1) fail('Blocket ska ligga under video-editorn: ' + order.join());
     // Klara objekt (Ganttens regel): de tre som är klara idag – den framtida väggen ingår inte.
     await page.click('#qtyRead'); await page.waitForFunction(() => qty.objs.length > 0, null, { timeout: 15000 });
-    let R = await page.evaluate(() => ({ n: qty.objs.length, val: qty.cfg.valKey, row: qty.cfg.rowKey, f: qty.factor, note: qty.unitNote, P: (() => { const p = qtyPivot(); return { total: p.total, rows: p.rows.map(r => [r.key, Math.round(r.sum * 100) / 100, r.n]) }; })() }));
-    if (R.n !== 3 || !/Volume$/.test(R.val) || !/Product Object Type/.test(R.row) || R.f !== 1e9 || !/mm³/.test(R.note)) fail('Läsning och enhet: ' + JSON.stringify(R));
+    let R = await page.evaluate(() => ({ n: qty.objs.length, piv: qtyPivot().nObj, val: qty.cfg.valKey, row: qty.cfg.rowKey, f: qty.factor, note: qty.unitNote, P: (() => { const p = qtyPivot(); return { total: p.total, rows: p.rows.map(r => [r.key, Math.round(r.sum * 100) / 100, r.n]) }; })() }));
+    if (R.n !== 4 || R.piv !== 3 || !/Volume$/.test(R.val) || !/Product Object Type/.test(R.row) || R.f !== 1e9 || !/mm³/.test(R.note)) fail('Läsning och enhet: ' + JSON.stringify(R));
     if (Math.abs(R.P.total - 12.5) > 0.001) fail('Summa klara volymer (6 + 4 + 2,5 m³): ' + JSON.stringify(R.P));
     if (R.P.rows.map(r => r.join(':')).join('|') !== 'Foundation Slab:Concrete - Cast-in-Place - 1200:10:2|Wall:Concrete - Cast-in-Place - 300:2.5:1') fail('Summering per typ: ' + JSON.stringify(R.P.rows));
     // Rader per område, kolumner per typ; filter; CSV.
@@ -71,8 +71,28 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     if ((await page.evaluate(() => qtyPivot().total)) !== 2.5) fail('Filter Innehåller: Wall ska ge 2,5 m³');
     await page.evaluate(() => { qty.cfg.filter = ''; qtyRender(); });
     // Alla oavsett läge.
-    await page.evaluate(() => { qty.cfg.phase = 'all'; qtyRender(); }); await page.click('#qtyRead'); await page.waitForFunction(() => qty.objs.length === 4, null, { timeout: 15000 });
+    await page.evaluate(() => { qty.cfg.phase = 'all'; qtyRender(); });
     if (Math.abs((await page.evaluate(() => qtyPivot().total)) - 21.5) > 0.001) fail('Alla objekt: 21,5 m³');
+    // Mängdförteckningen (Excel): läses utan bibliotek, kopplingar föreslås, jämförelse per post och byggnad.
+    await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.filter = ''; qtyRender(); });
+    await page.setInputFiles('#qmfFile', path.join(__dirname, 'fixtures', 'mf_test.xlsx'));
+    await page.waitForFunction(() => qmf.posts.length > 0, null, { timeout: 10000 });
+    const M = await page.evaluate(() => ({ posts: qmf.posts.length, builds: qmf.builds.join(), ese21: qmf.posts.find(p => p.ref === 'ESE.21'), types: qmf.map.types, areas: qmf.map.areas, sub: qmf.posts.some(p => /tillägg för anläggningscement/.test(p.label) && p.unit === 'm³') }));
+    if (M.posts < 5 || M.builds !== 'Sektionsfickor,Sikthall,Krosshall,Fläkthus,Förtjockarhus,Ställverk,Personal' || !M.ese21 || M.ese21.k.Krosshall !== 2575 || M.ese21.p.Krosshall !== 2600 || !M.sub) fail('Läsning av mängdförteckningen: ' + JSON.stringify(M));
+    if (M.areas['743 Krosshall'] !== 'Krosshall' || M.areas['744 Fläkthuset'] !== 'Fläkthus') fail('Byggnad föreslås efter områdets namn: ' + JSON.stringify(M.areas));
+    const tv = Object.entries(M.types).map(([k, v]) => k.split(':')[0] + '=' + v.split('|')[0]).sort().join();
+    if (tv !== 'Foundation Slab=ESE.15,Wall=ESE.21') fail('Typ → post föreslås: ' + tv);
+    const cmp = b => page.evaluate(b => { qmf.build = b; qmfRender(); const c = qmfCompare(); return Object.fromEntries(c.list.map(r => [r.p.ref, [r.k, r.pr, Math.round(r.klar * 100) / 100, Math.round(r.tot * 100) / 100]])); }, b);
+    let K = await cmp('Krosshall');
+    if (JSON.stringify(K['ESE.15']) !== '[669,669,10,10]' || JSON.stringify(K['ESE.21']) !== '[2575,2600,0,0]') fail('Jämförelse Krosshall: ' + JSON.stringify(K));
+    K = await cmp('Fläkthus');
+    if (JSON.stringify(K['ESE.21']) !== '[14,14,2.5,11.5]') fail('Jämförelse Fläkthus (klar 2,5 av totalt 11,5 m³): ' + JSON.stringify(K));
+    K = await cmp('');
+    if (K['ESE.21'][2] !== 2.5 || K['ESE.15'][2] !== 10) fail('Jämförelse alla byggnader: ' + JSON.stringify(K));
+    const csv = await page.evaluate(() => qmfCsv(qmfCompare())); if (!/ESE\.21/.test(csv)) fail('CSV för jämförelsen');
+    // Ändrad koppling slår igenom: Wall → ESE.1 ger ESE.21 noll.
+    await page.evaluate(() => { const t = Object.keys(qmf.map.types).find(k => /^Wall/.test(k)); qmf.map.types[t] = qmf.posts.find(p => p.ref === 'ESE.1').key; qmfRender(); });
+    K = await cmp('Fläkthus'); if (K['ESE.1'][2] !== 2.5) fail('Ändrad typ→post ska slå igenom: ' + JSON.stringify(K));
     // Klick på en rad markerar objekten i TC.
     await page.evaluate(() => { window.__sel = []; }); await page.click('#qtyTable tbody tr'); await page.waitForTimeout(300);
     if (!(await page.evaluate(() => window.__sel.length))) fail('Klick på rad ska markera i TC');

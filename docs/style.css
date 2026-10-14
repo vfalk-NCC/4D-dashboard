@@ -2378,3 +2378,8 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .qty-table tbody tr { cursor: pointer; } .qty-table tbody tr:hover { background: #eff6ff; }
 .qty-table tfoot td { border-top: 2px solid #9ca3af; border-bottom: none; }
 .qty-props summary { cursor: pointer; font-size: 12px; color: #374151; } .qty-proplist { max-height: 220px; overflow: auto; font-size: 12px; margin-top: 6px; }
+.qmf-box { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e5e7eb; display: flex; flex-direction: column; gap: 10px; }
+.qmf-h { margin: 0; font-size: 14px; }
+.qmf-map summary { cursor: pointer; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.qmf-map select { max-width: 420px; }
+.qmf-table td.qmf-warn { background: #fff7ed; color: #c2410c; } .qmf-table td.qmf-bad { background: #fef2f2; color: #b91c1c; font-weight: 600; }

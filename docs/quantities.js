@@ -21,12 +21,15 @@ function qtyFlat(obj) {
   (obj.properties || []).forEach(ps => (ps.properties || []).forEach(p => { if (p && p.name !== undefined && p.value !== undefined && p.value !== null && typeof p.value !== "object") f[`${ps.name || "Övrigt"} / ${p.name}`] = p.value; }));
   return f;
 }
+/* Klar vid valt datum enligt Ganttens regel (räknas vid summeringen, så datumet kan ändras utan att läsa om). */
+const qtyAt = () => qty.cfg.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO();
+const qtyDone = o => !o.item || !o.item.startDate && !o.item.endDate ? true : ganttPhaseAt(o.item, qtyAt()) === "klar";
+const qtyActive = o => qty.cfg.scope === "sel" || qty.cfg.phase !== "klar" || qtyDone(o);
 function qtyObjects() {
   const base = qty.cfg.scope === "all" ? items : (typeof ganttShownItems !== "undefined" ? ganttShownItems : items).flatMap(it => it.members || [it]);
-  const at = qty.cfg.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO(), seen = new Set(), out = [];
+  const seen = new Set(), out = [];
   base.forEach(m => {
     if (!m.modelId || !m.objectId) return;
-    if (qty.cfg.phase === "klar" && ganttPhaseAt(m, at) !== "klar") return;
     const k = `${m.modelId}|${m.objectId}`; if (seen.has(k)) return; seen.add(k);
     out.push({ modelId: m.modelId, objectId: String(m.objectId), item: m });
   });
@@ -102,6 +105,7 @@ function qtyPivot() {
   const get = (o, k) => (!k ? "" : QTY_ACT_KEYS[k] ? QTY_ACT_KEYS[k](o) : (o.flat[k] === undefined ? "(saknas)" : String(o.flat[k])));
   const rows = new Map(), cols = new Set(); let total = 0, nObj = 0, nNo = 0;
   qty.objs.forEach(o => {
+    if (!qtyActive(o)) return;
     if (text && !Object.values(o.flat).some(v => String(v).toLowerCase().includes(text))) return;
     const v = val(o); if (v === null) { nNo++; }
     const rk = get(o, C.rowKey) || "(tomt)", ck = C.colKey ? (get(o, C.colKey) || "(tomt)") : "";
@@ -130,7 +134,8 @@ function qtyExport() {
   const blob = new Blob([qtyCsv()], { type: "text/csv;charset=utf-8" }), url = URL.createObjectURL(blob), a = document.createElement("a");
   a.href = url; a.download = `Mängder ${todayISO()}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
-function qtyRender() {
+function qtyRender() { qtyRender0(); qtyAfterRender(); }
+function qtyRender0() {
   const host = document.getElementById("qtyBox"); if (!host) return;
   const C = qty.cfg, E = qtyEsc, hasData = qty.objs.length > 0;
   const keyOpts = (sel, withNone, acts) => `${withNone ? `<option value="">(ingen)</option>` : ""}${acts ? Object.keys(QTY_ACT_KEYS).map(k => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)}</option>`).join("") : ""}${[...qty.keys].map(([k, e]) => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)} (${e.n})</option>`).join("")}`;
@@ -168,5 +173,6 @@ function qtyRender() {
   tb.querySelectorAll("tr[data-r]").forEach(tr => { tr.onclick = () => { const r = P.rows[Number(tr.dataset.r)]; if (r) qtySelectRows(r.objs); }; });
   q("#qtyAllSel").onclick = () => qtySelectRows(P.rows.flatMap(r => r.objs));
 }
+function qtyAfterRender() { const host = document.getElementById("qtyBox"); if (!host) return; let b = document.getElementById("qmfBox"); if (!b) { b = document.createElement("div"); b.id = "qmfBox"; b.className = "qmf-box"; host.appendChild(b); } if (typeof qmfRender === "function") qmfRender(); }
 function initQuantities() { if (document.getElementById("qtyBox")) qtyRender(); }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initQuantities); else setTimeout(initQuantities, 0);
