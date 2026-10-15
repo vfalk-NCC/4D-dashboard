@@ -3531,12 +3531,14 @@ function renderGanttLegend() {
   const statusItems = STATUS_ORDER.map(s =>
     `<span class="gantt-legend-item"><span class="gantt-legend-dot" style="background:${STATUS_COLORS[s]}"></span>${escapeHtml(STATUS_LABELS[s])}</span>`
   ).join("");
+  const editHelp = 'Redigerbart läge: dra i en stapel eller lapp för att flytta den, eller i dess vänster-/högerkant för att ändra start eller slut. På tavlan flyttas aktiviteter som beror på den med – håll Shift för att bara flytta den lappen. Dubbelklicka en lapp eller stapel för att redigera den (namn, datum, Väntar på och glapp). Högerklicka för kopplingar och 3D-koppling. Ändringen sparas direkt och kan ångras.';
   el.innerHTML = statusItems + `
     <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-actual"></span>Verkligt (där ifyllt)</span>
     <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-weekend"></span>Helg</span>
     <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-today"></span>Idag</span>
     ${ganttShowBaseline ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline"></span>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : ""}
     ${ganttShowBaseline && ganttBaseline2Id ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline2"></span>Jämför: ${escapeHtml(baselineLabel(ganttBaseline2Id))}</span>` : ""}
+    ${ganttEditable ? `<span class="gantt-legend-item gl-edit" title="${escapeHtml(editHelp)}" style="cursor:help">✏️</span>` : ""}
   `;
   // Tavlans färger (Färga efter): en ruta per entreprenör/område/aktivitet – klicka för att välja egen färg.
   if (ganttView === "board") {
@@ -6473,11 +6475,9 @@ function initGanttControls() {
   updateGanttRangeStatus(rangeStatusEl);
   if (editableCheckbox) {
     editableCheckbox.checked = ganttEditable;
-    if (editableHintEl) editableHintEl.classList.toggle("hidden", !ganttEditable);
     editableCheckbox.onchange = () => {
       ganttEditable = editableCheckbox.checked;
       saveGanttPrefs();
-      if (editableHintEl) editableHintEl.classList.toggle("hidden", !ganttEditable);
       renderGantt(getFilteredItems());
     };
   }
