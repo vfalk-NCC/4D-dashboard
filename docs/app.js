@@ -5593,7 +5593,11 @@ function drawGanttArrows(el) {
     el.appendChild(svg);
   }
   const map = el._arrowMap, er = el.getBoundingClientRect();
-  svg.setAttribute("width", el.scrollWidth); svg.setAttribute("height", el.scrollHeight);
+  // Mät innehållet utan pil-lagret: svg:n ligger i samma ruta, så annars räknas den egna (gamla) höjden med och rutan får en onödig rullningslist.
+  svg.style.display = "none";
+  const sw = el.scrollWidth, sh = el.scrollHeight;
+  svg.style.display = "";
+  svg.setAttribute("width", sw); svg.setAttribute("height", sh);
   const byId = itemsByIdAll(), seen = new Set(), paths = [];
   const box = n => {
     const r = n.getBoundingClientRect();
