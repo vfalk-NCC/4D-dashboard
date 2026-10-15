@@ -111,6 +111,11 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
       const n2 = await page.evaluate(() => window.__selRows); if (!(n2 >= 1)) fail('Klick på postrad ska markera objekt: ' + n2);
       await page.evaluate(() => { window.__selRows = null; }); await page.click('tr[data-arrow] td:first-child'); await page.waitForTimeout(200);
       if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Klick på områdesrad ska markera objekt'); }
+    // Poster med annan enhet syns (nedtonade) i listan, och Antal (st) räknar objekt.
+    { const og = await page.evaluate(() => [...document.querySelectorAll('select[data-ty]')[0].querySelectorAll('optgroup option')].length); if (!(og >= 1)) fail('Poster med annan enhet ska visas under en egen rubrik: ' + og);
+      await page.click('[data-qkind="cnt"]'); await page.waitForTimeout(300);
+      const cn = await page.evaluate(() => ({ tot: qtyPivot().total, n: qtyPivot().nObj, val: !!document.getElementById('qtyVal') })); if (cn.tot !== cn.n || cn.val) fail('Antal (st): summan ska vara antalet objekt: ' + JSON.stringify(cn));
+      await page.click('[data-qkind="vol"]'); await page.waitForTimeout(300); }
     // Ändrad koppling slår igenom: Wall → ESE.1 ger ESE.21 noll.
     await page.evaluate(() => { const t = Object.keys(qmf.map.types.vol).find(k => /^Wall/.test(k)); qmf.map.types.vol[t] = qmf.posts.find(p => p.ref === 'ESE.1').key; qmfRender(); });
     K = await cmp('Fläkthus'); if (K['ESE.1'][2] !== 2.5) fail('Ändrad typ→post ska slå igenom: ' + JSON.stringify(K));

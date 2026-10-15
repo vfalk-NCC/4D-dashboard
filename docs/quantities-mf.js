@@ -153,7 +153,8 @@ function qmfRender() {
   const types = new Map(), areas = new Map();
   qty.objs.forEach(o => { const t = qmfTypeVal(o), a = qmfAreaOf(o), v = qtyValue(o) ?? 0;
     const te = types.get(t) || { n: 0, v: 0, objs: [] }; te.n++; te.v += v; te.objs.push(o); types.set(t, te); const ae = areas.get(a) || { n: 0, v: 0, objs: [] }; ae.n++; ae.v += v; ae.objs.push(o); areas.set(a, ae); });
-  const postOpts = sel => `<option value="">(ingen post)</option>${qmfPosts().map(p => `<option value="${E(p.key)}"${sel === p.key ? " selected" : ""}>${E(p.ref)} – ${E(p.label.slice(0, 100))} [${E(p.unit)}]</option>`).join("")}`;
+  const otherPosts = qmf.posts.filter(p => p.unit !== QTY_KINDS[qtyKind()][1]);
+  const postOpts = sel => `<option value="">(ingen post)</option>${qmfPosts().map(p => `<option value="${E(p.key)}"${sel === p.key ? " selected" : ""}>${E(p.ref)} – ${E(p.label.slice(0, 100))} [${E(p.unit)}]</option>`).join("")}${otherPosts.length ? `<optgroup label="Poster med annan enhet än ${E(QTY_KINDS[qtyKind()][1])} – byt mängdslag för att välja dem">${otherPosts.map(p => `<option disabled>${E(p.ref)} – ${E(p.label.slice(0, 90))} [${E(p.unit)}]</option>`).join("")}</optgroup>` : ""}`;
   const bOpts = sel => `<option value="">(ingen byggnad)</option>${qmf.builds.map(b => `<option value="${E(b)}"${sel === b ? " selected" : ""}>${E(b)}</option>`).join("")}`;
   const C = qmfCompare(), u = QTY_KINDS[qtyKind()][1];
   html += `<details class="qmf-map" open><summary>1. Vilken post är objekten? <span class="hint">(per ${E(qmf.typeKey || "egenskap")})</span></summary>

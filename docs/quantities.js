@@ -7,7 +7,7 @@ const QTY_KEY = "4ddash-qty";
 const qty = { cfg: { scope: "gantt", phase: "klar", date: "", from: "", formTop: false, kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", exclude: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
 try { Object.assign(qty.cfg, JSON.parse(localStorage.getItem(QTY_KEY) || "{}")); } catch (e) { /* standard */ }
 /* Mängdslag: Betong (volym m³), Form (yta m²), Kantform/längd (m), Armering/vikt (kg). Varje slag minns sin egenskap. */
-const QTY_KINDS = { vol: ["Betong – volym (m³)", "m³", /calculated\s*geometry\s*values\s*\/\s*volume$/i, /volume|volym/i], form: ["Form – sidoyta (m², utan över-/underyta)", "m²", /calculated\s*geometry\s*values\s*\/\s*(total\s*)?surface\s*area$/i, /surface|side\s*area|form|area|yta/i], len: ["Längd (m)", "m", /calculated\s*geometry\s*values\s*\/\s*length$/i, /length|längd/i], kg: ["Armering/vikt (kg)", "kg", /calculated\s*geometry\s*values\s*\/\s*weight$/i, /weight|vikt|mass/i] };
+const QTY_KINDS = { vol: ["Betong – volym (m³)", "m³", /calculated\s*geometry\s*values\s*\/\s*volume$/i, /volume|volym/i], form: ["Form – sidoyta (m², utan över-/underyta)", "m²", /calculated\s*geometry\s*values\s*\/\s*(total\s*)?surface\s*area$/i, /surface|side\s*area|form|area|yta/i], len: ["Längd (m)", "m", /calculated\s*geometry\s*values\s*\/\s*length$/i, /length|längd/i], cnt: ["Antal (st)", "st", /^$/, /^$/], kg: ["Armering/vikt (kg)", "kg", /calculated\s*geometry\s*values\s*\/\s*weight$/i, /weight|vikt|mass/i] };
 const qtyKind = () => QTY_KINDS[qty.cfg.kind] ? qty.cfg.kind : "vol";
 const qtySave = () => { try { localStorage.setItem(QTY_KEY, JSON.stringify(qty.cfg)); } catch (e) { /* ingen lagring */ } };
 const qtyEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -130,6 +130,7 @@ function qtyFormDeduct(o) {
   return 2 * (raw / (qty.volFactor || 1)) / o.hz;
 }
 function qtyValue(o) {
+  if (qtyKind() === "cnt") return 1; // Antal: ett per objekt (t.ex. bergbultar, pålar)
   const raw = qty.cfg.valKey ? qtyNum(o.flat[qty.cfg.valKey]) : null; if (raw === null) return null;
   let v = raw / (qty.factor || 1);
   if (qtyKind() === "form" && !qty.cfg.formTop) { const d = qtyFormDeduct(o); if (d !== null) v = Math.max(0, v - d); }
@@ -187,7 +188,7 @@ function qtyRender0() {
   const keyOpts = (sel, withNone, acts) => `${withNone ? `<option value="">(ingen)</option>` : ""}${acts ? Object.keys(QTY_ACT_KEYS).map(k => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)}</option>`).join("") : ""}${[...qty.keys].map(([k, e]) => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)} (${e.n})</option>`).join("")}`;
   const seg = (attr, cur, opts) => `<div class="gantt-seg qty-seg" role="group">${opts.map(([v, t, tip]) => `<button type="button" class="gantt-seg-btn${cur === v ? " active" : ""}" ${attr}="${v}"${tip ? ` title="${E(tip)}"` : ""}>${t}</button>`).join("")}</div>`;
   const ic = d => `<svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
-  const kindOpts = Object.entries(QTY_KINDS).map(([k, v]) => [k, { vol: "Betong m³", form: "Form m²", len: "Längd m", kg: "Vikt kg" }[k] || v[0], v[0]]);
+  const kindOpts = Object.entries(QTY_KINDS).map(([k, v]) => [k, { vol: "Betong m³", form: "Form m²", len: "Längd m", cnt: "Antal st", kg: "Vikt kg" }[k] || v[0], v[0]]);
   host.innerHTML = `<div class="qty-hint">Mängder ur modellen för de objekt som <b>Ganttens regel</b> räknar som klara (eller alla), att jämföra mot mängdförteckningen. Läses ur TC:s egna egenskaper. Inget ändras eller sparas.</div>
     <div class="gantt-head qty-head">
       <div class="gantt-head-row">
@@ -201,7 +202,7 @@ function qtyRender0() {
       ${hasData ? `<div class="gantt-head-row gantt-head-sub">
         <span class="gantt-sub-label" title="Vad som ska summeras">Mängdslag</span>${seg("data-qkind", qtyKind(), kindOpts)}
         ${qtyKind() === "form" ? `<label class="gantt-pill" title="Av: bara sidoytorna (formyta). På: hela ytan, även över- och underyta som inte formas."><input type="checkbox" id="qtyFormTop"${C.formTop ? " checked" : ""} /> Med över-/underyta</label>` : ""}
-        <label class="gantt-toolbar-field">Mängd <select id="qtyVal">${qtyNumKeys().map(k => `<option value="${E(k)}"${C.valKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>
+        ${qtyKind() === "cnt" ? "" : `<label class="gantt-toolbar-field">Mängd <select id="qtyVal">${qtyNumKeys().map(k => `<option value="${E(k)}"${C.valKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>`}
         <label class="gantt-toolbar-field" title="Enheten på mängden i modellen. Auto jämför volymen med objektens mått.">Enhet <select id="qtyUnit">${[["auto", "Auto"], ["1", "som i modellen"], ["1000", "÷ 1 000"], ["1000000", "÷ 1 000 000 (mm² → m²)"], ["1000000000", "÷ 1 000 000 000 (mm³ → m³)"]].map(([v, t]) => `<option value="${v}"${String(C.unit) === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
       </div>
       <div class="gantt-head-row gantt-head-sub">
@@ -226,7 +227,7 @@ function qtyRender0() {
   q("#qtyRead").onclick = qtyRead;
   if (!hasData) return;
   host.querySelectorAll("[data-qkind]").forEach(b => b.onclick = async () => { put("kind", b.dataset.qkind); qtyPickDefaults(); qtySave(); await qtyUnitCheck(); if (typeof qmfAutoMap === "function" && typeof qmf !== "undefined" && qmf.posts.length) qmfAutoMap(); qtyRender(); });
-  q("#qtyVal").onchange = async e => { put("valKey", e.target.value); qty.cfg.valKeys = { ...(qty.cfg.valKeys || {}), [qtyKind()]: e.target.value }; qtySave(); await qtyUnitCheck(); qtyRender(); };
+  if (q("#qtyVal")) q("#qtyVal").onchange = async e => { put("valKey", e.target.value); qty.cfg.valKeys = { ...(qty.cfg.valKeys || {}), [qtyKind()]: e.target.value }; qtySave(); await qtyUnitCheck(); qtyRender(); };
   q("#qtyRowKey").onchange = e => { put("rowKey", e.target.value); qtyRender(); };
   q("#qtyColKey").onchange = e => { put("colKey", e.target.value); qtyRender(); };
   q("#qtyFilter").onchange = e => { put("filter", e.target.value); qtyRender(); };
