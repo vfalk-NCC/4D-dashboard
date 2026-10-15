@@ -2615,3 +2615,6 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .qmf-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .qmf-table thead th { background: #f6f4ef; border-bottom: 1px solid #ddd6c8; padding: 6px 10px; font-size: 11px; }
 .qmf-table td { padding: 5px 10px; border-bottom: 1px solid #eef0f3; }
+
+.qmf-click { cursor: pointer; }
+.qmf-click:hover td { background: #eaf2ff !important; }

@@ -125,7 +125,7 @@ function qmfAutoMap() {
 function qmfCompare() {
   const sel = qmf.build, rows = new Map(), all = typeof qty !== "undefined" ? qty.objs : [], f = qty.factor || 1;
   const sumB = (o, b) => (b ? o[b] || 0 : Object.values(o).reduce((s, v) => s + v, 0));
-  qmfPosts().forEach(p => rows.set(p.key, { p, k: sumB(p.k, sel), pr: sumB(p.p, sel), klar: 0, tot: 0, n: 0 }));
+  qmfPosts().forEach(p => rows.set(p.key, { p, k: sumB(p.k, sel), pr: sumB(p.p, sel), klar: 0, tot: 0, n: 0, objs: [] }));
   let unmapped = 0, unmappedVol = 0, otherBuild = 0;
   all.forEach(o => {
     const v = qtyValue(o); if (v === null) return;
@@ -134,7 +134,7 @@ function qmfCompare() {
     if (!r) { unmapped++; unmappedVol += v; return; }
     const b = qmf.map.areas[qmfAreaOf(o)] || "";
     if (sel && b !== sel) { otherBuild++; return; }
-    r.tot += v; r.n++; if (qtyDone(o)) r.klar += v;
+    r.tot += v; r.n++; r.objs.push(o); if (qtyDone(o)) r.klar += v;
   });
   const list = [...rows.values()].filter(r => r.k || r.pr || r.tot);
   return { list, unmapped, unmappedVol, otherBuild };
@@ -152,17 +152,17 @@ function qmfRender() {
   if (!hasMf || !hasObjs) { host.innerHTML = html + `<div class="hint">${!hasMf ? "Välj mängdförteckningen (Excel). Filen läses bara i din webbläsare och ändras inte." : "Tryck på Läs mängder ovan först."}</div>`; wire(); return; }
   const types = new Map(), areas = new Map();
   qty.objs.forEach(o => { const t = qmfTypeVal(o), a = qmfAreaOf(o), v = qtyValue(o) ?? 0;
-    const te = types.get(t) || { n: 0, v: 0 }; te.n++; te.v += v; types.set(t, te); const ae = areas.get(a) || { n: 0, v: 0 }; ae.n++; ae.v += v; areas.set(a, ae); });
+    const te = types.get(t) || { n: 0, v: 0, objs: [] }; te.n++; te.v += v; te.objs.push(o); types.set(t, te); const ae = areas.get(a) || { n: 0, v: 0, objs: [] }; ae.n++; ae.v += v; ae.objs.push(o); areas.set(a, ae); });
   const postOpts = sel => `<option value="">(ingen post)</option>${qmfPosts().map(p => `<option value="${E(p.key)}"${sel === p.key ? " selected" : ""}>${E(p.ref)} – ${E(p.label.slice(0, 100))} [${E(p.unit)}]</option>`).join("")}`;
   const bOpts = sel => `<option value="">(ingen byggnad)</option>${qmf.builds.map(b => `<option value="${E(b)}"${sel === b ? " selected" : ""}>${E(b)}</option>`).join("")}`;
   const C = qmfCompare(), u = QTY_KINDS[qtyKind()][1];
   html += `<details class="qmf-map" open><summary>1. Vilken post är objekten? <span class="hint">(per ${E(qmf.typeKey || "egenskap")})</span></summary>
       <label class="qty-row">Typ-egenskap <select id="qmfTypeKey">${[...qty.keys.keys()].map(k => `<option value="${E(k)}"${qmf.typeKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>
-      <table class="qty-table"><thead><tr><th>Typ i modellen</th><th class="num">Objekt</th><th class="num">${u}</th><th>Post i förteckningen</th></tr></thead><tbody>${[...types].sort((a, b) => b[1].v - a[1].v).map(([t, e]) => `<tr><td>${E(t)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ty="${E(t)}">${postOpts(qmfTypes()[t])}</select></td></tr>`).join("")}</tbody></table></details>
+      <table class="qty-table"><thead><tr><th>Typ i modellen</th><th class="num">Objekt</th><th class="num">${u}</th><th>Post i förteckningen</th></tr></thead><tbody>${[...types].sort((a, b) => b[1].v - a[1].v).map(([t, e]) => `<tr class="qmf-click" data-tyrow="${E(t)}" title="Klicka för att markera de ${e.n} objekten i TC"><td>${E(t)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ty="${E(t)}">${postOpts(qmfTypes()[t])}</select></td></tr>`).join("")}</tbody></table></details>
     <details class="qmf-map" open><summary>2. Vilken byggnad hör området till? <span class="hint">(Områdena i Gantt-schemat)</span></summary>
-      <table class="qty-table"><thead><tr><th>Område i Gantt</th><th class="num">Objekt</th><th class="num">${u}</th><th>Byggnad i förteckningen</th></tr></thead><tbody>${[...areas].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([a, e]) => `<tr><td>${E(a)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ar="${E(a)}">${bOpts(qmf.map.areas[a])}</select></td></tr>`).join("")}</tbody></table></details>
+      <table class="qty-table"><thead><tr><th>Område i Gantt</th><th class="num">Objekt</th><th class="num">${u}</th><th>Byggnad i förteckningen</th></tr></thead><tbody>${[...areas].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([a, e]) => `<tr class="qmf-click" data-arrow="${E(a)}" title="Klicka för att markera de ${e.n} objekten i TC"><td>${E(a)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ar="${E(a)}">${bOpts(qmf.map.areas[a])}</select></td></tr>`).join("")}</tbody></table></details>
     <div class="qty-row"><label>Byggnad <select id="qmfBuild"><option value="">Alla byggnader</option>${qmf.builds.map(b => `<option value="${E(b)}"${qmf.build === b ? " selected" : ""}>${E(b)}</option>`).join("")}</select></label><span class="hint">Klara vid ${E(qtyAt())} enligt Ganttens regel</span></div>
-    <table class="qty-table qmf-table"><thead><tr><th>Post</th><th class="num">Kontrakt</th><th class="num">Prognos</th><th class="num">Modell klar</th><th class="num">Modell totalt</th><th class="num">Klart av prognos</th><th class="num">Kvar</th></tr></thead><tbody>${C.list.map(r => { const pc = qmfPct(r.klar, r.pr), dv = qmfPct(r.tot - r.pr, r.pr); return `<tr title="${E(r.p.label)}"><td><b>${E(r.p.ref)}</b> ${E(r.p.label.slice(0, 60))}</td><td class="num">${qtyFmt(r.k, 0)}</td><td class="num">${qtyFmt(r.pr, 0)}</td><td class="num"><b>${qtyFmt(r.klar)}</b></td><td class="num${dv !== null && Math.abs(dv) > 15 ? " qmf-bad" : dv !== null && Math.abs(dv) > 5 ? " qmf-warn" : ""}" title="Modell totalt mot prognos: ${dv === null ? "–" : (dv > 0 ? "+" : "") + dv + " %"}">${qtyFmt(r.tot)}</td><td class="num">${pc === null ? "–" : pc + " %"}</td><td class="num">${qtyFmt(r.pr - r.klar, 0)}</td></tr>`; }).join("") || `<tr><td colspan="7" class="hint">Inga poster med mängd för valet.</td></tr>`}</tbody></table>
+    <table class="qty-table qmf-table"><thead><tr><th>Post</th><th class="num">Kontrakt</th><th class="num">Prognos</th><th class="num">Modell klar</th><th class="num">Modell totalt</th><th class="num">Klart av prognos</th><th class="num">Kvar</th></tr></thead><tbody>${C.list.map(r => { const pc = qmfPct(r.klar, r.pr), dv = qmfPct(r.tot - r.pr, r.pr); return `<tr class="qmf-click" data-postrow="${E(r.p.key)}" title="${E(r.p.label)} – klicka för att markera de ${r.n} objekten i TC"><td><b>${E(r.p.ref)}</b> ${E(r.p.label.slice(0, 60))}</td><td class="num">${qtyFmt(r.k, 0)}</td><td class="num">${qtyFmt(r.pr, 0)}</td><td class="num"><b>${qtyFmt(r.klar)}</b></td><td class="num${dv !== null && Math.abs(dv) > 15 ? " qmf-bad" : dv !== null && Math.abs(dv) > 5 ? " qmf-warn" : ""}" title="Modell totalt mot prognos: ${dv === null ? "–" : (dv > 0 ? "+" : "") + dv + " %"}">${qtyFmt(r.tot)}</td><td class="num">${pc === null ? "–" : pc + " %"}</td><td class="num">${qtyFmt(r.pr - r.klar, 0)}</td></tr>`; }).join("") || `<tr><td colspan="7" class="hint">Inga poster med mängd för valet.</td></tr>`}</tbody></table>
     <div class="hint">${C.unmapped ? `${C.unmapped} objekt (${qtyFmt(C.unmappedVol)} ${u}) har ingen post vald och räknas inte med. ` : ""}${C.otherBuild ? `${C.otherBuild} objekt hör till andra byggnader. ` : ""}"Modell totalt" är objekten som är kopplade i planen – inte hela modellen. Orange/röd = modell totalt avviker mer än 5 / 15 % från prognosen.</div>
     <div class="qty-row"><button type="button" id="qmfCsv">Exportera jämförelsen (CSV)</button></div>`;
   host.innerHTML = html; wire();
@@ -172,6 +172,11 @@ function qmfRender() {
     const cl = q("#qmfClear"); if (cl) cl.onclick = () => { qmf.posts = []; qmf.builds = []; qmf.file = ""; qmf.msg = ""; try { localStorage.removeItem(QMF_KEY); } catch (e) { /* */ } qmfRender(); };
     if (!hasMf || !hasObjs) return;
     q("#qmfTypeKey").onchange = e => { qmf.typeKey = e.target.value; qmfSave(); qmfAutoMap(); qmfRender(); };
+    // Klick på en rad markerar de objekt som raden räknats på i TC.
+    const pick = (list, label) => { if (!list || !list.length) { if (typeof modelToast === "function") modelToast("Inga objekt på den raden"); return; } qtySelectRows(list); if (typeof modelToast === "function") modelToast(`${list.length} objekt markerade i TC${label ? " – " + label : ""}`); };
+    host.querySelectorAll("tr[data-tyrow]").forEach(tr => tr.addEventListener("click", e => { if (e.target.closest("select")) return; const t = types.get(tr.dataset.tyrow); pick(t && t.objs, tr.dataset.tyrow.split(":")[0]); }));
+    host.querySelectorAll("tr[data-arrow]").forEach(tr => tr.addEventListener("click", e => { if (e.target.closest("select")) return; const a = areas.get(tr.dataset.arrow); pick(a && a.objs, tr.dataset.arrow); }));
+    host.querySelectorAll("tr[data-postrow]").forEach(tr => tr.addEventListener("click", () => { const r = C.list.find(x => x.p.key === tr.dataset.postrow); pick(r && r.objs, r && r.p.ref); }));
     host.querySelectorAll("[data-ty]").forEach(s => { s.onchange = () => { qmfTypes()[s.dataset.ty] = s.value; qmfSave(); qmfRender(); }; });
     host.querySelectorAll("[data-ar]").forEach(s => { s.onchange = () => { qmf.map.areas[s.dataset.ar] = s.value; qmfSave(); qmfRender(); }; });
     q("#qmfBuild").onchange = e => { qmf.build = e.target.value; qmfSave(); qmfRender(); };

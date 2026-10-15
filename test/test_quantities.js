@@ -103,6 +103,14 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     K = await cmp('');
     if (K['ESE.21'][2] !== 2.5 || K['ESE.15'][2] !== 10) fail('Jämförelse alla byggnader: ' + JSON.stringify(K));
     const csv = await page.evaluate(() => qmfCsv(qmfCompare())); if (!/ESE\.21/.test(csv)) fail('CSV för jämförelsen');
+    // Klick på en typrad / postrad markerar objekten i TC.
+    { await page.evaluate(() => { window.__selRows = null; const o = window.qtySelectRows; window.qtySelectRows = async objs => { window.__selRows = objs.length; return o && o(objs); }; qmf.build = ''; qmfRender(); });
+      await page.click('tr[data-tyrow] td:first-child'); await page.waitForTimeout(200);
+      const n1 = await page.evaluate(() => window.__selRows); if (!(n1 >= 1)) fail('Klick på typrad ska markera objekt: ' + n1);
+      await page.evaluate(() => { window.__selRows = null; }); await page.evaluate(() => { const tr = [...document.querySelectorAll('tr[data-postrow]')].find(x => !/markera de 0 objekten/.test(x.title)); tr.querySelector('td').click(); }); await page.waitForTimeout(200);
+      const n2 = await page.evaluate(() => window.__selRows); if (!(n2 >= 1)) fail('Klick på postrad ska markera objekt: ' + n2);
+      await page.evaluate(() => { window.__selRows = null; }); await page.click('tr[data-arrow] td:first-child'); await page.waitForTimeout(200);
+      if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Klick på områdesrad ska markera objekt'); }
     // Ändrad koppling slår igenom: Wall → ESE.1 ger ESE.21 noll.
     await page.evaluate(() => { const t = Object.keys(qmf.map.types.vol).find(k => /^Wall/.test(k)); qmf.map.types.vol[t] = qmf.posts.find(p => p.ref === 'ESE.1').key; qmfRender(); });
     K = await cmp('Fläkthus'); if (K['ESE.1'][2] !== 2.5) fail('Ändrad typ→post ska slå igenom: ' + JSON.stringify(K));
