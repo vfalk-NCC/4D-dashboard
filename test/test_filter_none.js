@@ -82,6 +82,18 @@ seed('plan_items.json', [
       const a3 = await page.evaluate(() => ({ n: filters.activity.length, all: getFilteredItems().length === items.length }));
       if (!a1 || a2 !== 0 || a3.n !== 0 || !a3.all) fail('Välj/avmarkera träffarna och Rensa allt: ' + JSON.stringify({ a1, a2, a3 })); }
     await page.click('#filterActivityBtn'); await page.waitForTimeout(100); }
+  // 3D-editorn från dashboarden: knappen finns; hello besvaras med token/projekt, övriga förfrågningar vidarebefordras över kanalen.
+  { const ed = await page.evaluate(async () => {
+      const btn = !!document.getElementById('ganttOpen3d') && typeof window.openLagesplan3d === 'function';
+      const got = [], ch = new BroadcastChannel('4d-gantt-link'); ch.onmessage = e => got.push(e.data);
+      const replies = []; window.addEventListener('message', e => { if (e.data && e.data.lagesplanReply) replies.push(e.data); });
+      window.dispatchEvent(new MessageEvent('message', { data: { lagesplan: true, type: 'hello', reqId: 1 }, origin: location.origin, source: window }));
+      window.dispatchEvent(new MessageEvent('message', { data: { lagesplan: true, type: 'ifcModelsList', reqId: 2 }, origin: location.origin, source: window }));
+      await new Promise(r => setTimeout(r, 400));
+      return { btn, hello: replies.find(r => r.reqId === 1) && Object.keys(replies.find(r => r.reqId === 1).settings || {}), relay: got.filter(m => m.t === 'relay').map(m => m.msg.type) };
+    });
+    if (!ed.btn || !ed.hello || !ed.hello.includes('githubToken') || ed.relay.join() !== 'ifcModelsList') fail('3D-editorn från dashboarden: ' + JSON.stringify(ed));
+    console.log('OK: knapp för 3D-editorn i Gantten – hello besvaras och förfrågningar vidarebefordras'); }
   await page.click('#filterAreaBtn'); await page.click('#filterContractorBtn'); // stäng områdeslistan, öppna entreprenörslistan igen
   await page.check('#contractorFilterPop .ggp-row >> nth=0'); await page.waitForTimeout(300);
   let shown = await page.evaluate(() => getFilteredItems().map(it => it.objectName).sort().join());

@@ -2433,3 +2433,4 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 #ganttScaleBtn.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
 .new-act-pop .na-temp-sub { margin-left: 22px; padding: 3px 8px; font-size: 12px; background: #fffaf3; }
 .gantt-multibar button[data-mb="contractor"] { font-weight: 600; }
+#ganttOpen3d { display: inline-flex; align-items: center; gap: 5px; } #ganttOpen3d .gfs-l { font-weight: 700; font-size: 12px; }
