@@ -183,7 +183,13 @@ function phbRender(ctx, st) {
   });
   st.cards.forEach(c => phbDrawCard(ctx, c, c.x, c.y, k));
   if (st.date) phbDatePlate(ctx, W, k, st.date);
+  if (st.ui !== false) { // hanteringsgrafik (syns bara på skärmen, aldrig i sparad PNG/PDF): markering och ✕ för att ta bort
+    if (st.sel && st.cards.includes(st.sel)) { const c = st.sel; ctx.save(); ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 2.5 * k; ctx.setLineDash([6 * k, 4 * k]); phbRR(ctx, c.x - 3 * k, c.y - 3 * k, c.W + 6 * k, c.h + 6 * k, 6 * k); ctx.stroke(); ctx.restore(); }
+    const hv = st.hover && st.cards.includes(st.hover) ? st.hover : null;
+    if (hv) { const b = phbCloseBox(hv, k); ctx.save(); ctx.fillStyle = "#dc2626"; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 7); ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * k; ctx.stroke(); ctx.beginPath(); const d = b.r * 0.38; ctx.moveTo(b.x - d, b.y - d); ctx.lineTo(b.x + d, b.y + d); ctx.moveTo(b.x + d, b.y - d); ctx.lineTo(b.x - d, b.y + d); ctx.lineWidth = 2.4 * k; ctx.lineCap = "round"; ctx.stroke(); ctx.restore(); }
+  }
 }
+const phbCloseBox = (c, k) => ({ x: c.x + c.W - 2 * k, y: c.y + 2 * k, r: 11 * k });
 
 /* ---- PDF: fotot som bild, linjer/punkter och datumskylt som egna lager, varje bubbla som en flyttbar stämpel ---------------- */
 const phbWin = ch => ({ "–": 0x96, "—": 0x97, "…": 0x85, "·": 0xB7, "’": 0x27, "“": 0x22, "”": 0x22 }[ch]);
@@ -286,21 +292,35 @@ function phbPreview(st) {
   d.innerHTML = `<div class="phb-box"><div class="phb-img"><canvas id="phbCv" width="${st.W}" height="${st.H}"></canvas></div>
     <div class="phb-bar"><span class="phb-info" id="phbInfo"></span>
     <label class="phb-sel">Visa <select id="phbScope"><option value="auto">Markerade, annars pågående</option><option value="marked">Bara markerade</option><option value="active">Pågående</option><option value="all">Alla i schemat</option></select></label>
-    <button type="button" id="phbPdf" class="primary" title="Foto + bubblor som flyttbara stämplar och egna lager – flytta dem i PDF-läsaren">Spara PDF</button><button type="button" id="phbPng">Spara PNG</button><button type="button" id="phbClose">Stäng</button></div></div>`;
+    <button type="button" id="phbUndo" class="hidden" title="Ta tillbaka den senast borttagna bubblan (Ctrl+Z)">↶ Ångra borttagning</button><button type="button" id="phbPdf" class="primary" title="Foto + bubblor som flyttbara stämplar och egna lager – flytta dem i PDF-läsaren">Spara PDF</button><button type="button" id="phbPng">Spara PNG</button><button type="button" id="phbClose">Stäng</button></div></div>`;
   (document.fullscreenElement || document.body).appendChild(d);
   const cv = d.querySelector("#phbCv"), ctx = cv.getContext("2d"), info = d.querySelector("#phbInfo"); let cur = st;
-  const draw = () => { phbRender(ctx, cur); info.textContent = `${cur.cards.length} bubbl${cur.cards.length === 1 ? "a" : "or"} – dra i en bubbla för att flytta den${cur.note ? ". " + cur.note : ""}`; };
+  cv._state = () => cur; let removed = [];
+  const undoBtn = d.querySelector("#phbUndo");
+  const draw = () => { cur.ui = cur.ui !== false; phbRender(ctx, cur); undoBtn.classList.toggle("hidden", !removed.length); info.textContent = `${cur.cards.length} bubbl${cur.cards.length === 1 ? "a" : "or"} – dra för att flytta, ✕ (eller Delete / högerklick) för att ta bort${removed.length ? ` · ${removed.length} ${removed.length === 1 ? "borttagen" : "borttagna"}` : ""}${cur.note ? ". " + cur.note : ""}`; };
+  const removeCard = c => { const i = cur.cards.indexOf(c); if (i < 0) return; cur.cards.splice(i, 1); removed.push({ c, i }); if (cur.sel === c) cur.sel = null; if (cur.hover === c) cur.hover = null; draw(); };
+  const undoRemove = () => { const r = removed.pop(); if (!r) return; cur.cards.splice(Math.min(r.i, cur.cards.length), 0, r.c); cur.sel = r.c; draw(); };
+  const hit = p => [...cur.cards].reverse().find(c => p.x >= c.x && p.x <= c.x + c.W && p.y >= c.y && p.y <= c.y + c.h);
+  const onClose = (p, c) => { const b = phbCloseBox(c, cur.k); return Math.hypot(p.x - b.x, p.y - b.y) <= b.r * 1.15; };
   draw();
   // Dra bubblorna direkt i bilden (linjen följer med, punkten sitter kvar på objektet).
   let drag = null; const pos = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * cur.W / r.width, y: (e.clientY - r.top) * cur.H / r.height }; };
-  cv.addEventListener("pointerdown", e => { const p = pos(e), c = [...cur.cards].reverse().find(c => p.x >= c.x && p.x <= c.x + c.W && p.y >= c.y && p.y <= c.y + c.h); if (!c) return; drag = { c, dx: p.x - c.x, dy: p.y - c.y }; cur.cards.splice(cur.cards.indexOf(c), 1); cur.cards.push(c); cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; e.preventDefault(); });
-  cv.addEventListener("pointermove", e => { const p = pos(e); if (!drag) { cv.style.cursor = cur.cards.some(c => p.x >= c.x && p.x <= c.x + c.W && p.y >= c.y && p.y <= c.y + c.h) ? "grab" : ""; return; } drag.c.x = Math.max(0, Math.min(cur.W - drag.c.W, p.x - drag.dx)); drag.c.y = Math.max(0, Math.min(cur.H - drag.c.h, p.y - drag.dy)); draw(); });
+  cv.addEventListener("pointerdown", e => { if (e.button === 2) return; const p = pos(e), hv = cur.hover && cur.cards.includes(cur.hover) ? cur.hover : null; if (hv && onClose(p, hv)) { removeCard(hv); e.preventDefault(); return; }
+    const c = hit(p); if (!c) { cur.sel = null; draw(); return; } cur.sel = c; drag = { c, dx: p.x - c.x, dy: p.y - c.y }; cur.cards.splice(cur.cards.indexOf(c), 1); cur.cards.push(c); cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; draw(); e.preventDefault(); });
+  cv.addEventListener("pointermove", e => { const p = pos(e); if (!drag) { const c = hit(p); if (c !== cur.hover) { cur.hover = c || null; draw(); } cv.style.cursor = c ? (onClose(p, c) ? "pointer" : "grab") : ""; return; } drag.c.x = Math.max(0, Math.min(cur.W - drag.c.W, p.x - drag.dx)); drag.c.y = Math.max(0, Math.min(cur.H - drag.c.h, p.y - drag.dy)); draw(); });
+  cv.addEventListener("pointerleave", () => { if (!drag && cur.hover) { cur.hover = null; draw(); } });
+  cv.addEventListener("contextmenu", e => { e.preventDefault(); const c = hit(pos(e)); if (c) removeCard(c); });
+  const keys = e => { if (!document.getElementById("phbDlg")) { document.removeEventListener("keydown", keys, true); return; }
+    if ((e.key === "Delete" || e.key === "Backspace") && cur.sel && !/INPUT|SELECT|TEXTAREA/.test((e.target || {}).tagName || "")) { e.preventDefault(); removeCard(cur.sel); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undoRemove(); } else if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", keys, true);
+  undoBtn.onclick = undoRemove;
   const up = () => { drag = null; cv.style.cursor = ""; }; cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
-  const close = () => d.remove();
+  const close = () => { d.remove(); document.removeEventListener("keydown", keys, true); };
   d.querySelector("#phbClose").onclick = close; d.addEventListener("pointerdown", e => { if (e.target === d) close(); });
-  d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); cur = n; draw(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
+  d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); cur = n; removed = []; draw(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
   const dl = (blob, ext) => { const url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = `4D-foto-${stamp}.${ext}`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); };
-  d.querySelector("#phbPng").onclick = () => cv.toBlob(b => dl(b, "png"), "image/png");
+  d.querySelector("#phbPng").onclick = () => { cur.ui = false; phbRender(ctx, cur); cv.toBlob(b => { cur.ui = true; draw(); dl(b, "png"); }, "image/png"); };
   d.querySelector("#phbPdf").onclick = async () => { try { dl(await phbPdf(cur), "pdf"); } catch (err) { console.warn("PDF", err); modelToast("Kunde inte skapa PDF: " + ((err && err.message) || err)); } };
 }
 function initPhotoBubbles() { const b = document.getElementById("ganttPhotoBtn"); if (b) b.onclick = phbShoot; }

@@ -73,6 +73,17 @@ seed('plan_items.json', [
       await dl.saveAs(process.env.PHB_OUT + '/foto.pdf');
       const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('#phbPng')]);
       await dl2.saveAs(process.env.PHB_OUT + '/foto.png');
+      // Ta bort en bubbla: ✕ vid hovring, högerklick, Delete och Ångra.
+      const where = async i => page.evaluate(i => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.cards[i], r = cv.getBoundingClientRect(); return { x: r.left + (c.x + c.W / 2) * r.width / st.W, y: r.top + (c.y + c.h / 2) * r.height / st.H, cx: r.left + (c.x + c.W - 2 * st.k) * r.width / st.W, cy: r.top + (c.y + 2 * st.k) * r.height / st.H }; }, i);
+      let w = await where(0); await page.mouse.move(w.x, w.y); await page.waitForTimeout(100); await page.mouse.click(w.cx, w.cy);
+      let n = await page.evaluate(() => document.getElementById('phbCv')._state().cards.length); if (n !== 3) fail('✕ ska ta bort en bubbla: ' + n);
+      w = await where(0); await page.mouse.click(w.x, w.y, { button: 'right' });
+      n = await page.evaluate(() => document.getElementById('phbCv')._state().cards.length); if (n !== 2) fail('Högerklick ska ta bort: ' + n);
+      w = await where(0); await page.mouse.click(w.x, w.y); await page.keyboard.press('Delete');
+      n = await page.evaluate(() => document.getElementById('phbCv')._state().cards.length); if (n !== 1) fail('Delete ska ta bort markerad: ' + n);
+      if (!(await page.textContent('.phb-info')).includes('3 borttagna')) fail('Info om borttagna: ' + await page.textContent('.phb-info'));
+      await page.click('#phbUndo'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+      n = await page.evaluate(() => document.getElementById('phbCv')._state().cards.length); if (n !== 4) fail('Ångra ska ta tillbaka alla: ' + n);
       await page.selectOption('#phbScope', 'marked'); await page.waitForTimeout(500);
       const i2 = await page.textContent('.phb-info'); if (!/^0 bubblor/.test(i2) || !/markerade/.test(i2)) fail('Bara markerade utan markering: ' + i2);
     }
