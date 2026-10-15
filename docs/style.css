@@ -2659,3 +2659,8 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .phb-pa span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .phb-pa small, .phb-pg small { color: #6b7280; }
 .phb-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+.phb-h.phb-fold { cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between; }
+.phb-h.phb-fold::after { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); transition: transform .15s; margin-right: 4px; opacity: .6; }
+.phb-closed > .phb-h.phb-fold::after { transform: rotate(-45deg); }
+.phb-closed > :not(.phb-h) { display: none !important; }
+.phb-closed { padding-bottom: 4px; }

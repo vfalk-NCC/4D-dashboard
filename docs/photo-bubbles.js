@@ -128,6 +128,7 @@ function phbDrawCard(ctx, c, k) {
 }
 
 /* ---- "Pågår just nu"-listan: indelad per WBS/område, som i videoeditorn ------------------------------------- */
+const phbFold = new Set();
 const phbAreaHead = area => { const parts = String(area || "").replace(/^Excel · /, "").split(/\s+\/\s+/).map(p => p.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : "Utan område"; };
 const phbKey = a => String(a.activityKey || a.id || itemLabel(a));
 function phbActText(a) {
@@ -482,6 +483,14 @@ function phbPreview(st) {
     if (it && it.type === "card") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald bubbla</div><label class="phb-f"><span>Rubrik <small>(tomt = aktivitetens namn)</small></span><textarea id="phbCText" rows="3">${phbEsc(o.text != null ? o.text : "")}</textarea></label>${rng("phbCScale", "Bubblans skala", Math.round(o.scale * 100), 40, 300, 5)}<div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbCCol" value="${phbCol(o)}"></label><button type="button" id="phbCAuto" title="Färg efter status"${o.colOver ? "" : " disabled"}>Auto</button></div>${chk("phbCDate", "Datum", o.show.date)}${chk("phbCArea", "Område", o.show.area)}${chk("phbCProg", "Framdrift", o.show.prog)}<button type="button" id="phbCDel" class="danger">Ta bort bubblan</button></div>`;
     else if (it && it.type === "text") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald text</div><label class="phb-f"><span>Text</span><textarea id="phbTText" rows="3">${phbEsc(o.text)}</textarea></label>${rng("phbTSize", "Storlek", o.size, 8, 80, 1, " px")}<div class="phb-row"><label class="phb-f"><span>Textfärg</span><input type="color" id="phbTCol" value="${o.col}"></label>${chk("phbTBold", "Fet", o.bold)}</div><div class="phb-row">${chk("phbTBg", "Bakgrund", o.bg)}${o.bg ? `<input type="color" id="phbTBgCol" value="${o.bgCol}">` : ""}</div><button type="button" id="phbTDel" class="danger">Ta bort texten</button></div>`;
     side.innerHTML = h; bindSide();
+    /* Alla huvudmenyer kan fällas ihop (valet sparas så länge sidan är öppen). */
+    side.querySelectorAll(".phb-sec > .phb-h").forEach(hd => {
+      const sec = hd.parentElement, key = hd.textContent.trim();
+      hd.setAttribute("role", "button"); hd.tabIndex = 0; hd.classList.add("phb-fold"); sec.classList.toggle("phb-closed", phbFold.has(key));
+      hd.setAttribute("aria-expanded", String(!phbFold.has(key)));
+      const tog = () => { const c = sec.classList.toggle("phb-closed"); if (c) phbFold.add(key); else phbFold.delete(key); hd.setAttribute("aria-expanded", String(!c)); };
+      hd.addEventListener("click", tog); hd.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tog(); } });
+    });
   }
   function bindSide() {
     const q = id => side.querySelector("#" + id), on = (id, ev, fn) => { const e = q(id); if (e) e.addEventListener(ev, fn); };
