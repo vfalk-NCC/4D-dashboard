@@ -2618,3 +2618,6 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 
 .qmf-click { cursor: pointer; }
 .qmf-click:hover td { background: #eaf2ff !important; }
+
+.qmf-flt { display: block; margin-top: 4px; width: 100%; min-width: 120px; font: inherit; font-size: 11px; font-weight: 400; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+.qmf-flt-n { margin: 2px 0; font-size: 11px; color: var(--muted); min-height: 14px; }
