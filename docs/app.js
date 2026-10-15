@@ -4750,6 +4750,7 @@ function openBoardDepMenu(evt, it, byNoteId) {
       <button type="button" data-add="succ"${ed ? "" : " disabled"}>＋ Följs av… <small>klicka på en lapp</small></button>
       <button type="button" data-couple="1"${ed ? "" : " disabled"}>🧊 Koppla i 3D-modellen… <small>${(() => { const c = noteMembersOf(it).filter(m => m.modelId).length; return c ? `${c} kopplade` : "inte kopplad än"; })()}</small></button>
       <button type="button" data-new-after="1"${ed ? "" : " disabled"}>＋ Ny aktivitet efter den här</button>
+      <button type="button" data-copy="1"${ed ? "" : " disabled"} title="Ny aktivitet med samma namn, område, entreprenör, datum och egenskaper – utan 3D-koppling och beroenden">⧉ Kopiera aktiviteten… <small>granskas först</small></button>
       <button type="button" data-delete="1" class="bdm-danger"${ed ? "" : " disabled"}>🗑 Ta bort lappen</button>
     </div>
     ${ed ? "" : `<div class="hint bdm-hint">Slå på <b>Redigerbar</b> för att ändra beroenden.</div>`}`;
@@ -4785,6 +4786,8 @@ function openBoardDepMenu(evt, it, byNoteId) {
   if (cb3) cb3.onclick = () => { closeBoardDepMenu(); startCoupleMode(it); };
   const nb = pop.querySelector("[data-new-after]");
   if (nb) nb.onclick = () => { closeBoardDepMenu(); openNewActivityDialog(it); };
+  const cpb = pop.querySelector("[data-copy]");
+  if (cpb) cpb.onclick = () => { closeBoardDepMenu(); openActivityDialog({ copy: it }); };
   const db = pop.querySelector("[data-delete]");
   if (db) db.onclick = () => { closeBoardDepMenu(); deleteActivity(it); };
   setTimeout(() => {
@@ -5120,9 +5123,9 @@ function attachCombo(input, source, { onPick, empty = "Inga träffar – det du 
    sparas i en omplanering som går att ångra (Ctrl+Z). */
 function openNewActivityDialog(after) { openActivityDialog({ after }); }
 function openEditActivityDialog(it) { if (it) openActivityDialog({ edit: it }); }
-function openActivityDialog({ after = null, edit = null } = {}) {
+function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
   if (!ganttEditable) {
-    modelToast(edit ? "Slå på Redigerbar för att ändra aktiviteter" : "Slå på Redigerbar för att lägga till aktiviteter", { label: "Slå på", fn: () => { const cb = document.getElementById("ganttEditable"); if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } openActivityDialog({ after, edit }); } });
+    modelToast(edit ? "Slå på Redigerbar för att ändra aktiviteter" : copy ? "Slå på Redigerbar för att kopiera aktiviteter" : "Slå på Redigerbar för att lägga till aktiviteter", { label: "Slå på", fn: () => { const cb = document.getElementById("ganttEditable"); if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } openActivityDialog({ after, edit }); } });
     return;
   }
   document.querySelectorAll(".new-act-pop, .board-pop:not(.board-dep-menu)").forEach(p => p.remove());
@@ -5144,7 +5147,8 @@ function openActivityDialog({ after = null, edit = null } = {}) {
   // Startvärden.
   let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0, temp0 = false, bubOff0 = false, demo0 = false, doneCol0 = "", doneOp0 = 30;
   // Resurser: samma för alla objekt i aktiviteten – den första som har några gäller.
-  const res0 = edit ? ((members.find(m => m.resources && m.resources.length) || {}).resources || []).map(r => ({ ...r })) : [];
+  const cmem = copy ? (copy.members || [copy]) : [];
+  const res0 = edit || copy ? (((edit ? members : cmem).find(m => m.resources && m.resources.length) || {}).resources || []).map(r => ({ ...r })) : [];
   const preds = []; // { entry, lag: "" | tal }
   if (edit) {
     name0 = itemLabel(edit) === "Okänt objekt" ? "" : (edit.objectName || "");
@@ -5160,6 +5164,13 @@ function openActivityDialog({ after = null, edit = null } = {}) {
       const lag = members.map(m => en.ids.map(pid => lagOf(m, pid)).find(v => v !== undefined)).find(v => v !== undefined);
       preds.push({ entry: en, lag: lag === undefined ? "" : lag });
     });
+  } else if (copy) {
+    // Kopia: samma namn (med "(kopia)"), område, entreprenör, datum och egenskaper – men ingen koppling till 3D-objekt, inga beroenden och 0 % framdrift.
+    const nm = itemLabel(copy) === "Okänt objekt" ? "" : (copy.objectName || "");
+    name0 = nm ? `${nm} (kopia)` : ""; area0 = copy.area || ""; act0 = copy.activity || ""; contr0 = copy.contractor || "";
+    prog0 = 0; start0 = copy.startDate || todayISO(); end0 = copy.endDate || start0;
+    temp0 = cmem.some(m => m.temporary); bubOff0 = cmem.some(m => m.bubbleOff); demo0 = cmem.some(m => m.demolition);
+    { const dm = cmem.find(m => m.doneColor || m.doneOpacity !== null); if (dm) { doneCol0 = dm.doneColor || ""; doneOp0 = dm.doneOpacity !== null && dm.doneOpacity !== undefined ? dm.doneOpacity : 30; } }
   } else {
     area0 = after ? after.area || "" : ""; act0 = after ? after.activity || "" : ""; contr0 = after ? after.contractor || "" : "";
     start0 = after && after.endDate ? addDaysIso(after.endDate, 1) : todayISO();
@@ -5169,6 +5180,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
   const initKeys = new Set(preds.map(p => p.entry.key));
   const title = edit
     ? `✎ Redigera aktivitet${members.length > 1 ? ` <span class="hint">(${members.length} objekt)</span>` : ""}`
+    : copy ? `⧉ Kopiera aktivitet <span class="hint">från ${escapeHtml(tipShort(itemLabel(copy), 40))}</span>`
     : `＋ Ny aktivitet${after ? ` <span class="hint">efter ${escapeHtml(tipShort(itemLabel(after), 40))}</span>` : ""}`;
   const pop = document.createElement("div");
   pop.className = `board-pop new-act-pop${edit ? " edit-act-pop" : ""}`;
@@ -5201,7 +5213,7 @@ function openActivityDialog({ after = null, edit = null } = {}) {
     <p class="hint na-foot">${edit
       ? (imported ? `⚠ Kommer från ${pp ? "Powerproject" : "Excel"} – namn, område, datum och kopplingar kan skrivas över vid nästa import. Glappen behålls så länge kopplingen finns kvar.` : "Egen aktivitet – finns bara i 4D. Ändringen går att ångra (Ctrl+Z).")
       : `Finns bara i 4D (märks <b>Egen</b>) – nästa ${pp ? "Powerproject-" : ""}import rör den inte.`}</p>
-    <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">${edit ? "Spara" : "Lägg till"}</button></div>`;
+    <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">${edit ? "Spara" : copy ? "Skapa kopian" : "Lägg till"}</button></div>`;
   overlayHost().appendChild(pop);
   const q = c => pop.querySelector(c);
   const renderObjs = () => {
