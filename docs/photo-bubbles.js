@@ -395,7 +395,7 @@ function phbPreview(st) {
   let cur = st, removed = [], drag = null; cv._state = () => cur;
   const draw = () => {
     cur.ui = cur.ui !== false; phbRender(ctx, cur); undoBtn.classList.toggle("hidden", !removed.length);
-    info.textContent = `${cur.cards.length} bubbl${cur.cards.length === 1 ? "a" : "or"} – dra för att flytta, klicka för att redigera, ✕ / Delete / högerklick tar bort${removed.length ? ` · ${removed.length} ${removed.length === 1 ? "borttagen" : "borttagna"}` : ""}${cur.note ? ". " + cur.note : ""}`;
+    info.textContent = `${cur.cards.length} bubbl${cur.cards.length === 1 ? "a" : "or"} – dra bubblan eller dess punkt, klicka för att redigera, ✕ / Delete / högerklick tar bort${removed.length ? ` · ${removed.length} ${removed.length === 1 ? "borttagen" : "borttagna"}` : ""}${cur.note ? ". " + cur.note : ""}`;
   };
   const remeasure = () => { phbRemeasure(cur); draw(); };
   const removeObj = it => {
@@ -454,10 +454,13 @@ function phbPreview(st) {
   }
   const pos = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * cur.W / r.width, y: (e.clientY - r.top) * cur.H / r.height }; };
   const hit = p => [...phbObjects(cur)].reverse().find(i => { const b = phbBox(i); return p.x >= b.x && p.x <= b.x + b.W && p.y >= b.y && p.y <= b.y + b.h; });
+  const hitDot = p => cur.placed && cur.g.lines ? [...cur.cards].reverse().find(c => Math.hypot(p.x - c.ax, p.y - c.ay) <= (8 * cur.g.dot + 5) * cur.k) : null;
   const onClose = (p, it) => { const b = phbCloseBox(it, cur.k); return Math.hypot(p.x - b.x, p.y - b.y) <= b.r * 1.15; };
   cv.addEventListener("pointerdown", e => {
     if (e.button === 2) return; const p = pos(e), hv = phbObjects(cur).find(i => i.o === cur.hover);
     if (hv && onClose(p, hv)) { removeObj(hv); e.preventDefault(); return; }
+    const dot = hitDot(p);
+    if (dot && !hit(p)) { const was0 = cur.sel; cur.sel = dot; drag = { dot: true, o: dot, dx: p.x - dot.ax, dy: p.y - dot.ay }; cv.setPointerCapture(e.pointerId); cv.style.cursor = "move"; draw(); if (was0 !== dot) renderSide(); e.preventDefault(); return; }
     const it = hit(p); if (!it) { if (cur.sel) { cur.sel = null; draw(); renderSide(); } return; }
     const was = cur.sel; cur.sel = it.o; drag = { o: it.o, dx: p.x - it.o.x, dy: p.y - it.o.y };
     if (it.type === "card") { cur.cards.splice(cur.cards.indexOf(it.o), 1); cur.cards.push(it.o); }
@@ -465,7 +468,8 @@ function phbPreview(st) {
   });
   cv.addEventListener("pointermove", e => {
     const p = pos(e);
-    if (!drag) { const it = hit(p), o = it ? it.o : null; if (o !== cur.hover) { cur.hover = o; draw(); } cv.style.cursor = it ? (onClose(p, it) ? "pointer" : "grab") : ""; return; }
+    if (!drag) { const it = hit(p), o = it ? it.o : null; if (o !== cur.hover) { cur.hover = o; draw(); } const dt = !it && hitDot(p); cv.style.cursor = it ? (onClose(p, it) ? "pointer" : "grab") : dt ? "move" : ""; return; }
+    if (drag.dot) { drag.o.ax = Math.max(0, Math.min(cur.W, p.x - drag.dx)); drag.o.ay = Math.max(0, Math.min(cur.H, p.y - drag.dy)); draw(); return; }
     drag.o.x = Math.max(0, Math.min(cur.W - drag.o.W, p.x - drag.dx)); drag.o.y = Math.max(0, Math.min(cur.H - drag.o.h, p.y - drag.dy)); draw();
   });
   cv.addEventListener("pointerleave", () => { if (!drag && cur.hover) { cur.hover = null; draw(); } });

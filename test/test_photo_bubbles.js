@@ -73,6 +73,11 @@ seed('plan_items.json', [
       await dl.saveAs(process.env.PHB_OUT + '/foto.pdf');
       const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('#phbPng')]);
       await dl2.saveAs(process.env.PHB_OUT + '/foto.png');
+      // Flytta en bubblas punkt (ankaret) i redigeringsläget.
+      { const g = await page.evaluate(() => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.cards[st.cards.length - 1], r = cv.getBoundingClientRect(); return { ax: c.ax, ay: c.ay, x: r.left + c.ax * r.width / st.W, y: r.top + c.ay * r.height / st.H, f: r.width / st.W }; });
+        await page.mouse.move(g.x, g.y); await page.mouse.down(); await page.mouse.move(g.x + 40, g.y + 25, { steps: 4 }); await page.mouse.up();
+        const g2 = await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.cards[st.cards.length - 1]; return { ax: c.ax, ay: c.ay, x: c.x, y: c.y }; });
+        if (Math.abs((g2.ax - g.ax) * g.f - 40) > 3 || Math.abs((g2.ay - g.ay) * g.f - 25) > 3) fail('Punkten ska följa musen: ' + JSON.stringify({ g, g2 })); }
       // Ta bort en bubbla: ✕ vid hovring, högerklick, Delete och Ångra.
       const where = async i => page.evaluate(i => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.cards[i], r = cv.getBoundingClientRect(); return { x: r.left + (c.x + c.W / 2) * r.width / st.W, y: r.top + (c.y + c.h / 2) * r.height / st.H, cx: r.left + (c.x + c.W - 2 * st.k) * r.width / st.W, cy: r.top + (c.y + 2 * st.k) * r.height / st.H }; }, i);
       let w = await where(0); await page.mouse.move(w.x, w.y); await page.waitForTimeout(100); await page.mouse.click(w.cx, w.cy);
