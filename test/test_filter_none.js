@@ -64,6 +64,16 @@ seed('plan_items.json', [
       await page.waitForTimeout(300); const got = await page.evaluate(() => ({ n: getFilteredItems().length, lbl: document.getElementById('filterAreaBtn').textContent.trim() }));
       if (got.n !== exp.n || got.lbl !== '2 områden ▾') fail('Flera områden samtidigt: ' + JSON.stringify({ exp, got }));
       await page.evaluate(() => { filters.area = []; renderAreaFilter(); renderAll(); }); } }
+  // Aktivitet: samma lista med kryssrutor, med aktiviteternas namn (inte områdesnamnet).
+  { await page.click('#filterActivityBtn');
+    const an = await page.evaluate(() => ({ rows: [...document.querySelectorAll('#activityFilterPop .ggp-row')].map(o => o.textContent.trim()), names: [...new Set(items.map(i => i.objectName).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'sv')) }));
+    const real = an.rows.filter(r => r !== 'Utan aktivitet');
+    if (real.join('|') !== an.names.join('|')) fail('Aktivitetslistan ska ha aktiviteternas namn: ' + JSON.stringify(an));
+    if (an.names.length) { await page.check('#activityFilterPop .ggp-row >> nth=' + (an.rows.length - an.names.length)); await page.waitForTimeout(300);
+      const got = await page.evaluate(() => ({ n: getFilteredItems().length, lbl: document.getElementById('filterActivityBtn').textContent.trim(), exp: items.filter(i => filters.activity.includes(i.objectName)).length }));
+      if (got.n !== got.exp || !got.n) fail('Aktivitetsfiltret: ' + JSON.stringify(got));
+      await page.evaluate(() => { filters.activity = []; renderActivityFilter(); renderAll(); }); }
+    await page.click('#filterActivityBtn'); }
   await page.click('#filterAreaBtn'); await page.click('#filterContractorBtn'); // stäng områdeslistan, öppna entreprenörslistan igen
   await page.check('#contractorFilterPop .ggp-row >> nth=0'); await page.waitForTimeout(300);
   let shown = await page.evaluate(() => getFilteredItems().map(it => it.objectName).sort().join());
