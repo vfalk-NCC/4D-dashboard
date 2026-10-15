@@ -204,7 +204,7 @@ function phbRRpdf(x, y, w, h, r) { // rundat hörn (bézier), nedre vänstra hö
   const q = r * 0.5523;
   return `${phbN(x + r)} ${phbN(y)} m ${phbN(x + w - r)} ${phbN(y)} l ${phbN(x + w - r + q)} ${phbN(y)} ${phbN(x + w)} ${phbN(y + r - q)} ${phbN(x + w)} ${phbN(y + r)} c ${phbN(x + w)} ${phbN(y + h - r)} l ${phbN(x + w)} ${phbN(y + h - r + q)} ${phbN(x + w - r + q)} ${phbN(y + h)} ${phbN(x + w - r)} ${phbN(y + h)} c ${phbN(x + r)} ${phbN(y + h)} l ${phbN(x + r - q)} ${phbN(y + h)} ${phbN(x)} ${phbN(y + h - r + q)} ${phbN(x)} ${phbN(y + h - r)} c ${phbN(x)} ${phbN(y + r)} l ${phbN(x)} ${phbN(y + r - q)} ${phbN(x + r - q)} ${phbN(y)} ${phbN(x + r)} ${phbN(y)} c h `;
 }
-function phbPdfCard(c, k, f, h0) { // innehållet i en bubblas utseendeström (lokala koordinater, origo nere till vänster)
+function phbPdfCard(c, k, f) { // själva kortet (lokala koordinater, origo nere till vänster)
   const w = c.W * f, h = c.h * f, tx = 14 * k * f; let o = "";
   o += `1 g ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 4 * k * f)} f 0.85 G ${phbN(0.8 * k * f)} w ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 4 * k * f)} S `;
   o += `${phbRgb(c.col)} rg 0 ${phbN(1 * k * f)} ${phbN(5 * k * f)} ${phbN(h - 2 * k * f)} re f `;
@@ -217,6 +217,18 @@ function phbPdfCard(c, k, f, h0) { // innehållet i en bubblas utseendeström (l
   o += `BT 0.07 0.09 0.15 rg /F2 ${phbN(12 * k * f)} Tf 1 0 0 1 ${phbN(tx + (bw + 8 * k) * f)} ${phbN(h - (by + 2.5 * k + 4.2 * k) * f)} Tm ${phbPdfStr(c.prog + " %")} Tj ET `;
   return o;
 }
+function phbCirclePdf(cx, cy, r) { const q = r * 0.5523; return `${phbN(cx + r)} ${phbN(cy)} m ${phbN(cx + r)} ${phbN(cy + q)} ${phbN(cx + q)} ${phbN(cy + r)} ${phbN(cx)} ${phbN(cy + r)} c ${phbN(cx - q)} ${phbN(cy + r)} ${phbN(cx - r)} ${phbN(cy + q)} ${phbN(cx - r)} ${phbN(cy)} c ${phbN(cx - r)} ${phbN(cy - q)} ${phbN(cx - q)} ${phbN(cy - r)} ${phbN(cx)} ${phbN(cy - r)} c ${phbN(cx + q)} ${phbN(cy - r)} ${phbN(cx + r)} ${phbN(cy - q)} ${phbN(cx + r)} ${phbN(cy)} c h `; }
+/* En bubbla = ett kort + linjen och punkten ner till objektet i EN stämpel (så linjen följer med när den flyttas). */
+function phbPdfBubble(c, k, f, withLine) {
+  const r = 8 * k, x0 = withLine ? Math.min(c.x, c.ax - r) : c.x, x1 = withLine ? Math.max(c.x + c.W, c.ax + r) : c.x + c.W, y0 = withLine ? Math.min(c.y, c.ay - r) : c.y, y1 = withLine ? Math.max(c.y + c.h, c.ay + r) : c.y + c.h;
+  let o = "";
+  if (withLine) { const p = phbLeaderStart(c); if (p) {
+    const lx = v => (v - x0) * f, ly = v => (y1 - v) * f;
+    o += `${phbRgb(c.col)} RG ${phbN(2.5 * k * f)} w 1 J ${phbN(lx(p.x))} ${phbN(ly(p.y))} m ${phbN(lx(c.ax))} ${phbN(ly(c.ay))} l S `;
+    o += `${phbRgb(c.col)} rg 1 G ${phbN(2 * k * f)} w ${phbCirclePdf(lx(c.ax), ly(c.ay), 6 * k * f)} B `; } }
+  o += `q 1 0 0 1 ${phbN((c.x - x0) * f)} ${phbN((y1 - (c.y + c.h)) * f)} cm ${phbPdfCard(c, k, f)} Q`;
+  return { stream: o, x0, x1, y0, y1 };
+}
 async function phbPdf(st) {
   const jc = document.createElement("canvas"); jc.width = st.bmp.width; jc.height = st.bmp.height; jc.getContext("2d").drawImage(st.bmp, 0, 0);
   const jpeg = new Uint8Array(await (await new Promise(r => jc.toBlob(r, "image/jpeg", 0.95))).arrayBuffer());
@@ -227,30 +239,27 @@ async function phbPdf(st) {
   objs.length = 10;
   const annots = [], F = `/Font<</F1 6 0 R/F2 7 0 R>>`;
   st.cards.forEach((c, i) => {
-    const ap = add(`<</Type/XObject/Subtype/Form/BBox[0 0 ${phbN(c.W * f)} ${phbN(c.h * f)}]/Resources<<${F}>>>>`, phbPdfCard(c, k, f));
-    const rect = `${phbN(X(c.x))} ${phbN(Y(c.y + c.h))} ${phbN(X(c.x + c.W))} ${phbN(Y(c.y))}`;
-    annots.push(add(`<</Type/Annot/Subtype/Stamp/Rect[${rect}]/F 4/NM ${phbPdfStr("bubbla" + (i + 1))}/T(4D-planering)/Subj(Bubbla)/Contents ${phbPdfStr(c.name.join(" "))}/OC 10 0 R/AP<</N ${ap} 0 R>>/Name/Draft>>`));
+    const b = phbPdfBubble(c, k, f, st.placed);
+    const ap = add(`<</Type/XObject/Subtype/Form/BBox[0 0 ${phbN((b.x1 - b.x0) * f)} ${phbN((b.y1 - b.y0) * f)}]/Resources<<${F}>>>>`, b.stream);
+    const rect = `${phbN(X(b.x0))} ${phbN(Y(b.y1))} ${phbN(X(b.x1))} ${phbN(Y(b.y0))}`;
+    annots.push(add(`<</Type/Annot/Subtype/Stamp/Rect[${rect}]/F 4/NM ${phbPdfStr("bubbla" + (i + 1))}/T(4D-planering)/Subj(Bubbla)/Contents ${phbPdfStr(c.name.join(" "))}/OC 9 0 R/AP<</N ${ap} 0 R>>/Name/Draft>>`));
   });
   let ct = `q ${phbN(PW)} 0 0 ${phbN(PH)} 0 0 cm /Im0 Do Q\n`;
-  if (st.placed) { ct += "/OC /L1 BDC\n"; st.cards.forEach(c => { const p = phbLeaderStart(c); if (!p) return;
-    ct += `${phbRgb(c.col)} RG ${phbN(2.5 * k * f)} w 1 J ${phbN(X(p.x))} ${phbN(Y(p.y))} m ${phbN(X(c.ax))} ${phbN(Y(c.ay))} l S `;
-    const r = 6 * k * f, cx = X(c.ax), cy = Y(c.ay), q = r * 0.5523, d = `${phbN(cx + r)} ${phbN(cy)} m ${phbN(cx + r)} ${phbN(cy + q)} ${phbN(cx + q)} ${phbN(cy + r)} ${phbN(cx)} ${phbN(cy + r)} c ${phbN(cx - q)} ${phbN(cy + r)} ${phbN(cx - r)} ${phbN(cy + q)} ${phbN(cx - r)} ${phbN(cy)} c ${phbN(cx - r)} ${phbN(cy - q)} ${phbN(cx - q)} ${phbN(cy - r)} ${phbN(cx)} ${phbN(cy - r)} c ${phbN(cx + q)} ${phbN(cy - r)} ${phbN(cx + r)} ${phbN(cy - q)} ${phbN(cx + r)} ${phbN(cy)} c h `;
-    ct += `${phbRgb(c.col)} rg 1 G ${phbN(2 * k * f)} w ${d} B\n`; }); ct += "EMC\n"; }
   if (st.date) {
     const d = parseDate(st.date), t = `v.${isoWeekNumber(d)} · ${d.getUTCDate()} ${PHB_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`, m = document.createElement("canvas").getContext("2d");
     m.font = `700 ${34 * k}px Arial, Helvetica, sans-serif`; const w = (m.measureText(t).width + 44 * k) * f, h = 62 * k * f, x0 = 20 * k * f, y0 = PH - 20 * k * f - h;
-    ct += `/OC /L2 BDC 0.2 0.23 0.28 rg ${phbRRpdf(x0, y0, w, h, 10 * k * f)} f 1 g BT /F2 ${phbN(34 * k * f)} Tf 1 0 0 1 ${phbN(x0 + 22 * k * f)} ${phbN(y0 + h / 2 - 11.5 * k * f)} Tm ${phbPdfStr(t)} Tj ET EMC\n`;
+    ct += `/OC /L1 BDC 0.2 0.23 0.28 rg ${phbRRpdf(x0, y0, w, h, 10 * k * f)} f 1 g BT /F2 ${phbN(34 * k * f)} Tf 1 0 0 1 ${phbN(x0 + 22 * k * f)} ${phbN(y0 + h / 2 - 11.5 * k * f)} Tm ${phbPdfStr(t)} Tj ET EMC\n`;
   }
-  objs[0] = { head: `<</Type/Catalog/Pages 2 0 R/OCProperties<</OCGs[8 0 R 9 0 R 10 0 R]/D<</Order[8 0 R 9 0 R 10 0 R]/ON[8 0 R 9 0 R 10 0 R]>>>>>>` };
+  objs[0] = { head: `<</Type/Catalog/Pages 2 0 R/OCProperties<</OCGs[8 0 R 9 0 R]/D<</Order[8 0 R 9 0 R]/ON[8 0 R 9 0 R]>>>>>>` };
   objs[1] = { head: `<</Type/Pages/Kids[3 0 R]/Count 1>>` };
-  objs[2] = { head: `<</Type/Page/Parent 2 0 R/MediaBox[0 0 ${phbN(PW)} ${phbN(PH)}]/Resources<</XObject<</Im0 5 0 R>>${F}/Properties<</L1 8 0 R/L2 9 0 R>>>>/Contents 4 0 R${annots.length ? `/Annots[${annots.map(n => n + " 0 R").join(" ")}]` : ""}>>` };
+  objs[2] = { head: `<</Type/Page/Parent 2 0 R/MediaBox[0 0 ${phbN(PW)} ${phbN(PH)}]/Resources<</XObject<</Im0 5 0 R>>${F}/Properties<</L1 8 0 R>>>>/Contents 4 0 R${annots.length ? `/Annots[${annots.map(n => n + " 0 R").join(" ")}]` : ""}>>` };
   objs[3] = { head: `<<`, stream: ct };
   objs[4] = { head: `<</Type/XObject/Subtype/Image/Width ${st.bmp.width}/Height ${st.bmp.height}/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode`, stream: jpeg };
   objs[5] = { head: `<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>` };
   objs[6] = { head: `<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Bold/Encoding/WinAnsiEncoding>>` };
-  objs[7] = { head: `<</Type/OCG/Name(Linjer och punkter)>>` };
-  objs[8] = { head: `<</Type/OCG/Name(Datumskylt)>>` };
-  objs[9] = { head: `<</Type/OCG/Name(Bubblor)>>` };
+  objs[7] = { head: `<</Type/OCG/Name(Datumskylt)>>` };
+  objs[8] = { head: `<</Type/OCG/Name(Bubblor)>>` };
+  objs[9] = { head: `<<>>` };
   const parts = [], enc = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; };
   let len = 0; const push = u => { parts.push(u); len += u.length; }, offs = [];
   push(enc("%PDF-1.7\n%\xE2\xE3\xCF\xD3\n"));
