@@ -109,6 +109,8 @@ seed('plan_items.json', [
       const ph = await page.evaluate(() => { const st = document.getElementById('phbCv')._state(); return { w: st.photo && st.photo.width, W: st.W, sharp: st.sharp }; });
       if (!ph.w || ph.w !== ph.W) fail('Fotot ska finnas i arbetsstorlek: ' + JSON.stringify(ph));
       await page.fill('#phbSharp', '0'); await page.waitForTimeout(300); if (await page.evaluate(() => document.getElementById('phbCv')._state().sharp) !== 0) fail('Skärpa 0');
+      await page.selectOption('#phbProgMode', 'plan'); await page.waitForTimeout(100); const pm = await page.evaluate(() => document.getElementById('phbCv')._state().cards.map(c => c.prog)); if (!pm.every(v => v >= 0 && v <= 100)) fail('Framdrift enligt tidplan: ' + pm);
+      await page.selectOption('#phbProgMode', 'entered');
       await page.fill('#phbListMax', '40'); await page.waitForTimeout(100);
       const lg = await page.evaluate(() => { const l = document.getElementById('phbCv')._state().list; return { heads: l.lines.filter(x => x.t === 'h').length, cands: l.cands.length, sel: l.sel.size, pk: document.querySelectorAll('[data-pk]').length, pg: document.querySelectorAll('[data-pg]').length }; });
       if (!lg.heads || lg.heads !== lg.pg || lg.pk !== lg.cands) fail('Listan ska vara indelad per område med en kryssruta per aktivitet: ' + JSON.stringify(lg));

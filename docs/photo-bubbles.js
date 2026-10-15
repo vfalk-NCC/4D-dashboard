@@ -101,7 +101,7 @@ function phbCardMeasure(c, st) {
   if (sh.date && a.startDate) sub.push(`${phbFmtDate(a.startDate)} – ${phbFmtDate(a.actualEndDate && a.actualEndDate > (a.endDate || "") ? a.actualEndDate : a.endDate || a.startDate)}`);
   const ar = String(a.area || "").trim(); if (sh.area && ar) sub.push(ar);
   ctx.font = `${11.5 * kk}px ${PHB_FAM}`; c.sub = sub.map(t => phbWrap(ctx, t, W - 24 * kk, 1)[0] || "");
-  c.prog = Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0)));
+  c.prog = phbProg(a, st);
   c.kk = kk; c.W = W; c.h = (c.name.length * 18 + c.sub.length * 16 + (sh.prog ? 34 : 20)) * kk;
 }
 function phbNewCard(o, st) {
@@ -129,6 +129,16 @@ function phbDrawCard(ctx, c, k) {
 
 /* ---- "Pågår just nu"-listan: indelad per WBS/område, som i videoeditorn ------------------------------------- */
 const phbFold = new Set();
+/* Framdrift som redovisas: "entered" = inskriven framdrift (klara = 100 %), "plan" = enligt tidplanen (andel av start–slut som passerat vid fotodatumet). */
+function phbProg(a, st, ph) {
+  if (st.progMode === "plan") {
+    const s0 = a.startDate, e0 = a.endDate || a.startDate; if (!s0) return 0;
+    if (st.at <= s0) return 0; if (st.at >= e0) return 100;
+    return Math.max(0, Math.min(100, Math.round(100 * daysBetweenIso(s0, st.at) / Math.max(1, daysBetweenIso(s0, e0)))));
+  }
+  if ((ph || ganttPhaseAt(a, st.at)) === "klar") return 100;
+  return Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0)));
+}
 const phbAreaHead = area => { const parts = String(area || "").replace(/^Excel · /, "").split(/\s+\/\s+/).map(p => p.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : "Utan område"; };
 const phbKey = a => String(a.activityKey || a.id || itemLabel(a));
 function phbActText(a) {
@@ -160,7 +170,7 @@ function phbListMeasure(st) {
   L.lines = []; L.rows = [];
   groups.forEach((list, head) => {
     const phs = list.map(a => ganttPhaseAt(a, st.at)), col = phs.includes("forsenad") ? PHB_COL.forsenad : phs.includes("pagaende") ? PHB_COL.pagaende : phs.every(p => p === "klar") ? PHB_COL.klar : PHB_COL.planerad;
-    const pr = list.map((a, i) => phs[i] === "klar" ? 100 : Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0))));
+    const pr = list.map((a, i) => phbProg(a, st, phs[i]));
     ctx.font = `700 ${12.5 * kk}px ${PHB_FAM}`;
     L.lines.push({ t: "h", name: phbWrap(ctx, head, L.W - 70 * kk, 1)[0] || head, prog: Math.round(pr.reduce((x, y) => x + y, 0) / pr.length), col });
     ctx.font = `${11.5 * kk}px ${PHB_FAM}`;
@@ -269,7 +279,7 @@ async function phbBuild(blob, cam, scopeOverride) {
   const sc0 = bubbleCfg.scope; let acts, scope;
   try { if (scopeOverride && scopeOverride !== "auto") bubbleCfg.scope = scopeOverride; ({ acts, scope } = bubbleActs()); } finally { bubbleCfg.scope = sc0; }
   const anchors = await phbAnchors(acts);
-  const st = { bmp, s, W, H, k, at, sharp: 0.6, cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
+  const st = { bmp, s, W, H, k, at, sharp: 0.6, progMode: "entered", cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
     dateObj: { on: typeof ganttMode !== "undefined" && ganttMode === "time", iso: at, x: 20 * k, y: 20 * k, scale: 1 },
     list: { on: false, title: "Pågår just nu", max: 40, scale: 1, weeks: 2, x: W - 360 * k, y: 20 * k, cands: [], sel: new Set(), items: [] } };
   st.list.cands = phbCandidates(at, 2); phbActiveList(at).forEach(a => st.list.sel.add(phbKey(a)));
@@ -500,7 +510,7 @@ function phbPreview(st) {
   function renderSide() {
     const g = cur.g, g0 = cur, L = cur.list, D = cur.dateObj, it = selItem(), o = it && it.o;
     let h = `<div class="phb-sec"><div class="phb-h">Allmänt</div>${rng("phbGScale", "Bubblornas skala", Math.round(g.bscale * 100), 40, 250, 5)}${chk("phbLines", "Linjer till objekten", g.lines)}${g.lines ? rng("phbLineW", "Linjetjocklek", Math.round(g.lineW * 100), 40, 300, 10) + rng("phbDot", "Punktstorlek", Math.round(g.dot * 100), 40, 300, 10) : ""}
-      ${rng("phbSharp", "Skärpa på fotot", Math.round(g0.sharp * 100), 0, 150, 10)}<div class="phb-note">Fotots källa: ${g0.bmp.width}×${g0.bmp.height} px (TC-vyns storlek), arbetsbild ${g0.W}×${g0.H}. Mer detaljer: gör TC-vyn större innan du tar fotot (dölj sidopaneler, helskärm F11) – API:t har ingen upplösningsinställning.</div>
+      <label class="phb-f"><span>Framdrift som visas</span><select id="phbProgMode"><option value="entered"${g0.progMode !== "plan" ? " selected" : ""}>Inskriven framdrift</option><option value="plan"${g0.progMode === "plan" ? " selected" : ""}>Enligt tidplanen (datum)</option></select></label>${rng("phbSharp", "Skärpa på fotot", Math.round(g0.sharp * 100), 0, 150, 10)}<div class="phb-note">Fotots källa: ${g0.bmp.width}×${g0.bmp.height} px (TC-vyns storlek), arbetsbild ${g0.W}×${g0.H}. Mer detaljer: gör TC-vyn större innan du tar fotot (dölj sidopaneler, helskärm F11) – API:t har ingen upplösningsinställning.</div>
       <button type="button" id="phbArrange" title="Lägg bubblorna ovanför sina punkter igen, utan överlapp">Ordna om bubblorna</button></div>
       <div class="phb-sec"><div class="phb-h">Pågår just nu</div>${chk("phbListOn", `Visa listan (${L.items.length} aktiviteter)`, L.on)}${L.on ? `<label class="phb-f"><span>Rubrik</span><input type="text" id="phbListTitle" value="${phbEsc(L.title)}" maxlength="60"></label>${phbListPick(L)}<label class="phb-f"><span>Högst antal rader</span><input type="number" id="phbListMax" min="1" max="60" value="${L.max}"></label>${rng("phbListScale", "Skala", Math.round(L.scale * 100), 40, 250, 5)}` : ""}</div>
       <div class="phb-sec"><div class="phb-h">Datumskylt</div>${chk("phbDateOn", "Visa datumskylten", D.on)}${D.on ? `<label class="phb-f"><span>Datum</span><input type="date" id="phbDateVal" value="${D.iso}"></label>${rng("phbDateScale", "Skala", Math.round(D.scale * 100), 40, 250, 5)}` : ""}</div>
@@ -524,6 +534,7 @@ function phbPreview(st) {
     const q = id => side.querySelector("#" + id), on = (id, ev, fn) => { const e = q(id); if (e) e.addEventListener(ev, fn); };
     const range = (id, apply, pct = true) => on(id, "input", e => { const v = Number(e.target.value); const lab = q(id + "V"); if (lab) lab.textContent = v + (pct ? "%" : " px"); apply(pct ? v / 100 : v); });
     range("phbGScale", v => { cur.g.bscale = v; remeasure(); }); range("phbLineW", v => { cur.g.lineW = v; draw(); }); range("phbDot", v => { cur.g.dot = v; draw(); });
+    on("phbProgMode", "change", e => { cur.progMode = e.target.value; remeasure(); });
     let shT = 0; range("phbSharp", v => { cur.sharp = v; clearTimeout(shT); shT = setTimeout(() => { phbPhoto(cur); draw(); }, 120); });
     on("phbLines", "change", e => { cur.g.lines = e.target.checked; draw(); renderSide(); });
     on("phbArrange", "click", () => { phbLayout(cur.cards, cur.W, cur.H, cur.k, cur.placed); draw(); });
