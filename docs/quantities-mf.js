@@ -129,7 +129,7 @@ function qmfCompare() {
   let unmapped = 0, unmappedVol = 0, otherBuild = 0;
   all.forEach(o => {
     const raw = qty.cfg.valKey ? qtyNum(o.flat[qty.cfg.valKey]) : null; if (raw === null) return; const v = raw / f;
-    if (qty.cfg.filter && !Object.values(o.flat).some(x => String(x).toLowerCase().includes(String(qty.cfg.filter).toLowerCase()))) return;
+    if (!qtyPass(o)) return;
     const post = qmfTypes()[qmfTypeVal(o)], r = post && rows.get(post);
     if (!r) { unmapped++; unmappedVol += v; return; }
     const b = qmf.map.areas[qmfAreaOf(o)] || "";

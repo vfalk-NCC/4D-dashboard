@@ -2572,3 +2572,6 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .gantt-fs-bar .gantt-mode-seg .gantt-toolbar-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
 .gantt-fs-bar .gantt-time-menu-wrap { position: relative; display: inline-flex; }
 .gantt-fs-bar .gantt-time-menu { top: calc(100% + 4px); right: 0; left: auto; }
+.qty-presets { display: inline-flex; gap: 4px; }
+.qty-presets button { font: inherit; font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; background: #fff; cursor: pointer; }
+.qty-presets button:hover { background: #eaf2ff; border-color: #bcd2fb; }

@@ -4,7 +4,7 @@
    Inget sparas någonstans; resultatet kan exporteras som CSV (öppnas i Excel). */
 
 const QTY_KEY = "4ddash-qty";
-const qty = { cfg: { scope: "gantt", phase: "klar", date: "", from: "", kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
+const qty = { cfg: { scope: "gantt", phase: "klar", date: "", from: "", kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", exclude: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
 try { Object.assign(qty.cfg, JSON.parse(localStorage.getItem(QTY_KEY) || "{}")); } catch (e) { /* standard */ }
 /* Mängdslag: Betong (volym m³), Form (yta m²), Kantform/längd (m), Armering/vikt (kg). Varje slag minns sin egenskap. */
 const QTY_KINDS = { vol: ["Betong – volym (m³)", "m³", /calculated\s*geometry\s*values\s*\/\s*volume$/i, /volume|volym/i], form: ["Form – yta (m²)", "m²", /calculated\s*geometry\s*values\s*\/\s*(total\s*)?surface\s*area$/i, /surface|side\s*area|form|area|yta/i], len: ["Längd (m)", "m", /calculated\s*geometry\s*values\s*\/\s*length$/i, /length|längd/i], kg: ["Armering/vikt (kg)", "kg", /calculated\s*geometry\s*values\s*\/\s*weight$/i, /weight|vikt|mass/i] };
@@ -109,15 +109,23 @@ async function qtyUnitCheck() {
   if (med > big) { qty.factor = F; qty.unitNote = `${kind === "vol" ? "Volymen" : "Ytan"} verkar vara i mm${kind === "vol" ? "³" : "²"} (jämförd med objektens mått) – räknas om till ${kind === "vol" ? "m³" : "m²"}.`; }
   else qty.unitNote = `${kind === "vol" ? "Volymen" : "Ytan"} verkar vara i ${kind === "vol" ? "m³" : "m²"} (jämförd med objektens mått).`;
 }
+/* Innehåller / Utesluter (flera ord med komma): objektet tas med om någon egenskap innehåller något av orden i Innehåller och ingen innehåller något ord i Utesluter. */
+const qtyTerms = t => String(t || "").toLowerCase().split(/[,;]/).map(x => x.trim()).filter(Boolean);
+function qtyPass(o) {
+  const inc = qtyTerms(qty.cfg.filter), exc = qtyTerms(qty.cfg.exclude); if (!inc.length && !exc.length) return true;
+  const vals = Object.values(o.flat).map(v => String(v).toLowerCase());
+  if (inc.length && !inc.some(t => vals.some(v => v.includes(t)))) return false;
+  return !(exc.length && exc.some(t => vals.some(v => v.includes(t))));
+}
 /* Summering: rader × kolumner. */
 function qtyPivot() {
-  const C = qty.cfg, f = qty.factor || 1, text = String(C.filter || "").toLowerCase().trim();
+  const C = qty.cfg, f = qty.factor || 1;
   const val = o => { const raw = C.valKey ? qtyNum(o.flat[C.valKey]) : null; return raw === null ? null : raw / f; };
   const get = (o, k) => (!k ? "" : QTY_ACT_KEYS[k] ? QTY_ACT_KEYS[k](o) : (o.flat[k] === undefined ? "(saknas)" : String(o.flat[k])));
   const rows = new Map(), cols = new Set(); let total = 0, nObj = 0, nNo = 0;
   qty.objs.forEach(o => {
     if (!qtyActive(o)) return;
-    if (text && !Object.values(o.flat).some(v => String(v).toLowerCase().includes(text))) return;
+    if (!qtyPass(o)) return;
     const v = val(o); if (v === null) { nNo++; }
     const rk = get(o, C.rowKey) || "(tomt)", ck = C.colKey ? (get(o, C.colKey) || "(tomt)") : "";
     cols.add(ck);
@@ -162,7 +170,9 @@ function qtyRender0() {
       <label>Mängd <select id="qtyVal">${qtyNumKeys().map(k => `<option value="${E(k)}"${C.valKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>
       <label>Rader efter <select id="qtyRowKey">${keyOpts(C.rowKey, false, true)}</select></label>
       <label>Kolumner efter <select id="qtyColKey">${keyOpts(C.colKey, true, true)}</select></label>
-      <label title="Visa bara objekt där någon egenskap innehåller texten (t.ex. Concrete)">Innehåller <input type="text" id="qtyFilter" value="${E(C.filter)}" placeholder="t.ex. Concrete" /></label>
+      <label title="Visa bara objekt där någon egenskap innehåller något av orden (flera ord med komma, t.ex. Concrete, Betong)">Innehåller <input type="text" id="qtyFilter" value="${E(C.filter)}" placeholder="t.ex. Concrete, Betong" /></label>
+      <label title="Lämna bort objekt där någon egenskap innehåller något av orden (t.ex. Steel, Stål för att inte räkna stålpålar som betong)">Utesluter <input type="text" id="qtyExclude" value="${E(C.exclude || "")}" placeholder="t.ex. Steel, Stål" /></label>
+      <span class="qty-presets" title="Snabbval som fyller i Innehåller/Utesluter – ändra orden så de passar egenskaperna i din modell"><button type="button" data-qpre="all">Allt</button><button type="button" data-qpre="concrete">Bara betong</button><button type="button" data-qpre="steel">Bara stål</button></span>
       <label title="Enheten på mängden i modellen. Auto jämför volymen med objektens mått.">Enhet <select id="qtyUnit">${[["auto", "Auto"], ["1", "som i modellen"], ["1000", "÷ 1 000"], ["1000000", "÷ 1 000 000 (mm² → m²)"], ["1000000000", "÷ 1 000 000 000 (mm³ → m³)"]].map(([v, t]) => `<option value="${v}"${String(C.unit) === v ? " selected" : ""}>${t}</option>`).join("")}</select></label></div>
       <div class="hint">${E(qty.unitNote || "")}</div>
       ${C.phase === "period" ? `<div class="hint"><b>Klart under perioden ${E(qtyFrom())} – ${E(qtyAt())}</b> (klart senast ${E(qtyAt())}, men inte redan klart före ${E(qtyFrom())}).</div>` : ""}
@@ -182,6 +192,11 @@ function qtyRender0() {
   q("#qtyRowKey").onchange = e => { put("rowKey", e.target.value); qtyRender(); };
   q("#qtyColKey").onchange = e => { put("colKey", e.target.value); qtyRender(); };
   q("#qtyFilter").onchange = e => { put("filter", e.target.value); qtyRender(); };
+  q("#qtyExclude").onchange = e => { put("exclude", e.target.value); qtyRender(); };
+  host.querySelectorAll("[data-qpre]").forEach(b => b.onclick = () => {
+    const P = { all: ["", ""], concrete: ["Concrete, Betong", "Steel, Stål, Rebar, Armering, Pile, Påle"], steel: ["Steel, Stål, Pile, Påle, Rebar, Armering", ""] }[b.dataset.qpre];
+    put("filter", P[0]); put("exclude", P[1]); qtyRender();
+  });
   q("#qtyUnit").onchange = async e => { put("unit", e.target.value); await qtyUnitCheck(); qtyRender(); };
   q("#qtyCsv").onclick = qtyExport;
   const P = qtyPivot(), u = qtyUnitLabel(), tb = q("#qtyTable");

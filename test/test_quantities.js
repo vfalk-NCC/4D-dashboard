@@ -69,7 +69,13 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     if (R.rows !== '743 Krosshall:10|744 Fläkthuset:2.5' || R.cols !== 2 || !/743 Krosshall";"10";/.test(R.csv.replace(/"10"/, '"10"')) && !/743 Krosshall";"[\d,]*";"10";2/.test(R.csv)) fail('Område × typ och CSV: ' + JSON.stringify(R));
     await page.evaluate(() => { qty.cfg.filter = 'Wall'; qtyRender(); });
     if ((await page.evaluate(() => qtyPivot().total)) !== 2.5) fail('Filter Innehåller: Wall ska ge 2,5 m³');
-    await page.evaluate(() => { qty.cfg.filter = ''; qtyRender(); });
+    await page.evaluate(() => { qty.cfg.filter = ''; qty.cfg.exclude = 'wall'; qtyRender(); });
+    if ((await page.evaluate(() => qtyPivot().total)) !== 10) fail('Utesluter: wall ska ge bara fundamentet (10 m³)');
+    await page.evaluate(() => { qty.cfg.filter = 'foundation, wall'; qty.cfg.exclude = 'foundation'; qtyRender(); });
+    if ((await page.evaluate(() => qtyPivot().total)) !== 2.5) fail('Flera ord med komma: Innehåller foundation, wall och Utesluter foundation ska ge 2,5 m³');
+    await page.evaluate(() => { qty.cfg.filter = ''; qty.cfg.exclude = ''; qtyRender(); });
+    await page.click('[data-qpre="steel"]'); if ((await page.evaluate(() => qty.cfg.filter)) !== 'Steel, Stål, Pile, Påle, Rebar, Armering') fail('Snabbval Bara stål');
+    await page.click('[data-qpre="all"]'); if ((await page.evaluate(() => qty.cfg.filter + qty.cfg.exclude)) !== '') fail('Snabbval Allt');
     // Alla oavsett läge.
     await page.evaluate(() => { qty.cfg.phase = 'all'; qtyRender(); });
     if (Math.abs((await page.evaluate(() => qtyPivot().total)) - 21.5) > 0.001) fail('Alla objekt: 21,5 m³');
