@@ -8608,7 +8608,7 @@ function initGanttResize() {
   const apply = h => { if (h) { chart.style.height = h + "px"; chart.style.maxHeight = "none"; chart.style.overflow = "auto"; } else { chart.style.height = chart.style.maxHeight = chart.style.overflow = ""; } };
   try { const h = parseInt(localStorage.getItem(KEY), 10); if (h >= 80) apply(h); } catch (e) {}
   const grip = document.createElement("div"); grip.id = "ganttResize"; grip.className = "gantt-resize"; grip.title = "Dra för att ställa höjden – dubbelklicka för automatisk höjd";
-  grip.innerHTML = "<span></span>"; chart.after(grip);
+  grip.innerHTML = '<span></span><svg class="gr-corner" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M13 2 L2 13 M13 7 L7 13 M13 12 L12 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>'; chart.after(grip);
   let y0 = 0, h0 = 0;
   grip.addEventListener("pointerdown", e => {
     e.preventDefault(); y0 = e.clientY; h0 = chart.getBoundingClientRect().height; grip.setPointerCapture(e.pointerId); grip.classList.add("drag");

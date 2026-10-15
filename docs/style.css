@@ -2468,3 +2468,6 @@ body.has-multibar .model-toast { bottom: 74px; z-index: 3200; }
 section.panel.gantt-fullscreen .gantt-resize { display: none; }
 @media print { .gantt-resize { display: none; } }
 section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 0 !important; max-height: none !important; }
+.gantt-resize { position: relative; }
+.gantt-resize .gr-corner { position: absolute; right: 3px; bottom: 0; color: #94a3b8; transition: color .15s; }
+.gantt-resize:hover .gr-corner, .gantt-resize.drag .gr-corner { color: var(--accent); }
