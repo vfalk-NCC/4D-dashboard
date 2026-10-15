@@ -127,19 +127,46 @@ function phbDrawCard(ctx, c, k) {
   }
 }
 
-/* ---- "Pågår just nu"-listan ----------------------------------------------------------------------------- */
-function phbActiveList(at) {
-  const merged = mergeActivityGroups(ganttShownItems.filter(x => x.startDate));
-  return merged.filter(a => { const ph = ganttPhaseAt(a, at); return (ph === "pagaende" || ph === "forsenad") && !(a.temporary && a.bubbleOff); })
-    .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)) || itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
+/* ---- "Pågår just nu"-listan: indelad per WBS/område, som i videoeditorn ------------------------------------- */
+const phbAreaHead = area => { const parts = String(area || "").replace(/^Excel · /, "").split(/\s+\/\s+/).map(p => p.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : "Utan område"; };
+const phbKey = a => String(a.activityKey || a.id || itemLabel(a));
+function phbActText(a) {
+  const head = phbAreaHead(a.area), code = (head.match(/^\d+[A-Za-z]?/) || [""])[0], esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let v = String(itemLabel(a) || "").trim();
+  [String(a.area || "").replace(/^Excel · /, ""), head].filter(Boolean).forEach(z => { v = v.replace(new RegExp("^\\s*" + esc(z) + "\\s*[-–—:·,/]?\\s*", "i"), ""); });
+  if (code) v = v.replace(new RegExp("^\\s*" + esc(code) + "\\b\\s*[-–—:·,/]?\\s*"), "");
+  return v.trim() || itemLabel(a);
 }
+/* Alla aktiviteter som ligger inom ±span veckor från fotodatumet (även klara och planerade). */
+function phbCandidates(at, weeks) {
+  const lo = addDaysIso(at, -7 * weeks), hi = addDaysIso(at, 7 * weeks);
+  return mergeActivityGroups(ganttShownItems.filter(x => x.startDate)).filter(a => {
+    if (a.temporary && a.bubbleOff) return false;
+    const e = [a.endDate, a.actualEndDate].filter(Boolean).sort().pop() || a.startDate;
+    return a.startDate <= hi && e >= lo;
+  }).sort((a, b) => phbAreaHead(a.area).localeCompare(phbAreaHead(b.area), "sv", { numeric: true }) || String(a.startDate).localeCompare(String(b.startDate)) || itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
+}
+function phbActiveList(at) {
+  return phbCandidates(at, 2).filter(a => { const ph = ganttPhaseAt(a, at); return ph === "pagaende" || ph === "forsenad"; });
+}
+function phbListItems(st) { const L = st.list; return L.cands.filter(a => L.sel.has(phbKey(a))); }
 function phbListMeasure(st) {
-  const L = st.list, kk = st.k * L.scale, ctx = phbMeasure(); L.kk = kk; L.W = 320 * kk;
-  const all = L.items, rows = all.slice(0, Math.max(1, L.max));
+  const L = st.list, kk = st.k * L.scale, ctx = phbMeasure(); L.kk = kk; L.W = 340 * kk;
+  const all = phbListItems(st); L.items = all;
+  const shown = all.slice(0, Math.max(1, L.max)), groups = new Map();
+  shown.forEach(a => { const h = phbAreaHead(a.area); if (!groups.has(h)) groups.set(h, []); groups.get(h).push(a); });
   ctx.font = `${12 * kk}px ${PHB_FAM}`;
-  L.rows = rows.map(a => ({ name: phbWrap(ctx, itemLabel(a), L.W - 96 * kk, 1)[0] || "", prog: Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0))), col: PHB_COL[ganttPhaseAt(a, st.at)] || PHB_COL.planerad }));
-  L.more = Math.max(0, all.length - rows.length);
-  L.h = (34 + L.rows.length * 21 + (L.more ? 20 : 0) + 8) * kk;
+  L.lines = []; L.rows = [];
+  groups.forEach((list, head) => {
+    const phs = list.map(a => ganttPhaseAt(a, st.at)), col = phs.includes("forsenad") ? PHB_COL.forsenad : phs.includes("pagaende") ? PHB_COL.pagaende : phs.every(p => p === "klar") ? PHB_COL.klar : PHB_COL.planerad;
+    const pr = list.map((a, i) => phs[i] === "klar" ? 100 : Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0))));
+    ctx.font = `700 ${12.5 * kk}px ${PHB_FAM}`;
+    L.lines.push({ t: "h", name: phbWrap(ctx, head, L.W - 70 * kk, 1)[0] || head, prog: Math.round(pr.reduce((x, y) => x + y, 0) / pr.length), col });
+    ctx.font = `${11.5 * kk}px ${PHB_FAM}`;
+    list.forEach((a, i) => { const r = { t: "r", name: phbWrap(ctx, phbActText(a), L.W - 140 * kk, 1)[0] || "", prog: pr[i], klar: phs[i] === "klar", col: PHB_COL[phs[i]] || PHB_COL.planerad }; L.lines.push(r); L.rows.push(r); });
+  });
+  L.more = Math.max(0, all.length - shown.length);
+  L.h = (34 + L.lines.reduce((s, l) => s + (l.t === "h" ? 30 : 20), 0) + (L.more ? 20 : 0) + 8) * kk;
 }
 function phbDrawList(ctx, st) {
   const L = st.list, kk = L.kk, x = L.x, y = L.y;
@@ -148,13 +175,25 @@ function phbDrawList(ctx, st) {
   ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.font = `700 ${14 * kk}px ${PHB_FAM}`; ctx.fillText(L.title || "Pågår just nu", x + 12 * kk, y + 13.5 * kk);
   ctx.textAlign = "right"; ctx.font = `${11 * kk}px ${PHB_FAM}`; ctx.fillStyle = "#cbd5e1"; ctx.fillText(String(L.items.length), x + L.W - 10 * kk, y + 13.5 * kk); ctx.textAlign = "left";
   let ty = y + 34 * kk;
-  L.rows.forEach(r => {
-    ctx.fillStyle = r.col; ctx.beginPath(); ctx.arc(x + 14 * kk, ty + 9 * kk, 4.5 * kk, 0, 7); ctx.fill();
-    ctx.fillStyle = "#111827"; ctx.font = `${12 * kk}px ${PHB_FAM}`; ctx.fillText(r.name, x + 26 * kk, ty + 9.5 * kk);
-    ctx.textAlign = "right"; ctx.font = `700 ${11.5 * kk}px ${PHB_FAM}`; ctx.fillText(`${r.prog} %`, x + L.W - 10 * kk, ty + 9.5 * kk); ctx.textAlign = "left";
-    ty += 21 * kk;
+  L.lines.forEach(r => {
+    if (r.t === "h") {
+      ctx.fillStyle = r.col; ctx.fillRect(x + 8 * kk, ty + 2 * kk, 4 * kk, 24 * kk);
+      ctx.fillStyle = "#111827"; ctx.font = `700 ${12.5 * kk}px ${PHB_FAM}`; ctx.fillText(r.name, x + 18 * kk, ty + 8 * kk);
+      ctx.textAlign = "right"; ctx.font = `700 ${11.5 * kk}px ${PHB_FAM}`; ctx.fillText(`${r.prog} %`, x + L.W - 10 * kk, ty + 8 * kk); ctx.textAlign = "left";
+      ctx.fillStyle = "#e5e7eb"; phbRR(ctx, x + 18 * kk, ty + 18 * kk, L.W - 28 * kk, 5 * kk, 3 * kk); ctx.fill();
+      if (r.prog > 0) { ctx.fillStyle = r.col; phbRR(ctx, x + 18 * kk, ty + 18 * kk, Math.max(5 * kk, (L.W - 28 * kk) * r.prog / 100), 5 * kk, 3 * kk); ctx.fill(); }
+      ty += 30 * kk;
+    } else {
+      ctx.fillStyle = r.col; ctx.beginPath(); ctx.arc(x + 26 * kk, ty + 9 * kk, 4 * kk, 0, 7); ctx.fill();
+      ctx.fillStyle = "#111827"; ctx.font = `${11.5 * kk}px ${PHB_FAM}`; ctx.fillText(r.name, x + 36 * kk, ty + 9.5 * kk);
+      const bx = x + L.W - 90 * kk;
+      ctx.fillStyle = "#e5e7eb"; phbRR(ctx, bx, ty + 7 * kk, 40 * kk, 4 * kk, 2 * kk); ctx.fill();
+      if (r.prog > 0) { ctx.fillStyle = r.col; phbRR(ctx, bx, ty + 7 * kk, Math.max(4 * kk, 40 * kk * r.prog / 100), 4 * kk, 2 * kk); ctx.fill(); }
+      ctx.fillStyle = r.klar ? "#2fa84f" : "#111827"; ctx.textAlign = "right"; ctx.font = `700 ${11 * kk}px ${PHB_FAM}`; ctx.fillText(r.klar ? "Klar" : `${r.prog} %`, x + L.W - 10 * kk, ty + 9.5 * kk); ctx.textAlign = "left";
+      ty += 20 * kk;
+    }
   });
-  if (L.more) { ctx.fillStyle = "#6b7280"; ctx.font = `italic ${11 * kk}px ${PHB_FAM}`; ctx.fillText(`+ ${L.more} till`, x + 26 * kk, ty + 8 * kk); }
+  if (L.more) { ctx.fillStyle = "#6b7280"; ctx.font = `italic ${11 * kk}px ${PHB_FAM}`; ctx.fillText(`+ ${L.more} till`, x + 18 * kk, ty + 8 * kk); }
 }
 
 /* ---- Fria texter och datumskylten -------------------------------------------------------------------------- */
@@ -209,7 +248,8 @@ async function phbBuild(blob, cam, scopeOverride) {
   const anchors = await phbAnchors(acts);
   const st = { bmp, s, W, H, k, at, cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
     dateObj: { on: typeof ganttMode !== "undefined" && ganttMode === "time", iso: at, x: 20 * k, y: 20 * k, scale: 1 },
-    list: { on: false, title: "Pågår just nu", max: 10, scale: 1, x: W - 340 * k, y: 20 * k, items: phbActiveList(at) } };
+    list: { on: false, title: "Pågår just nu", max: 40, scale: 1, weeks: 2, x: W - 360 * k, y: 20 * k, cands: [], sel: new Set(), items: [] } };
+  st.list.cands = phbCandidates(at, 2); phbActiveList(at).forEach(a => st.list.sel.add(phbKey(a)));
   let cards = anchors.map(o => phbNewCard(o, st));
   if (anchors.length) {
     const c = phbPickCamera(cam, anchors.map(o => o.P), W, H);
@@ -298,16 +338,24 @@ function phbPdfBubble(st, c, f) {
 }
 function phbPdfList(L, f) {
   const kk = L.kk, w = L.W * f, h = L.h * f; let o = "";
+  const T = (font, size, rgb, px, py, txt, right) => `BT ${rgb} rg /${font} ${phbN(size * kk * f)} Tf 1 0 0 1 ${phbN(px * kk * f - (right ? Math.min(w, txt.length * size * kk * f * 0.56) : 0))} ${phbN(h - py * kk * f)} Tm ${phbPdfStr(txt)} Tj ET `;
   o += `1 g ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 5 * kk * f)} f 0.85 G ${phbN(0.8 * kk * f)} w ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 5 * kk * f)} S `;
   o += `0.12 0.16 0.22 rg ${phbRRpdf(0.5, h - 26 * kk * f, w - 1, 26 * kk * f - 0.5, 5 * kk * f)} f `;
   o += `BT 1 g /F2 ${phbN(14 * kk * f)} Tf 1 0 0 1 ${phbN(12 * kk * f)} ${phbN(h - 18.5 * kk * f)} Tm ${phbPdfStr(L.title || "Pågår just nu")} Tj ET `;
-  let ty = 34 * kk;
-  L.rows.forEach(r => {
-    o += `${phbRgb(r.col)} rg ${phbCirclePdf(14 * kk * f, h - (ty + 9 * kk) * f, 4.5 * kk * f)} f `;
-    o += `BT 0.07 0.09 0.15 rg /F1 ${phbN(12 * kk * f)} Tf 1 0 0 1 ${phbN(26 * kk * f)} ${phbN(h - (ty + 13.2 * kk) * f)} Tm ${phbPdfStr(r.name)} Tj /F2 ${phbN(11.5 * kk * f)} Tf 1 0 0 1 ${phbN(w - 40 * kk * f)} ${phbN(h - (ty + 13.2 * kk) * f)} Tm ${phbPdfStr(r.prog + " %")} Tj ET `;
-    ty += 21 * kk;
+  let ty = 34;
+  const bar = (bx, by, bw, bh, prog, col) => `0.9 g ${phbRRpdf(bx * kk * f, h - (by + bh) * kk * f, bw * kk * f, bh * kk * f, bh / 2 * kk * f)} f ` + (prog > 0 ? `${phbRgb(col)} rg ${phbRRpdf(bx * kk * f, h - (by + bh) * kk * f, Math.max(bh, bw * prog / 100) * kk * f, bh * kk * f, bh / 2 * kk * f)} f ` : "");
+  L.lines.forEach(r => {
+    if (r.t === "h") {
+      o += `${phbRgb(r.col)} rg ${phbN(8 * kk * f)} ${phbN(h - (ty + 26) * kk * f)} ${phbN(4 * kk * f)} ${phbN(24 * kk * f)} re f `;
+      o += T("F2", 12.5, "0.07 0.09 0.15", 18, ty + 12, r.name) + T("F2", 11.5, "0.07 0.09 0.15", L.W - 10, ty + 12, r.prog + " %", true) + bar(18, ty + 18, L.W - 28, 5, r.prog, r.col);
+      ty += 30;
+    } else {
+      o += `${phbRgb(r.col)} rg ${phbCirclePdf(26 * kk * f, h - (ty + 9) * kk * f, 4 * kk * f)} f `;
+      o += T("F1", 11.5, "0.07 0.09 0.15", 36, ty + 13.2, r.name) + bar(L.W - 90, ty + 7, 40, 4, r.prog, r.col) + T("F2", 11, r.klar ? "0.18 0.66 0.31" : "0.07 0.09 0.15", L.W - 10, ty + 13.2, r.klar ? "Klar" : r.prog + " %", true);
+      ty += 20;
+    }
   });
-  if (L.more) o += `BT 0.42 0.45 0.5 rg /F1 ${phbN(11 * kk * f)} Tf 1 0 0 1 ${phbN(26 * kk * f)} ${phbN(h - (ty + 12 * kk) * f)} Tm ${phbPdfStr("+ " + L.more + " till")} Tj ET `;
+  if (L.more) o += T("F1", 11, "0.42 0.45 0.5", 18, ty + 12, "+ " + L.more + " till");
   return o;
 }
 function phbPdfText(t, f) {
@@ -410,11 +458,25 @@ function phbPreview(st) {
   /* Sidopanelen: allmänt överst, sedan det som är valt. */
   const rng = (id, lbl, v, min, max, step, unit = "%") => `<label class="phb-f"><span>${lbl} <b id="${id}V">${v}${unit}</b></span><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${v}"></label>`;
   const chk = (id, lbl, on) => `<label class="phb-c"><input type="checkbox" id="${id}"${on ? " checked" : ""}> ${lbl}</label>`;
+  /* Aktiviteterna inom ±veckor från fotodatumet, per WBS/område – kryssa i vilka som ska med (även klara). */
+  function phbListPick(L) {
+    const by = new Map(); L.cands.forEach(a => { const h = phbAreaHead(a.area); if (!by.has(h)) by.set(h, []); by.get(h).push(a); });
+    const ph = { forsenad: "Försenad", pagaende: "Pågår", klar: "Klar", planerad: "Planerad" };
+    let h = `<label class="phb-f"><span>Spann ± veckor kring ${phbEsc(phbFmtDate(cur.at))}</span><input type="number" id="phbListWeeks" min="0" max="26" value="${L.weeks}"></label><div class="phb-row"><button type="button" id="phbListAll">Alla</button><button type="button" id="phbListNone">Inga</button><button type="button" id="phbListNow" title="Bara det som pågår vid fotodatumet">Pågår</button></div><div class="phb-pick" id="phbPick">`;
+    if (!L.cands.length) h += `<div class="phb-note">Inga aktiviteter i spannet.</div>`;
+    by.forEach((list, head) => {
+      const n = list.filter(a => L.sel.has(phbKey(a))).length;
+      h += `<div class="phb-pg"><label class="phb-c"><input type="checkbox" data-pg="${phbEsc(head)}"${n === list.length ? " checked" : ""}> <b>${phbEsc(head)}</b> <small>${n}/${list.length}</small></label>`;
+      list.forEach(a => { const p = ganttPhaseAt(a, cur.at); h += `<label class="phb-c phb-pa"><input type="checkbox" data-pk="${phbEsc(phbKey(a))}"${L.sel.has(phbKey(a)) ? " checked" : ""}> <i class="phb-dot" style="background:${PHB_COL[p]}"></i><span>${phbEsc(phbActText(a))}</span> <small>${ph[p]}</small></label>`; });
+      h += `</div>`;
+    });
+    return h + `</div>`;
+  }
   function renderSide() {
     const g = cur.g, L = cur.list, D = cur.dateObj, it = selItem(), o = it && it.o;
     let h = `<div class="phb-sec"><div class="phb-h">Allmänt</div>${rng("phbGScale", "Bubblornas skala", Math.round(g.bscale * 100), 40, 250, 5)}${chk("phbLines", "Linjer till objekten", g.lines)}${g.lines ? rng("phbLineW", "Linjetjocklek", Math.round(g.lineW * 100), 40, 300, 10) + rng("phbDot", "Punktstorlek", Math.round(g.dot * 100), 40, 300, 10) : ""}
       <button type="button" id="phbArrange" title="Lägg bubblorna ovanför sina punkter igen, utan överlapp">Ordna om bubblorna</button></div>
-      <div class="phb-sec"><div class="phb-h">Pågår just nu</div>${chk("phbListOn", `Visa listan (${L.items.length} aktiviteter)`, L.on)}${L.on ? `<label class="phb-f"><span>Rubrik</span><input type="text" id="phbListTitle" value="${phbEsc(L.title)}" maxlength="60"></label><label class="phb-f"><span>Högst antal rader</span><input type="number" id="phbListMax" min="1" max="60" value="${L.max}"></label>${rng("phbListScale", "Skala", Math.round(L.scale * 100), 40, 250, 5)}` : ""}</div>
+      <div class="phb-sec"><div class="phb-h">Pågår just nu</div>${chk("phbListOn", `Visa listan (${L.items.length} aktiviteter)`, L.on)}${L.on ? `<label class="phb-f"><span>Rubrik</span><input type="text" id="phbListTitle" value="${phbEsc(L.title)}" maxlength="60"></label>${phbListPick(L)}<label class="phb-f"><span>Högst antal rader</span><input type="number" id="phbListMax" min="1" max="60" value="${L.max}"></label>${rng("phbListScale", "Skala", Math.round(L.scale * 100), 40, 250, 5)}` : ""}</div>
       <div class="phb-sec"><div class="phb-h">Datumskylt</div>${chk("phbDateOn", "Visa datumskylten", D.on)}${D.on ? `<label class="phb-f"><span>Datum</span><input type="date" id="phbDateVal" value="${D.iso}"></label>${rng("phbDateScale", "Skala", Math.round(D.scale * 100), 40, 250, 5)}` : ""}</div>
       <div class="phb-sec"><button type="button" id="phbAddText">＋ Text</button></div>`;
     if (it && it.type === "card") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald bubbla</div><label class="phb-f"><span>Rubrik <small>(tomt = aktivitetens namn)</small></span><textarea id="phbCText" rows="3">${phbEsc(o.text != null ? o.text : "")}</textarea></label>${rng("phbCScale", "Bubblans skala", Math.round(o.scale * 100), 40, 300, 5)}<div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbCCol" value="${phbCol(o)}"></label><button type="button" id="phbCAuto" title="Färg efter status"${o.colOver ? "" : " disabled"}>Auto</button></div>${chk("phbCDate", "Datum", o.show.date)}${chk("phbCArea", "Område", o.show.area)}${chk("phbCProg", "Framdrift", o.show.prog)}<button type="button" id="phbCDel" class="danger">Ta bort bubblan</button></div>`;
@@ -429,6 +491,13 @@ function phbPreview(st) {
     on("phbArrange", "click", () => { phbLayout(cur.cards, cur.W, cur.H, cur.k, cur.placed); draw(); });
     on("phbListOn", "change", e => { cur.list.on = e.target.checked; if (cur.list.on) cur.sel = cur.list; draw(); renderSide(); });
     on("phbListTitle", "input", e => { cur.list.title = e.target.value; draw(); });
+    on("phbListWeeks", "change", e => { const L = cur.list; L.weeks = Math.max(0, Math.min(26, Number(e.target.value) || 0)); L.cands = phbCandidates(cur.at, L.weeks); const keep = new Set(L.cands.map(phbKey)); [...L.sel].forEach(k => { if (!keep.has(k)) L.sel.delete(k); }); remeasure(); renderSide(); });
+    const setSel = fn => { const L = cur.list; fn(L); remeasure(); renderSide(); };
+    on("phbListAll", "click", () => setSel(L => L.cands.forEach(a => L.sel.add(phbKey(a)))));
+    on("phbListNone", "click", () => setSel(L => L.sel.clear()));
+    on("phbListNow", "click", () => setSel(L => { L.sel.clear(); L.cands.forEach(a => { const p = ganttPhaseAt(a, cur.at); if (p === "pagaende" || p === "forsenad") L.sel.add(phbKey(a)); }); }));
+    side.querySelectorAll("[data-pk]").forEach(e => e.addEventListener("change", () => setSel(L => { if (e.checked) L.sel.add(e.dataset.pk); else L.sel.delete(e.dataset.pk); })));
+    side.querySelectorAll("[data-pg]").forEach(e => e.addEventListener("change", () => setSel(L => L.cands.filter(a => phbAreaHead(a.area) === e.dataset.pg).forEach(a => { if (e.checked) L.sel.add(phbKey(a)); else L.sel.delete(phbKey(a)); }))));
     on("phbListMax", "input", e => { cur.list.max = Math.max(1, Math.min(60, Number(e.target.value) || 1)); remeasure(); });
     range("phbListScale", v => { cur.list.scale = v; remeasure(); });
     on("phbDateOn", "change", e => { cur.dateObj.on = e.target.checked; draw(); renderSide(); });

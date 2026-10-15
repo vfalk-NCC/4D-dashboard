@@ -100,6 +100,14 @@ seed('plan_items.json', [
       const s2 = await S(); if (s2.c0.name !== 'Egen rubrik' || s2.c0.prog !== false || s2.c0.col !== '#ff0000') fail('Redigerad bubbla: ' + JSON.stringify(s2.c0));
       await page.check('#phbListOn'); await page.waitForTimeout(100); const s3 = await S(); if (!s3.list || s3.nl < 1) fail('Pågår just nu-listan ska ha rader: ' + JSON.stringify(s3));
       await page.fill('#phbListTitle', 'Pågår idag'); await page.fill('#phbListMax', '2'); await page.waitForTimeout(100); const s3b = await S(); if (s3b.nl !== 2) fail('Max rader: ' + s3b.nl);
+      await page.fill('#phbListMax', '40'); await page.waitForTimeout(100);
+      const lg = await page.evaluate(() => { const l = document.getElementById('phbCv')._state().list; return { heads: l.lines.filter(x => x.t === 'h').length, cands: l.cands.length, sel: l.sel.size, pk: document.querySelectorAll('[data-pk]').length, pg: document.querySelectorAll('[data-pg]').length }; });
+      if (!lg.heads || lg.heads !== lg.pg || lg.pk !== lg.cands) fail('Listan ska vara indelad per område med en kryssruta per aktivitet: ' + JSON.stringify(lg));
+      await page.click('#phbListNone'); await page.waitForTimeout(100);
+      const l0 = await page.evaluate(() => document.getElementById('phbCv')._state().list.rows.length); if (l0 !== 0) fail('Inga: ' + l0);
+      await page.click('[data-pk]:not(:checked)'); await page.waitForTimeout(100);
+      const l1 = await page.evaluate(() => document.getElementById('phbCv')._state().list.rows.length); if (l1 !== 1) fail('En ikryssad aktivitet ska ge en rad: ' + l1);
+      await page.click('#phbListNow'); await page.fill('#phbListMax', '2'); await page.waitForTimeout(100);
       await page.click('#phbAddText'); await page.fill('#phbTText', 'Min kommentar\nrad 2'); await page.fill('#phbTSize', '30'); await page.waitForTimeout(100);
       const s4 = await S(); if (s4.texts !== 1) fail('Text ska finnas: ' + s4.texts);
       const [dl3] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]); await dl3.saveAs(process.env.PHB_OUT + '/foto2.pdf');

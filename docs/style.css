@@ -2653,3 +2653,9 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .gantt-legend .gantt-add-inline { height: 20px; font-size: 11px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; }
 #ganttUncoupledBtn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 #ganttUncoupledBtn b { font-weight: 600; opacity: .8; }
+.phb-pick { max-height: 240px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 6px; background: #fafbfc; }
+.phb-pg { margin-bottom: 4px; }
+.phb-pa { padding-left: 16px; font-size: 12px; }
+.phb-pa span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phb-pa small, .phb-pg small { color: #6b7280; }
+.phb-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
