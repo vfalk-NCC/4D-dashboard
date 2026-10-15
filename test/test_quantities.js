@@ -46,6 +46,7 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     const req = r.request(), f = decodeURIComponent(new URL(req.url()).pathname.replace('/repos/vfalk-NCC/4D-data/contents/', ''));
     const e = store.get(f);
     if (req.method() === 'GET') return e ? r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: Buffer.from(e.content).toString('base64'), sha: e.sha }) }) : r.fulfill({ status: 404, body: '{}' });
+    if (req.method() === 'PUT') { const b = JSON.parse(req.postData() || '{}'); if (e && e.sha !== b.sha) return r.fulfill({ status: 409, body: '{}' }); const sha = 's' + (++n); store.set(f, { content: Buffer.from(b.content, 'base64').toString('utf8'), sha }); return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: { sha } }) }); }
     r.fulfill({ status: 405, body: '' });
   });
   await page.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
@@ -161,6 +162,19 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
       const mp = await page.evaluate(k => { const [m, id] = k.split('|'); return qmfMemberPosts({ modelId: m, objectId: id }).map(x => x.kind + ':' + x.post.ref); }, info.keys[0]);
       if (!mp.some(x => x.startsWith('vol:'))) fail('qmfMemberPosts (Gantt-dialogen) ska visa posten: ' + mp.join()); 
       await page.evaluate(() => { qmf.map.obj = {}; qmfRender(); }); }
+    // Delning via 4D-data: kopplingar och poster skrivs till projektets mapp och läses tillbaka (den nyaste gäller).
+    { await page.evaluate(() => { qmf.map.obj = { vol: { 'm1|o1': 'KEY1' } }; qmfSave(); qmfSavePosts(); });
+      await page.waitForTimeout(2600);
+      const sm = [...store.keys()].filter(k => /qty_mapping\.json$/.test(k)), sp = [...store.keys()].filter(k => /qty_posts\.json$/.test(k));
+      if (sm.length !== 1 || sp.length !== 1) fail('Kopplingar och poster ska skrivas till 4D-data: ' + [...store.keys()].join());
+      const wm = JSON.parse(store.get(sm[0]).content)[0]; if (!wm.updated_at || !wm.map.obj.vol || wm.map.obj.vol['m1|o1'] !== 'KEY1') fail('Skriven fil: ' + JSON.stringify(wm).slice(0, 200));
+      const wp = JSON.parse(store.get(sp[0]).content)[0]; if (!wp.posts || wp.posts.length !== await page.evaluate(() => qmf.posts.length)) fail('Postfilen ska innehålla förteckningens poster');
+      // fjärrfilen är nyare (någon annan har ändrat) → hämtas
+      const remote = { ...wm, updated_at: '2999-01-01T00:00:00.000Z', map: { ...wm.map, obj: { vol: { 'm1|o1': 'FROM-REMOTE' } } } };
+      store.set(sm[0], { content: JSON.stringify([remote]), sha: 'sx' + Date.now() });
+      await page.evaluate(() => qmfSyncLoad()); await page.waitForTimeout(500);
+      if ((await page.evaluate(() => qmf.map.obj.vol['m1|o1'])) !== 'FROM-REMOTE') fail('Nyare fjärrfil ska hämtas');
+      await page.evaluate(() => { qmf.map.obj = {}; qmfSaveLocalOnly(); }); }
     { // Antal (st) räknar objekt.
       await page.click('[data-qkind="cnt"]'); await page.waitForTimeout(300);
       const cn = await page.evaluate(() => ({ tot: qtyPivot().total, n: qtyPivot().nObj, val: !!document.getElementById('qtyVal') })); if (cn.tot !== cn.n || cn.val) fail('Antal (st): summan ska vara antalet objekt: ' + JSON.stringify(cn));

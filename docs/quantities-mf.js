@@ -8,9 +8,61 @@
 const QMF_KEY = "4ddash-qty-mf", QMF_MAP = "4ddash-qty-map";
 const qmf = { f: { ty: "", po: "", ar: "", by: "" },  posts: [], builds: [], file: "", build: "", typeKey: "", map: { types: {}, areas: {}, obj: {}, mvO: {}, mvT: {} }, groupId: true, open: new Set(), msg: "" };
 try { const s = JSON.parse(localStorage.getItem(QMF_KEY) || "null"); if (s && Array.isArray(s.posts)) { qmf.posts = s.posts; qmf.builds = s.builds || []; qmf.file = s.file || ""; } } catch (e) { /* ingen sparad */ }
-try { const m = JSON.parse(localStorage.getItem(QMF_MAP) || "null"); if (m) { let ty = m.types || {}; if (Object.values(ty).some(v => typeof v === "string")) ty = { vol: ty }; /* äldre sparning: bara volym */ qmf.map = { types: ty, areas: m.areas || {}, obj: m.obj || {}, mvO: m.mvO || {}, mvT: m.mvT || {} }; qmf.groupId = m.groupId !== false; qmf.typeKey = m.typeKey || ""; qmf.build = m.build || ""; } } catch (e) { /* standard */ }
-const qmfSave = () => { try { localStorage.setItem(QMF_MAP, JSON.stringify({ types: qmf.map.types, areas: qmf.map.areas, obj: qmf.map.obj || {}, mvO: qmf.map.mvO || {}, mvT: qmf.map.mvT || {}, groupId: qmf.groupId, typeKey: qmf.typeKey, build: qmf.build })); } catch (e) { /* ingen lagring */ } };
-const qmfSavePosts = () => { try { localStorage.setItem(QMF_KEY, JSON.stringify({ posts: qmf.posts, builds: qmf.builds, file: qmf.file })); } catch (e) { qmf.msg = "Förteckningen är för stor för att sparas i webbläsaren – den gäller bara tills sidan laddas om."; } };
+try { const m = JSON.parse(localStorage.getItem(QMF_MAP) || "null"); if (m) { let ty = m.types || {}; if (Object.values(ty).some(v => typeof v === "string")) ty = { vol: ty }; /* äldre sparning: bara volym */ qmf.map = { types: ty, areas: m.areas || {}, obj: m.obj || {}, mvO: m.mvO || {}, mvT: m.mvT || {} }; qmf.groupId = m.groupId !== false; qmf.typeKey = m.typeKey || ""; qmf.build = m.build || ""; qmf.stamp = m.updated_at || ""; } } catch (e) { /* standard */ }
+const qmfSave = () => { try { localStorage.setItem(QMF_MAP, JSON.stringify({ types: qmf.map.types, areas: qmf.map.areas, obj: qmf.map.obj || {}, mvO: qmf.map.mvO || {}, mvT: qmf.map.mvT || {}, groupId: qmf.groupId, typeKey: qmf.typeKey, build: qmf.build, updated_at: qmf.stamp || "" })); } catch (e) { /* ingen lagring */ } qmfSyncSoon("map"); };
+const qmfSavePosts = () => { try { localStorage.setItem(QMF_KEY, JSON.stringify({ posts: qmf.posts, builds: qmf.builds, file: qmf.file })); } catch (e) { qmf.msg = "Förteckningen är för stor för att sparas i webbläsaren – den gäller bara tills sidan laddas om."; } qmfSyncSoon("posts"); };
+
+/* ---- Delning via 4D-data (Victor 2026-10-15: "varför skulle vi inte spara det?") ----------------------------------------------
+   Kopplingarna (typ/objekt → post, område → byggnad) och mängdförteckningens poster sparas i projektets mapp i det privata datarepot
+   (projects/<projekt>/qty_mapping.json och qty_posts.json), så att alla som öppnar projektet ser samma kopplingar. Webbläsaren behåller en lokal kopia.
+   Skrivs efter en kort paus; vid skrivning slås fjärrfilens kopplingar ihop med dina (dina ändringar går före). */
+const QMF_PATH = k => `projects/${encodeURIComponent(typeof projectId !== "undefined" ? projectId : "_")}/${k === "posts" ? "qty_posts" : "qty_mapping"}.json`;
+const qmfSync = { timers: {}, state: "", busy: false };
+function qmfSyncState(t, bad) { qmfSync.state = t; const el = document.getElementById("qmfSyncState"); if (el) { el.textContent = t; el.classList.toggle("bad", !!bad); } }
+const qmfCanSync = () => typeof settings !== "undefined" && settings.githubToken && typeof projectId !== "undefined" && projectId && typeof ghWriteJSON === "function";
+function qmfSyncSoon(kind) {
+  if (!qmfCanSync() || qmfSync.loading) return; qmf.stamp = new Date().toISOString();
+  try { const m = JSON.parse(localStorage.getItem(QMF_MAP) || "{}"); m.updated_at = qmf.stamp; localStorage.setItem(QMF_MAP, JSON.stringify(m)); } catch (e) { /* */ }
+  qmfSyncState("Sparar i 4D-data …"); clearTimeout(qmfSync.timers[kind]); qmfSync.timers[kind] = setTimeout(() => qmfSyncPush(kind), 1500);
+}
+const qmfMapPayload = () => ({ updated_at: qmf.stamp || new Date().toISOString(), map: { types: qmf.map.types, areas: qmf.map.areas, obj: qmf.map.obj || {}, mvO: qmf.map.mvO || {}, mvT: qmf.map.mvT || {} }, groupId: qmf.groupId, typeKey: qmf.typeKey, build: qmf.build });
+function qmfMergeMaps(remote, local) { // dina kopplingar går före fjärrfilens, i övrigt behålls fjärrfilens
+  const out = JSON.parse(JSON.stringify(remote || {}));
+  ["types", "obj"].forEach(k => { out[k] = out[k] || {}; Object.keys(local[k] || {}).forEach(kind => { out[k][kind] = { ...(out[k][kind] || {}), ...local[k][kind] }; }); });
+  out.areas = { ...(out.areas || {}), ...(local.areas || {}) }; ["mvO", "mvT"].forEach(k => { out[k] = { ...(out[k] || {}), ...(local[k] || {}) }; });
+  return out;
+}
+async function qmfSyncPush(kind) {
+  if (!qmfCanSync()) return;
+  try {
+    if (kind === "posts") {
+      const payload = { updated_at: qmf.stamp || new Date().toISOString(), posts: qmf.posts, builds: qmf.builds, file: qmf.file };
+      if (JSON.stringify(payload).length > 900000) { qmfSyncState("Förteckningen är för stor för att delas i 4D-data – den sparas bara i den här webbläsaren.", true); return; }
+      await ghWriteJSON(settings.githubToken, QMF_PATH("posts"), () => [payload], "Mängdförteckning (poster)");
+    } else {
+      const local = qmfMapPayload();
+      if (JSON.stringify(local).length > 900000) { qmfSyncState("Kopplingarna är för många för att delas i 4D-data – de sparas bara i den här webbläsaren.", true); return; }
+      await ghWriteJSON(settings.githubToken, QMF_PATH("map"), arr => { const r = (Array.isArray(arr) && arr[0]) || {}; return [{ ...local, map: qmfMergeMaps(r.map, local.map) }]; }, "Mängdkopplingar (typ/objekt → post, område → byggnad)");
+    }
+    qmfSyncState("✓ Delat i 4D-data");
+  } catch (e) { console.warn("Mängdkopplingar kunde inte sparas i 4D-data", e); qmfSyncState("Kunde inte spara i 4D-data (sparas lokalt): " + ((e && e.message) || e), true); }
+}
+/* Läser fjärrfilerna när projektet öppnats: den nyaste versionen gäller (fjärr om den är nyare än din lokala kopia). */
+async function qmfSyncLoad() {
+  if (!qmfCanSync()) return; qmfSync.loading = true;
+  try {
+    const [pr, mr] = await Promise.all([ghReadJSON(settings.githubToken, QMF_PATH("posts")).catch(() => []), ghReadJSON(settings.githubToken, QMF_PATH("map")).catch(() => [])]);
+    const rp = pr[0], rm = mr[0]; let localStamp = ""; try { localStamp = (JSON.parse(localStorage.getItem(QMF_MAP) || "{}").updated_at) || ""; } catch (e) { /* */ }
+    let changed = false;
+    if (rp && Array.isArray(rp.posts) && rp.posts.length && (!qmf.posts.length || String(rp.updated_at || "") > localStamp)) { qmf.posts = rp.posts; qmf.builds = rp.builds || []; qmf.file = rp.file || ""; try { localStorage.setItem(QMF_KEY, JSON.stringify({ posts: qmf.posts, builds: qmf.builds, file: qmf.file })); } catch (e) { /* */ } changed = true; }
+    if (rm && rm.map && String(rm.updated_at || "") > localStamp) { qmf.map = { types: rm.map.types || {}, areas: rm.map.areas || {}, obj: rm.map.obj || {}, mvO: rm.map.mvO || {}, mvT: rm.map.mvT || {} }; qmf.groupId = rm.groupId !== false; qmf.typeKey = rm.typeKey || qmf.typeKey; qmf.build = rm.build || ""; qmf.stamp = rm.updated_at; qmfSaveLocalOnly(); changed = true; }
+    qmfSync.loading = false;
+    if (!rm && (Object.keys(qmf.map.obj || {}).length || Object.keys(qmf.map.types).length)) qmfSyncSoon("map");       // lokalt finns kopplingar som ännu inte delats
+    if (!rp && qmf.posts.length) qmfSyncSoon("posts");
+    if (changed) { qmfSyncState("✓ Hämtade delade kopplingar från 4D-data"); if (typeof qtyRender === "function") qtyRender(); } else if (rm || rp) qmfSyncState("✓ Delat i 4D-data");
+  } catch (e) { console.warn("Mängdkopplingar kunde inte hämtas", e); } finally { qmfSync.loading = false; }
+}
+function qmfSaveLocalOnly() { try { localStorage.setItem(QMF_MAP, JSON.stringify({ types: qmf.map.types, areas: qmf.map.areas, obj: qmf.map.obj || {}, mvO: qmf.map.mvO || {}, mvT: qmf.map.mvT || {}, groupId: qmf.groupId, typeKey: qmf.typeKey, build: qmf.build, updated_at: qmf.stamp || "" })); } catch (e) { /* */ } }
 
 /* ---- .xlsx utan bibliotek --------------------------------------------------------------------------- */
 async function qmfInflate(bytes) { const ds = new DecompressionStream("deflate-raw"), w = ds.writable.getWriter(); w.write(bytes); w.close(); return new Uint8Array(await new Response(ds.readable).arrayBuffer()); }
@@ -238,7 +290,7 @@ function qmfMemberPosts(m) {
 function qmfRender() {
   const host = document.getElementById("qmfBox"); if (!host) return;
   const E = qtyEsc, hasObjs = typeof qty !== "undefined" && qty.objs.length > 0, hasMf = qmf.posts.length > 0;
-  let html = `<h3 class="qmf-h">Jämför mot mängdförteckningen <span class="hint">· mängdslag: ${E(QTY_KINDS[qtyKind()][0])} (byts ovan)</span></h3><div class="qty-row"><label>Mängdförteckning (.xlsx) <input type="file" id="qmfFile" accept=".xlsx" /></label>${hasMf ? `<span class="hint">✓ ${E(qmf.file)} · ${qmf.posts.length} poster · ${qmf.builds.length} byggnader</span><button type="button" id="qmfClear">Ta bort</button>` : ""}<span class="hint" id="qmfMsg">${E(qmf.msg)}</span></div>`;
+  let html = `<h3 class="qmf-h">Jämför mot mängdförteckningen <span class="hint">· mängdslag: ${E(QTY_KINDS[qtyKind()][0])} (byts ovan)</span></h3><div class="qty-row"><label>Mängdförteckning (.xlsx) <input type="file" id="qmfFile" accept=".xlsx" /></label>${hasMf ? `<span class="hint">✓ ${E(qmf.file)} · ${qmf.posts.length} poster · ${qmf.builds.length} byggnader</span><button type="button" id="qmfClear">Ta bort</button>` : ""}<span class="hint" id="qmfMsg">${E(qmf.msg)}</span><span class="hint qmf-sync" id="qmfSyncState">${E(qmfSync.state)}</span></div>`;
   if (!hasMf || !hasObjs) { host.innerHTML = html + `<div class="hint">${!hasMf ? "Välj mängdförteckningen (Excel). Filen läses bara i din webbläsare och ändras inte." : "Tryck på Läs mängder ovan först."}</div>`; wire(); return; }
   const types = new Map(), areas = new Map();
   qty.objs.forEach(o => { const t = qmfTypeVal(o), a = qmfAreaOf(o), v = qtyValue(o) ?? 0;

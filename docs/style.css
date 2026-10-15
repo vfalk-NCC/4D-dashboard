@@ -2645,3 +2645,4 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 
 .na-post { display: inline-block; font-size: 10px; font-weight: 700; padding: 0 5px; margin-left: 3px; border-radius: 999px; background: #eaf2ff; color: #1d4ed8; border: 1px solid #bcd2fb; }
 .na-posts-sum { margin: 2px 0 6px; font-size: 11.5px; }
+.qmf-sync { margin-left: auto; font-size: 11px; } .qmf-sync.bad { color: #b42318; }

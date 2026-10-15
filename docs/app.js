@@ -341,6 +341,7 @@ async function initApp() {
   document.querySelectorAll("#planSourceBar [data-src]").forEach(b => { b.onclick = () => setPlanSource(b.dataset.src); });
 
   await refreshAll();
+  if (typeof qmfSyncLoad === "function") qmfSyncLoad();
   if (typeof gvRestore === "function") { try { await gvRestore(); } catch (e) { console.warn("Hämta vy", e); } }
 }
 
