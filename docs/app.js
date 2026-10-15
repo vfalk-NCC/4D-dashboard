@@ -3636,12 +3636,18 @@ function ganttMultiContractorPop(btn) {
   const cur = [...new Set(ms.map(m => m.contractor || ""))], names = uniqueValues(it => it.contractor);
   const pop = document.createElement("div"); pop.id = "ganttMultiCPop"; pop.className = "gantt-time-menu"; pop.style.cssText = "position:fixed;z-index:80;min-width:280px;display:flex;flex-direction:column;gap:8px";
   pop.innerHTML = `<div class="gtm-title">Entreprenör på ${ganttMultiSel.size} markerade (${ms.length} objekt)</div>
-    <input type="text" id="gmcInput" list="gmcList" placeholder="Välj eller skriv entreprenör…" autocomplete="off" value="${cur.length === 1 ? escapeHtml(cur[0]) : ""}" /><datalist id="gmcList">${names.map(n => `<option value="${escapeHtml(n)}">`).join("")}</datalist>
+    <input type="text" id="gmcInput" placeholder="Sök eller skriv ny entreprenör…" autocomplete="off" value="${cur.length === 1 ? escapeHtml(cur[0]) : ""}" />
+    <div class="gmc-list" id="gmcList">${names.map(n => `<button type="button" class="gmc-opt${cur.length === 1 && cur[0] === n ? " on" : ""}" data-v="${escapeHtml(n)}">${escapeHtml(n)}</button>`).join("")}</div>
     <div class="hint">${cur.length === 1 && cur[0] ? `Nu: ${escapeHtml(cur[0])}` : cur.length > 1 ? "De har olika entreprenörer nu – de får alla samma." : "Ingen entreprenör satt nu."} Tomt fält = ta bort entreprenören.</div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" id="gmcCancel">Avbryt</button><button type="button" id="gmcOk" class="primary">Sätt på alla</button></div>`;
   document.body.appendChild(pop);
   const r = btn.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 300)) + "px"; pop.style.top = Math.max(8, r.top - pop.offsetHeight - 8) + "px";
   const inp = pop.querySelector("#gmcInput"); inp.focus(); inp.select();
+  const lst = pop.querySelector("#gmcList");
+  const filt = () => { const q = inp.value.trim().toLowerCase(); let n = 0; lst.querySelectorAll(".gmc-opt").forEach(b => { const ok = !q || b.dataset.v.toLowerCase().includes(q); b.style.display = ok ? "" : "none"; if (ok) n++; }); lst.style.display = n ? "" : "none"; };
+  inp.addEventListener("input", filt); filt();
+  lst.addEventListener("click", e => { const b = e.target.closest(".gmc-opt"); if (!b) return; inp.value = b.dataset.v; lst.querySelectorAll(".gmc-opt").forEach(x => x.classList.toggle("on", x === b)); inp.focus(); });
+  lst.addEventListener("dblclick", e => { if (e.target.closest(".gmc-opt")) go(); });
   const close = () => { pop.remove(); document.removeEventListener("pointerdown", off, true); };
   const off = ev => { if (!pop.contains(ev.target) && !btn.contains(ev.target)) close(); };
   setTimeout(() => document.addEventListener("pointerdown", off, true), 0);
