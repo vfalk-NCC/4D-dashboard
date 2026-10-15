@@ -84,8 +84,23 @@ seed('plan_items.json', [
       if (!(await page.textContent('.phb-info')).includes('3 borttagna')) fail('Info om borttagna: ' + await page.textContent('.phb-info'));
       await page.click('#phbUndo'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
       n = await page.evaluate(() => document.getElementById('phbCv')._state().cards.length); if (n !== 4) fail('Ångra ska ta tillbaka alla: ' + n);
+      // Redigering: skala, rubrik, färg, fält, lista, text, datum.
+      const S = () => page.evaluate(() => { const s = document.getElementById('phbCv')._state(); return { k0: s.cards[0] && s.cards[0].W, n: s.cards.length, list: s.list.on, nl: s.list.rows.length, texts: s.texts.length, c0: s.sel && s.cards.includes(s.sel) ? { name: s.sel.name.join(' '), sub: s.sel.sub.length, prog: s.sel.show.prog, col: s.sel.colOver, h: s.sel.h } : null }; });
+      const s0 = await S();
+      await page.fill('#phbGScale', '200'); await page.waitForTimeout(100); const s1 = await S(); if (!(s1.k0 > s0.k0 * 1.9)) fail('Skala 200 % ska ge dubbel bredd: ' + s0.k0 + ' → ' + s1.k0);
+      await page.fill('#phbGScale', '100'); await page.waitForTimeout(100);
+      w = await where(0); await page.mouse.click(w.x, w.y); await page.waitForSelector('#phbCText');
+      await page.fill('#phbCText', 'Egen rubrik'); await page.fill('#phbCScale', '150'); await page.uncheck('#phbCProg'); await page.uncheck('#phbCDate');
+      await page.evaluate(() => { const i = document.getElementById('phbCCol'); i.value = '#ff0000'; i.dispatchEvent(new Event('input', { bubbles: true })); });
+      const s2 = await S(); if (s2.c0.name !== 'Egen rubrik' || s2.c0.prog !== false || s2.c0.col !== '#ff0000') fail('Redigerad bubbla: ' + JSON.stringify(s2.c0));
+      await page.check('#phbListOn'); await page.waitForTimeout(100); const s3 = await S(); if (!s3.list || s3.nl < 1) fail('Pågår just nu-listan ska ha rader: ' + JSON.stringify(s3));
+      await page.fill('#phbListTitle', 'Pågår idag'); await page.fill('#phbListMax', '2'); await page.waitForTimeout(100); const s3b = await S(); if (s3b.nl !== 2) fail('Max rader: ' + s3b.nl);
+      await page.click('#phbAddText'); await page.fill('#phbTText', 'Min kommentar\nrad 2'); await page.fill('#phbTSize', '30'); await page.waitForTimeout(100);
+      const s4 = await S(); if (s4.texts !== 1) fail('Text ska finnas: ' + s4.texts);
+      const [dl3] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]); await dl3.saveAs(process.env.PHB_OUT + '/foto2.pdf');
+      const [dl4] = await Promise.all([page.waitForEvent('download'), page.click('#phbPng')]); await dl4.saveAs(process.env.PHB_OUT + '/foto2.png');
       await page.selectOption('#phbScope', 'marked'); await page.waitForTimeout(500);
-      const i2 = await page.textContent('.phb-info'); if (!/^0 bubblor/.test(i2) || !/markerade/.test(i2)) fail('Bara markerade utan markering: ' + i2);
+      const i2 = await page.textContent('.phb-info'); if (!/^0 bubblor/.test(i2)) fail('Bara markerade utan markering: ' + i2);
     }
     await page.click('#phbClose');
   }

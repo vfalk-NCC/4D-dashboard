@@ -87,35 +87,97 @@ function phbWrap(ctx, txt, maxW, lines) {
   return out;
 }
 const PHB_COL = { forsenad: "#e5262b", pagaende: "#eadb2b", klar: "#2fa84f", planerad: "#9aa3af" };
-function phbCardInfo(ctx, a, at, k, fam) {
-  fam = fam || 'Arial, Helvetica, sans-serif';
-  const last = x => String(x || "").split("/").map(y => y.trim()).filter(Boolean).pop() || "";
-  const fd = d => { const p = parseDate(d); return `${p.getUTCDate()} ${PHB_MON[p.getUTCMonth()]} ${p.getUTCFullYear()}`; };
-  const ph = ganttPhaseAt(a, at), W = 250 * k;
-  ctx.font = `700 ${15 * k}px ${fam}`;
-  const name = phbWrap(ctx, itemLabel(a), W - 30 * k, 2);
+const PHB_FAM = "Arial, Helvetica, sans-serif";
+const phbMeasure = (() => { let c = null; return () => (c = c || document.createElement("canvas").getContext("2d")); })();
+const phbCol = c => c.colOver || c.autoCol;
+const phbFmtDate = d => { const p = parseDate(d); return `${p.getUTCDate()} ${PHB_MON[p.getUTCMonth()]} ${p.getUTCFullYear()}`; };
+
+/* ---- Bubblor: innehåll och mått (alla mått i "kk" = bildens grundskala × bubblornas skala × bubblans egen skala) ------------ */
+function phbCardMeasure(c, st) {
+  const ctx = phbMeasure(), a = c.a, kk = st.k * st.g.bscale * c.scale, W = 250 * kk, sh = c.show;
+  ctx.font = `700 ${15 * kk}px ${PHB_FAM}`;
+  c.name = phbWrap(ctx, c.text != null && c.text !== "" ? c.text : itemLabel(a), W - 30 * kk, 3);
   const sub = [];
-  if (a.startDate) sub.push(`${fd(a.startDate)} – ${fd(a.actualEndDate && a.actualEndDate > (a.endDate || "") ? a.actualEndDate : a.endDate || a.startDate)}`);
-  const ar = String(a.area || "").trim(); if (ar) sub.push(ar);
-  const prog = Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0)));
-  ctx.font = `${11.5 * k}px ${fam}`; sub.forEach((t, i) => { sub[i] = phbWrap(ctx, t, W - 24 * k, 1)[0] || ""; });
-  const h = (name.length * 18 + sub.length * 16 + 34) * k;
-  return { a, ph, W, h, name, sub, prog, col: PHB_COL[ph] || PHB_COL.planerad };
+  if (sh.date && a.startDate) sub.push(`${phbFmtDate(a.startDate)} – ${phbFmtDate(a.actualEndDate && a.actualEndDate > (a.endDate || "") ? a.actualEndDate : a.endDate || a.startDate)}`);
+  const ar = String(a.area || "").trim(); if (sh.area && ar) sub.push(ar);
+  ctx.font = `${11.5 * kk}px ${PHB_FAM}`; c.sub = sub.map(t => phbWrap(ctx, t, W - 24 * kk, 1)[0] || "");
+  c.prog = Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0)));
+  c.kk = kk; c.W = W; c.h = (c.name.length * 18 + c.sub.length * 16 + (sh.prog ? 34 : 20)) * kk;
 }
-function phbDrawCard(ctx, c, x, y, k) {
-  ctx.save(); ctx.shadowColor = "rgba(15,23,42,.28)"; ctx.shadowBlur = 14 * k; ctx.shadowOffsetY = 3 * k;
-  ctx.fillStyle = "#fff"; phbRR(ctx, x, y, c.W, c.h, 5 * k); ctx.fill(); ctx.restore();
-  ctx.fillStyle = c.col; ctx.fillRect(x, y + 1, 5 * k, c.h - 2);
-  let ty = y + 8 * k; const tx = x + 14 * k;
-  ctx.textBaseline = "top"; ctx.fillStyle = "#111827"; ctx.font = `700 ${15 * k}px Arial, Helvetica, sans-serif`;
-  c.name.forEach(l => { ctx.fillText(l, tx, ty); ty += 18 * k; });
-  ctx.font = `${11.5 * k}px Arial, Helvetica, sans-serif`; ctx.fillStyle = "#4b5563";
-  c.sub.forEach(l => { ctx.fillText(l, tx, ty + 1 * k); ty += 16 * k; });
-  const by = y + c.h - 14 * k, bw = c.W - 70 * k;
-  ctx.fillStyle = "#e5e7eb"; phbRR(ctx, tx, by, bw, 5 * k, 3 * k); ctx.fill();
-  ctx.fillStyle = c.ph === "forsenad" ? "#e5262b" : c.col; if (c.prog > 0) { phbRR(ctx, tx, by, Math.max(5 * k, bw * c.prog / 100), 5 * k, 3 * k); ctx.fill(); }
-  ctx.fillStyle = "#111827"; ctx.font = `700 ${12 * k}px Arial, Helvetica, sans-serif`; ctx.textBaseline = "middle"; ctx.fillText(`${c.prog} %`, tx + bw + 8 * k, by + 2.5 * k);
+function phbNewCard(o, st) {
+  const ph = ganttPhaseAt(o.a, st.at);
+  const c = { o, a: o.a, ph, autoCol: PHB_COL[ph] || PHB_COL.planerad, colOver: null, text: null, scale: 1, show: { date: true, area: true, prog: true }, x: 0, y: 0, ax: 0, ay: 0 };
+  phbCardMeasure(c, st); return c;
 }
+function phbDrawCard(ctx, c, k) {
+  const { x, y } = c, kk = c.kk, col = phbCol(c);
+  ctx.save(); ctx.shadowColor = "rgba(15,23,42,.28)"; ctx.shadowBlur = 14 * kk; ctx.shadowOffsetY = 3 * kk;
+  ctx.fillStyle = "#fff"; phbRR(ctx, x, y, c.W, c.h, 5 * kk); ctx.fill(); ctx.restore();
+  ctx.fillStyle = col; ctx.fillRect(x, y + 1, 5 * kk, c.h - 2);
+  let ty = y + 8 * kk; const tx = x + 14 * kk;
+  ctx.textBaseline = "top"; ctx.fillStyle = "#111827"; ctx.font = `700 ${15 * kk}px ${PHB_FAM}`;
+  c.name.forEach(l => { ctx.fillText(l, tx, ty); ty += 18 * kk; });
+  ctx.font = `${11.5 * kk}px ${PHB_FAM}`; ctx.fillStyle = "#4b5563";
+  c.sub.forEach(l => { ctx.fillText(l, tx, ty + 1 * kk); ty += 16 * kk; });
+  if (c.show.prog) {
+    const by = y + c.h - 14 * kk, bw = c.W - 70 * kk;
+    ctx.fillStyle = "#e5e7eb"; phbRR(ctx, tx, by, bw, 5 * kk, 3 * kk); ctx.fill();
+    ctx.fillStyle = c.ph === "forsenad" ? "#e5262b" : col; if (c.prog > 0) { phbRR(ctx, tx, by, Math.max(5 * kk, bw * c.prog / 100), 5 * kk, 3 * kk); ctx.fill(); }
+    ctx.fillStyle = "#111827"; ctx.font = `700 ${12 * kk}px ${PHB_FAM}`; ctx.textBaseline = "middle"; ctx.fillText(`${c.prog} %`, tx + bw + 8 * kk, by + 2.5 * kk);
+  }
+}
+
+/* ---- "Pågår just nu"-listan ----------------------------------------------------------------------------- */
+function phbActiveList(at) {
+  const merged = mergeActivityGroups(ganttShownItems.filter(x => x.startDate));
+  return merged.filter(a => { const ph = ganttPhaseAt(a, at); return (ph === "pagaende" || ph === "forsenad") && !(a.temporary && a.bubbleOff); })
+    .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)) || itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
+}
+function phbListMeasure(st) {
+  const L = st.list, kk = st.k * L.scale, ctx = phbMeasure(); L.kk = kk; L.W = 320 * kk;
+  const all = L.items, rows = all.slice(0, Math.max(1, L.max));
+  ctx.font = `${12 * kk}px ${PHB_FAM}`;
+  L.rows = rows.map(a => ({ name: phbWrap(ctx, itemLabel(a), L.W - 96 * kk, 1)[0] || "", prog: Math.max(0, Math.min(100, Math.round(Number(a.progress) || 0))), col: PHB_COL[ganttPhaseAt(a, st.at)] || PHB_COL.planerad }));
+  L.more = Math.max(0, all.length - rows.length);
+  L.h = (34 + L.rows.length * 21 + (L.more ? 20 : 0) + 8) * kk;
+}
+function phbDrawList(ctx, st) {
+  const L = st.list, kk = L.kk, x = L.x, y = L.y;
+  ctx.save(); ctx.shadowColor = "rgba(15,23,42,.28)"; ctx.shadowBlur = 14 * kk; ctx.shadowOffsetY = 3 * kk; ctx.fillStyle = "#fff"; phbRR(ctx, x, y, L.W, L.h, 6 * kk); ctx.fill(); ctx.restore();
+  ctx.fillStyle = "#1f2937"; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, L.W, 26 * kk, [6 * kk, 6 * kk, 0, 0]); else ctx.rect(x, y, L.W, 26 * kk); ctx.fill();
+  ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.font = `700 ${14 * kk}px ${PHB_FAM}`; ctx.fillText(L.title || "Pågår just nu", x + 12 * kk, y + 13.5 * kk);
+  ctx.textAlign = "right"; ctx.font = `${11 * kk}px ${PHB_FAM}`; ctx.fillStyle = "#cbd5e1"; ctx.fillText(String(L.items.length), x + L.W - 10 * kk, y + 13.5 * kk); ctx.textAlign = "left";
+  let ty = y + 34 * kk;
+  L.rows.forEach(r => {
+    ctx.fillStyle = r.col; ctx.beginPath(); ctx.arc(x + 14 * kk, ty + 9 * kk, 4.5 * kk, 0, 7); ctx.fill();
+    ctx.fillStyle = "#111827"; ctx.font = `${12 * kk}px ${PHB_FAM}`; ctx.fillText(r.name, x + 26 * kk, ty + 9.5 * kk);
+    ctx.textAlign = "right"; ctx.font = `700 ${11.5 * kk}px ${PHB_FAM}`; ctx.fillText(`${r.prog} %`, x + L.W - 10 * kk, ty + 9.5 * kk); ctx.textAlign = "left";
+    ty += 21 * kk;
+  });
+  if (L.more) { ctx.fillStyle = "#6b7280"; ctx.font = `italic ${11 * kk}px ${PHB_FAM}`; ctx.fillText(`+ ${L.more} till`, x + 26 * kk, ty + 8 * kk); }
+}
+
+/* ---- Fria texter och datumskylten -------------------------------------------------------------------------- */
+function phbTextMeasure(t, st) {
+  const ctx = phbMeasure(), kk = st.k, sz = t.size * kk; ctx.font = `${t.bold ? 700 : 400} ${sz}px ${PHB_FAM}`;
+  t.lines = String(t.text || "").split("\n"); const pad = t.bg ? 9 * kk : 2 * kk;
+  t.W = Math.max(...t.lines.map(l => ctx.measureText(l).width), 10 * kk) + 2 * pad; t.h = t.lines.length * sz * 1.28 + 2 * pad; t.pad = pad; t.sz = sz;
+}
+function phbDrawText(ctx, t) {
+  if (t.bg) { ctx.save(); ctx.shadowColor = "rgba(15,23,42,.2)"; ctx.shadowBlur = 8 * (t.sz / 18); ctx.fillStyle = t.bgCol; phbRR(ctx, t.x, t.y, t.W, t.h, 6 * (t.sz / 18)); ctx.fill(); ctx.restore(); }
+  ctx.fillStyle = t.col; ctx.textBaseline = "top"; ctx.font = `${t.bold ? 700 : 400} ${t.sz}px ${PHB_FAM}`;
+  t.lines.forEach((l, i) => ctx.fillText(l, t.x + t.pad, t.y + t.pad + i * t.sz * 1.28 + t.sz * 0.1));
+}
+function phbDateText(iso) { const d = parseDate(iso); return `v.${isoWeekNumber(d)} · ${d.getUTCDate()} ${PHB_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`; }
+function phbDateMeasure(st) {
+  const D = st.dateObj, kk = st.k * D.scale, ctx = phbMeasure(); ctx.font = `700 ${34 * kk}px ${PHB_FAM}`;
+  D.kk = kk; D.text = phbDateText(D.iso); D.W = ctx.measureText(D.text).width + 44 * kk; D.h = 62 * kk;
+}
+function phbDrawDate(ctx, D) {
+  ctx.save(); ctx.fillStyle = "rgba(51,58,72,.92)"; phbRR(ctx, D.x, D.y, D.W, D.h, 10 * D.kk); ctx.fill(); ctx.restore();
+  ctx.fillStyle = "#fff"; ctx.textBaseline = "middle"; ctx.font = `700 ${34 * D.kk}px ${PHB_FAM}`; ctx.fillText(D.text, D.x + 22 * D.kk, D.y + D.h / 2 + 1 * D.kk);
+}
+
 /* Bubblorna ovanför sina punkter; överlapp trycks isär (enkel avstötning) och hålls inom bilden. */
 function phbLayout(cards, W, H, k, anchored) {
   const m = 10 * k, gap = 8 * k;
@@ -124,7 +186,7 @@ function phbLayout(cards, W, H, k, anchored) {
     cards.forEach(c => { if (y + c.h > H - m) { x -= colW + gap; y = m; colW = 0; } c.x = x - c.W; c.y = y; y += c.h + gap; colW = Math.max(colW, c.W); });
     return;
   }
-  cards.forEach(c => { c.x = c.ax - c.W / 2; c.y = c.ay - c.h - 56 * k; });
+  cards.forEach(c => { c.x = c.ax - c.W / 2; c.y = c.ay - c.h - 56 * c.kk; });
   for (let it = 0; it < 80; it++) {
     for (let i = 0; i < cards.length; i++) for (let j = i + 1; j < cards.length; j++) {
       const a = cards[i], b = cards[j];
@@ -137,35 +199,32 @@ function phbLayout(cards, W, H, k, anchored) {
     cards.forEach(c => { c.x = Math.max(m, Math.min(W - c.W - m, c.x)); c.y = Math.max(m, Math.min(H - c.h - m, c.y)); });
   }
 }
-function phbDatePlate(ctx, W, k, iso) {
-  const d = parseDate(iso), t = `v.${isoWeekNumber(d)} · ${d.getUTCDate()} ${PHB_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
-  ctx.font = `700 ${34 * k}px Arial, Helvetica, sans-serif`; const w = ctx.measureText(t).width + 44 * k, h = 62 * k;
-  ctx.save(); ctx.fillStyle = "rgba(51,58,72,.92)"; phbRR(ctx, 20 * k, 20 * k, w, h, 10 * k); ctx.fill(); ctx.restore();
-  ctx.fillStyle = "#fff"; ctx.textBaseline = "middle"; ctx.fillText(t, 42 * k, 20 * k + h / 2 + 1 * k);
-}
 
-/* En bubbla/bild-uppsättning: fotot, bubblorna (med lägen) och vilket urval de kommer ur. Allt ritas om från den här när en bubbla flyttas. */
+/* Allt som kan redigeras på bilden: fotot, bubblorna (med lägen), listan, texter och datumskylten. Ritas om från den här. */
 async function phbBuild(blob, cam, scopeOverride) {
   const bmp = await createImageBitmap(blob), s = Math.max(1, Math.min(3, Math.round(2400 / bmp.width))), W = bmp.width * s, H = bmp.height * s;
-  const cv = document.createElement("canvas"); cv.width = W; cv.height = H; const ctx = cv.getContext("2d");
   const k = Math.max(0.9, W / 1500), at = (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO();
   const sc0 = bubbleCfg.scope; let acts, scope;
   try { if (scopeOverride && scopeOverride !== "auto") bubbleCfg.scope = scopeOverride; ({ acts, scope } = bubbleActs()); } finally { bubbleCfg.scope = sc0; }
   const anchors = await phbAnchors(acts);
-  let note = "", placed = false, cards = anchors.map(o => ({ o, ...phbCardInfo(ctx, o.a, at, k), fam: 0 }));
+  const st = { bmp, s, W, H, k, at, cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
+    dateObj: { on: typeof ganttMode !== "undefined" && ganttMode === "time", iso: at, x: 20 * k, y: 20 * k, scale: 1 },
+    list: { on: false, title: "Pågår just nu", max: 10, scale: 1, x: W - 340 * k, y: 20 * k, items: phbActiveList(at) } };
+  let cards = anchors.map(o => phbNewCard(o, st));
   if (anchors.length) {
     const c = phbPickCamera(cam, anchors.map(o => o.P), W, H);
     if (c) {
-      placed = true;
+      st.placed = true;
       cards = cards.map(cd => { const q = phbProject(c, cd.o.P, W, H); return q ? Object.assign(cd, { ax: q.x, ay: q.y }) : null; }).filter(cd => cd && cd.ax > -0.05 * W && cd.ax < 1.05 * W && cd.ay > -0.05 * H && cd.ay < 1.05 * H);
-    } else note = "Kunde inte avgöra var objekten ligger i bilden – bubblorna ligger i kanten utan linjer.";
-  } else note = scope === "marked" ? "Inga markerade aktiviteter med objekt i modellen." : "Inga aktiviteter med objekt i modellen i det här urvalet – markera med Ctrl-klick eller välj ett annat urval.";
-  if (anchors.length && placed && !cards.length) note = "Aktiviteternas objekt syns inte i bilden.";
+    } else st.note = "Kunde inte avgöra var objekten ligger i bilden – bubblorna ligger i kanten utan linjer.";
+  } else st.note = scope === "marked" ? "Inga markerade aktiviteter med objekt i modellen." : "Inga aktiviteter med objekt i modellen i det här urvalet – markera med Ctrl-klick eller välj ett annat urval.";
+  if (anchors.length && st.placed && !cards.length) st.note = "Aktiviteternas objekt syns inte i bilden.";
   cards.sort((a, b) => (a.ax || 0) - (b.ax || 0));
-  phbLayout(cards, W, H, k, placed);
-  const date = typeof ganttMode !== "undefined" && ganttMode === "time" && at ? at : "";
-  return { bmp, s, W, H, k, at, cards, placed, note, scope, date, nAnch: anchors.length };
+  st.cards = cards; phbLayout(cards, W, H, k, st.placed); phbListMeasure(st); phbDateMeasure(st);
+  return st;
 }
+/* Mått om efter en ändring (skala, text, fält). Bubblan behåller sin övre vänstra hörn. */
+function phbRemeasure(st) { st.cards.forEach(c => phbCardMeasure(c, st)); st.texts.forEach(t => phbTextMeasure(t, st)); phbListMeasure(st); phbDateMeasure(st); }
 /* Närmaste punkt på kortets kant mot punkten – därifrån går linjen. */
 function phbLeaderStart(c) {
   const px = Math.max(c.x + 12, Math.min(c.x + c.W - 12, c.ax));
@@ -173,25 +232,30 @@ function phbLeaderStart(c) {
   if (c.ay < c.y) return { x: px, y: c.y };
   return c.ax < c.x ? { x: c.x, y: c.ay } : c.ax > c.x + c.W ? { x: c.x + c.W, y: c.ay } : null;
 }
+/* Objekten i ritordning (överst sist) för träffyta och markering. */
+const phbObjects = st => [...st.cards.map(o => ({ type: "card", o })), ...(st.list.on ? [{ type: "list", o: st.list }] : []), ...st.texts.map(o => ({ type: "text", o })), ...(st.dateObj.on ? [{ type: "date", o: st.dateObj }] : [])];
+const phbBox = it => ({ x: it.o.x, y: it.o.y, W: it.o.W, h: it.o.h });
+const phbCloseBox = (it, k) => { const b = phbBox(it); return { x: b.x + b.W - 2 * k, y: b.y + 2 * k, r: 11 * k }; };
 function phbRender(ctx, st) {
   const { W, H, k } = st;
   ctx.imageSmoothingQuality = "high"; ctx.drawImage(st.bmp, 0, 0, W, H);
-  if (st.placed) st.cards.forEach(c => {
+  if (st.placed && st.g.lines) st.cards.forEach(c => {
     const p = phbLeaderStart(c); if (!p) return;
-    ctx.strokeStyle = c.col; ctx.lineWidth = 2.5 * k; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(c.ax, c.ay); ctx.stroke();
-    ctx.fillStyle = c.col; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * k; ctx.beginPath(); ctx.arc(c.ax, c.ay, 6 * k, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = phbCol(c); ctx.lineWidth = 2.5 * k * st.g.lineW; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(c.ax, c.ay); ctx.stroke();
+    ctx.fillStyle = phbCol(c); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * k; ctx.beginPath(); ctx.arc(c.ax, c.ay, 6 * k * st.g.dot, 0, 7); ctx.fill(); ctx.stroke();
   });
-  st.cards.forEach(c => phbDrawCard(ctx, c, c.x, c.y, k));
-  if (st.date) phbDatePlate(ctx, W, k, st.date);
+  st.cards.forEach(c => phbDrawCard(ctx, c, k));
+  if (st.list.on) phbDrawList(ctx, st);
+  st.texts.forEach(t => phbDrawText(ctx, t));
+  if (st.dateObj.on) phbDrawDate(ctx, st.dateObj);
   if (st.ui !== false) { // hanteringsgrafik (syns bara på skärmen, aldrig i sparad PNG/PDF): markering och ✕ för att ta bort
-    if (st.sel && st.cards.includes(st.sel)) { const c = st.sel; ctx.save(); ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 2.5 * k; ctx.setLineDash([6 * k, 4 * k]); phbRR(ctx, c.x - 3 * k, c.y - 3 * k, c.W + 6 * k, c.h + 6 * k, 6 * k); ctx.stroke(); ctx.restore(); }
-    const hv = st.hover && st.cards.includes(st.hover) ? st.hover : null;
+    const items = phbObjects(st), sel = items.find(i => i.o === st.sel), hv = items.find(i => i.o === st.hover);
+    if (sel) { const b = phbBox(sel); ctx.save(); ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 2.5 * k; ctx.setLineDash([6 * k, 4 * k]); phbRR(ctx, b.x - 3 * k, b.y - 3 * k, b.W + 6 * k, b.h + 6 * k, 6 * k); ctx.stroke(); ctx.restore(); }
     if (hv) { const b = phbCloseBox(hv, k); ctx.save(); ctx.fillStyle = "#dc2626"; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 7); ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * k; ctx.stroke(); ctx.beginPath(); const d = b.r * 0.38; ctx.moveTo(b.x - d, b.y - d); ctx.lineTo(b.x + d, b.y + d); ctx.moveTo(b.x + d, b.y - d); ctx.lineTo(b.x - d, b.y + d); ctx.lineWidth = 2.4 * k; ctx.lineCap = "round"; ctx.stroke(); ctx.restore(); }
   }
 }
-const phbCloseBox = (c, k) => ({ x: c.x + c.W - 2 * k, y: c.y + 2 * k, r: 11 * k });
 
-/* ---- PDF: fotot som bild, linjer/punkter och datumskylt som egna lager, varje bubbla som en flyttbar stämpel ---------------- */
+/* ---- PDF: fotot som bild; varje bubbla (kort + linje + punkt), listan och varje text som en flyttbar stämpel i egna lager ------- */
 const phbWin = ch => ({ "–": 0x96, "—": 0x97, "…": 0x85, "·": 0xB7, "’": 0x27, "“": 0x22, "”": 0x22 }[ch]);
 function phbPdfStr(str) { // PDF-sträng (WinAnsi) med skyddade tecken
   let o = "(";
@@ -199,58 +263,81 @@ function phbPdfStr(str) { // PDF-sträng (WinAnsi) med skyddade tecken
   return o + ")";
 }
 const phbN = n => (Math.round(n * 100) / 100).toString();
-const phbRgb = hex => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255].map(v => phbN(v)).join(" "); };
+const phbRgb = hex => { const n = parseInt(String(hex).replace("#", "").slice(0, 6), 16) || 0; return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255].map(v => phbN(v)).join(" "); };
 function phbRRpdf(x, y, w, h, r) { // rundat hörn (bézier), nedre vänstra hörnet i (x, y)
   const q = r * 0.5523;
   return `${phbN(x + r)} ${phbN(y)} m ${phbN(x + w - r)} ${phbN(y)} l ${phbN(x + w - r + q)} ${phbN(y)} ${phbN(x + w)} ${phbN(y + r - q)} ${phbN(x + w)} ${phbN(y + r)} c ${phbN(x + w)} ${phbN(y + h - r)} l ${phbN(x + w)} ${phbN(y + h - r + q)} ${phbN(x + w - r + q)} ${phbN(y + h)} ${phbN(x + w - r)} ${phbN(y + h)} c ${phbN(x + r)} ${phbN(y + h)} l ${phbN(x + r - q)} ${phbN(y + h)} ${phbN(x)} ${phbN(y + h - r + q)} ${phbN(x)} ${phbN(y + h - r)} c ${phbN(x)} ${phbN(y + r)} l ${phbN(x)} ${phbN(y + r - q)} ${phbN(x + r - q)} ${phbN(y)} ${phbN(x + r)} ${phbN(y)} c h `;
 }
-function phbPdfCard(c, k, f) { // själva kortet (lokala koordinater, origo nere till vänster)
-  const w = c.W * f, h = c.h * f, tx = 14 * k * f; let o = "";
-  o += `1 g ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 4 * k * f)} f 0.85 G ${phbN(0.8 * k * f)} w ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 4 * k * f)} S `;
-  o += `${phbRgb(c.col)} rg 0 ${phbN(1 * k * f)} ${phbN(5 * k * f)} ${phbN(h - 2 * k * f)} re f `;
-  let ty = 8 * k;
-  o += `BT 0.07 0.09 0.15 rg /F2 ${phbN(15 * k * f)} Tf `; c.name.forEach(l => { o += `1 0 0 1 ${phbN(tx)} ${phbN(h - (ty + 12.3 * k) * f)} Tm ${phbPdfStr(l)} Tj `; ty += 18 * k; }); o += "ET ";
-  o += `BT 0.29 0.33 0.4 rg /F1 ${phbN(11.5 * k * f)} Tf `; c.sub.forEach(l => { o += `1 0 0 1 ${phbN(tx)} ${phbN(h - (ty + 1 * k + 9.4 * k) * f)} Tm ${phbPdfStr(l)} Tj `; ty += 16 * k; }); o += "ET ";
-  const by = c.h - 14 * k, bw = c.W - 70 * k;
-  o += `0.9 g ${phbRRpdf(tx, h - (by + 5 * k) * f, bw * f, 5 * k * f, 2.5 * k * f)} f `;
-  if (c.prog > 0) o += `${phbRgb(c.ph === "forsenad" ? "#e5262b" : c.col)} rg ${phbRRpdf(tx, h - (by + 5 * k) * f, Math.max(5 * k, bw * c.prog / 100) * f, 5 * k * f, 2.5 * k * f)} f `;
-  o += `BT 0.07 0.09 0.15 rg /F2 ${phbN(12 * k * f)} Tf 1 0 0 1 ${phbN(tx + (bw + 8 * k) * f)} ${phbN(h - (by + 2.5 * k + 4.2 * k) * f)} Tm ${phbPdfStr(c.prog + " %")} Tj ET `;
+function phbCirclePdf(cx, cy, r) { const q = r * 0.5523; return `${phbN(cx + r)} ${phbN(cy)} m ${phbN(cx + r)} ${phbN(cy + q)} ${phbN(cx + q)} ${phbN(cy + r)} ${phbN(cx)} ${phbN(cy + r)} c ${phbN(cx - q)} ${phbN(cy + r)} ${phbN(cx - r)} ${phbN(cy + q)} ${phbN(cx - r)} ${phbN(cy)} c ${phbN(cx - r)} ${phbN(cy - q)} ${phbN(cx - q)} ${phbN(cy - r)} ${phbN(cx)} ${phbN(cy - r)} c ${phbN(cx + q)} ${phbN(cy - r)} ${phbN(cx + r)} ${phbN(cy - q)} ${phbN(cx + r)} ${phbN(cy)} c h `; }
+function phbPdfCard(c, f) { // själva kortet (lokala koordinater, origo nere till vänster)
+  const kk = c.kk, w = c.W * f, h = c.h * f, tx = 14 * kk * f, col = phbCol(c); let o = "";
+  o += `1 g ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 4 * kk * f)} f 0.85 G ${phbN(0.8 * kk * f)} w ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 4 * kk * f)} S `;
+  o += `${phbRgb(col)} rg 0 ${phbN(1 * kk * f)} ${phbN(5 * kk * f)} ${phbN(h - 2 * kk * f)} re f `;
+  let ty = 8 * kk;
+  o += `BT 0.07 0.09 0.15 rg /F2 ${phbN(15 * kk * f)} Tf `; c.name.forEach(l => { o += `1 0 0 1 ${phbN(tx)} ${phbN(h - (ty + 12.3 * kk) * f)} Tm ${phbPdfStr(l)} Tj `; ty += 18 * kk; }); o += "ET ";
+  o += `BT 0.29 0.33 0.4 rg /F1 ${phbN(11.5 * kk * f)} Tf `; c.sub.forEach(l => { o += `1 0 0 1 ${phbN(tx)} ${phbN(h - (ty + 1 * kk + 9.4 * kk) * f)} Tm ${phbPdfStr(l)} Tj `; ty += 16 * kk; }); o += "ET ";
+  if (c.show.prog) {
+    const by = c.h - 14 * kk, bw = c.W - 70 * kk;
+    o += `0.9 g ${phbRRpdf(tx, h - (by + 5 * kk) * f, bw * f, 5 * kk * f, 2.5 * kk * f)} f `;
+    if (c.prog > 0) o += `${phbRgb(c.ph === "forsenad" ? "#e5262b" : col)} rg ${phbRRpdf(tx, h - (by + 5 * kk) * f, Math.max(5 * kk, bw * c.prog / 100) * f, 5 * kk * f, 2.5 * kk * f)} f `;
+    o += `BT 0.07 0.09 0.15 rg /F2 ${phbN(12 * kk * f)} Tf 1 0 0 1 ${phbN(tx + (bw + 8 * kk) * f)} ${phbN(h - (by + 2.5 * kk + 4.2 * kk) * f)} Tm ${phbPdfStr(c.prog + " %")} Tj ET `;
+  }
   return o;
 }
-function phbCirclePdf(cx, cy, r) { const q = r * 0.5523; return `${phbN(cx + r)} ${phbN(cy)} m ${phbN(cx + r)} ${phbN(cy + q)} ${phbN(cx + q)} ${phbN(cy + r)} ${phbN(cx)} ${phbN(cy + r)} c ${phbN(cx - q)} ${phbN(cy + r)} ${phbN(cx - r)} ${phbN(cy + q)} ${phbN(cx - r)} ${phbN(cy)} c ${phbN(cx - r)} ${phbN(cy - q)} ${phbN(cx - q)} ${phbN(cy - r)} ${phbN(cx)} ${phbN(cy - r)} c ${phbN(cx + q)} ${phbN(cy - r)} ${phbN(cx + r)} ${phbN(cy - q)} ${phbN(cx + r)} ${phbN(cy)} c h `; }
 /* En bubbla = ett kort + linjen och punkten ner till objektet i EN stämpel (så linjen följer med när den flyttas). */
-function phbPdfBubble(c, k, f, withLine) {
-  const r = 8 * k, x0 = withLine ? Math.min(c.x, c.ax - r) : c.x, x1 = withLine ? Math.max(c.x + c.W, c.ax + r) : c.x + c.W, y0 = withLine ? Math.min(c.y, c.ay - r) : c.y, y1 = withLine ? Math.max(c.y + c.h, c.ay + r) : c.y + c.h;
+function phbPdfBubble(st, c, f) {
+  const k = st.k, withLine = st.placed && st.g.lines, r = 8 * k * Math.max(1, st.g.dot), lw = 2.5 * k * st.g.lineW;
+  const x0 = withLine ? Math.min(c.x, c.ax - r) : c.x, x1 = withLine ? Math.max(c.x + c.W, c.ax + r) : c.x + c.W, y0 = withLine ? Math.min(c.y, c.ay - r) : c.y, y1 = withLine ? Math.max(c.y + c.h, c.ay + r) : c.y + c.h;
   let o = "";
   if (withLine) { const p = phbLeaderStart(c); if (p) {
     const lx = v => (v - x0) * f, ly = v => (y1 - v) * f;
-    o += `${phbRgb(c.col)} RG ${phbN(2.5 * k * f)} w 1 J ${phbN(lx(p.x))} ${phbN(ly(p.y))} m ${phbN(lx(c.ax))} ${phbN(ly(c.ay))} l S `;
-    o += `${phbRgb(c.col)} rg 1 G ${phbN(2 * k * f)} w ${phbCirclePdf(lx(c.ax), ly(c.ay), 6 * k * f)} B `; } }
-  o += `q 1 0 0 1 ${phbN((c.x - x0) * f)} ${phbN((y1 - (c.y + c.h)) * f)} cm ${phbPdfCard(c, k, f)} Q`;
+    o += `${phbRgb(phbCol(c))} RG ${phbN(lw * f)} w 1 J ${phbN(lx(p.x))} ${phbN(ly(p.y))} m ${phbN(lx(c.ax))} ${phbN(ly(c.ay))} l S `;
+    o += `${phbRgb(phbCol(c))} rg 1 G ${phbN(2 * k * f)} w ${phbCirclePdf(lx(c.ax), ly(c.ay), 6 * k * st.g.dot * f)} B `; } }
+  o += `q 1 0 0 1 ${phbN((c.x - x0) * f)} ${phbN((y1 - (c.y + c.h)) * f)} cm ${phbPdfCard(c, f)} Q`;
   return { stream: o, x0, x1, y0, y1 };
+}
+function phbPdfList(L, f) {
+  const kk = L.kk, w = L.W * f, h = L.h * f; let o = "";
+  o += `1 g ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 5 * kk * f)} f 0.85 G ${phbN(0.8 * kk * f)} w ${phbRRpdf(0.5, 0.5, w - 1, h - 1, 5 * kk * f)} S `;
+  o += `0.12 0.16 0.22 rg ${phbRRpdf(0.5, h - 26 * kk * f, w - 1, 26 * kk * f - 0.5, 5 * kk * f)} f `;
+  o += `BT 1 g /F2 ${phbN(14 * kk * f)} Tf 1 0 0 1 ${phbN(12 * kk * f)} ${phbN(h - 18.5 * kk * f)} Tm ${phbPdfStr(L.title || "Pågår just nu")} Tj ET `;
+  let ty = 34 * kk;
+  L.rows.forEach(r => {
+    o += `${phbRgb(r.col)} rg ${phbCirclePdf(14 * kk * f, h - (ty + 9 * kk) * f, 4.5 * kk * f)} f `;
+    o += `BT 0.07 0.09 0.15 rg /F1 ${phbN(12 * kk * f)} Tf 1 0 0 1 ${phbN(26 * kk * f)} ${phbN(h - (ty + 13.2 * kk) * f)} Tm ${phbPdfStr(r.name)} Tj /F2 ${phbN(11.5 * kk * f)} Tf 1 0 0 1 ${phbN(w - 40 * kk * f)} ${phbN(h - (ty + 13.2 * kk) * f)} Tm ${phbPdfStr(r.prog + " %")} Tj ET `;
+    ty += 21 * kk;
+  });
+  if (L.more) o += `BT 0.42 0.45 0.5 rg /F1 ${phbN(11 * kk * f)} Tf 1 0 0 1 ${phbN(26 * kk * f)} ${phbN(h - (ty + 12 * kk) * f)} Tm ${phbPdfStr("+ " + L.more + " till")} Tj ET `;
+  return o;
+}
+function phbPdfText(t, f) {
+  const w = t.W * f, h = t.h * f; let o = "";
+  if (t.bg) o += `${phbRgb(t.bgCol)} rg ${phbRRpdf(0, 0, w, h, 6 * (t.sz / 18) * f)} f `;
+  o += `BT ${phbRgb(t.col)} rg /${t.bold ? "F2" : "F1"} ${phbN(t.sz * f)} Tf `;
+  t.lines.forEach((l, i) => { o += `1 0 0 1 ${phbN(t.pad * f)} ${phbN(h - (t.pad + i * t.sz * 1.28 + t.sz * 0.88) * f)} Tm ${phbPdfStr(l)} Tj `; });
+  return o + "ET ";
 }
 async function phbPdf(st) {
   const jc = document.createElement("canvas"); jc.width = st.bmp.width; jc.height = st.bmp.height; jc.getContext("2d").drawImage(st.bmp, 0, 0);
   const jpeg = new Uint8Array(await (await new Promise(r => jc.toBlob(r, "image/jpeg", 0.95))).arrayBuffer());
-  const f = 0.75 / st.s, PW = st.bmp.width * 0.75, PH = st.bmp.height * 0.75, k = st.k, X = x => x * f, Y = y => PH - y * f;
-  const objs = []; // { head: "<<…>>" } eller { head, stream: string | Uint8Array }
-  const add = (head, stream) => { objs.push({ head, stream }); return objs.length; };
-  // Reserverade nummer: 1 katalog, 2 sidor, 3 sida, 4 innehåll, 5 bild, 6–7 typsnitt, 8–10 lager
+  const f = 0.75 / st.s, PW = st.bmp.width * 0.75, PH = st.bmp.height * 0.75, X = x => x * f, Y = y => PH - y * f;
+  const objs = []; const add = (head, stream) => { objs.push({ head, stream }); return objs.length; };
+  // Reserverade nummer: 1 katalog, 2 sidor, 3 sida, 4 innehåll, 5 bild, 6–7 typsnitt, 8 lager Datumskylt, 9 lager Bubblor, 10 lager Lista och texter
   objs.length = 10;
   const annots = [], F = `/Font<</F1 6 0 R/F2 7 0 R>>`;
-  st.cards.forEach((c, i) => {
-    const b = phbPdfBubble(c, k, f, st.placed);
-    const ap = add(`<</Type/XObject/Subtype/Form/BBox[0 0 ${phbN((b.x1 - b.x0) * f)} ${phbN((b.y1 - b.y0) * f)}]/Resources<<${F}>>>>`, b.stream);
-    const rect = `${phbN(X(b.x0))} ${phbN(Y(b.y1))} ${phbN(X(b.x1))} ${phbN(Y(b.y0))}`;
-    annots.push(add(`<</Type/Annot/Subtype/Stamp/Rect[${rect}]/F 4/NM ${phbPdfStr("bubbla" + (i + 1))}/T(4D-planering)/Subj(Bubbla)/Contents ${phbPdfStr(c.name.join(" "))}/OC 9 0 R/AP<</N ${ap} 0 R>>/Name/Draft>>`));
-  });
+  const stamp = (name, oc, x0, y0, x1, y1, stream, contents) => {
+    const ap = add(`<</Type/XObject/Subtype/Form/BBox[0 0 ${phbN((x1 - x0) * f)} ${phbN((y1 - y0) * f)}]/Resources<<${F}>>>>`, stream);
+    annots.push(add(`<</Type/Annot/Subtype/Stamp/Rect[${phbN(X(x0))} ${phbN(Y(y1))} ${phbN(X(x1))} ${phbN(Y(y0))}]/F 4/NM ${phbPdfStr(name)}/T(4D-planering)/Subj(${name.startsWith("bubbla") ? "Bubbla" : name.startsWith("lista") ? "Lista" : "Text"})/Contents ${phbPdfStr(contents)}/OC ${oc} 0 R/AP<</N ${ap} 0 R>>/Name/Draft>>`));
+  };
+  st.cards.forEach((c, i) => { const b = phbPdfBubble(st, c, f); stamp("bubbla" + (i + 1), 9, b.x0, b.y0, b.x1, b.y1, b.stream, c.name.join(" ")); });
+  if (st.list.on) { const L = st.list; stamp("lista", 10, L.x, L.y, L.x + L.W, L.y + L.h, phbPdfList(L, f), L.title || "Pågår just nu"); }
+  st.texts.forEach((t, i) => stamp("text" + (i + 1), 10, t.x, t.y, t.x + t.W, t.y + t.h, phbPdfText(t, f), t.text));
   let ct = `q ${phbN(PW)} 0 0 ${phbN(PH)} 0 0 cm /Im0 Do Q\n`;
-  if (st.date) {
-    const d = parseDate(st.date), t = `v.${isoWeekNumber(d)} · ${d.getUTCDate()} ${PHB_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`, m = document.createElement("canvas").getContext("2d");
-    m.font = `700 ${34 * k}px Arial, Helvetica, sans-serif`; const w = (m.measureText(t).width + 44 * k) * f, h = 62 * k * f, x0 = 20 * k * f, y0 = PH - 20 * k * f - h;
-    ct += `/OC /L1 BDC 0.2 0.23 0.28 rg ${phbRRpdf(x0, y0, w, h, 10 * k * f)} f 1 g BT /F2 ${phbN(34 * k * f)} Tf 1 0 0 1 ${phbN(x0 + 22 * k * f)} ${phbN(y0 + h / 2 - 11.5 * k * f)} Tm ${phbPdfStr(t)} Tj ET EMC\n`;
+  if (st.dateObj.on) {
+    const D = st.dateObj, w = D.W * f, h = D.h * f, x0 = D.x * f, y0 = PH - D.y * f - h;
+    ct += `/OC /L1 BDC 0.2 0.23 0.28 rg ${phbRRpdf(x0, y0, w, h, 10 * D.kk * f)} f 1 g BT /F2 ${phbN(34 * D.kk * f)} Tf 1 0 0 1 ${phbN(x0 + 22 * D.kk * f)} ${phbN(y0 + h / 2 - 11.5 * D.kk * f)} Tm ${phbPdfStr(D.text)} Tj ET EMC\n`;
   }
-  objs[0] = { head: `<</Type/Catalog/Pages 2 0 R/OCProperties<</OCGs[8 0 R 9 0 R]/D<</Order[8 0 R 9 0 R]/ON[8 0 R 9 0 R]>>>>>>` };
+  objs[0] = { head: `<</Type/Catalog/Pages 2 0 R/OCProperties<</OCGs[8 0 R 9 0 R 10 0 R]/D<</Order[8 0 R 9 0 R 10 0 R]/ON[8 0 R 9 0 R 10 0 R]>>>>>>` };
   objs[1] = { head: `<</Type/Pages/Kids[3 0 R]/Count 1>>` };
   objs[2] = { head: `<</Type/Page/Parent 2 0 R/MediaBox[0 0 ${phbN(PW)} ${phbN(PH)}]/Resources<</XObject<</Im0 5 0 R>>${F}/Properties<</L1 8 0 R>>>>/Contents 4 0 R${annots.length ? `/Annots[${annots.map(n => n + " 0 R").join(" ")}]` : ""}>>` };
   objs[3] = { head: `<<`, stream: ct };
@@ -259,13 +346,13 @@ async function phbPdf(st) {
   objs[6] = { head: `<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Bold/Encoding/WinAnsiEncoding>>` };
   objs[7] = { head: `<</Type/OCG/Name(Datumskylt)>>` };
   objs[8] = { head: `<</Type/OCG/Name(Bubblor)>>` };
-  objs[9] = { head: `<<>>` };
+  objs[9] = { head: `<</Type/OCG/Name(Lista och texter)>>` };
   const parts = [], enc = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; };
   let len = 0; const push = u => { parts.push(u); len += u.length; }, offs = [];
   push(enc("%PDF-1.7\n%\xE2\xE3\xCF\xD3\n"));
   objs.forEach((o, i) => {
     offs[i] = len; push(enc(`${i + 1} 0 obj\n`));
-    if (o.stream !== undefined) { const body = typeof o.stream === "string" ? enc(o.stream) : o.stream; push(enc(`${o.head.replace(/>>$/, "")}${o.head.endsWith(">>") ? "" : ""}/Length ${body.length}>>\nstream\n`)); push(body); push(enc("\nendstream")); }
+    if (o.stream !== undefined) { const body = typeof o.stream === "string" ? enc(o.stream) : o.stream; push(enc(`${o.head.replace(/>>$/, "")}/Length ${body.length}>>\nstream\n`)); push(body); push(enc("\nendstream")); }
     else push(enc(o.head));
     push(enc("\nendobj\n"));
   });
@@ -274,7 +361,7 @@ async function phbPdf(st) {
   return new Blob(parts, { type: "application/pdf" });
 }
 
-/* ---- Knappen och förhandsvisningen --------------------------------------------------------------------- */
+/* ---- Knappen, förhandsvisningen och redigeringen ----------------------------------------------------------------- */
 let phbBusy = false, phbLast = null;
 async function phbShoot() {
   if (phbBusy) return;
@@ -294,43 +381,112 @@ async function phbShoot() {
   } catch (e) { console.warn("Foto", e); modelToast("Kunde inte ta foto: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
   finally { phbBusy = false; if (btn) btn.disabled = false; if (hadBubbles) bubblesSchedule(true); }
 }
+const phbEsc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 function phbPreview(st) {
   const old = document.getElementById("phbDlg"); if (old) old.remove();
   const d = document.createElement("div"); d.id = "phbDlg"; d.className = "phb-wrap";
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").replace(/^(\d{8})(\d{4})$/, "$1-$2");
-  d.innerHTML = `<div class="phb-box"><div class="phb-img"><canvas id="phbCv" width="${st.W}" height="${st.H}"></canvas></div>
+  d.innerHTML = `<div class="phb-box"><div class="phb-main"><div class="phb-img"><canvas id="phbCv" width="${st.W}" height="${st.H}"></canvas></div><aside class="phb-side" id="phbSide"></aside></div>
     <div class="phb-bar"><span class="phb-info" id="phbInfo"></span>
     <label class="phb-sel">Visa <select id="phbScope"><option value="auto">Markerade, annars pågående</option><option value="marked">Bara markerade</option><option value="active">Pågående</option><option value="all">Alla i schemat</option></select></label>
-    <button type="button" id="phbUndo" class="hidden" title="Ta tillbaka den senast borttagna bubblan (Ctrl+Z)">↶ Ångra borttagning</button><button type="button" id="phbPdf" class="primary" title="Foto + bubblor som flyttbara stämplar och egna lager – flytta dem i PDF-läsaren">Spara PDF</button><button type="button" id="phbPng">Spara PNG</button><button type="button" id="phbClose">Stäng</button></div></div>`;
+    <button type="button" id="phbUndo" class="hidden" title="Ta tillbaka den senast borttagna bubblan (Ctrl+Z)">↶ Ångra borttagning</button><button type="button" id="phbPdf" class="primary" title="Foto + bubblor, lista och texter som flyttbara stämplar i egna lager – flytta dem i PDF-läsaren">Spara PDF</button><button type="button" id="phbPng">Spara PNG</button><button type="button" id="phbClose">Stäng</button></div></div>`;
   (document.fullscreenElement || document.body).appendChild(d);
-  const cv = d.querySelector("#phbCv"), ctx = cv.getContext("2d"), info = d.querySelector("#phbInfo"); let cur = st;
-  cv._state = () => cur; let removed = [];
-  const undoBtn = d.querySelector("#phbUndo");
-  const draw = () => { cur.ui = cur.ui !== false; phbRender(ctx, cur); undoBtn.classList.toggle("hidden", !removed.length); info.textContent = `${cur.cards.length} bubbl${cur.cards.length === 1 ? "a" : "or"} – dra för att flytta, ✕ (eller Delete / högerklick) för att ta bort${removed.length ? ` · ${removed.length} ${removed.length === 1 ? "borttagen" : "borttagna"}` : ""}${cur.note ? ". " + cur.note : ""}`; };
-  const removeCard = c => { const i = cur.cards.indexOf(c); if (i < 0) return; cur.cards.splice(i, 1); removed.push({ c, i }); if (cur.sel === c) cur.sel = null; if (cur.hover === c) cur.hover = null; draw(); };
-  const undoRemove = () => { const r = removed.pop(); if (!r) return; cur.cards.splice(Math.min(r.i, cur.cards.length), 0, r.c); cur.sel = r.c; draw(); };
-  const hit = p => [...cur.cards].reverse().find(c => p.x >= c.x && p.x <= c.x + c.W && p.y >= c.y && p.y <= c.y + c.h);
-  const onClose = (p, c) => { const b = phbCloseBox(c, cur.k); return Math.hypot(p.x - b.x, p.y - b.y) <= b.r * 1.15; };
-  draw();
-  // Dra bubblorna direkt i bilden (linjen följer med, punkten sitter kvar på objektet).
-  let drag = null; const pos = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * cur.W / r.width, y: (e.clientY - r.top) * cur.H / r.height }; };
-  cv.addEventListener("pointerdown", e => { if (e.button === 2) return; const p = pos(e), hv = cur.hover && cur.cards.includes(cur.hover) ? cur.hover : null; if (hv && onClose(p, hv)) { removeCard(hv); e.preventDefault(); return; }
-    const c = hit(p); if (!c) { cur.sel = null; draw(); return; } cur.sel = c; drag = { c, dx: p.x - c.x, dy: p.y - c.y }; cur.cards.splice(cur.cards.indexOf(c), 1); cur.cards.push(c); cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; draw(); e.preventDefault(); });
-  cv.addEventListener("pointermove", e => { const p = pos(e); if (!drag) { const c = hit(p); if (c !== cur.hover) { cur.hover = c || null; draw(); } cv.style.cursor = c ? (onClose(p, c) ? "pointer" : "grab") : ""; return; } drag.c.x = Math.max(0, Math.min(cur.W - drag.c.W, p.x - drag.dx)); drag.c.y = Math.max(0, Math.min(cur.H - drag.c.h, p.y - drag.dy)); draw(); });
+  const cv = d.querySelector("#phbCv"), ctx = cv.getContext("2d"), info = d.querySelector("#phbInfo"), side = d.querySelector("#phbSide"), undoBtn = d.querySelector("#phbUndo");
+  let cur = st, removed = [], drag = null; cv._state = () => cur;
+  const draw = () => {
+    cur.ui = cur.ui !== false; phbRender(ctx, cur); undoBtn.classList.toggle("hidden", !removed.length);
+    info.textContent = `${cur.cards.length} bubbl${cur.cards.length === 1 ? "a" : "or"} – dra för att flytta, klicka för att redigera, ✕ / Delete / högerklick tar bort${removed.length ? ` · ${removed.length} ${removed.length === 1 ? "borttagen" : "borttagna"}` : ""}${cur.note ? ". " + cur.note : ""}`;
+  };
+  const remeasure = () => { phbRemeasure(cur); draw(); };
+  const removeObj = it => {
+    if (!it) return;
+    if (it.type === "card") { const i = cur.cards.indexOf(it.o); if (i < 0) return; cur.cards.splice(i, 1); removed.push({ c: it.o, i }); }
+    else if (it.type === "text") cur.texts.splice(cur.texts.indexOf(it.o), 1);
+    else if (it.type === "list") cur.list.on = false; else if (it.type === "date") cur.dateObj.on = false;
+    if (cur.sel === it.o) cur.sel = null; if (cur.hover === it.o) cur.hover = null; draw(); renderSide();
+  };
+  const undoRemove = () => { const r = removed.pop(); if (!r) return; cur.cards.splice(Math.min(r.i, cur.cards.length), 0, r.c); cur.sel = r.c; draw(); renderSide(); };
+  const selItem = () => phbObjects(cur).find(i => i.o === cur.sel);
+  /* Sidopanelen: allmänt överst, sedan det som är valt. */
+  const rng = (id, lbl, v, min, max, step, unit = "%") => `<label class="phb-f"><span>${lbl} <b id="${id}V">${v}${unit}</b></span><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${v}"></label>`;
+  const chk = (id, lbl, on) => `<label class="phb-c"><input type="checkbox" id="${id}"${on ? " checked" : ""}> ${lbl}</label>`;
+  function renderSide() {
+    const g = cur.g, L = cur.list, D = cur.dateObj, it = selItem(), o = it && it.o;
+    let h = `<div class="phb-sec"><div class="phb-h">Allmänt</div>${rng("phbGScale", "Bubblornas skala", Math.round(g.bscale * 100), 40, 250, 5)}${chk("phbLines", "Linjer till objekten", g.lines)}${g.lines ? rng("phbLineW", "Linjetjocklek", Math.round(g.lineW * 100), 40, 300, 10) + rng("phbDot", "Punktstorlek", Math.round(g.dot * 100), 40, 300, 10) : ""}
+      <button type="button" id="phbArrange" title="Lägg bubblorna ovanför sina punkter igen, utan överlapp">Ordna om bubblorna</button></div>
+      <div class="phb-sec"><div class="phb-h">Pågår just nu</div>${chk("phbListOn", `Visa listan (${L.items.length} aktiviteter)`, L.on)}${L.on ? `<label class="phb-f"><span>Rubrik</span><input type="text" id="phbListTitle" value="${phbEsc(L.title)}" maxlength="60"></label><label class="phb-f"><span>Högst antal rader</span><input type="number" id="phbListMax" min="1" max="60" value="${L.max}"></label>${rng("phbListScale", "Skala", Math.round(L.scale * 100), 40, 250, 5)}` : ""}</div>
+      <div class="phb-sec"><div class="phb-h">Datumskylt</div>${chk("phbDateOn", "Visa datumskylten", D.on)}${D.on ? `<label class="phb-f"><span>Datum</span><input type="date" id="phbDateVal" value="${D.iso}"></label>${rng("phbDateScale", "Skala", Math.round(D.scale * 100), 40, 250, 5)}` : ""}</div>
+      <div class="phb-sec"><button type="button" id="phbAddText">＋ Text</button></div>`;
+    if (it && it.type === "card") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald bubbla</div><label class="phb-f"><span>Rubrik <small>(tomt = aktivitetens namn)</small></span><textarea id="phbCText" rows="3">${phbEsc(o.text != null ? o.text : "")}</textarea></label>${rng("phbCScale", "Bubblans skala", Math.round(o.scale * 100), 40, 300, 5)}<div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbCCol" value="${phbCol(o)}"></label><button type="button" id="phbCAuto" title="Färg efter status"${o.colOver ? "" : " disabled"}>Auto</button></div>${chk("phbCDate", "Datum", o.show.date)}${chk("phbCArea", "Område", o.show.area)}${chk("phbCProg", "Framdrift", o.show.prog)}<button type="button" id="phbCDel" class="danger">Ta bort bubblan</button></div>`;
+    else if (it && it.type === "text") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald text</div><label class="phb-f"><span>Text</span><textarea id="phbTText" rows="3">${phbEsc(o.text)}</textarea></label>${rng("phbTSize", "Storlek", o.size, 8, 80, 1, " px")}<div class="phb-row"><label class="phb-f"><span>Textfärg</span><input type="color" id="phbTCol" value="${o.col}"></label>${chk("phbTBold", "Fet", o.bold)}</div><div class="phb-row">${chk("phbTBg", "Bakgrund", o.bg)}${o.bg ? `<input type="color" id="phbTBgCol" value="${o.bgCol}">` : ""}</div><button type="button" id="phbTDel" class="danger">Ta bort texten</button></div>`;
+    side.innerHTML = h; bindSide();
+  }
+  function bindSide() {
+    const q = id => side.querySelector("#" + id), on = (id, ev, fn) => { const e = q(id); if (e) e.addEventListener(ev, fn); };
+    const range = (id, apply, pct = true) => on(id, "input", e => { const v = Number(e.target.value); const lab = q(id + "V"); if (lab) lab.textContent = v + (pct ? "%" : " px"); apply(pct ? v / 100 : v); });
+    range("phbGScale", v => { cur.g.bscale = v; remeasure(); }); range("phbLineW", v => { cur.g.lineW = v; draw(); }); range("phbDot", v => { cur.g.dot = v; draw(); });
+    on("phbLines", "change", e => { cur.g.lines = e.target.checked; draw(); renderSide(); });
+    on("phbArrange", "click", () => { phbLayout(cur.cards, cur.W, cur.H, cur.k, cur.placed); draw(); });
+    on("phbListOn", "change", e => { cur.list.on = e.target.checked; if (cur.list.on) cur.sel = cur.list; draw(); renderSide(); });
+    on("phbListTitle", "input", e => { cur.list.title = e.target.value; draw(); });
+    on("phbListMax", "input", e => { cur.list.max = Math.max(1, Math.min(60, Number(e.target.value) || 1)); remeasure(); });
+    range("phbListScale", v => { cur.list.scale = v; remeasure(); });
+    on("phbDateOn", "change", e => { cur.dateObj.on = e.target.checked; draw(); renderSide(); });
+    on("phbDateVal", "input", e => { if (e.target.value) { cur.dateObj.iso = e.target.value; remeasure(); } });
+    range("phbDateScale", v => { cur.dateObj.scale = v; remeasure(); });
+    on("phbAddText", "click", () => { const t = { id: cur.nextId++, x: cur.W * 0.35, y: cur.H * 0.08, text: "Text", size: 22, col: "#111827", bg: true, bgCol: "#ffffff", bold: true }; phbTextMeasure(t, cur); cur.texts.push(t); cur.sel = t; draw(); renderSide(); const ta = q("phbTText"); if (ta) { ta.focus(); ta.select(); } });
+    const c = cur.sel && cur.cards.includes(cur.sel) ? cur.sel : null, t = cur.sel && cur.texts.includes(cur.sel) ? cur.sel : null;
+    if (c) {
+      on("phbCText", "input", e => { c.text = e.target.value; remeasure(); });
+      range("phbCScale", v => { c.scale = v; remeasure(); });
+      on("phbCCol", "input", e => { c.colOver = e.target.value; const a = q("phbCAuto"); if (a) a.disabled = false; draw(); });
+      on("phbCAuto", "click", () => { c.colOver = null; draw(); renderSide(); });
+      on("phbCDate", "change", e => { c.show.date = e.target.checked; remeasure(); }); on("phbCArea", "change", e => { c.show.area = e.target.checked; remeasure(); }); on("phbCProg", "change", e => { c.show.prog = e.target.checked; remeasure(); });
+      on("phbCDel", "click", () => removeObj(selItem()));
+    }
+    if (t) {
+      on("phbTText", "input", e => { t.text = e.target.value; remeasure(); });
+      range("phbTSize", v => { t.size = v; remeasure(); }, false);
+      on("phbTCol", "input", e => { t.col = e.target.value; draw(); }); on("phbTBold", "change", e => { t.bold = e.target.checked; remeasure(); });
+      on("phbTBg", "change", e => { t.bg = e.target.checked; remeasure(); renderSide(); }); on("phbTBgCol", "input", e => { t.bgCol = e.target.value; draw(); });
+      on("phbTDel", "click", () => removeObj(selItem()));
+    }
+  }
+  const pos = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * cur.W / r.width, y: (e.clientY - r.top) * cur.H / r.height }; };
+  const hit = p => [...phbObjects(cur)].reverse().find(i => { const b = phbBox(i); return p.x >= b.x && p.x <= b.x + b.W && p.y >= b.y && p.y <= b.y + b.h; });
+  const onClose = (p, it) => { const b = phbCloseBox(it, cur.k); return Math.hypot(p.x - b.x, p.y - b.y) <= b.r * 1.15; };
+  cv.addEventListener("pointerdown", e => {
+    if (e.button === 2) return; const p = pos(e), hv = phbObjects(cur).find(i => i.o === cur.hover);
+    if (hv && onClose(p, hv)) { removeObj(hv); e.preventDefault(); return; }
+    const it = hit(p); if (!it) { if (cur.sel) { cur.sel = null; draw(); renderSide(); } return; }
+    const was = cur.sel; cur.sel = it.o; drag = { o: it.o, dx: p.x - it.o.x, dy: p.y - it.o.y };
+    if (it.type === "card") { cur.cards.splice(cur.cards.indexOf(it.o), 1); cur.cards.push(it.o); }
+    cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; draw(); if (was !== it.o) renderSide(); e.preventDefault();
+  });
+  cv.addEventListener("pointermove", e => {
+    const p = pos(e);
+    if (!drag) { const it = hit(p), o = it ? it.o : null; if (o !== cur.hover) { cur.hover = o; draw(); } cv.style.cursor = it ? (onClose(p, it) ? "pointer" : "grab") : ""; return; }
+    drag.o.x = Math.max(0, Math.min(cur.W - drag.o.W, p.x - drag.dx)); drag.o.y = Math.max(0, Math.min(cur.H - drag.o.h, p.y - drag.dy)); draw();
+  });
   cv.addEventListener("pointerleave", () => { if (!drag && cur.hover) { cur.hover = null; draw(); } });
-  cv.addEventListener("contextmenu", e => { e.preventDefault(); const c = hit(pos(e)); if (c) removeCard(c); });
-  const keys = e => { if (!document.getElementById("phbDlg")) { document.removeEventListener("keydown", keys, true); return; }
-    if ((e.key === "Delete" || e.key === "Backspace") && cur.sel && !/INPUT|SELECT|TEXTAREA/.test((e.target || {}).tagName || "")) { e.preventDefault(); removeCard(cur.sel); }
-    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undoRemove(); } else if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const up = () => { drag = null; cv.style.cursor = ""; }; cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+  cv.addEventListener("contextmenu", e => { e.preventDefault(); removeObj(hit(pos(e))); });
+  const keys = e => {
+    if (!document.getElementById("phbDlg")) { document.removeEventListener("keydown", keys, true); return; }
+    const typing = /INPUT|SELECT|TEXTAREA/.test((e.target || {}).tagName || "");
+    if ((e.key === "Delete" || e.key === "Backspace") && cur.sel && !typing) { e.preventDefault(); removeObj(selItem()); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); undoRemove(); }
+    else if (e.key === "Escape") { e.stopPropagation(); close(); }
+  };
   document.addEventListener("keydown", keys, true);
   undoBtn.onclick = undoRemove;
-  const up = () => { drag = null; cv.style.cursor = ""; }; cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
   const close = () => { d.remove(); document.removeEventListener("keydown", keys, true); };
   d.querySelector("#phbClose").onclick = close; d.addEventListener("pointerdown", e => { if (e.target === d) close(); });
-  d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); cur = n; removed = []; draw(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
+  d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); cur = n; removed = []; draw(); renderSide(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
   const dl = (blob, ext) => { const url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = `4D-foto-${stamp}.${ext}`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); };
   d.querySelector("#phbPng").onclick = () => { cur.ui = false; phbRender(ctx, cur); cv.toBlob(b => { cur.ui = true; draw(); dl(b, "png"); }, "image/png"); };
   d.querySelector("#phbPdf").onclick = async () => { try { dl(await phbPdf(cur), "pdf"); } catch (err) { console.warn("PDF", err); modelToast("Kunde inte skapa PDF: " + ((err && err.message) || err)); } };
+  draw(); renderSide();
 }
 function initPhotoBubbles() { const b = document.getElementById("ganttPhotoBtn"); if (b) b.onclick = phbShoot; }
 document.addEventListener("DOMContentLoaded", initPhotoBubbles);

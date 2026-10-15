@@ -2500,3 +2500,23 @@ section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 
 .gv-t .hint { margin: 0; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gv-del { color: #64748b; }
 @media print { .gv-pop { display: none; } }
+/* Foto med bubblor: redigeringspanel */
+.phb-main { display: flex; min-height: 0; }
+.phb-side { width: 270px; flex: 0 0 270px; max-height: 78vh; overflow-y: auto; border-left: 1px solid #e2e8f0; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; font-size: 12px; background: #fafbfc; }
+.phb-sec { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid #e8ecf1; }
+.phb-sec:last-child { border-bottom: 0; }
+.phb-sel-sec { background: #eef4ff; border: 1px solid #c7d8fb; border-radius: 8px; padding: 8px; }
+.phb-h { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: #334155; }
+.phb-f { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.phb-f span { color: #475569; display: flex; justify-content: space-between; gap: 6px; }
+.phb-f small { color: #94a3b8; font-weight: 400; }
+.phb-f input[type="text"], .phb-f input[type="number"], .phb-f input[type="date"], .phb-f textarea { font: inherit; padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px; width: 100%; resize: vertical; }
+.phb-f input[type="range"] { width: 100%; }
+.phb-f input[type="color"] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; }
+.phb-c { display: flex; align-items: center; gap: 5px; margin: 0; }
+.phb-row { display: flex; align-items: center; gap: 10px; }
+.phb-side button { font: inherit; font-size: 11px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
+.phb-side button.danger { color: #b42318; border-color: #f3c1bd; }
+.phb-side button:disabled { opacity: .45; cursor: default; }
+.phb-img canvas { max-height: 78vh; }
+@media (max-width: 800px) { .phb-main { flex-direction: column; } .phb-side { width: auto; flex: none; max-height: 30vh; border-left: 0; border-top: 1px solid #e2e8f0; } }
