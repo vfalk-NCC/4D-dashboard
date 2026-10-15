@@ -325,6 +325,15 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('#ganttMultiBar [data-mb="only"]'); await page.waitForTimeout(900);
   const only = await page.evaluate(() => ({ mode: ganttMode, last: window.__iso.slice(-1)[0] }));
   if (only.mode !== 'isolate' || only.last.flatMap(m => m.entityIds).sort().join() !== 'G5,G7') fail('Bara dessa: ' + JSON.stringify(only));
+  // Ctrl-markera flera och sätt entreprenör på alla på en gång.
+  await page.evaluate(() => { ganttEditable = true; });
+  await page.click('#ganttMultiBar [data-mb="contractor"]'); await page.waitForSelector('#ganttMultiCPop #gmcInput');
+  await page.fill('#gmcInput', 'Testbolaget AB'); await page.click('#gmcOk'); await page.waitForTimeout(1200);
+  const mc = await page.evaluate(() => ['G5', 'G7'].map(o => (items.find(x => x.objectId === o) || {}).contractor));
+  const mcFile = get('plan_items.json').filter(r => ['G5', 'G7'].includes(r.object_id)).map(r => r.contractor);
+  if (mc.join() !== 'Testbolaget AB,Testbolaget AB' || mcFile.some(c => c !== 'Testbolaget AB') || mcFile.length < 2) fail('Entreprenör på flera markerade: ' + JSON.stringify({ mc, mcFile }));
+  console.log('OK: Ctrl-markera flera i Gantten och sätt entreprenör på alla samtidigt');
+  await page.evaluate(() => { ganttEditable = false; });
   await page.keyboard.press('Escape'); await page.waitForTimeout(400);
   if (await page.$('#ganttMultiBar') || (await page.locator('.gantt-multisel').count())) fail('Esc rensar markeringen');
   await page.click('[data-gmode="off"]'); await page.waitForTimeout(300);

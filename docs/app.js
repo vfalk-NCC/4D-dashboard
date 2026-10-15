@@ -3570,12 +3570,38 @@ function applyGanttMultiSel() {
   if (!ganttMultiSel.size) { if (bar) bar.remove(); return; }
   if (!bar) {
     bar = document.createElement("div"); bar.id = "ganttMultiBar"; bar.className = "gantt-multibar";
-    bar.innerHTML = `<b id="ganttMultiN"></b><button type="button" data-mb="show" title="Markera och zooma i 3D">Visa i 3D</button><button type="button" data-mb="only" title="Släck allt utom de markerade">Bara dessa</button><button type="button" data-mb="clear" title="Rensa (Esc)">✕</button>`;
+    bar.innerHTML = `<b id="ganttMultiN"></b><button type="button" data-mb="show" title="Markera och zooma i 3D">Visa i 3D</button><button type="button" data-mb="only" title="Släck allt utom de markerade">Bara dessa</button><button type="button" data-mb="contractor" title="Sätt samma entreprenör på alla markerade (kräver Redigerbar)">Entreprenör…</button><button type="button" data-mb="clear" title="Rensa (Esc)">✕</button>`;
     (document.fullscreenElement || document.body).appendChild(bar);
     bar.onclick = e => { const b = e.target.closest("[data-mb]"); if (!b) return; const a = b.dataset.mb;
-      if (a === "clear") clearGanttMulti(); else if (a === "show") pushGanttMulti(); else if (a === "only") isolateGanttMulti(); };
+      if (a === "clear") clearGanttMulti(); else if (a === "show") pushGanttMulti(); else if (a === "only") isolateGanttMulti(); else if (a === "contractor") ganttMultiContractorPop(b); };
   }
   document.getElementById("ganttMultiN").textContent = `${ganttMultiSel.size} markerade`;
+}
+/* Sätt entreprenör på alla markerade (Ctrl-klick) på en gång: en liten ruta med val bland befintliga entreprenörer (eller skriv ett nytt). Ångra finns. */
+function ganttMultiContractorPop(btn) {
+  const old = document.getElementById("ganttMultiCPop"); if (old) { old.remove(); return; }
+  if (!ganttEditable) { modelToast("Slå på Redigerbar för att ändra entreprenör"); return; }
+  const ms = ganttMultiMembers(); if (!ms.length) return;
+  const cur = [...new Set(ms.map(m => m.contractor || ""))], names = uniqueValues(it => it.contractor);
+  const pop = document.createElement("div"); pop.id = "ganttMultiCPop"; pop.className = "gantt-time-menu"; pop.style.cssText = "position:fixed;z-index:80;min-width:280px;display:flex;flex-direction:column;gap:8px";
+  pop.innerHTML = `<div class="gtm-title">Entreprenör på ${ganttMultiSel.size} markerade (${ms.length} objekt)</div>
+    <input type="text" id="gmcInput" list="gmcList" placeholder="Välj eller skriv entreprenör…" autocomplete="off" value="${cur.length === 1 ? escapeHtml(cur[0]) : ""}" /><datalist id="gmcList">${names.map(n => `<option value="${escapeHtml(n)}">`).join("")}</datalist>
+    <div class="hint">${cur.length === 1 && cur[0] ? `Nu: ${escapeHtml(cur[0])}` : cur.length > 1 ? "De har olika entreprenörer nu – de får alla samma." : "Ingen entreprenör satt nu."} Tomt fält = ta bort entreprenören.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" id="gmcCancel">Avbryt</button><button type="button" id="gmcOk" class="primary">Sätt på alla</button></div>`;
+  document.body.appendChild(pop);
+  const r = btn.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 300)) + "px"; pop.style.top = Math.max(8, r.top - pop.offsetHeight - 8) + "px";
+  const inp = pop.querySelector("#gmcInput"); inp.focus(); inp.select();
+  const close = () => { pop.remove(); document.removeEventListener("pointerdown", off, true); };
+  const off = ev => { if (!pop.contains(ev.target) && !btn.contains(ev.target)) close(); };
+  setTimeout(() => document.addEventListener("pointerdown", off, true), 0);
+  const go = async () => {
+    const v = inp.value.trim(); close();
+    const plan = emptyPlan(); ms.forEach(m => { if ((m.contractor || "") !== v) plan.fields.set(m.id, { contractor: v || null }); });
+    if (!planSize(plan)) { setScheduleStatus("Inga ändringar"); return; }
+    await applySchedulePlan(plan, `Entreprenör${v ? " " + tipShort(v, 30) : " borttagen"} på ${ms.length} objekt`);
+  };
+  pop.querySelector("#gmcOk").onclick = go; pop.querySelector("#gmcCancel").onclick = close;
+  inp.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") go(); else if (e.key === "Escape") close(); };
 }
 function clearGanttMulti() { ganttMultiSel.clear(); const had = ganttIsoOverride; ganttIsoOverride = null; applyGanttMultiSel(); if (had && ganttMode === "isolate") scheduleGanttIsolate(); }
 function pushGanttMulti() { const ms = ganttMultiMembers(); if (ms.length) selectActivityInModel({ members: ms }); }
