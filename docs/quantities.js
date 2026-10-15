@@ -4,7 +4,7 @@
    Inget sparas någonstans; resultatet kan exporteras som CSV (öppnas i Excel). */
 
 const QTY_KEY = "4ddash-qty";
-const qty = { cfg: { scope: "gantt", phase: "klar", date: "", kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
+const qty = { cfg: { scope: "gantt", phase: "klar", date: "", from: "", kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
 try { Object.assign(qty.cfg, JSON.parse(localStorage.getItem(QTY_KEY) || "{}")); } catch (e) { /* standard */ }
 /* Mängdslag: Betong (volym m³), Form (yta m²), Kantform/längd (m), Armering/vikt (kg). Varje slag minns sin egenskap. */
 const QTY_KINDS = { vol: ["Betong – volym (m³)", "m³", /calculated\s*geometry\s*values\s*\/\s*volume$/i, /volume|volym/i], form: ["Form – yta (m²)", "m²", /calculated\s*geometry\s*values\s*\/\s*(total\s*)?surface\s*area$/i, /surface|side\s*area|form|area|yta/i], len: ["Längd (m)", "m", /calculated\s*geometry\s*values\s*\/\s*length$/i, /length|längd/i], kg: ["Armering/vikt (kg)", "kg", /calculated\s*geometry\s*values\s*\/\s*weight$/i, /weight|vikt|mass/i] };
@@ -26,8 +26,15 @@ function qtyFlat(obj) {
 }
 /* Klar vid valt datum enligt Ganttens regel (räknas vid summeringen, så datumet kan ändras utan att läsa om). */
 const qtyAt = () => qty.cfg.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO();
-const qtyDone = o => !o.item || !o.item.startDate && !o.item.endDate ? true : ganttPhaseAt(o.item, qtyAt()) === "klar";
-const qtyActive = o => qty.cfg.scope === "sel" || qty.cfg.phase !== "klar" || qtyDone(o);
+/* Läge "Klara under period" (Victor 2026-10-15): det som blev klart mellan Från och Till – klart vid Till men inte redan klart dagen före Från. */
+const qtyFrom = () => qty.cfg.phase === "period" ? (qty.cfg.from || addDaysIso(qtyAt(), -6)) : "";
+const qtyDone = o => {
+  const hasDates = o.item && (o.item.startDate || o.item.endDate), f = qtyFrom();
+  if (!hasDates) return !f; // utan datum räknas objektet som klart (som förut), men inte som producerat i en period
+  if (ganttPhaseAt(o.item, qtyAt()) !== "klar") return false;
+  return !f || ganttPhaseAt(o.item, addDaysIso(f, -1)) !== "klar";
+};
+const qtyActive = o => qty.cfg.scope === "sel" || (qty.cfg.phase !== "klar" && qty.cfg.phase !== "period") || qtyDone(o);
 function qtyObjects() {
   const base = qty.cfg.scope === "all" ? items : (typeof ganttShownItems !== "undefined" ? ganttShownItems : items).flatMap(it => it.members || [it]);
   const seen = new Set(), out = [];
@@ -146,8 +153,9 @@ function qtyRender0() {
   host.innerHTML = `<div class="qty-hint">Tar fram mängder ur modellen för de objekt som <b>Ganttens regel</b> räknar som klara (eller alla), så att du kan jämföra mot mängdförteckningen. Mängderna läses ur TC:s egna egenskaper, t.ex. <i>Calculated Geometry Values → Volume</i>. Inget ändras eller sparas.</div>
     <div class="qty-row">
       <label>Urval <select id="qtyScope"><option value="gantt"${C.scope === "gantt" ? " selected" : ""}>Det som visas i Gantt-schemat</option><option value="all"${C.scope === "all" ? " selected" : ""}>Hela planen</option><option value="sel"${C.scope === "sel" ? " selected" : ""}>Markerat i TC</option></select></label>
-      ${C.scope !== "sel" ? `<label>Läge <select id="qtyPhase"><option value="klar"${C.phase === "klar" ? " selected" : ""}>Klara</option><option value="all"${C.phase === "all" ? " selected" : ""}>Alla (oavsett läge)</option></select></label>
-      ${C.phase === "klar" ? `<label title="Klara enligt Ganttens regel vid det här datumet">Datum <input type="date" id="qtyDate" value="${E(C.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO())}" /></label><button type="button" id="qtyToday" title="Använd dagens datum">Idag</button>` : ""}` : ""}
+      ${C.scope !== "sel" ? `<label>Läge <select id="qtyPhase"><option value="klar"${C.phase === "klar" ? " selected" : ""}>Klara</option><option value="period"${C.phase === "period" ? " selected" : ""}>Klara under period</option><option value="all"${C.phase === "all" ? " selected" : ""}>Alla (oavsett läge)</option></select></label>
+      ${C.phase === "period" ? `<label title="Första dagen i perioden – bara det som blev klart från och med den här dagen räknas">Från <input type="date" id="qtyFrom" value="${E(C.from || addDaysIso(qtyAt(), -6))}" /></label>` : ""}
+      ${C.phase === "klar" || C.phase === "period" ? `<label title="${C.phase === "period" ? "Sista dagen i perioden" : "Klara enligt Ganttens regel vid det här datumet"}">${C.phase === "period" ? "Till" : "Datum"} <input type="date" id="qtyDate" value="${E(C.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO())}" /></label><button type="button" id="qtyToday" title="Använd dagens datum">Idag</button>` : ""}` : ""}
       <button type="button" id="qtyRead" class="primary">Läs mängder</button><span id="qtyMsg" class="hint"></span></div>
     ${hasData ? `<div class="qty-row">
       <label title="Vad som ska summeras: betong (volym), form (yta), längd eller vikt">Mängdslag <select id="qtyKind">${Object.entries(QTY_KINDS).map(([k, v]) => `<option value="${k}"${qtyKind() === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select></label>
@@ -157,13 +165,15 @@ function qtyRender0() {
       <label title="Visa bara objekt där någon egenskap innehåller texten (t.ex. Concrete)">Innehåller <input type="text" id="qtyFilter" value="${E(C.filter)}" placeholder="t.ex. Concrete" /></label>
       <label title="Enheten på mängden i modellen. Auto jämför volymen med objektens mått.">Enhet <select id="qtyUnit">${[["auto", "Auto"], ["1", "som i modellen"], ["1000", "÷ 1 000"], ["1000000", "÷ 1 000 000 (mm² → m²)"], ["1000000000", "÷ 1 000 000 000 (mm³ → m³)"]].map(([v, t]) => `<option value="${v}"${String(C.unit) === v ? " selected" : ""}>${t}</option>`).join("")}</select></label></div>
       <div class="hint">${E(qty.unitNote || "")}</div>
+      ${C.phase === "period" ? `<div class="hint"><b>Klart under perioden ${E(qtyFrom())} – ${E(qtyAt())}</b> (klart senast ${E(qtyAt())}, men inte redan klart före ${E(qtyFrom())}).</div>` : ""}
       <div id="qtyTable"></div>
       <div class="qty-row"><button type="button" id="qtyCsv">Exportera CSV (Excel)</button><button type="button" id="qtyAllSel" title="Markera alla objekt i tabellen i TC">Markera alla i TC</button></div>
       <details class="qty-props"><summary>Egenskaper som hittades (${qty.keys.size})</summary><div class="qty-proplist">${[...qty.keys].map(([k, e]) => `<div><b>${E(k)}</b> <span class="hint">${e.n} obj · ex: ${E(String(e.sample).slice(0, 60))}</span></div>`).join("")}</div></details>` : ""}`;
   const q = s => host.querySelector(s), put = (k, v) => { qty.cfg[k] = v; qtySave(); };
   q("#qtyScope").onchange = e => { put("scope", e.target.value); qtyRender(); };
   if (q("#qtyPhase")) q("#qtyPhase").onchange = e => { put("phase", e.target.value); qtyRender(); };
-  if (q("#qtyDate")) q("#qtyDate").onchange = e => put("date", e.target.value);
+  if (q("#qtyDate")) q("#qtyDate").onchange = e => { put("date", e.target.value); if (C.phase === "period") qtyRender(); };
+  if (q("#qtyFrom")) q("#qtyFrom").onchange = e => { put("from", e.target.value); qtyRender(); };
   if (q("#qtyToday")) q("#qtyToday").onclick = () => { put("date", todayISO()); qtyRender(); };
   q("#qtyRead").onclick = qtyRead;
   if (!hasData) return;

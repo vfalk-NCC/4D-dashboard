@@ -73,6 +73,13 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     // Alla oavsett läge.
     await page.evaluate(() => { qty.cfg.phase = 'all'; qtyRender(); });
     if (Math.abs((await page.evaluate(() => qtyPivot().total)) - 21.5) > 0.001) fail('Alla objekt: 21,5 m³');
+    // Klara under period: långt tillbaka = samma som Klara; Från efter Till = inget; UI:t visar Från/Till.
+    await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.date = ''; qty.cfg.from = ''; qtyRender(); });
+    const base = await page.evaluate(() => qtyPivot().total);
+    await page.selectOption('#qtyPhase', 'period'); await page.waitForSelector('#qtyFrom');
+    const per = await page.evaluate(() => { const r = {}; qty.cfg.from = '2000-01-01'; r.old = qtyPivot().total; qty.cfg.from = addDaysIso(qtyAt(), 1); r.after = qtyPivot().total; qty.cfg.from = ''; r.def = qtyFrom(); qtyRender(); r.hint = document.querySelector('#qtyBox').textContent.includes('Klart under perioden'); return r; });
+    if (Math.abs(per.old - base) > 0.001 || per.after !== 0 || !per.hint) fail('Klara under period: ' + JSON.stringify({ base, per }));
+    await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.from = ''; qtyRender(); });
     // Mängdförteckningen (Excel): läses utan bibliotek, kopplingar föreslås, jämförelse per post och byggnad.
     await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.filter = ''; qtyRender(); });
     await page.setInputFiles('#qmfFile', path.join(__dirname, 'fixtures', 'mf_test.xlsx'));
