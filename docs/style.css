@@ -1631,7 +1631,7 @@ section.panel.gantt-view-board #ganttLegend .gantt-legend-item.gl-bars-only { di
 /* ---------------------------------------------------------------------
    Gantt som post-it-tavla
    ------------------------------------------------------------------- */
-.gantt-board-chart { overflow: auto; max-height: 75vh; background: #f6f4ef; border-radius: 8px; border: 1px solid var(--border); }
+.gantt-board-chart { overflow: auto; max-height: max(75vh, 360px); background: #f6f4ef; border-radius: 8px; border: 1px solid var(--border); }
 .board { position: relative; }
 .board-head { display: flex; position: sticky; top: 0; z-index: 3; background: #f6f4ef; border-bottom: 1px solid #ddd6c8; }
 .board-corner { flex: 0 0 150px; position: sticky; left: 0; z-index: 4; background: #f6f4ef; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; padding: 8px 10px; }
