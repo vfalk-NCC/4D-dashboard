@@ -121,23 +121,58 @@ function qmfAutoMap() {
   areas.forEach(a => { if (qmf.map.areas[a] === undefined) { const b = qmfSuggestBuild(a, learned); if (b) qmf.map.areas[a] = b; } });
   qmfSave();
 }
+/* Vilket annat mängdslag (om något) en typ är flyttad till – t.ex. en sandwichvägg som listas i m³ men posten är i m². */
+const qmfKindOfUnit = u => (Object.entries(QTY_KINDS).find(([, v]) => v[1] === u) || [])[0] || "";
+function qmfMovedTo(t) { const k = (qmf.map.mv || {})[t]; return k && k !== qtyKind() && (qmf.map.types[k] || {})[t] ? k : ""; }
+/* Söklista (kombinationsruta) i stället för webbläsarens rullgardin: sök/filtrera och välj. groups: [{ label, items: [{ v, t, dis }] }] */
+function qmfCombo(se, groups, onPick) {
+  document.querySelectorAll(".qmf-combo").forEach(x => x.remove());
+  const pop = document.createElement("div"); pop.className = "qmf-combo";
+  pop.innerHTML = `<input type="search" class="qmf-combo-q" placeholder="Sök post…  (flera ord, t.ex. väggar betong)" autocomplete="off" /><div class="qmf-combo-list"></div>`;
+  (document.fullscreenElement || document.body).appendChild(pop);
+  const r = se.getBoundingClientRect(), W = Math.min(innerWidth - 16, Math.max(r.width, 560));
+  pop.style.width = W + "px"; pop.style.left = Math.max(8, Math.min(r.left, innerWidth - W - 8)) + "px";
+  const list = pop.querySelector(".qmf-combo-list"), qi = pop.querySelector(".qmf-combo-q"), E = qtyEsc;
+  let hi = 0;
+  const words = () => qi.value.toLowerCase().split(/\s+/).filter(Boolean);
+  const draw = () => {
+    const w = words(); let n = 0, html = "";
+    groups.forEach(g => { const it = g.items.filter(x => w.every(k => (x.t + " " + (g.label || "")).toLowerCase().includes(k))); if (!it.length) return; html += `<div class="qmf-combo-g">${E(g.label)}</div>` + it.map(x => `<div class="qmf-combo-i${x.dis ? " dis" : ""}${x.cur ? " cur" : ""}" data-i="${E(String(x.id))}">${E(x.t)}</div>`).join(""); n += it.length; });
+    list.innerHTML = html || `<div class="qmf-combo-g">Inga poster matchar</div>`;
+    const els = [...list.querySelectorAll(".qmf-combo-i:not(.dis)")]; hi = Math.min(hi, Math.max(0, els.length - 1)); if (els[hi]) els[hi].classList.add("hi");
+  };
+  const all = groups.flatMap(g => g.items), byId = new Map(all.map(x => [String(x.id), x]));
+  const close = () => { pop.remove(); document.removeEventListener("pointerdown", out, true); };
+  const out = e => { if (!pop.contains(e.target) && e.target !== se) close(); };
+  const pick = id => { const it = byId.get(String(id)); if (!it || it.dis) return; close(); onPick(it); };
+  qi.addEventListener("input", () => { hi = 0; draw(); });
+  qi.addEventListener("keydown", e => {
+    e.stopPropagation(); const els = [...list.querySelectorAll(".qmf-combo-i:not(.dis)")];
+    if (e.key === "Escape") close(); else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); if (els[hi]) els[hi].classList.remove("hi"); hi = Math.max(0, Math.min(els.length - 1, hi + (e.key === "ArrowDown" ? 1 : -1))); if (els[hi]) { els[hi].classList.add("hi"); els[hi].scrollIntoView({ block: "nearest" }); } }
+    else if (e.key === "Enter") { e.preventDefault(); if (els[hi]) pick(els[hi].dataset.i); }
+  });
+  list.addEventListener("click", e => { const x = e.target.closest(".qmf-combo-i"); if (x) pick(x.dataset.i); });
+  const below = innerHeight - r.bottom, up = r.top > below + 120; list.style.maxHeight = Math.max(160, Math.min(380, (up ? r.top : below) - 70)) + "px";
+  pop.style.top = up ? "" : r.bottom + 4 + "px"; pop.style.bottom = up ? innerHeight - r.top + 4 + "px" : "";
+  draw(); setTimeout(() => { document.addEventListener("pointerdown", out, true); qi.focus(); const c = list.querySelector(".cur"); if (c) c.scrollIntoView({ block: "center" }); }, 0);
+}
 /* ---- Jämförelsen ------------------------------------------------------------------------------------ */
 function qmfCompare() {
   const sel = qmf.build, rows = new Map(), all = typeof qty !== "undefined" ? qty.objs : [], f = qty.factor || 1;
   const sumB = (o, b) => (b ? o[b] || 0 : Object.values(o).reduce((s, v) => s + v, 0));
   qmfPosts().forEach(p => rows.set(p.key, { p, k: sumB(p.k, sel), pr: sumB(p.p, sel), klar: 0, tot: 0, n: 0, objs: [] }));
-  let unmapped = 0, unmappedVol = 0, otherBuild = 0;
+  let unmapped = 0, unmappedVol = 0, otherBuild = 0, movedOther = 0;
   all.forEach(o => {
     const v = qtyValue(o); if (v === null) return;
     if (!qtyPass(o)) return;
     const post = qmfTypes()[qmfTypeVal(o)], r = post && rows.get(post);
-    if (!r) { unmapped++; unmappedVol += v; return; }
+    if (!r) { if (!post && qmfMovedTo(qmfTypeVal(o))) { movedOther++; return; } unmapped++; unmappedVol += v; return; }
     const b = qmf.map.areas[qmfAreaOf(o)] || "";
     if (sel && b !== sel) { otherBuild++; return; }
     r.tot += v; r.n++; r.objs.push(o); if (qtyDone(o)) r.klar += v;
   });
   const list = [...rows.values()].filter(r => r.k || r.pr || r.tot);
-  return { list, unmapped, unmappedVol, otherBuild };
+  return { list, unmapped, unmappedVol, otherBuild, movedOther };
 }
 const qmfPct = (a, b) => (b ? Math.round(a / b * 100) : null);
 function qmfCsv(C) {
@@ -153,18 +188,18 @@ function qmfRender() {
   const types = new Map(), areas = new Map();
   qty.objs.forEach(o => { const t = qmfTypeVal(o), a = qmfAreaOf(o), v = qtyValue(o) ?? 0;
     const te = types.get(t) || { n: 0, v: 0, objs: [] }; te.n++; te.v += v; te.objs.push(o); types.set(t, te); const ae = areas.get(a) || { n: 0, v: 0, objs: [] }; ae.n++; ae.v += v; ae.objs.push(o); areas.set(a, ae); });
-  const otherPosts = qmf.posts.filter(p => p.unit !== QTY_KINDS[qtyKind()][1]);
-  const postOpts = sel => `<option value="">(ingen post)</option>${qmfPosts().map(p => `<option value="${E(p.key)}"${sel === p.key ? " selected" : ""}>${E(p.ref)} – ${E(p.label.slice(0, 100))} [${E(p.unit)}]</option>`).join("")}${otherPosts.length ? `<optgroup label="Poster med annan enhet än ${E(QTY_KINDS[qtyKind()][1])} – byt mängdslag för att välja dem">${otherPosts.map(p => `<option disabled>${E(p.ref)} – ${E(p.label.slice(0, 90))} [${E(p.unit)}]</option>`).join("")}</optgroup>` : ""}`;
+  const postOpts = (sel, t) => { const mv = !sel && t !== undefined ? qmfMovedTo(t) : ""; const mp = mv ? qmf.posts.find(p => p.key === qmf.map.types[mv][t]) : null;
+    return `<option value="">(ingen post)</option>${mp ? `<option value="__moved" selected>→ ${E(QTY_KINDS[mv][0])}: ${E(mp.ref)} – ${E(mp.label.slice(0, 80))} [${E(mp.unit)}]</option>` : ""}${qmf.posts.filter(p => p.key === sel).map(p => `<option value="${E(p.key)}" selected>${E(p.ref)} – ${E(p.label.slice(0, 100))} [${E(p.unit)}]</option>`).join("")}`; };
   const bOpts = sel => `<option value="">(ingen byggnad)</option>${qmf.builds.map(b => `<option value="${E(b)}"${sel === b ? " selected" : ""}>${E(b)}</option>`).join("")}`;
   const C = qmfCompare(), u = QTY_KINDS[qtyKind()][1];
   html += `<details class="qmf-map" open><summary>1. Vilken post är objekten? <span class="hint">(per ${E(qmf.typeKey || "egenskap")})</span></summary>
       <label class="qty-row">Typ-egenskap <select id="qmfTypeKey">${[...qty.keys.keys()].map(k => `<option value="${E(k)}"${qmf.typeKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>
-      <div class="hint qmf-flt-n"></div><table class="qty-table"><thead><tr><th>Typ i modellen<input type="search" class="qmf-flt" data-flt="ty" placeholder="Sök typ…" value="${E(qmf.f.ty)}" /></th><th class="num">Objekt</th><th class="num">${u}</th><th>Post i förteckningen<input type="search" class="qmf-flt" data-flt="po" placeholder="Sök post… (eller ”ingen”)" value="${E(qmf.f.po)}" /></th></tr></thead><tbody>${[...types].sort((a, b) => b[1].v - a[1].v).map(([t, e]) => `<tr class="qmf-click" data-tyrow="${E(t)}" title="Klicka för att markera de ${e.n} objekten i TC"><td>${E(t)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ty="${E(t)}">${postOpts(qmfTypes()[t])}</select></td></tr>`).join("")}</tbody></table></details>
+      <div class="hint qmf-flt-n"></div><table class="qty-table"><thead><tr><th>Typ i modellen<input type="search" class="qmf-flt" data-flt="ty" placeholder="Sök typ…" value="${E(qmf.f.ty)}" /></th><th class="num">Objekt</th><th class="num">${u}</th><th>Post i förteckningen<input type="search" class="qmf-flt" data-flt="po" placeholder="Sök post… (eller ”ingen”)" value="${E(qmf.f.po)}" /></th></tr></thead><tbody>${[...types].sort((a, b) => b[1].v - a[1].v).map(([t, e]) => `<tr class="qmf-click" data-tyrow="${E(t)}" title="Klicka för att markera de ${e.n} objekten i TC"><td>${E(t)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ty="${E(t)}">${postOpts(qmfTypes()[t], t)}</select></td></tr>`).join("")}</tbody></table></details>
     <details class="qmf-map" open><summary>2. Vilken byggnad hör området till? <span class="hint">(Områdena i Gantt-schemat)</span></summary>
       <div class="hint qmf-flt-n"></div><table class="qty-table"><thead><tr><th>Område i Gantt<input type="search" class="qmf-flt" data-flt="ar" placeholder="Sök område…" value="${E(qmf.f.ar)}" /></th><th class="num">Objekt</th><th class="num">${u}</th><th>Byggnad i förteckningen<input type="search" class="qmf-flt" data-flt="by" placeholder="Sök byggnad… (eller ”ingen”)" value="${E(qmf.f.by)}" /></th></tr></thead><tbody>${[...areas].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([a, e]) => `<tr class="qmf-click" data-arrow="${E(a)}" title="Klicka för att markera de ${e.n} objekten i TC"><td>${E(a)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ar="${E(a)}">${bOpts(qmf.map.areas[a])}</select></td></tr>`).join("")}</tbody></table></details>
     <div class="qty-row"><label>Byggnad <select id="qmfBuild"><option value="">Alla byggnader</option>${qmf.builds.map(b => `<option value="${E(b)}"${qmf.build === b ? " selected" : ""}>${E(b)}</option>`).join("")}</select></label><span class="hint">Klara vid ${E(qtyAt())} enligt Ganttens regel</span></div>
     <table class="qty-table qmf-table"><thead><tr><th>Post</th><th class="num">Kontrakt</th><th class="num">Prognos</th><th class="num">Modell klar</th><th class="num">Modell totalt</th><th class="num">Klart av prognos</th><th class="num">Kvar</th></tr></thead><tbody>${C.list.map(r => { const pc = qmfPct(r.klar, r.pr), dv = qmfPct(r.tot - r.pr, r.pr); return `<tr class="qmf-click" data-postrow="${E(r.p.key)}" title="${E(r.p.label)} – klicka för att markera de ${r.n} objekten i TC"><td><b>${E(r.p.ref)}</b> ${E(r.p.label.slice(0, 60))}</td><td class="num">${qtyFmt(r.k, 0)}</td><td class="num">${qtyFmt(r.pr, 0)}</td><td class="num"><b>${qtyFmt(r.klar)}</b></td><td class="num${dv !== null && Math.abs(dv) > 15 ? " qmf-bad" : dv !== null && Math.abs(dv) > 5 ? " qmf-warn" : ""}" title="Modell totalt mot prognos: ${dv === null ? "–" : (dv > 0 ? "+" : "") + dv + " %"}">${qtyFmt(r.tot)}</td><td class="num">${pc === null ? "–" : pc + " %"}</td><td class="num">${qtyFmt(r.pr - r.klar, 0)}</td></tr>`; }).join("") || `<tr><td colspan="7" class="hint">Inga poster med mängd för valet.</td></tr>`}</tbody></table>
-    <div class="hint">${C.unmapped ? `${C.unmapped} objekt (${qtyFmt(C.unmappedVol)} ${u}) har ingen post vald och räknas inte med. ` : ""}${C.otherBuild ? `${C.otherBuild} objekt hör till andra byggnader. ` : ""}"Modell totalt" är objekten som är kopplade i planen – inte hela modellen. Orange/röd = modell totalt avviker mer än 5 / 15 % från prognosen.</div>
+    <div class="hint">${C.unmapped ? `${C.unmapped} objekt (${qtyFmt(C.unmappedVol)} ${u}) har ingen post vald och räknas inte med. ` : ""}${C.otherBuild ? `${C.otherBuild} objekt hör till andra byggnader. ` : ""}${C.movedOther ? `${C.movedOther} objekt är flyttade till ett annat mängdslag (posten har en annan enhet) – byt mängdslag ovan för att se dem. ` : ""}"Modell totalt" är objekten som är kopplade i planen – inte hela modellen. Orange/röd = modell totalt avviker mer än 5 / 15 % från prognosen.</div>
     <div class="qty-row"><button type="button" id="qmfCsv">Exportera jämförelsen (CSV)</button></div>`;
   host.innerHTML = html; wire();
   function wire() {
@@ -193,8 +228,29 @@ function qmfRender() {
     host.querySelectorAll("tr[data-tyrow]").forEach(tr => tr.addEventListener("click", e => { if (e.target.closest("select")) return; const t = types.get(tr.dataset.tyrow); pick(t && t.objs, tr.dataset.tyrow.split(":")[0]); }));
     host.querySelectorAll("tr[data-arrow]").forEach(tr => tr.addEventListener("click", e => { if (e.target.closest("select")) return; const a = areas.get(tr.dataset.arrow); pick(a && a.objs, tr.dataset.arrow); }));
     host.querySelectorAll("tr[data-postrow]").forEach(tr => tr.addEventListener("click", () => { const r = C.list.find(x => x.p.key === tr.dataset.postrow); pick(r && r.objs, r && r.p.ref); }));
-    host.querySelectorAll("[data-ty]").forEach(s => { s.onchange = () => { qmfTypes()[s.dataset.ty] = s.value; qmfSave(); qmfRender(); }; });
-    host.querySelectorAll("[data-ar]").forEach(s => { s.onchange = () => { qmf.map.areas[s.dataset.ar] = s.value; qmfSave(); qmfRender(); }; });
+    const cur = qtyKind(), curU = QTY_KINDS[cur][1], kname = k => QTY_KINDS[k][0];
+    const postGroups = (t, selKey) => {
+      const g = [{ label: `Poster i ${curU} – gäller mängdslaget ${kname(cur)}`, items: [{ id: "", v: "", t: "(ingen post)", cur: !selKey }, ...qmf.posts.filter(p => p.unit === curU).map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, cur: p.key === selKey }))] }];
+      [...new Set(qmf.posts.filter(p => p.unit !== curU).map(p => p.unit))].sort().forEach(u => { const k = qmfKindOfUnit(u), ps = qmf.posts.filter(p => p.unit === u);
+        g.push({ label: k ? `Poster i ${u} – väljer du en av dem flyttas typen till mängdslaget ${kname(k)}` : `Poster i ${u} – inget mängdslag för den enheten`, items: ps.map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, dis: !k }))}); });
+      return g;
+    };
+    host.querySelectorAll("select[data-ty]").forEach(se => se.addEventListener("mousedown", e => {
+      e.preventDefault(); const t = se.dataset.ty;
+      qmfCombo(se, postGroups(t, qmfTypes()[t] || ""), it => {
+        const k = it.post ? qmfKindOfUnit(it.post.unit) : cur;
+        if (!it.post || k === cur) { qmfTypes()[t] = it.v; if (qmf.map.mv) delete qmf.map.mv[t]; }
+        else { // posten har en annan enhet: typen flyttas till mängdslaget som hanterar den enheten, och lämnar det nuvarande
+          qmf.map.types[k] = qmf.map.types[k] || {}; qmf.map.types[k][t] = it.v; qmfTypes()[t] = ""; (qmf.map.mv = qmf.map.mv || {})[t] = k;
+          if (typeof modelToast === "function") modelToast(`Typen flyttad till mängdslaget ${kname(k)} (post ${it.post.ref}). Byt mängdslag ovan för att se den.`);
+        }
+        qmfSave(); qmfRender();
+      });
+    }));
+    host.querySelectorAll("select[data-ar]").forEach(se => se.addEventListener("mousedown", e => {
+      e.preventDefault(); const a = se.dataset.ar, selB = qmf.map.areas[a] || "";
+      qmfCombo(se, [{ label: "Byggnader i förteckningen", items: [{ id: "", v: "", t: "(ingen byggnad)", cur: !selB }, ...qmf.builds.map(b => ({ id: b, v: b, t: b, cur: b === selB }))] }], it => { qmf.map.areas[a] = it.v; qmfSave(); qmfRender(); });
+    }));
     q("#qmfBuild").onchange = e => { qmf.build = e.target.value; qmfSave(); qmfRender(); };
     q("#qmfCsv").onclick = () => { const b = new Blob([qmfCsv(qmfCompare())], { type: "text/csv;charset=utf-8" }), url = URL.createObjectURL(b), a = document.createElement("a"); a.href = url; a.download = `Mängdjämförelse ${qmf.build || "alla byggnader"} ${todayISO()}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); };
   }
