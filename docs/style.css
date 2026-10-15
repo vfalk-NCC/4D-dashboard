@@ -2434,3 +2434,6 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 .new-act-pop .na-temp-sub { margin-left: 22px; padding: 3px 8px; font-size: 12px; background: #fffaf3; }
 .gantt-multibar button[data-mb="contractor"] { font-weight: 600; }
 #ganttOpen3d { display: inline-flex; align-items: center; gap: 5px; } #ganttOpen3d .gfs-l { font-weight: 700; font-size: 12px; }
+.sf-pop { display: flex; flex-direction: column; gap: 6px; } .sf-new { display: flex; gap: 6px; } .sf-new .sf-name { flex: 1; min-width: 0; } .sf-hint { margin: 0; }
+.sf-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; } .sf-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-del { border: 0; background: transparent; color: #b91c1c; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 5px; } .sf-del:hover { background: #fee2e2; }

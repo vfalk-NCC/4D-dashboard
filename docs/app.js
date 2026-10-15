@@ -364,7 +364,7 @@ function bindUI() {
   updateConnectionWarning();
 
   initAreaFilter();
-  initActivityFilter();
+  initActivityFilter(); initSavedFilters();
   initContractorFilter();
   document.getElementById("btnResetFilters").onclick = onResetFilters;
 
@@ -629,7 +629,7 @@ function initContractorFilter() {
   renderContractorFilter();
 }
 function openContractorPop(btn) {
-  closeContractorPop(); closeAreaPop(); closeActivityPop();
+  closeContractorPop(); closeAreaPop(); closeActivityPop(); closeSavedPop();
   const p = document.createElement("div");
   p.id = "contractorFilterPop"; p.className = "gantt-group-picker cf-pop";
   p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök entreprenör…" />
@@ -699,7 +699,7 @@ function initAreaFilter() {
 }
 function areaOptions() { return [...(items.some(it => !it.area) ? [{ value: FILTER_NONE, label: NO_AREA_LABEL, none: true }] : []), ...uniqueValues(it => it.area).map(v => ({ value: v, label: v }))]; }
 function openAreaPop(btn) {
-  closeAreaPop(); closeContractorPop(); closeActivityPop();
+  closeAreaPop(); closeContractorPop(); closeActivityPop(); closeSavedPop();
   const p = document.createElement("div");
   p.id = "areaFilterPop"; p.className = "gantt-group-picker cf-pop";
   p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök område…" />
@@ -762,7 +762,7 @@ function initActivityFilter() {
 }
 function activityOptions() { return [...(items.some(it => !it.objectName) ? [{ value: FILTER_NONE, label: NO_ACTIVITY_LABEL, none: true }] : []), ...uniqueValues(it => it.objectName).map(v => ({ value: v, label: v }))]; }
 function openActivityPop(btn) {
-  closeActivityPop(); closeContractorPop(); closeAreaPop();
+  closeActivityPop(); closeContractorPop(); closeAreaPop(); closeSavedPop();
   const p = document.createElement("div");
   p.id = "activityFilterPop"; p.className = "gantt-group-picker cf-pop";
   p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök aktivitet…" />
@@ -804,6 +804,51 @@ function closeActivityPop() {
   document.removeEventListener("mousedown", activityPopOutside, true);
   document.removeEventListener("keydown", activityPopKey, true);
 }
+
+/* Sparade filter (Victor 2026-10-15): det man filtrerat på (områden, aktiviteter, entreprenörer) sparas under ett namn och återställs med ett klick.
+   Sparas i webbläsaren per projekt. Valen är de ibockade värdena – tillkommer nya aktiviteter senare behöver filtret sparas om. */
+const savedFiltersKey = () => `4ddash-saved-filters:${typeof projectId !== "undefined" && projectId ? projectId : "_"}`;
+function savedFiltersGet() { try { const v = JSON.parse(localStorage.getItem(savedFiltersKey()) || "[]"); return Array.isArray(v) ? v.filter(x => x && x.name) : []; } catch (e) { return []; } }
+function savedFiltersPut(list) { try { localStorage.setItem(savedFiltersKey(), JSON.stringify(list.slice(0, 40))); } catch (e) { modelToast("Kunde inte spara (webbläsarens lagring är avstängd)"); } }
+const filtersCount = () => (filters.area || []).length + (filters.activity || []).length + (filters.contractor || []).length;
+function savedFilterSummary(f) { const n = (a, w) => (a && a.length ? `${a.length} ${w}` : ""); return [n(f.area, "områden"), n(f.activity, "aktiviteter"), n(f.contractor, "entreprenörer")].filter(Boolean).join(" · ") || "inga filter"; }
+function initSavedFilters() {
+  const b = document.getElementById("filterSavedBtn"); if (!b) return;
+  b.onclick = e => { e.stopPropagation(); if (document.getElementById("savedFilterPop")) closeSavedPop(); else openSavedPop(b); };
+}
+function openSavedPop(btn) {
+  closeSavedPop(); closeAreaPop(); closeActivityPop(); closeContractorPop();
+  const p = document.createElement("div"); p.id = "savedFilterPop"; p.className = "gantt-group-picker cf-pop sf-pop";
+  p.innerHTML = `<div class="sf-new"><input type="text" class="ggp-search sf-name" maxlength="50" placeholder="Namn på filtret, t.ex. Utan sandwich" /><button type="button" class="sf-save primary" title="Spara de valda områdena, aktiviteterna och entreprenörerna just nu">Spara nuvarande</button></div>
+    <div class="hint sf-hint"></div><div class="ggp-list sf-list"></div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect(); p.style.left = Math.max(4, Math.min(r.left, innerWidth - 380)) + "px"; p.style.top = (r.bottom + 4) + "px"; p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px"; p.style.minWidth = "340px";
+  const q = s2 => p.querySelector(s2), name = q(".sf-name");
+  const fill = () => {
+    const list = savedFiltersGet(), n = filtersCount();
+    q(".sf-hint").textContent = n ? `Nuvarande filter: ${savedFilterSummary(filters)}.` : "Inget filter är på just nu – bocka i områden, aktiviteter eller entreprenörer först.";
+    q(".sf-save").disabled = !n;
+    q(".sf-list").innerHTML = list.map((f, i) => `<div class="ggp-row sf-row" data-i="${i}" title="Använd filtret"><span class="sf-n"><b>${escapeHtml(f.name)}</b><span class="hint"> · ${escapeHtml(savedFilterSummary(f))}</span></span><button type="button" class="sf-del" title="Ta bort det sparade filtret" aria-label="Ta bort">✕</button></div>`).join("") || `<div class="hint">Inga sparade filter ännu.</div>`;
+  };
+  const apply = f => { filters.area = (f.area || []).slice(); filters.activity = (f.activity || []).slice(); filters.contractor = (f.contractor || []).slice(); renderAreaFilter(); renderActivityFilter(); renderContractorFilter(); renderAll(); modelToast(`Filtret "${f.name}" används`); };
+  q(".sf-save").onclick = () => {
+    const nm = name.value.trim() || `Filter ${savedFiltersGet().length + 1}`, list = savedFiltersGet(), i = list.findIndex(x => x.name.toLowerCase() === nm.toLowerCase());
+    if (i >= 0 && !confirm(`Det finns redan ett filter som heter "${list[i].name}". Ersätta det med det du filtrerat på nu?`)) return;
+    const f = { name: nm, area: (filters.area || []).slice(), activity: (filters.activity || []).slice(), contractor: (filters.contractor || []).slice(), at: new Date().toISOString() };
+    if (i >= 0) list[i] = f; else list.push(f);
+    savedFiltersPut(list); name.value = ""; fill(); modelToast(`Filtret "${nm}" sparat`);
+  };
+  name.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") q(".sf-save").click(); else if (e.key === "Escape") closeSavedPop(); };
+  q(".sf-list").onclick = e => {
+    const row = e.target.closest(".sf-row"); if (!row) return; const list = savedFiltersGet(), f = list[Number(row.dataset.i)]; if (!f) return;
+    if (e.target.closest(".sf-del")) { if (confirm(`Ta bort det sparade filtret "${f.name}"?`)) { list.splice(Number(row.dataset.i), 1); savedFiltersPut(list); fill(); } return; }
+    apply(f); closeSavedPop();
+  };
+  fill(); setTimeout(() => document.addEventListener("mousedown", savedPopOutside, true), 0); document.addEventListener("keydown", savedPopKey, true); name.focus();
+}
+function savedPopOutside(e) { const p = document.getElementById("savedFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterSavedBtn") closeSavedPop(); }
+function savedPopKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeSavedPop(); } }
+function closeSavedPop() { document.getElementById("savedFilterPop")?.remove(); document.removeEventListener("mousedown", savedPopOutside, true); document.removeEventListener("keydown", savedPopKey, true); }
 
 function uniqueValues(keyFn) {
   const set = new Set();

@@ -94,6 +94,19 @@ seed('plan_items.json', [
     });
     if (!ed.btn || !ed.hello || !ed.hello.includes('githubToken') || ed.relay.join() !== 'ifcModelsList') fail('3D-editorn från dashboarden: ' + JSON.stringify(ed));
     console.log('OK: knapp för 3D-editorn i Gantten – hello besvaras och förfrågningar vidarebefordras'); }
+  // Sparade filter: spara det man filtrerat på under ett namn, rensa, och återställ med ett klick.
+  { const pre = await page.evaluate(() => { const as = [...new Set(items.map(i => i.area).filter(Boolean))].slice(0, 1), ac = [...new Set(items.map(i => i.objectName).filter(Boolean))].slice(0, 2); filters.area = as; filters.activity = ac; renderAreaFilter(); renderActivityFilter(); renderAll(); return { as, ac, n: getFilteredItems().length }; });
+    await page.click('#filterSavedBtn'); await page.fill('#savedFilterPop .sf-name', 'Mitt filter'); await page.click('#savedFilterPop .sf-save'); await page.waitForTimeout(200);
+    const listed = await page.evaluate(() => [...document.querySelectorAll('#savedFilterPop .sf-row')].map(r => r.textContent.trim()));
+    await page.click('#filterSavedBtn'); await page.click('#btnResetFilters'); await page.waitForTimeout(200);
+    const cleared = await page.evaluate(() => filtersCount());
+    await page.click('#filterSavedBtn'); await page.click('#savedFilterPop .sf-row'); await page.waitForTimeout(300);
+    const back = await page.evaluate(() => ({ as: filters.area.slice(), ac: filters.activity.slice(), n: getFilteredItems().length }));
+    if (!listed.length || !/Mitt filter/.test(listed[0]) || cleared !== 0 || JSON.stringify(back.as) !== JSON.stringify(pre.as) || JSON.stringify(back.ac) !== JSON.stringify(pre.ac) || back.n !== pre.n) fail('Sparade filter: ' + JSON.stringify({ pre, listed, cleared, back }));
+    await page.click('#filterSavedBtn'); await page.click('#savedFilterPop .sf-del'); await page.waitForTimeout(200);
+    const gone = await page.evaluate(() => savedFiltersGet().length); await page.click('#filterSavedBtn'); await page.evaluate(() => { filters.area = []; filters.activity = []; renderAreaFilter(); renderActivityFilter(); renderAll(); });
+    if (gone !== 0) fail('Sparat filter ska gå att ta bort');
+    console.log('OK: sparade filter – spara under namn, återställ med ett klick, ta bort'); }
   await page.click('#filterAreaBtn'); await page.click('#filterContractorBtn'); // stäng områdeslistan, öppna entreprenörslistan igen
   await page.check('#contractorFilterPop .ggp-row >> nth=0'); await page.waitForTimeout(300);
   let shown = await page.evaluate(() => getFilteredItems().map(it => it.objectName).sort().join());
