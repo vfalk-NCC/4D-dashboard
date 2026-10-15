@@ -6069,13 +6069,19 @@ function ganttFullscreenPanel() { return document.querySelector('section.panel[d
 /* I helskärm kan alla knappar döljas – bara färgförklaringen och schemat syns (Victor 2026-10-06).
    Valet sparas till nästa gång. */
 let ganttFsClean = (() => { try { return localStorage.getItem("4ddash-gantt-fs-clean") === "1"; } catch (e) { return false; } })();
+/* Ikon i stället för text: öga = visa knapparna, överstruket öga = dölj dem. */
+function ganttFsToolsPaint(b, on) {
+  const ico = on ? '<path d="M2 10s3.2-5.5 8-5.5S18 10 18 10s-3.2 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.4"/>' : '<path d="M2 10s3.2-5.5 8-5.5S18 10 18 10s-3.2 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.4"/><path d="M3.5 16.5l13-13"/>';
+  b.innerHTML = `<svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ico}</svg>`;
+  b.title = on ? "Visa knapparna igen" : "Dölj knapparna – färgförklaringen ligger kvar"; b.setAttribute("aria-label", on ? "Visa knappar" : "Dölj knappar");
+}
 function setGanttFsClean(on) {
   ganttFsClean = on;
   try { localStorage.setItem("4ddash-gantt-fs-clean", on ? "1" : "0"); } catch (e) {}
   const panel = ganttFullscreenPanel(), b = document.getElementById("ganttFsTools");
   // Gäller både i och utanför helskärm (Victor 2026-10-06).
   if (panel) panel.classList.toggle("gantt-fs-clean", on);
-  if (b) b.textContent = on ? "☰ Visa knappar" : "☰ Dölj knappar";
+  if (b) ganttFsToolsPaint(b, on);
   if (panel) renderGantt(getFilteredItems());
 }
 function setGanttFullscreen(on) {
@@ -6493,7 +6499,7 @@ function initGanttControls() {
   if (fsClose) fsClose.onclick = toggleGanttFullscreen;
   const fsEnter = document.getElementById("ganttFsEnter");
   if (fsEnter) fsEnter.onclick = toggleGanttFullscreen;
-  { const panel = ganttFullscreenPanel(); if (panel) panel.classList.toggle("gantt-fs-clean", ganttFsClean); if (fsTools) fsTools.textContent = ganttFsClean ? "☰ Visa knappar" : "☰ Dölj knappar"; }
+  { const panel = ganttFullscreenPanel(); if (panel) panel.classList.toggle("gantt-fs-clean", ganttFsClean); if (fsTools) ganttFsToolsPaint(fsTools, ganttFsClean); }
 
   groupSel.value = ganttGroupBy;
   sortSel.value = ganttSortBy;

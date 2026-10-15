@@ -2539,3 +2539,23 @@ section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 
 .gantt-pill.gp-ico:has(.gantt-bl-color) { width: auto; padding: 0 6px 0 8px; gap: 6px; }
 .gantt-pill.gp-ico .gantt-bl-color { position: relative; z-index: 1; width: 18px; height: 18px; }
 .gantt-sub-label { display: inline-flex; align-items: center; color: var(--muted); }
+
+/* Kompakta ikonknappar (Victor 2026-10-15: 40 % lägre) – tids-, period- och övre högerraden */
+.gb-ico { height: 18px; min-width: 24px; padding: 0 4px; border-radius: 5px; }
+.gb-ico .gp-svg { width: 12px; height: 12px; }
+.gb-caret { font-size: 8px; }
+.gantt-mode-seg { border-radius: 6px; }
+.gantt-mode-seg .gb-ico { height: 18px; min-width: 26px; border-radius: 0; }
+.gantt-pill.gp-ico { width: 24px; height: 18px; border-radius: 5px; }
+.gantt-pill.gp-ico .gp-svg { width: 12px; height: 12px; }
+.gantt-pill.gp-ico:has(.gantt-bl-color) { width: auto; padding: 0 5px 0 6px; gap: 4px; }
+.gantt-pill.gp-ico .gantt-bl-color { width: 12px; height: 12px; border-radius: 3px; }
+.gantt-time-row .gtr-sep { height: 14px; }
+.gantt-time-row .gtr-tools { gap: 3px; }
+.gantt-time-slider { flex: 1 1 200px; min-width: 120px; }
+/* övre högerraden: samma ikonstil och höjd som de nedre */
+.gantt-fs-bar { gap: 3px; align-items: center; }
+.gantt-fs-bar button { height: 18px; min-width: 24px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; border-radius: 5px; box-shadow: none; }
+.gantt-fs-bar button .gp-svg, .gantt-fs-bar button svg { width: 12px; height: 12px; }
+.gantt-fs-bar .gfs-l { display: none; }
+.gantt-fs-bar button#ganttFsTime { padding: 0 5px; }

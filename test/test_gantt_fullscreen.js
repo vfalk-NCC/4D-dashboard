@@ -69,13 +69,13 @@ seed('plan_items.json', [
   await page.mouse.move(0, 0);
   // Dölj knapparna: bara färgförklaringen och schemat; valet sparas.
   await page.click('#ganttFsTools'); await page.waitForTimeout(300);
-  const clean = await page.evaluate(() => ({ head: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display, h2: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] > h2')).display, legend: document.getElementById('ganttLegend').getBoundingClientRect().height, ch: document.getElementById('ganttChart').getBoundingClientRect().height, btn: document.getElementById('ganttFsTools').textContent }));
+  const clean = await page.evaluate(() => ({ head: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display, h2: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] > h2')).display, legend: document.getElementById('ganttLegend').getBoundingClientRect().height, ch: document.getElementById('ganttChart').getBoundingClientRect().height, btn: document.getElementById('ganttFsTools').getAttribute('aria-label') }));
   if (clean.head !== 'none' || clean.h2 !== 'none' || clean.legend < 10 || clean.ch <= on.ch || !/Visa knappar/.test(clean.btn)) fail('Dölj knappar: ' + JSON.stringify({ clean, on }));
   await page.locator('section[data-panel-id="gantt"]').screenshot({ path: path.join(require('os').tmpdir(), 'gantt_fullscreen_clean.png') });
   await page.click('#ganttFsClose'); await page.waitForTimeout(300);
   if ((await size()).fs) fail('✕ ska stänga helskärmen');
   // Även utanför helskärm (Victor 2026-10-06): knapparna förblir dolda, rubriken och ☰ syns, ✕ inte.
-  const outside = await page.evaluate(() => ({ head: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display, h2: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] > h2')).display, tools: document.getElementById('ganttFsTools').textContent, toolsShown: getComputedStyle(document.getElementById('ganttFsTools')).display !== 'none', close: getComputedStyle(document.getElementById('ganttFsClose')).display }));
+  const outside = await page.evaluate(() => ({ head: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display, h2: getComputedStyle(document.querySelector('section[data-panel-id="gantt"] > h2')).display, tools: document.getElementById('ganttFsTools').getAttribute('aria-label'), toolsShown: getComputedStyle(document.getElementById('ganttFsTools')).display !== 'none', close: getComputedStyle(document.getElementById('ganttFsClose')).display }));
   if (outside.head !== 'none' || outside.h2 === 'none' || !/Visa knappar/.test(outside.tools) || !outside.toolsShown || outside.close !== 'none') fail('Dölj knappar utanför helskärm: ' + JSON.stringify(outside));
   await page.locator('section[data-panel-id="gantt"]').screenshot({ path: path.join(require('os').tmpdir(), 'gantt_clean_normal.png') });
   await page.click('#ganttFsTools'); await page.waitForTimeout(300);
