@@ -199,6 +199,42 @@ function qmfCsv(C) {
   const lines = [["Post", "Beskrivning", "Enhet", "Kontrakt", "Prognos", "Modell klar", "Modell totalt", "Klart av prognos %", "Kvar (prognos − klar)"], ...C.list.map(r => [r.p.ref, r.p.label, r.p.unit, d(r.k), d(r.pr), d(r.klar), d(r.tot), qmfPct(r.klar, r.pr) ?? "", d(r.pr - r.klar)])];
   return "﻿" + lines.map(l => l.map(x => `"${String(x).replace(/"/g, '""')}"`).join(";")).join("\r\n");
 }
+/* Postlistans grupper (poster i nuvarande mängdslags enhet först, sedan övriga enheter under egna rubriker). */
+function qmfPostGroups(selKey) {
+  const cur = qtyKind(), curU = QTY_KINDS[cur][1], kname = k => QTY_KINDS[k][0];
+  const g = [{ label: `Poster i ${curU} – gäller mängdslaget ${kname(cur)}`, items: [{ id: "", v: "", t: "(ingen post)", cur: !selKey }, ...qmf.posts.filter(p => p.unit === curU).map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, cur: p.key === selKey }))] }];
+  const other = qmf.posts.filter(p => p.unit !== curU), kinds = [...new Set(other.map(p => qmfKindOfPost(p)))].sort();
+  kinds.forEach(k => { const ps = other.filter(p => qmfKindOfPost(p) === k), u = ps[0].unit;
+    g.push({ label: k ? `Poster i ${u} – väljer du en av dem läggs objekten till i mängdslaget ${kname(k)} (de finns kvar i ${kname(cur)})` : `Poster i ${u} – inget mängdslag för den enheten`, items: ps.map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, dis: !k })) }); });
+  return g;
+}
+/* Lägg alla objekt som är markerade i TC på en post på en gång (t.ex. 2 000 objekt). */
+async function qmfAssignSelection(anchor) {
+  const V = API && API.viewer; if (!V || typeof V.getSelection !== "function") { modelToast("Kräver Trimble Connect-vyn"); return; }
+  if (!qty.objs.length) { modelToast("Tryck på Läs mängder först"); return; }
+  const sel = await V.getSelection(), want = new Set(); let total = 0;
+  (sel || []).forEach(x => (x.objectRuntimeIds || []).forEach(r => { want.add(`${x.modelId}|${r}`); total++; }));
+  if (!total) { modelToast("Inget är markerat i TC – markera objekten i modellen först"); return; }
+  const objs = qty.objs.filter(o => want.has(`${o.modelId}|${o.rid}`)), miss = total - objs.length;
+  if (!objs.length) { modelToast(`Inga av de ${total} markerade finns i det inlästa urvalet (kolla Urval och Läs mängder igen)`); return; }
+  qmfCombo(anchor, qmfPostGroups(""), async it => {
+    if (!it.post && it.v) return;
+    const cur = qtyKind(), k = it.post ? qmfKindOfPost(it.post) : cur, what = it.post ? `${it.post.ref} – ${it.post.label.slice(0, 80)}` : "(ingen post)";
+    const ok = await qmfAsk(`Lägga ${objs.length} markerade objekt på "${what}" i mängdslaget ${QTY_KINDS[k][0]}?${miss ? ` (${miss} markerade ingår inte i det inlästa urvalet och hoppas över.)` : ""}`, [["ja", "Ja, lägg dem där"], ["", "Avbryt"]]);
+    if (!ok) return;
+    const m = (qmf.map.obj[k] = qmf.map.obj[k] || {}); objs.forEach(o => { m[qmfObjKey(o)] = it.v; });
+    qmfSave(); qmfRender(); modelToast(`${objs.length} objekt lades på ${it.post ? it.post.ref : "ingen post"} (${QTY_KINDS[k][0]})`);
+  });
+}
+/* Poster ett objekt hör till (per mängdslag) – används även i Gantt-schemats aktivitetsdialog. */
+function qmfMemberPosts(m) {
+  if (!m || !m.modelId || !m.objectId || !qmf.posts.length) return [];
+  const ok = `${m.modelId}|${m.objectId}`, out = [];
+  if (qmfMemberPosts._src !== qty.objs) { qmfMemberPosts._src = qty.objs; qmfMemberPosts._idx = new Map(qty.objs.map(o => [qmfObjKey(o), o])); }
+  const o = qmfMemberPosts._idx.get(ok);
+  Object.keys(QTY_KINDS).forEach(k => { const ov = (qmf.map.obj[k] || {})[ok]; const key = ov !== undefined ? ov : (o ? qmfEffPost(o, k) : ""); const p = key && qmf.posts.find(x => x.key === key); if (p) out.push({ kind: k, post: p }); });
+  return out;
+}
 function qmfRender() {
   const host = document.getElementById("qmfBox"); if (!host) return;
   const E = qtyEsc, hasObjs = typeof qty !== "undefined" && qty.objs.length > 0, hasMf = qmf.posts.length > 0;
@@ -219,6 +255,7 @@ function qmfRender() {
   const C = qmfCompare(), u = QTY_KINDS[qtyKind()][1];
   html += `<details class="qmf-map" open><summary>1. Vilken post är objekten? <span class="hint">(per ${E(qmf.typeKey || "egenskap")})</span></summary>
       <label class="qty-row">Typ-egenskap <select id="qmfTypeKey">${[...qty.keys.keys()].map(k => `<option value="${E(k)}"${qmf.typeKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label><label class="qmf-chk qty-row" title="Revit-namn slutar ofta på objektets eget ID (…:1788329). Då blir varje objekt en egen typ. Med den här kryssrutan grupperas objekten per typ, och du kan ändå välja post per objekt (▸)."><input type="checkbox" id="qmfGroupId"${qmf.groupId !== false ? " checked" : ""} /> Gruppera bort objektets ID i namnet</label>
+      <div class="qty-row"><button type="button" id="qmfSelAssign" class="gantt-toolbar-btn" title="Markera objekten i modellen i Trimble Connect först – lägg sedan alla markerade på en post på en gång">Lägg markerade i TC på post…</button></div>
       <div class="hint">Klicka på ▸ för att se objekten i en typ och välja post för ett enskilt objekt. Ändrar du ett enskilt objekt får du frågan om det ska gälla bara det eller alla i typen.</div>
       <div class="hint qmf-flt-n"></div><table class="qty-table"><thead><tr><th>Typ i modellen<input type="search" class="qmf-flt" data-flt="ty" placeholder="Sök typ…" value="${E(qmf.f.ty)}" /></th><th class="num">Objekt</th><th class="num">${u}</th><th>Post i förteckningen<input type="search" class="qmf-flt" data-flt="po" placeholder="Sök post… (eller ”ingen”)" value="${E(qmf.f.po)}" /></th></tr></thead><tbody>${[...types].sort((a, b) => b[1].v - a[1].v).map(grpRows).join("")}</tbody></table></details>
     <details class="qmf-map" open><summary>2. Vilken byggnad hör området till? <span class="hint">(Områdena i Gantt-schemat)</span></summary>
@@ -234,6 +271,7 @@ function qmfRender() {
     const cl = q("#qmfClear"); if (cl) cl.onclick = () => { qmf.posts = []; qmf.builds = []; qmf.file = ""; qmf.msg = ""; try { localStorage.removeItem(QMF_KEY); } catch (e) { /* */ } qmfRender(); };
     if (!hasMf || !hasObjs) return;
     if (q("#qmfGroupId")) q("#qmfGroupId").onchange = e => { qmf.groupId = e.target.checked; qmf.open.clear(); qmfSave(); qmfAutoMap(); qmfRender(); };
+    if (q("#qmfSelAssign")) q("#qmfSelAssign").onclick = e => qmfAssignSelection(e.currentTarget);
     q("#qmfTypeKey").onchange = e => { qmf.typeKey = e.target.value; qmfSave(); qmfAutoMap(); qmfRender(); };
     // Sök/filtrera raderna (utan omritning): alla ord ska finnas; för Post/Byggnad söks i den valda postens text.
     const applyFlt = () => {
@@ -260,13 +298,7 @@ function qmfRender() {
     host.querySelectorAll("tr[data-arrow]").forEach(tr => tr.addEventListener("click", e => { if (e.target.closest("select")) return; const a = areas.get(tr.dataset.arrow); pick(a && a.objs, tr.dataset.arrow); }));
     host.querySelectorAll("tr[data-postrow]").forEach(tr => tr.addEventListener("click", () => { const r = C.list.find(x => x.p.key === tr.dataset.postrow); pick(r && r.objs, r && r.p.ref); }));
     const cur = qtyKind(), curU = QTY_KINDS[cur][1], kname = k => QTY_KINDS[k][0];
-    const postGroups = (t, selKey) => {
-      const g = [{ label: `Poster i ${curU} – gäller mängdslaget ${kname(cur)}`, items: [{ id: "", v: "", t: "(ingen post)", cur: !selKey }, ...qmf.posts.filter(p => p.unit === curU).map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, cur: p.key === selKey }))] }];
-      const other = qmf.posts.filter(p => p.unit !== curU), kinds = [...new Set(other.map(p => qmfKindOfPost(p)))].sort();
-      kinds.forEach(k => { const ps = other.filter(p => qmfKindOfPost(p) === k), u = ps[0].unit;
-        g.push({ label: k ? `Poster i ${u} – väljer du en av dem läggs objekten till i mängdslaget ${kname(k)} (de finns kvar i ${kname(cur)})` : `Poster i ${u} – inget mängdslag för den enheten`, items: ps.map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, dis: !k })) }); });
-      return g;
-    };
+    const postGroups = (t, selKey) => qmfPostGroups(selKey);
     /* Välj post: för en hel typ, eller för ett enskilt objekt (då frågar vi om det ska gälla alla i typen). */
     const unitKind = it => (it.post ? qmfKindOfPost(it.post) : cur);
     const delOv = (objs, kinds) => objs.forEach(o => { const ok = qmfObjKey(o); kinds.forEach(k => { if (qmf.map.obj[k]) delete qmf.map.obj[k][ok]; }); });

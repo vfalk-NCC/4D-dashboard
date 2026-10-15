@@ -149,6 +149,18 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
         const kk = qty.cfg.kind; qty.cfg.kind = 'area'; const vk = Object.keys(qty.objs[0].flat).find(k => /volume$/i.test(k)); const w = { flat: { [vk]: 6 }, hz: 3, bx: 0.2, by: 5 }; qty.volFactor = 1; r.area = qtyValue(w); qty.cfg.kind = kk; return r; });
       if (g.a !== 'Basic Wall:Concrete - Cast-in-Place - 1000' || !g.same || g.off !== g.raw || g.eff !== 'X' || !g.eff2) fail('Gruppering bort objekt-ID och objektets egen koppling: ' + JSON.stringify(g));
       if (Math.abs(g.area - 30) > 1e-6) fail('Yta en sida = volym ÷ tjocklek (6 ÷ 0,2 = 30): ' + g.area); }
+    // Lägg markerade objekt i TC på en post på en gång; posten syns sedan via qmfMemberPosts (Gantt-dialogen).
+    { await page.evaluate(() => { qmf.map.obj = {}; qmf.build = ''; qmfRender(); });
+      const info = await page.evaluate(() => { const os = qty.objs.slice(0, 3); API.viewer.getSelection = async () => [{ modelId: os[0].modelId, objectRuntimeIds: os.map(o => o.rid) }]; return { n: os.length, keys: os.map(o => o.modelId + '|' + o.objectId) }; });
+      await page.click('#qmfSelAssign'); await page.waitForSelector('.qmf-combo'); await page.waitForTimeout(300);
+      const pk = await page.evaluate(() => { const p = qmf.posts.find(x => x.unit === 'm³'); [...document.querySelectorAll('.qmf-combo-i')].find(x => x.textContent.startsWith(p.ref + ' –')).click(); return p.key; });
+      await page.waitForSelector('.qmf-ask'); const q = await page.textContent('.qmf-ask-t'); if (!new RegExp('Lägga ' + info.n + ' markerade').test(q)) fail('Frågan ska nämna antalet: ' + q);
+      await page.click('.qmf-ask button[data-k="ja"]'); await page.waitForTimeout(300);
+      const set = await page.evaluate(([keys, pk]) => keys.filter(k => (qmf.map.obj.vol || {})[k] === pk).length, [info.keys, pk]);
+      if (set !== info.n) fail('Alla markerade ska läggas på posten: ' + set + '/' + info.n);
+      const mp = await page.evaluate(k => { const [m, id] = k.split('|'); return qmfMemberPosts({ modelId: m, objectId: id }).map(x => x.kind + ':' + x.post.ref); }, info.keys[0]);
+      if (!mp.some(x => x.startsWith('vol:'))) fail('qmfMemberPosts (Gantt-dialogen) ska visa posten: ' + mp.join()); 
+      await page.evaluate(() => { qmf.map.obj = {}; qmfRender(); }); }
     { // Antal (st) räknar objekt.
       await page.click('[data-qkind="cnt"]'); await page.waitForTimeout(300);
       const cn = await page.evaluate(() => ({ tot: qtyPivot().total, n: qtyPivot().nObj, val: !!document.getElementById('qtyVal') })); if (cn.tot !== cn.n || cn.val) fail('Antal (st): summan ska vara antalet objekt: ' + JSON.stringify(cn));

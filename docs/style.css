@@ -2642,3 +2642,6 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .qmf-ask-b { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .qmf-ask-b button { font: inherit; font-size: 12px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; }
 .qmf-ask-b button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.na-post { display: inline-block; font-size: 10px; font-weight: 700; padding: 0 5px; margin-left: 3px; border-radius: 999px; background: #eaf2ff; color: #1d4ed8; border: 1px solid #bcd2fb; }
+.na-posts-sum { margin: 2px 0 6px; font-size: 11.5px; }
