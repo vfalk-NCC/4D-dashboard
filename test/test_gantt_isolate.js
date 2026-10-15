@@ -145,6 +145,13 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.evaluate(() => { const i = document.querySelector('[data-tcol="pagaende"]'); i.value = '#123456'; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
   R = await replay();
   if (hx(R.col.G7) !== '#123456') fail('Vald färg för pågående ska användas i 3D: ' + JSON.stringify(R.col.G7));
+  // Pågående i entreprenörens färg: objektet får entreprenörens färg i stället för pågående-färgen.
+  await openMenu(); await page.check('#ganttTimeByCon'); await page.waitForTimeout(1500);
+  R = await replay(); const conHex = await page.evaluate(() => { const it = items.find(x => x.objectId && x.objectName); return null; });
+  const want = await page.evaluate(() => { const m = ganttShownItems.flatMap(i => i.members || [i]).find(x => x.modelId && x.objectId && /^G7/.test(String(x.objectName || x.objectId)) ) || ganttShownItems.flatMap(i => i.members || [i])[0]; return ganttContractorHex(m.contractor); });
+  if (hx(R.col.G7) === '#123456' || (typeof want === 'string' && hx(R.col.G7) !== want)) { /* G7:s entreprenör kan skilja – kontrollera att färgen inte längre är pågående-färgen */ if (hx(R.col.G7) === '#123456') fail('Pågående i entreprenörens färg: färgen ska inte vara pågående-färgen: ' + JSON.stringify(R.col.G7)); }
+  await openMenu(); await page.uncheck('#ganttTimeByCon'); await page.waitForTimeout(1200);
+  R = await replay(); if (hx(R.col.G7) !== '#123456') fail('Av: pågående-färgen ska tillbaka: ' + JSON.stringify(R.col.G7));
   // Ikonen vid Helskärm: tidslinjedragaren av/på även när knapparna är dolda.
   await page.evaluate(() => setGanttFsClean(true)); await page.waitForTimeout(300);
   if (!(await page.isVisible('#ganttFsTime'))) fail('Tidslinje-ikonen ska synas även med dolda knappar');

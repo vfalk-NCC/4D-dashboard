@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=20261015115727" />
+<link rel="stylesheet" href="style.css?v=20261015131941" />
 <script>
 /* Självläkning mot webbläsarens cache (Trimble Connect visar ibland en gammal index.html): jämför den inbyggda versionen med version.txt
    (hämtas alltid färsk) och laddar om en enda gång om de skiljer sig. */
@@ -181,6 +181,9 @@
           <div class="gtm-title">Visning</div>
           <label class="gantt-pill" title="Visa det som inte startat, i kommande-färgen">
             <input type="checkbox" id="ganttTimeFuture" /> Kommande
+          </label>
+          <label class="gantt-pill" title="Pågående objekt färgas i sin entreprenörs färg (samma färger som entreprenörsraden och tavlan) i stället för pågående-färgen – så ser du vem som är var vid det här datumet. Försenade behåller sin röda färg.">
+            <input type="checkbox" id="ganttTimeByCon" /> Pågående i entreprenörens färg
           </label>
           <label class="gantt-pill" title="Pågående objekt pulserar (ljust gult) i 3D – så ser du direkt vad som händer nu">
             <input type="checkbox" id="ganttTimePulse" /> Pulsera pågående
@@ -467,17 +470,17 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=20261015115727"></script>
-  <script src="app.js?v=20261015115727"></script>
-  <script src="resource-curve.js?v=20261015115727"></script>
-  <script src="pp-export.js?v=20261015115727"></script>
-  <script src="bubbles.js?v=20261015115727"></script>
-  <script src="gantt-views.js?v=20261015115727"></script>
-  <script src="photo-bubbles.js?v=20261015115727"></script>
-  <script src="video-gfx.js?v=20261015115727"></script>
-  <script src="video-editor.js?v=20261015115727"></script>
-  <script src="quantities.js?v=20261015115727"></script>
-  <script src="quantities-mf.js?v=20261015115727"></script>
-  <script src="planning-link.js?v=20261015115727"></script>
+  <script src="ui-dialog.js?v=20261015131941"></script>
+  <script src="app.js?v=20261015131941"></script>
+  <script src="resource-curve.js?v=20261015131941"></script>
+  <script src="pp-export.js?v=20261015131941"></script>
+  <script src="bubbles.js?v=20261015131941"></script>
+  <script src="gantt-views.js?v=20261015131941"></script>
+  <script src="photo-bubbles.js?v=20261015131941"></script>
+  <script src="video-gfx.js?v=20261015131941"></script>
+  <script src="video-editor.js?v=20261015131941"></script>
+  <script src="quantities.js?v=20261015131941"></script>
+  <script src="quantities-mf.js?v=20261015131941"></script>
+  <script src="planning-link.js?v=20261015131941"></script>
 </body>
 </html>

@@ -3713,7 +3713,7 @@ function ganttCoupledTargets() {
       if (phase === "planerad_syns") phase = "planerad"; // rivning före start: syns alltid
       if ((phase === "pagaende" || phase === "forsenad" || phase === "planerad") && Number(ganttOp[phase]) <= 0) phase = "dold"; // opacitet 0 = osynligt
     }
-    const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase, startDate: m.startDate || "", endDate: m.endDate || "", doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity }); }
+    const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase, startDate: m.startDate || "", endDate: m.endDate || "", doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity, contractor: m.contractor || "" }); }
   });
   return out;
 }
@@ -3747,7 +3747,14 @@ function ganttTimeColorOf(t) {
     const hx = ganttScaleHex(t); if (hx) return hexToRgbaObj(hx, (t.phase === "klar" ? ganttDoneOp : (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase])) / 100);
   }
   if (t.phase === "klar") return hexToRgbaObj(t.doneColor || STATUS_COLORS.klar, (t.doneOpacity !== null ? t.doneOpacity : ganttDoneOp) / 100);
+  if (t.phase === "pagaende" && ganttByContractor) return hexToRgbaObj(ganttContractorHex(t.contractor), (ganttOp.pagaende === undefined ? 100 : ganttOp.pagaende) / 100);
   return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase]) / 100);
+}
+/* Pågående i entreprenörens färg (Victor 2026-10-15): samma färger som entreprenörsraden och tavlan (egen vald färg, annars paletten), så man ser vem som är var. */
+let ganttByContractor = false;
+function ganttContractorHex(name) {
+  const key = name || NO_CONTRACTOR_LABEL, own = ganttCustomColors.get(`contractor:${key}`);
+  return own || softColor("contractor", key).bd;
 }
 /* Opacitet per status i 3D-tidslinjen (Victor 2026-10-14): pågående, försenad och kommande (klart har sitt eget "Klart"-reglage ovan). 0 = osynligt. */
 const LBL_OP = { pagaende: "pågående", forsenad: "försenad", planerad: "kommande" };
@@ -4164,6 +4171,8 @@ function initGanttTime() {
   try { const sv = JSON.parse(localStorage.getItem("4ddash-gantt-time-range") || "null"); if (Array.isArray(sv)) { ganttTimeFrom = sv[0] || ""; ganttTimeTo = sv[1] || ""; } } catch (e) {}
   fut.onchange = () => { ganttTimeFuture = fut.checked; try { localStorage.setItem("4ddash-gantt-time-future", ganttTimeFuture ? "1" : "0"); } catch (e) {} if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); };
   try { ganttTimeFuture = localStorage.getItem("4ddash-gantt-time-future") === "1"; } catch (e) {}
+  { const bc = document.getElementById("ganttTimeByCon"); try { ganttByContractor = localStorage.getItem("4ddash-gantt-time-bycontractor") === "1"; } catch (e) {}
+    if (bc) { bc.checked = ganttByContractor; bc.onchange = () => { ganttByContractor = bc.checked; try { localStorage.setItem("4ddash-gantt-time-bycontractor", ganttByContractor ? "1" : "0"); } catch (e) {} ganttTimeReset(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); }; } }
   { const gb = document.getElementById("ganttScaleBtn"); if (gb) {
     try { Object.assign(ganttScale, JSON.parse(localStorage.getItem("4ddash-gantt-scale") || "{}")); } catch (e) {}
     const paint = () => gb.classList.toggle("on", !!ganttScale.on), save = () => { try { localStorage.setItem("4ddash-gantt-scale", JSON.stringify(ganttScale)); } catch (e) {} paint(); ganttScaleR = null; if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); };
