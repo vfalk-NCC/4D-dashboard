@@ -240,6 +240,29 @@ function phbLayout(cards, W, H, k, anchored) {
   }
 }
 
+/* Fotot i arbetsstorlek. TC:s getSnapshot() har ingen storleksinställning (bilden är vyns pixelstorlek), så den förstoras i
+   halvstora steg (skarpare än ett enda hopp) och skärps med unsharp mask. amount 0 = ingen skärpning. */
+function phbPhoto(st) {
+  const { bmp, W, H } = st; let src = bmp, w = bmp.width, h = bmp.height;
+  while (w < W) {
+    const nw = Math.min(W, Math.round(w * 1.5)), nh = Math.round(nw * H / W), c = document.createElement("canvas"); c.width = nw; c.height = nh;
+    const x = c.getContext("2d"); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = "high"; x.drawImage(src, 0, 0, nw, nh); src = c; w = nw; h = nh;
+  }
+  const out = document.createElement("canvas"); out.width = W; out.height = H; const o = out.getContext("2d"); o.imageSmoothingQuality = "high"; o.drawImage(src, 0, 0, W, H);
+  const a = Number(st.sharp) || 0;
+  if (a > 0) {
+    try {
+      const b = document.createElement("canvas"); b.width = W; b.height = H; const bx = b.getContext("2d");
+      if (typeof bx.filter === "string") {
+        bx.filter = `blur(${Math.max(0.8, st.s * 0.9)}px)`; bx.drawImage(out, 0, 0); bx.filter = "none";
+        const A = o.getImageData(0, 0, W, H), B = bx.getImageData(0, 0, W, H), d = A.data, e = B.data;
+        for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) { const v = d[i + k] + a * (d[i + k] - e[i + k]); d[i + k] = v < 0 ? 0 : v > 255 ? 255 : v; }
+        o.putImageData(A, 0, 0);
+      }
+    } catch (e) { /* utan skärpning */ }
+  }
+  st.photo = out; st.photoSharp = a;
+}
 /* Allt som kan redigeras på bilden: fotot, bubblorna (med lägen), listan, texter och datumskylten. Ritas om från den här. */
 async function phbBuild(blob, cam, scopeOverride) {
   const bmp = await createImageBitmap(blob), s = Math.max(1, Math.min(3, Math.round(2400 / bmp.width))), W = bmp.width * s, H = bmp.height * s;
@@ -247,7 +270,7 @@ async function phbBuild(blob, cam, scopeOverride) {
   const sc0 = bubbleCfg.scope; let acts, scope;
   try { if (scopeOverride && scopeOverride !== "auto") bubbleCfg.scope = scopeOverride; ({ acts, scope } = bubbleActs()); } finally { bubbleCfg.scope = sc0; }
   const anchors = await phbAnchors(acts);
-  const st = { bmp, s, W, H, k, at, cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
+  const st = { bmp, s, W, H, k, at, sharp: 0.6, cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
     dateObj: { on: typeof ganttMode !== "undefined" && ganttMode === "time", iso: at, x: 20 * k, y: 20 * k, scale: 1 },
     list: { on: false, title: "Pågår just nu", max: 40, scale: 1, weeks: 2, x: W - 360 * k, y: 20 * k, cands: [], sel: new Set(), items: [] } };
   st.list.cands = phbCandidates(at, 2); phbActiveList(at).forEach(a => st.list.sel.add(phbKey(a)));
@@ -261,6 +284,7 @@ async function phbBuild(blob, cam, scopeOverride) {
   } else st.note = scope === "marked" ? "Inga markerade aktiviteter med objekt i modellen." : "Inga aktiviteter med objekt i modellen i det här urvalet – markera med Ctrl-klick eller välj ett annat urval.";
   if (anchors.length && st.placed && !cards.length) st.note = "Aktiviteternas objekt syns inte i bilden.";
   cards.sort((a, b) => (a.ax || 0) - (b.ax || 0));
+  phbPhoto(st);
   st.cards = cards; phbLayout(cards, W, H, k, st.placed); phbListMeasure(st); phbDateMeasure(st);
   return st;
 }
@@ -279,7 +303,7 @@ const phbBox = it => ({ x: it.o.x, y: it.o.y, W: it.o.W, h: it.o.h });
 const phbCloseBox = (it, k) => { const b = phbBox(it); return { x: b.x + b.W - 2 * k, y: b.y + 2 * k, r: 11 * k }; };
 function phbRender(ctx, st) {
   const { W, H, k } = st;
-  ctx.imageSmoothingQuality = "high"; ctx.drawImage(st.bmp, 0, 0, W, H);
+  ctx.imageSmoothingQuality = "high"; ctx.drawImage(st.photo || st.bmp, 0, 0, W, H);
   if (st.placed && st.g.lines) st.cards.forEach(c => {
     const p = phbLeaderStart(c); if (!p) return;
     ctx.strokeStyle = phbCol(c); ctx.lineWidth = 2.5 * k * st.g.lineW; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(c.ax, c.ay); ctx.stroke();
@@ -367,7 +391,8 @@ function phbPdfText(t, f) {
   return o + "ET ";
 }
 async function phbPdf(st) {
-  const jc = document.createElement("canvas"); jc.width = st.bmp.width; jc.height = st.bmp.height; jc.getContext("2d").drawImage(st.bmp, 0, 0);
+  const jc = st.photo || Object.assign(document.createElement("canvas"), { width: st.bmp.width, height: st.bmp.height });
+  if (!st.photo) jc.getContext("2d").drawImage(st.bmp, 0, 0);
   const jpeg = new Uint8Array(await (await new Promise(r => jc.toBlob(r, "image/jpeg", 0.95))).arrayBuffer());
   const f = 0.75 / st.s, PW = st.bmp.width * 0.75, PH = st.bmp.height * 0.75, X = x => x * f, Y = y => PH - y * f;
   const objs = []; const add = (head, stream) => { objs.push({ head, stream }); return objs.length; };
@@ -390,7 +415,7 @@ async function phbPdf(st) {
   objs[1] = { head: `<</Type/Pages/Kids[3 0 R]/Count 1>>` };
   objs[2] = { head: `<</Type/Page/Parent 2 0 R/MediaBox[0 0 ${phbN(PW)} ${phbN(PH)}]/Resources<</XObject<</Im0 5 0 R>>${F}/Properties<</L1 8 0 R>>>>/Contents 4 0 R${annots.length ? `/Annots[${annots.map(n => n + " 0 R").join(" ")}]` : ""}>>` };
   objs[3] = { head: `<<`, stream: ct };
-  objs[4] = { head: `<</Type/XObject/Subtype/Image/Width ${st.bmp.width}/Height ${st.bmp.height}/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode`, stream: jpeg };
+  objs[4] = { head: `<</Type/XObject/Subtype/Image/Width ${jc.width}/Height ${jc.height}/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode`, stream: jpeg };
   objs[5] = { head: `<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>` };
   objs[6] = { head: `<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Bold/Encoding/WinAnsiEncoding>>` };
   objs[7] = { head: `<</Type/OCG/Name(Datumskylt)>>` };
@@ -474,8 +499,9 @@ function phbPreview(st) {
     return h + `</div>`;
   }
   function renderSide() {
-    const g = cur.g, L = cur.list, D = cur.dateObj, it = selItem(), o = it && it.o;
+    const g = cur.g, g0 = cur, L = cur.list, D = cur.dateObj, it = selItem(), o = it && it.o;
     let h = `<div class="phb-sec"><div class="phb-h">Allmänt</div>${rng("phbGScale", "Bubblornas skala", Math.round(g.bscale * 100), 40, 250, 5)}${chk("phbLines", "Linjer till objekten", g.lines)}${g.lines ? rng("phbLineW", "Linjetjocklek", Math.round(g.lineW * 100), 40, 300, 10) + rng("phbDot", "Punktstorlek", Math.round(g.dot * 100), 40, 300, 10) : ""}
+      ${rng("phbSharp", "Skärpa på fotot", Math.round(g0.sharp * 100), 0, 150, 10)}<div class="phb-note">Fotots källa: ${g0.bmp.width}×${g0.bmp.height} px (TC-vyns storlek), arbetsbild ${g0.W}×${g0.H}. Mer detaljer: gör TC-vyn större innan du tar fotot (dölj sidopaneler, helskärm F11) – API:t har ingen upplösningsinställning.</div>
       <button type="button" id="phbArrange" title="Lägg bubblorna ovanför sina punkter igen, utan överlapp">Ordna om bubblorna</button></div>
       <div class="phb-sec"><div class="phb-h">Pågår just nu</div>${chk("phbListOn", `Visa listan (${L.items.length} aktiviteter)`, L.on)}${L.on ? `<label class="phb-f"><span>Rubrik</span><input type="text" id="phbListTitle" value="${phbEsc(L.title)}" maxlength="60"></label>${phbListPick(L)}<label class="phb-f"><span>Högst antal rader</span><input type="number" id="phbListMax" min="1" max="60" value="${L.max}"></label>${rng("phbListScale", "Skala", Math.round(L.scale * 100), 40, 250, 5)}` : ""}</div>
       <div class="phb-sec"><div class="phb-h">Datumskylt</div>${chk("phbDateOn", "Visa datumskylten", D.on)}${D.on ? `<label class="phb-f"><span>Datum</span><input type="date" id="phbDateVal" value="${D.iso}"></label>${rng("phbDateScale", "Skala", Math.round(D.scale * 100), 40, 250, 5)}` : ""}</div>
@@ -496,6 +522,7 @@ function phbPreview(st) {
     const q = id => side.querySelector("#" + id), on = (id, ev, fn) => { const e = q(id); if (e) e.addEventListener(ev, fn); };
     const range = (id, apply, pct = true) => on(id, "input", e => { const v = Number(e.target.value); const lab = q(id + "V"); if (lab) lab.textContent = v + (pct ? "%" : " px"); apply(pct ? v / 100 : v); });
     range("phbGScale", v => { cur.g.bscale = v; remeasure(); }); range("phbLineW", v => { cur.g.lineW = v; draw(); }); range("phbDot", v => { cur.g.dot = v; draw(); });
+    let shT = 0; range("phbSharp", v => { cur.sharp = v; clearTimeout(shT); shT = setTimeout(() => { phbPhoto(cur); draw(); }, 120); });
     on("phbLines", "change", e => { cur.g.lines = e.target.checked; draw(); renderSide(); });
     on("phbArrange", "click", () => { phbLayout(cur.cards, cur.W, cur.H, cur.k, cur.placed); draw(); });
     on("phbListOn", "change", e => { cur.list.on = e.target.checked; if (cur.list.on) cur.sel = cur.list; draw(); renderSide(); });

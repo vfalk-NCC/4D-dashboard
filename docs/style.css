@@ -2667,3 +2667,4 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .phb-zoom { display: inline-flex; gap: 2px; margin-right: 8px; }
 .phb-zoom button { min-width: 30px; padding: 4px 8px; }
 .phb-zoom #phbZv { min-width: 56px; }
+.phb-note { font-size: 11px; color: #6b7280; line-height: 1.35; }
