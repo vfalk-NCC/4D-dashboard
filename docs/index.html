@@ -12,7 +12,26 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=20261015101728" />
+<link rel="stylesheet" href="style.css?v=20261015102330" />
+<script>
+/* Självläkning mot webbläsarens cache (Trimble Connect visar ibland en gammal index.html): jämför den inbyggda versionen med version.txt
+   (hämtas alltid färsk) och laddar om en enda gång om de skiljer sig. */
+(function () {
+  window.addEventListener("load", function () {
+    try {
+      var s = document.querySelector('script[src^="app.js"]'), cur = s ? (s.getAttribute("src").split("v=")[1] || "") : "";
+      if (!cur || !window.fetch) return;
+      fetch("version.txt?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (v) {
+        v = (v || "").trim(); if (!/^\d+$/.test(v) || v === cur) return;
+        var last = 0; try { last = Number(sessionStorage.getItem("4ddash-selfreload") || 0); } catch (e) { /* */ }
+        if (Date.now() - last < 120000) return; // högst en omladdning per två minuter – ingen slinga
+        try { sessionStorage.setItem("4ddash-selfreload", String(Date.now())); } catch (e) { /* */ }
+        location.reload();
+      }).catch(function () { /* offline: inget */ });
+    } catch (e) { /* */ }
+  });
+})();
+</script>
 <script src="error-guard.js"></script>
 <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
 </head>
@@ -451,17 +470,17 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=20261015101728"></script>
-  <script src="app.js?v=20261015101728"></script>
-  <script src="resource-curve.js?v=20261015101728"></script>
-  <script src="pp-export.js?v=20261015101728"></script>
-  <script src="bubbles.js?v=20261015101728"></script>
-  <script src="gantt-views.js?v=20261015101728"></script>
-  <script src="photo-bubbles.js?v=20261015101728"></script>
-  <script src="video-gfx.js?v=20261015101728"></script>
-  <script src="video-editor.js?v=20261015101728"></script>
-  <script src="quantities.js?v=20261015101728"></script>
-  <script src="quantities-mf.js?v=20261015101728"></script>
-  <script src="planning-link.js?v=20261015101728"></script>
+  <script src="ui-dialog.js?v=20261015102330"></script>
+  <script src="app.js?v=20261015102330"></script>
+  <script src="resource-curve.js?v=20261015102330"></script>
+  <script src="pp-export.js?v=20261015102330"></script>
+  <script src="bubbles.js?v=20261015102330"></script>
+  <script src="gantt-views.js?v=20261015102330"></script>
+  <script src="photo-bubbles.js?v=20261015102330"></script>
+  <script src="video-gfx.js?v=20261015102330"></script>
+  <script src="video-editor.js?v=20261015102330"></script>
+  <script src="quantities.js?v=20261015102330"></script>
+  <script src="quantities-mf.js?v=20261015102330"></script>
+  <script src="planning-link.js?v=20261015102330"></script>
 </body>
 </html>
