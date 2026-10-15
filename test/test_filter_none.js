@@ -74,6 +74,11 @@ seed('plan_items.json', [
       if (got.n !== got.exp || !got.n) fail('Aktivitetsfiltret: ' + JSON.stringify(got));
       await page.evaluate(() => { filters.activity = []; renderActivityFilter(); renderAll(); }); }
     await page.click('#filterActivityBtn'); }
+  // Välj alla (utan sökning) finns alltid i listorna.
+  { await page.click('#filterActivityBtn'); const lbl = await page.textContent('#activityFilterPop [data-aa="match"]'); await page.click('#activityFilterPop [data-aa="match"]'); await page.waitForTimeout(200);
+    const all = await page.evaluate(() => ({ sel: filters.activity.length, opts: activityOptions().length }));
+    await page.click('#activityFilterPop [data-aa="all"]'); await page.click('#filterActivityBtn');
+    if (lbl.trim() !== 'Välj alla' || all.sel !== all.opts || !all.sel) fail('Välj alla i aktivitetslistan: ' + JSON.stringify({ lbl, all })); }
   // Välj träffarna → Avmarkera träffarna → Rensa allt (sök + knappar i listan).
   { await page.click('#filterActivityBtn'); const nm = await page.evaluate(() => (items.find(i => i.objectName) || {}).objectName || '');
     if (nm) { const q = nm.slice(0, 3); await page.fill('#activityFilterPop .ggp-search', q); await page.click('#activityFilterPop [data-aa="match"]'); await page.waitForTimeout(200);
