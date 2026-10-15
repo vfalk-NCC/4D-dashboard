@@ -112,6 +112,8 @@ seed('plan_items.json', [
       await page.fill('#phbListMax', '40'); await page.waitForTimeout(100);
       const lg = await page.evaluate(() => { const l = document.getElementById('phbCv')._state().list; return { heads: l.lines.filter(x => x.t === 'h').length, cands: l.cands.length, sel: l.sel.size, pk: document.querySelectorAll('[data-pk]').length, pg: document.querySelectorAll('[data-pg]').length }; });
       if (!lg.heads || lg.heads !== lg.pg || lg.pk !== lg.cands) fail('Listan ska vara indelad per område med en kryssruta per aktivitet: ' + JSON.stringify(lg));
+      await page.evaluate(() => { const k = document.getElementById('phbPick'); k.scrollTop = 120; }); const sb = await page.evaluate(() => document.getElementById('phbPick').scrollTop);
+      if (sb > 0) { await page.click('[data-pk]:nth-of-type(1) >> nth=3'); const sa = await page.evaluate(() => document.getElementById('phbPick').scrollTop); if (Math.abs(sa - sb) > 2) fail('Listan ska behålla rullningsläget: ' + sb + ' -> ' + sa); await page.click('#phbListNone'); await page.click('#phbListNow'); }
       await page.click('#phbListNone'); await page.waitForTimeout(100);
       const l0 = await page.evaluate(() => document.getElementById('phbCv')._state().list.rows.length); if (l0 !== 0) fail('Inga: ' + l0);
       await page.click('[data-pk]:not(:checked)'); await page.waitForTimeout(100);

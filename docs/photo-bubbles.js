@@ -507,7 +507,10 @@ function phbPreview(st) {
       <div class="phb-sec"><button type="button" id="phbAddText">＋ Text</button></div>`;
     if (it && it.type === "card") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald bubbla</div><label class="phb-f"><span>Rubrik <small>(tomt = aktivitetens namn)</small></span><textarea id="phbCText" rows="3">${phbEsc(o.text != null ? o.text : "")}</textarea></label>${rng("phbCScale", "Bubblans skala", Math.round(o.scale * 100), 40, 300, 5)}<div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbCCol" value="${phbCol(o)}"></label><button type="button" id="phbCAuto" title="Färg efter status"${o.colOver ? "" : " disabled"}>Auto</button></div>${chk("phbCDate", "Datum", o.show.date)}${chk("phbCArea", "Område", o.show.area)}${chk("phbCProg", "Framdrift", o.show.prog)}<button type="button" id="phbCDel" class="danger">Ta bort bubblan</button></div>`;
     else if (it && it.type === "text") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald text</div><label class="phb-f"><span>Text</span><textarea id="phbTText" rows="3">${phbEsc(o.text)}</textarea></label>${rng("phbTSize", "Storlek", o.size, 8, 80, 1, " px")}<div class="phb-row"><label class="phb-f"><span>Textfärg</span><input type="color" id="phbTCol" value="${o.col}"></label>${chk("phbTBold", "Fet", o.bold)}</div><div class="phb-row">${chk("phbTBg", "Bakgrund", o.bg)}${o.bg ? `<input type="color" id="phbTBgCol" value="${o.bgCol}">` : ""}</div><button type="button" id="phbTDel" class="danger">Ta bort texten</button></div>`;
+    const pk0 = side.querySelector("#phbPick"), keepSide = side.scrollTop, keepPick = pk0 ? pk0.scrollTop : 0;
     side.innerHTML = h; bindSide();
+    /* Samma rullningsläge efter ombyggnaden – klick i en kryssruta ska inte hoppa till toppen. */
+    side.scrollTop = keepSide; const pk1 = side.querySelector("#phbPick"); if (pk1) pk1.scrollTop = keepPick;
     /* Alla huvudmenyer kan fällas ihop (valet sparas så länge sidan är öppen). */
     side.querySelectorAll(".phb-sec > .phb-h").forEach(hd => {
       const sec = hd.parentElement, key = hd.textContent.trim();
