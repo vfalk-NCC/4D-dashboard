@@ -633,7 +633,7 @@ function openContractorPop(btn) {
   const p = document.createElement("div");
   p.id = "contractorFilterPop"; p.className = "gantt-group-picker cf-pop";
   p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök entreprenör…" />
-    <div class="ggp-acts"><button type="button" data-cf="all">Alla</button><button type="button" data-cf="match" class="hidden">Välj träffarna</button></div>
+    <div class="ggp-acts"><button type="button" data-cf="all" title="Rensa alla val – visa allt">Rensa allt</button><button type="button" data-cf="match" class="hidden">Välj träffarna</button><button type="button" data-cf="unmatch" class="hidden">Avmarkera träffarna</button></div>
     <div class="ggp-list"></div>`;
   document.body.appendChild(p);
   const r = btn.getBoundingClientRect();
@@ -645,6 +645,7 @@ function openContractorPop(btn) {
   p.querySelector(".ggp-acts").onclick = e => {
     const a = e.target.closest("[data-cf]"); if (!a) return;
     if (a.dataset.cf === "all") filters.contractor = [];
+    else if (a.dataset.cf === "unmatch") { const hit = new Set(contractorOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)); filters.contractor = (filters.contractor || []).filter(v => !hit.has(v)); }
     else filters.contractor = [...new Set([...(filters.contractor || []), ...contractorOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)])];
     renderContractorFilter(); renderAll();
   };
@@ -667,6 +668,7 @@ function fillContractorPop(p) {
   const q = p.querySelector(".ggp-search").value.trim().toLowerCase(), sel = new Set(filters.contractor || []);
   const opts = contractorOptions().filter(o => !q || o.label.toLowerCase().includes(q));
   p.querySelector('[data-cf="match"]').classList.toggle("hidden", !q);
+  p.querySelector('[data-cf="unmatch"]').classList.toggle("hidden", !q);
   p.querySelector(".ggp-list").innerHTML = opts.map(o => `<label class="ggp-row" title="${escapeHtml(o.label)}"><input type="checkbox" data-v="${escapeHtml(o.value)}"${sel.has(o.value) ? " checked" : ""} /><span${o.none ? ' class="cf-none"' : ""}>${escapeHtml(o.label)}</span></label>`).join("") || `<div class="ggp-empty">Inga träffar</div>`;
 }
 function contractorPopOutside(e) { const p = document.getElementById("contractorFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterContractorBtn") closeContractorPop(); }
@@ -701,7 +703,7 @@ function openAreaPop(btn) {
   const p = document.createElement("div");
   p.id = "areaFilterPop"; p.className = "gantt-group-picker cf-pop";
   p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök område…" />
-    <div class="ggp-acts"><button type="button" data-af="all">Alla</button><button type="button" data-af="match" class="hidden">Välj träffarna</button></div>
+    <div class="ggp-acts"><button type="button" data-af="all" title="Rensa alla val – visa allt">Rensa allt</button><button type="button" data-af="match" class="hidden">Välj träffarna</button><button type="button" data-af="unmatch" class="hidden">Avmarkera träffarna</button></div>
     <div class="ggp-list"></div>`;
   document.body.appendChild(p);
   const r = btn.getBoundingClientRect();
@@ -711,6 +713,7 @@ function openAreaPop(btn) {
   p.querySelector(".ggp-acts").onclick = e => {
     const a = e.target.closest("[data-af]"); if (!a) return;
     if (a.dataset.af === "all") filters.area = [];
+    else if (a.dataset.af === "unmatch") { const hit = new Set(areaOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)); filters.area = (filters.area || []).filter(v => !hit.has(v)); }
     else filters.area = [...new Set([...(filters.area || []), ...areaOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)])];
     renderAreaFilter(); renderAll();
   };
@@ -728,6 +731,7 @@ function fillAreaPop(p) {
   const q = p.querySelector(".ggp-search").value.trim().toLowerCase(), sel = new Set(filters.area || []);
   const opts = areaOptions().filter(o => !q || o.label.toLowerCase().includes(q));
   p.querySelector('[data-af="match"]').classList.toggle("hidden", !q);
+  p.querySelector('[data-af="unmatch"]').classList.toggle("hidden", !q);
   p.querySelector(".ggp-list").innerHTML = opts.map(o => `<label class="ggp-row" title="${escapeHtml(o.label)}"><input type="checkbox" data-v="${escapeHtml(o.value)}"${sel.has(o.value) ? " checked" : ""} /><span${o.none ? ' class="cf-none"' : ""}>${escapeHtml(o.label)}</span></label>`).join("") || `<div class="hint">Inga träffar.</div>`;
 }
 function areaPopOutside(e) { const p = document.getElementById("areaFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterAreaBtn") closeAreaPop(); }
@@ -762,7 +766,7 @@ function openActivityPop(btn) {
   const p = document.createElement("div");
   p.id = "activityFilterPop"; p.className = "gantt-group-picker cf-pop";
   p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök aktivitet…" />
-    <div class="ggp-acts"><button type="button" data-aa="all">Alla</button><button type="button" data-aa="match" class="hidden">Välj träffarna</button></div>
+    <div class="ggp-acts"><button type="button" data-aa="all" title="Rensa alla val – visa allt">Rensa allt</button><button type="button" data-aa="match" class="hidden">Välj träffarna</button><button type="button" data-aa="unmatch" class="hidden">Avmarkera träffarna</button></div>
     <div class="ggp-list"></div>`;
   document.body.appendChild(p);
   const r = btn.getBoundingClientRect();
@@ -771,7 +775,8 @@ function openActivityPop(btn) {
   search.oninput = () => fillActivityPop(p);
   p.querySelector(".ggp-acts").onclick = e => {
     const a = e.target.closest("[data-aa]"); if (!a) return;
-    if (a.dataset.af === "all") filters.activity = [];
+    if (a.dataset.aa === "all") filters.activity = [];
+    else if (a.dataset.aa === "unmatch") { const hit = new Set(activityOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)); filters.activity = (filters.activity || []).filter(v => !hit.has(v)); }
     else filters.activity = [...new Set([...(filters.activity || []), ...activityOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)])];
     renderActivityFilter(); renderAll();
   };
@@ -789,6 +794,7 @@ function fillActivityPop(p) {
   const q = p.querySelector(".ggp-search").value.trim().toLowerCase(), sel = new Set(filters.activity || []);
   const opts = activityOptions().filter(o => !q || o.label.toLowerCase().includes(q));
   p.querySelector('[data-aa="match"]').classList.toggle("hidden", !q);
+  p.querySelector('[data-aa="unmatch"]').classList.toggle("hidden", !q);
   p.querySelector(".ggp-list").innerHTML = opts.map(o => `<label class="ggp-row" title="${escapeHtml(o.label)}"><input type="checkbox" data-v="${escapeHtml(o.value)}"${sel.has(o.value) ? " checked" : ""} /><span${o.none ? ' class="cf-none"' : ""}>${escapeHtml(o.label)}</span></label>`).join("") || `<div class="hint">Inga träffar.</div>`;
 }
 function activityPopOutside(e) { const p = document.getElementById("activityFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterActivityBtn") closeActivityPop(); }

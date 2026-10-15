@@ -74,6 +74,14 @@ seed('plan_items.json', [
       if (got.n !== got.exp || !got.n) fail('Aktivitetsfiltret: ' + JSON.stringify(got));
       await page.evaluate(() => { filters.activity = []; renderActivityFilter(); renderAll(); }); }
     await page.click('#filterActivityBtn'); }
+  // Välj träffarna → Avmarkera träffarna → Rensa allt (sök + knappar i listan).
+  { await page.click('#filterActivityBtn'); const nm = await page.evaluate(() => (items.find(i => i.objectName) || {}).objectName || '');
+    if (nm) { const q = nm.slice(0, 3); await page.fill('#activityFilterPop .ggp-search', q); await page.click('#activityFilterPop [data-aa="match"]'); await page.waitForTimeout(200);
+      const a1 = await page.evaluate(() => filters.activity.length); await page.click('#activityFilterPop [data-aa="unmatch"]'); await page.waitForTimeout(200);
+      const a2 = await page.evaluate(() => filters.activity.length); await page.click('#activityFilterPop [data-aa="match"]'); await page.click('#activityFilterPop [data-aa="all"]'); await page.waitForTimeout(200);
+      const a3 = await page.evaluate(() => ({ n: filters.activity.length, all: getFilteredItems().length === items.length }));
+      if (!a1 || a2 !== 0 || a3.n !== 0 || !a3.all) fail('Välj/avmarkera träffarna och Rensa allt: ' + JSON.stringify({ a1, a2, a3 })); }
+    await page.click('#filterActivityBtn'); await page.waitForTimeout(100); }
   await page.click('#filterAreaBtn'); await page.click('#filterContractorBtn'); // stäng områdeslistan, öppna entreprenörslistan igen
   await page.check('#contractorFilterPop .ggp-row >> nth=0'); await page.waitForTimeout(300);
   let shown = await page.evaluate(() => getFilteredItems().map(it => it.objectName).sort().join());
