@@ -438,7 +438,7 @@ function phbPreview(st) {
   d.innerHTML = `<div class="phb-box"><div class="phb-main"><div class="phb-img"><canvas id="phbCv" width="${st.W}" height="${st.H}"></canvas></div><aside class="phb-side" id="phbSide"></aside></div>
     <div class="phb-bar"><span class="phb-info" id="phbInfo"></span>
     <label class="phb-sel">Visa <select id="phbScope"><option value="auto">Markerade, annars pågående</option><option value="marked">Bara markerade</option><option value="active">Pågående</option><option value="all">Alla i schemat</option></select></label>
-    <button type="button" id="phbUndo" class="hidden" title="Ta tillbaka den senast borttagna bubblan (Ctrl+Z)">↶ Ångra borttagning</button><button type="button" id="phbPdf" class="primary" title="Foto + bubblor, lista och texter som flyttbara stämplar i egna lager – flytta dem i PDF-läsaren">Spara PDF</button><button type="button" id="phbPng">Spara PNG</button><button type="button" id="phbClose">Stäng</button></div></div>`;
+    <span class="phb-zoom" title="Zooma i förhandsvisningen (mushjul, Ctrl +/−). Panorera: mellanklick-dra, Mellanslag-dra eller rullningslisterna"><button type="button" id="phbZm" aria-label="Zooma ut">−</button><button type="button" id="phbZv" aria-label="Anpassa till fönstret">100 %</button><button type="button" id="phbZp" aria-label="Zooma in">+</button></span><button type="button" id="phbUndo" class="hidden" title="Ta tillbaka den senast borttagna bubblan (Ctrl+Z)">↶ Ångra borttagning</button><button type="button" id="phbPdf" class="primary" title="Foto + bubblor, lista och texter som flyttbara stämplar i egna lager – flytta dem i PDF-läsaren">Spara PDF</button><button type="button" id="phbPng">Spara PNG</button><button type="button" id="phbClose">Stäng</button></div></div>`;
   (document.fullscreenElement || document.body).appendChild(d);
   const cv = d.querySelector("#phbCv"), ctx = cv.getContext("2d"), info = d.querySelector("#phbInfo"), side = d.querySelector("#phbSide"), undoBtn = d.querySelector("#phbUndo");
   let cur = st, removed = [], drag = null; cv._state = () => cur;
@@ -530,6 +530,30 @@ function phbPreview(st) {
       on("phbTDel", "click", () => removeObj(selItem()));
     }
   }
+  /* Zoom i förhandsvisningen: bara visningen ändras (arbetsytan och exporten är oförändrade). */
+  const imgBox = d.querySelector(".phb-img"), zv = d.querySelector("#phbZv"); let zoom = 1, fitW = 0, space = false, pan = null;
+  const setZoom = (z, cx, cy) => {
+    if (!fitW || zoom === 1) { cv.style.width = ""; const r0 = cv.getBoundingClientRect(); if (zoom === 1) fitW = r0.width; }
+    const r = cv.getBoundingClientRect(), nz = Math.max(1, Math.min(8, z));
+    const px = cx == null ? r.left + r.width / 2 : cx, py = cy == null ? r.top + r.height / 2 : cy, fx = (px - r.left) / r.width, fy = (py - r.top) / r.height;
+    zoom = nz; cv.style.maxWidth = nz === 1 ? "" : "none"; cv.style.maxHeight = nz === 1 ? "" : "none"; cv.style.width = nz === 1 ? "" : (fitW * nz) + "px"; cv.style.height = nz === 1 ? "" : "auto";
+    const r2 = cv.getBoundingClientRect(); imgBox.scrollLeft += r2.left + fx * r2.width - px; imgBox.scrollTop += r2.top + fy * r2.height - py;
+    zv.textContent = Math.round(nz * 100) + " %"; cv.style.cursor = nz > 1 && space ? "grab" : "";
+  };
+  requestAnimationFrame(() => { fitW = cv.getBoundingClientRect().width; });
+  d.querySelector("#phbZp").onclick = () => setZoom(zoom * 1.25); d.querySelector("#phbZm").onclick = () => setZoom(zoom / 1.25); zv.onclick = () => setZoom(1);
+  imgBox.addEventListener("wheel", e => { e.preventDefault(); setZoom(zoom * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX, e.clientY); }, { passive: false });
+  d.addEventListener("keydown", e => {
+    if (e.key === " " && !/INPUT|TEXTAREA|SELECT|BUTTON/.test((e.target || {}).tagName || "")) { space = true; e.preventDefault(); }
+    else if ((e.ctrlKey || e.metaKey) && (e.key === "+" || e.key === "=")) { e.preventDefault(); setZoom(zoom * 1.25); }
+    else if ((e.ctrlKey || e.metaKey) && e.key === "-") { e.preventDefault(); setZoom(zoom / 1.25); }
+    else if ((e.ctrlKey || e.metaKey) && e.key === "0") { e.preventDefault(); setZoom(1); }
+  });
+  d.addEventListener("keyup", e => { if (e.key === " ") space = false; });
+  cv.addEventListener("pointerdown", e => { if (zoom > 1 && (e.button === 1 || space)) { e.preventDefault(); e.stopImmediatePropagation(); pan = { x: e.clientX, y: e.clientY, l: imgBox.scrollLeft, t: imgBox.scrollTop }; cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; } }, true);
+  cv.addEventListener("pointermove", e => { if (pan) { e.stopImmediatePropagation(); imgBox.scrollLeft = pan.l - (e.clientX - pan.x); imgBox.scrollTop = pan.t - (e.clientY - pan.y); } }, true);
+  const panEnd = () => { if (pan) { pan = null; cv.style.cursor = ""; } }; cv.addEventListener("pointerup", panEnd, true); cv.addEventListener("pointercancel", panEnd, true);
+  cv._zoom = () => zoom;
   const pos = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * cur.W / r.width, y: (e.clientY - r.top) * cur.H / r.height }; };
   const hit = p => [...phbObjects(cur)].reverse().find(i => { const b = phbBox(i); return p.x >= b.x && p.x <= b.x + b.W && p.y >= b.y && p.y <= b.y + b.h; });
   const hitDot = p => cur.placed && cur.g.lines ? [...cur.cards].reverse().find(c => Math.hypot(p.x - c.ax, p.y - c.ay) <= (8 * cur.g.dot + 5) * cur.k) : null;

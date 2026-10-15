@@ -101,6 +101,11 @@ seed('plan_items.json', [
       await page.check('#phbListOn'); await page.waitForTimeout(100); const s3 = await S(); if (!s3.list || s3.nl < 1) fail('Pågår just nu-listan ska ha rader: ' + JSON.stringify(s3));
       await page.fill('#phbListTitle', 'Pågår idag'); await page.fill('#phbListMax', '2'); await page.waitForTimeout(100); const s3b = await S(); if (s3b.nl !== 2) fail('Max rader: ' + s3b.nl);
       await page.click('.phb-sec:has(#phbListOn) > .phb-h'); if (await page.isVisible('#phbListTitle')) fail('Menyn ska fällas ihop'); await page.click('.phb-sec:has(#phbListOn) > .phb-h'); if (!(await page.isVisible('#phbListTitle'))) fail('Menyn ska fällas ut');
+      const w0 = await page.evaluate(() => document.getElementById('phbCv').getBoundingClientRect().width);
+      await page.click('#phbZp'); await page.click('#phbZp'); const w2 = await page.evaluate(() => document.getElementById('phbCv').getBoundingClientRect().width);
+      if (!(w2 > w0 * 1.5)) fail('Zoom in ska förstora förhandsvisningen: ' + w0 + ' -> ' + w2);
+      const zc = await page.evaluate(() => { const c = document.getElementById('phbCv'); return { cw: c.width, z: c._zoom() }; }); if (zc.cw < 100 || zc.z <= 1) fail('Zoomläge: ' + JSON.stringify(zc));
+      await page.click('#phbZv'); const w3 = await page.evaluate(() => document.getElementById('phbCv').getBoundingClientRect().width); if (Math.abs(w3 - w0) > 2) fail('100 % ska återställa: ' + w3 + ' vs ' + w0);
       await page.fill('#phbListMax', '40'); await page.waitForTimeout(100);
       const lg = await page.evaluate(() => { const l = document.getElementById('phbCv')._state().list; return { heads: l.lines.filter(x => x.t === 'h').length, cands: l.cands.length, sel: l.sel.size, pk: document.querySelectorAll('[data-pk]').length, pg: document.querySelectorAll('[data-pg]').length }; });
       if (!lg.heads || lg.heads !== lg.pg || lg.pk !== lg.cands) fail('Listan ska vara indelad per område med en kryssruta per aktivitet: ' + JSON.stringify(lg));
