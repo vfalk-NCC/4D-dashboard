@@ -101,10 +101,10 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
     return { shown: [...vis].filter(([, v]) => v).map(([r]) => r).sort().join(), col: Object.fromEntries(col) };
   });
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(500);
-  if (await page.isVisible('#ganttTimeRow')) fail('Dragaren ska vara avstängd som standard');
+  if (!(await page.evaluate(() => document.getElementById('ganttTimeRow').classList.contains('gantt-time-off')))) fail('Tidsstyrningen ska vara nedtonad (avstängd) som standard');
   await page.evaluate(() => { window.__calls = []; });
   await page.click('[data-gmode="time"]'); await page.waitForTimeout(400);
-  if (!(await page.isVisible('#ganttTimeRow')) || !(await page.isVisible('#ganttTimeSlider'))) fail('Tidslinje-raden ska visas');
+  if (await page.evaluate(() => document.getElementById('ganttTimeRow').classList.contains('gantt-time-off')) || !(await page.isVisible('#ganttTimeSlider'))) fail('Tidslinje-raden ska vara aktiv');
   await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(500);
   if (!(await page.$('.gantt-scrub'))) fail('Dragstrecket ska ligga ovanpå schemat');
   const sum = await page.innerText('#ganttTimeSum');
@@ -283,7 +283,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (R.shown !== 'G5,G7') fail('Visa kommande: båda i 3D: ' + R.shown);
   await openMenu(); await page.uncheck('#ganttTimeFuture'); await page.waitForTimeout(800);
   await page.click('[data-gmode="off"]'); await page.waitForTimeout(600);
-  if (await page.isVisible('#ganttTimeRow') || await page.$('.gantt-scrub')) fail('Av: raden och dragstrecket ska försvinna');
+  if (!(await page.evaluate(() => document.getElementById('ganttTimeRow').classList.contains('gantt-time-off'))) || await page.$('.gantt-scrub')) fail('Av: raden ska tonas ned och dragstrecket försvinna');
 
   console.log('OK: tidslinje-dragare över schemat – datummarkering, realtid i 3D, färger/opacitet efter slut, intervall, kommande');
   // Avvisar Trimble Connect isolateEntities (fel utan text, som hos Victor): släck allt och tänd de kopplade i stället.

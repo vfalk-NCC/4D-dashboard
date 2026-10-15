@@ -2520,3 +2520,22 @@ section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 
 .phb-side button:disabled { opacity: .45; cursor: default; }
 .phb-img canvas { max-height: 78vh; }
 @media (max-width: 800px) { .phb-main { flex-direction: column; } .phb-side { width: auto; flex: none; max-height: 30vh; border-left: 0; border-top: 1px solid #e2e8f0; } }
+
+/* Ikonmeny: tidsraden (alltid synlig) med lägesknappar och verktyg, ikonknappar och ikon-växlar */
+.gantt-time-row .gtr-sep { width: 1px; height: 22px; background: var(--border); margin: 0 2px; flex: 0 0 auto; }
+.gantt-time-row .gtr-tools { display: inline-flex; gap: 6px; align-items: center; }
+.gantt-time-row.gantt-time-off > :not(.gantt-mode-seg):not(.gtr-tools):not(.gtr-sep) { opacity: .45; cursor: pointer; }
+.gantt-time-row.gantt-time-off .gantt-time-slider { pointer-events: auto; }
+.gb-ico { display: inline-flex; align-items: center; justify-content: center; gap: 2px; min-width: 30px; height: 30px; padding: 0 6px; }
+.gb-ico .gp-svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.gb-caret { font-size: 9px; opacity: .7; }
+.gantt-mode-seg .gb-ico { height: 28px; min-width: 32px; }
+.gantt-mode-seg .gantt-toolbar-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+#ganttStrictBtn[aria-pressed="true"], #ganttScaleBtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.gantt-pill.gp-ico { position: relative; width: 32px; height: 30px; padding: 0; justify-content: center; border-radius: 8px; color: #475569; }
+.gantt-pill.gp-ico > input[type="checkbox"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.gantt-pill.gp-ico .gp-svg { width: 17px; height: 17px; pointer-events: none; }
+.gantt-pill.gp-ico:has(input:checked) { background: #eaf2ff; border-color: #8db4fa; color: #0b5fff; }
+.gantt-pill.gp-ico:has(.gantt-bl-color) { width: auto; padding: 0 6px 0 8px; gap: 6px; }
+.gantt-pill.gp-ico .gantt-bl-color { position: relative; z-index: 1; width: 18px; height: 18px; }
+.gantt-sub-label { display: inline-flex; align-items: center; color: var(--muted); }

@@ -3985,7 +3985,7 @@ async function loadCoupledModelsDash() {
 let ganttMode = "off", ganttModeSeq = 0;
 function syncGanttModeUi() {
   document.querySelectorAll("#ganttModeSeg [data-gmode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.gmode === ganttMode)));
-  const row = document.getElementById("ganttTimeRow"); if (row) row.classList.toggle("hidden", ganttMode !== "time");
+  const row = document.getElementById("ganttTimeRow"); if (row) row.classList.toggle("gantt-time-off", ganttMode !== "time");
   const tb = document.getElementById("ganttFsTime"); if (tb) tb.setAttribute("aria-pressed", String(ganttMode === "time"));
 }
 async function setGanttMode(mode, quiet) {
@@ -6474,6 +6474,14 @@ function initGanttControls() {
     refBtn.classList.remove("spin");
     setTimeout(() => { refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdatera"; }, 1800);
   };
+  { // Tidsraden är alltid synlig; är Tid-läget av är tidsstyrningen nedtonad – ett klick på den slår på Tid-läget.
+    const tr = document.getElementById("ganttTimeRow");
+    if (tr) tr.addEventListener("pointerdown", e => {
+      if (!tr.classList.contains("gantt-time-off") || e.target.closest(".gantt-mode-seg, .gtr-tools, .gtr-sep")) return;
+      if (!e.target.closest(".gantt-toolbar-btn, input, label, .gantt-time-slider")) return;
+      e.preventDefault(); e.stopPropagation(); setGanttMode("time");
+    }, true);
+  }
   initGanttTime(); initGanttMulti(); initGanttResize(); if (typeof initBubbles === "function") initBubbles();
   syncGanttModeUi();
   const lmBtn = document.getElementById("ganttLoadModelsBtn"); if (lmBtn) lmBtn.onclick = loadCoupledModelsDash;

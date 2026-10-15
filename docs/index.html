@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=20261015093440" />
+<link rel="stylesheet" href="style.css?v=20261015095714" />
 <script src="error-guard.js"></script>
 <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
 </head>
@@ -184,35 +184,39 @@
             <button type="button" id="ganttZoomIn" class="gantt-toolbar-btn" title="Zooma in">+</button>
           </div>
           <button type="button" id="ganttRefreshBtn" class="gantt-toolbar-btn gantt-refresh-btn" title="Uppdatera – hämta senaste data (aktiviteter, framdrift, kopplingar)" aria-label="Uppdatera"><svg class="gantt-refresh-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.6L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.3 4.6L20 16"/><path d="M20 21v-5h-5"/></svg><span>Uppdatera</span></button>
-          <div class="gantt-seg gantt-mode-seg" id="ganttModeSeg" role="group" aria-label="3D">
-            <span class="gantt-seg-lbl">3D</span>
-            <button type="button" data-gmode="off" aria-pressed="true" class="gantt-toolbar-btn" title="Rör inte modellen">Alla</button>
-            <button type="button" data-gmode="isolate" aria-pressed="false" class="gantt-toolbar-btn" title="Bara det som är kopplat till schemat">Kopplade</button>
-            <button type="button" data-gmode="hide" aria-pressed="false" class="gantt-toolbar-btn" title="Dölj kopplade – visa bara det okopplade">Okopplade</button>
-            <button type="button" data-gmode="time" aria-pressed="false" class="gantt-toolbar-btn" title="Tidslinje: se läget ett visst datum">⏱ Tid</button>
-          </div>
           <button type="button" id="bubbleBtn" class="gantt-toolbar-btn" aria-pressed="false" title="Info-bubbla vid varje aktivitet i 3D: datum, framdrift, område och aktivitet">💬 Bubblor</button><button type="button" id="bubbleCfgBtn" class="gantt-toolbar-btn" title="Vilka bubblor och vilken info">▾</button><span id="bubbleInfo" class="hint"></span>
-          <button type="button" id="ganttLoadModelsBtn" class="gantt-toolbar-btn" title="Läs in alla modeller som aktiviteterna är kopplade till">📥 Modeller</button>
-          <button type="button" id="ganttFullBtn" class="gantt-toolbar-btn" title="Visa Gantt-schemat i helskärm (Esc stänger)">⛶ Helskärm</button>
-          <button type="button" id="ganttPpExportBtn" class="gantt-toolbar-btn" title="Exportera aktiviteter till Powerproject (Microsoft Project-XML)">⇪ Till PP</button>
-          <button type="button" id="ganttPrintBtn" class="gantt-toolbar-btn" title="Skriv ut Gantt-schemat eller spara det som PDF – med rubrik, förklaring och tidshuvud på varje sida">🖨 Skriv ut</button>
           <button type="button" id="ganttHelpBtn" class="gantt-toolbar-btn gantt-help-btn" title="Visa/dölj hjälp" aria-expanded="false">?</button>
         </div>
 
-        <div class="gantt-head-row gantt-head-sub gantt-time-row hidden" id="ganttTimeRow">
+        <div class="gantt-head-row gantt-head-sub gantt-time-row gantt-time-off" id="ganttTimeRow">
           <button type="button" id="ganttTimePlay" class="gantt-toolbar-btn" title="Spela upp">▶</button>
           <button type="button" id="ganttTimePrev" class="gantt-toolbar-btn gantt-step" title="Backa en dag" aria-label="Backa en dag">‹</button>
           <input type="range" id="ganttTimeSlider" class="gantt-time-slider" min="0" max="1" value="0" aria-label="Datum" />
           <button type="button" id="ganttTimeNext" class="gantt-toolbar-btn gantt-step" title="Fram en dag" aria-label="Fram en dag">›</button>
           <label class="gantt-toolbar-field"><input type="date" id="ganttTimeDate" aria-label="Datum" /></label>
           <button type="button" id="ganttTimeToday" class="gantt-toolbar-btn" title="Till idag">Idag</button>
+          <span class="gtr-sep"></span>
+          <div class="gantt-seg gantt-mode-seg" id="ganttModeSeg" role="group" aria-label="3D-läge">
+                        <button type="button" data-gmode="off" aria-pressed="true" class="gantt-toolbar-btn gb-ico" title="Alla – rör inte modellen" aria-label="Alla"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5 16.5 6v8L10 17.5 3.5 14V6z"/><path d="M3.5 6 10 9.7 16.5 6M10 9.7v7.8"/></svg></button>
+            <button type="button" data-gmode="isolate" aria-pressed="false" class="gantt-toolbar-btn gb-ico" title="Kopplade – bara det som är kopplat till schemat" aria-label="Kopplade"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9"/><path d="M11.5 8.5a3 3 0 0 0-4.2 0L4.7 11.1a3 3 0 0 0 4.2 4.2l.9-.9"/></svg></button>
+            <button type="button" data-gmode="hide" aria-pressed="false" class="gantt-toolbar-btn gb-ico" title="Okopplade – dölj kopplade, visa bara det okopplade" aria-label="Okopplade"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9"/><path d="M11.5 8.5a3 3 0 0 0-4.2 0L4.7 11.1a3 3 0 0 0 4.2 4.2l.9-.9"/><path d="M3 3l14 14" stroke-width="2"/></svg></button>
+            <button type="button" data-gmode="time" aria-pressed="false" class="gantt-toolbar-btn gb-ico" title="Tid – se läget ett visst datum" aria-label="Tid"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10.5" r="6.5"/><path d="M10 7v3.8l2.4 1.5M8 2.5h4"/></svg></button>
+          </div>
+          <span class="gtr-sep"></span>
+          <div class="gtr-tools">
+          <button type="button" id="ganttLoadModelsBtn" class="gantt-toolbar-btn gb-ico"  title="Modeller – läs in alla modeller som aktiviteterna är kopplade till" aria-label="Modeller"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5 16.5 6v8L10 17.5 3.5 14V6z"/><path d="M10 7v5m0 0-2-2m2 2 2-2"/></svg></button>
+          <button type="button" id="ganttPpExportBtn" class="gantt-toolbar-btn gb-ico"  title="Till Powerproject – exportera aktiviteter (Microsoft Project-XML)" aria-label="Till Powerproject"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 5H4.5v11h11V13"/><path d="M10 11 16.5 4.5M12 4h4.5v4.5"/></svg></button>
+          <button type="button" id="ganttPrintBtn" class="gantt-toolbar-btn gb-ico"  title="Skriv ut – skriv ut Gantt-schemat eller spara det som PDF, med rubrik, förklaring och tidshuvud på varje sida" aria-label="Skriv ut"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 7V3h8v4M6 13H3.5V8h13v5H14"/><rect x="6" y="11" width="8" height="6" rx="1"/></svg></button>
+          <button type="button" id="ganttFullBtn" class="gantt-toolbar-btn gb-ico"  title="Helskärm – visa Gantt-schemat i helskärm (Esc stänger)" aria-label="Helskärm"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7.5v-4h4M16.5 7.5v-4h-4M3.5 12.5v4h4M16.5 12.5v4h-4"/></svg></button>
+          </div>
+          <span class="gtr-sep"></span>
           <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens start">Från <input type="date" id="ganttTimeFrom" aria-label="Från" /></label>
           <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens slut">Till <input type="date" id="ganttTimeTo" aria-label="Till" /></label>
-          <button type="button" id="ganttTimeAuto" class="gantt-toolbar-btn" title="Hela spannet">Auto</button>
-          <button type="button" id="ganttScaleBtn" class="gantt-toolbar-btn" aria-haspopup="true" title="Färgskala efter datum: objekten färgas från tidig till sen start (eller slut) mellan två färger du väljer">Färgskala ▾</button>
-          <button type="button" id="ganttStrictBtn" class="gantt-toolbar-btn" aria-pressed="false" title="Följ datum: färgen följer strikt start- och slutdatumen (planerad före start, pågående mellan, klar efter slut) och struntar i framdriften i procent">Följ datum</button>
+          <button type="button" id="ganttTimeAuto" class="gantt-toolbar-btn gb-ico"  title="Hela spannet (auto)" aria-label="Hela spannet (auto)"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10h14M6 7l-3 3 3 3M14 7l3 3-3 3"/></svg></button>
+          <button type="button" id="ganttScaleBtn" class="gantt-toolbar-btn gb-ico" aria-haspopup="true" title="Färgskala efter datum – objekten färgas från tidig till sen start (eller slut) mellan två färger du väljer" aria-label="Färgskala efter datum"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="14" height="8" rx="2"/><path d="M7 6v8M11 6v8M15 6v8" opacity=".55"/></svg><span class=gb-caret>▾</span></button>
+          <button type="button" id="ganttStrictBtn" class="gantt-toolbar-btn gb-ico" aria-pressed="false" title="Följ datum – färgen följer strikt start- och slutdatumen (planerad före start, pågående mellan, klar efter slut) och struntar i framdriften i procent" aria-label="Följ datum"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="2"/><path d="M3 8.5h14M7 3v3M13 3v3M7.5 12.5l2 2 3.5-3.5"/></svg></button>
           <div class="gantt-time-menu-wrap">
-            <button type="button" id="ganttTimeMenuBtn" class="gantt-toolbar-btn" aria-expanded="false" aria-haspopup="true" title="Färger, opacitet, Kommande, Pulsera och Markera pågående">Färger &amp; visning ▾</button>
+            <button type="button" id="ganttTimeMenuBtn" class="gantt-toolbar-btn gb-ico" aria-expanded="false" aria-haspopup="true" title="Färger & visning – färger, opacitet, Kommande, Pulsera och Markera pågående" aria-label="Färger & visning"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h7M15 6h1M4 14h2M10 14h6"/><circle cx="13" cy="6" r="1.8"/><circle cx="8" cy="14" r="1.8"/></svg><span class=gb-caret>▾</span></button>
             <div id="ganttTimeMenu" class="gantt-time-menu hidden" role="dialog" aria-label="Färger och visning">
               <div class="gtm-title">Färger och opacitet</div>
           <div class="gtm-grid">
@@ -240,7 +244,7 @@
         </div>
 
         <div class="gantt-head-row gantt-head-sub gantt-range-row">
-          <span class="gantt-sub-label">Period</span>
+          <span class="gantt-sub-label" title="Period som visas i schemat"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="2"/><path d="M3 8.5h14M7 3v3M13 3v3"/></svg></span>
           <div class="gantt-chips">
             <button type="button" class="gantt-chip" data-gantt-weeks="2">2 v</button>
             <button type="button" class="gantt-chip" data-gantt-weeks="4">4 v</button>
@@ -250,18 +254,18 @@
           <label class="gantt-toolbar-field"><input type="date" id="ganttRangeStart" aria-label="Visa från" /></label>
           <span class="gantt-sub-dash">–</span>
           <label class="gantt-toolbar-field"><input type="date" id="ganttRangeEnd" aria-label="Visa till" /></label>
-          <button type="button" id="ganttRangeApply" class="gantt-toolbar-btn">Använd</button>
+          <button type="button" id="ganttRangeApply" class="gantt-toolbar-btn gb-ico"  title="Använd perioden" aria-label="Använd perioden"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg></button>
           <span id="ganttRangeStatus" class="hint gantt-range-status"></span>
           <span class="gantt-head-spacer"></span>
-          <label class="gantt-pill gantt-bars-only" title="Visar verkliga start/slut som en streckad stapel under den planerade">
-            <input type="checkbox" id="ganttShowActual" /> Verkligt
+          <label aria-label="Visar verkliga start/slut som en strecka" class="gantt-pill gp-ico gantt-bars-only" title="Visar verkliga start/slut som en streckad stapel under den planerade">
+            <input type="checkbox" id="ganttShowActual" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="14" height="3.5" rx="1.5"/><path d="M3 13.5h3M8 13.5h3M13 13.5h4"/></svg>
           </label>
-          <label class="gantt-pill" title="Visa baseline (en tidigare version av tidplanen) som en grå stapel/linje under den planerade, och hur mycket aktiviteten flyttats">
-            <input type="checkbox" id="ganttShowBaseline" /> Baseline
+          <label aria-label="Visa baseline (en tidigare version av ti" class="gantt-pill gp-ico" title="Visa baseline (en tidigare version av tidplanen) som en grå stapel/linje under den planerade, och hur mycket aktiviteten flyttats">
+            <input type="checkbox" id="ganttShowBaseline" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 17V3.5M5 4h9l-2 3 2 3H5"/></svg>
             <input type="color" id="ganttBaselineColor" class="gantt-bl-color" value="#f59e0b" title="Baseline-färg" aria-label="Baseline-färg" />
           </label>
-          <label id="ganttBaselineDaysPill" class="gantt-pill hidden" title="Visa bara hur många dagar aktiviteterna flyttats mot baseline (+5 d / −2 d) – utan baseline-linjerna">
-            <input type="checkbox" id="ganttBaselineDays" /> Bara ± dagar
+          <label aria-label="Visa bara hur många dagar aktiviteterna " id="ganttBaselineDaysPill" class="gantt-pill gp-ico hidden" title="Visa bara hur många dagar aktiviteterna flyttats mot baseline (+5 d / −2 d) – utan baseline-linjerna">
+            <input type="checkbox" id="ganttBaselineDays" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5v8M6 7.5h8M6 15h8"/></svg>
           </label>
           <span id="ganttBlPick" class="gantt-bl-pick hidden" title="Vilken baseline som visas, och en andra att jämföra mot">
             <select id="ganttBaselineSel" aria-label="Baseline som visas"></select>
@@ -269,20 +273,20 @@
             <select id="ganttBaseline2Sel" aria-label="Jämför även med"></select>
             <input type="color" id="ganttBaselineColor2" class="gantt-bl-color" value="#2563eb" title="Färg för jämförelsen" aria-label="Färg för jämförelsen" />
           </span>
-          <label class="gantt-pill gantt-board-only" title="Lapparna på en rad (namn, aktivitet och datum) – av: större lappar på flera rader">
-            <input type="checkbox" id="ganttBoardOneLine" /> En rad
+          <label aria-label="Lapparna på en rad (namn, aktivitet och " class="gantt-pill gp-ico gantt-board-only" title="Lapparna på en rad (namn, aktivitet och datum) – av: större lappar på flera rader">
+            <input type="checkbox" id="ganttBoardOneLine" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7.5" width="14" height="5" rx="1.5"/></svg>
           </label>
-          <label class="gantt-pill gantt-board-only" title="Visa hela namnet på alla lappar (av: högst två rader – hela texten syns när du pekar på lappen)">
-            <input type="checkbox" id="ganttBoardFull" /> Hela texten
+          <label aria-label="Visa hela namnet på alla lappar (av: hög" class="gantt-pill gp-ico gantt-board-only" title="Visa hela namnet på alla lappar (av: högst två rader – hela texten syns när du pekar på lappen)">
+            <input type="checkbox" id="ganttBoardFull" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><text x="10" y="14.2" text-anchor="middle" font-size="11.5" font-weight="700" fill="currentColor" stroke="none" font-family="Segoe UI,Arial">Aa</text></svg>
           </label>
-          <label class="gantt-pill" title="Pilar för kopplingarna, och att beroende aktiviteter glider med när du drar">
-            <input type="checkbox" id="ganttShowArrows" /> Pilar
+          <label aria-label="Pilar för kopplingarna, och att beroende" class="gantt-pill gp-ico" title="Pilar för kopplingarna, och att beroende aktiviteter glider med när du drar">
+            <input type="checkbox" id="ganttShowArrows" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h5a3 3 0 0 1 3 3v5M9.5 11.5 12 14l2.5-2.5"/></svg>
           </label>
-          <label class="gantt-pill gantt-board-only" title="Visa varje 3D-objekt som en egen lapp (annars en lapp per aktivitet)">
-            <input type="checkbox" id="ganttBoardSplit" /> En lapp per objekt
+          <label aria-label="Visa varje 3D-objekt som en egen lapp (a" class="gantt-pill gp-ico gantt-board-only" title="Visa varje 3D-objekt som en egen lapp (annars en lapp per aktivitet)">
+            <input type="checkbox" id="ganttBoardSplit" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg>
           </label>
-          <label class="gantt-pill" title="Dra i en stapel/lapp för att flytta den, eller i dess kanter för att ändra start-/slutdatum. Sparas direkt till 4D-data (samma som ett sparat formulär i 4D-planering).">
-            <input type="checkbox" id="ganttEditable" /> Redigerbar
+          <label aria-label="Dra i en stapel/lapp för att flytta den," class="gantt-pill gp-ico" title="Dra i en stapel/lapp för att flytta den, eller i dess kanter för att ändra start-/slutdatum. Sparas direkt till 4D-data (samma som ett sparat formulär i 4D-planering).">
+            <input type="checkbox" id="ganttEditable" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 3.5l3 3L7 16l-4 1 1-4z"/></svg>
           </label>
         </div>
       </div>
@@ -445,17 +449,17 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=20261015093440"></script>
-  <script src="app.js?v=20261015093440"></script>
-  <script src="resource-curve.js?v=20261015093440"></script>
-  <script src="pp-export.js?v=20261015093440"></script>
-  <script src="bubbles.js?v=20261015093440"></script>
-  <script src="gantt-views.js?v=20261015093440"></script>
-  <script src="photo-bubbles.js?v=20261015093440"></script>
-  <script src="video-gfx.js?v=20261015093440"></script>
-  <script src="video-editor.js?v=20261015093440"></script>
-  <script src="quantities.js?v=20261015093440"></script>
-  <script src="quantities-mf.js?v=20261015093440"></script>
-  <script src="planning-link.js?v=20261015093440"></script>
+  <script src="ui-dialog.js?v=20261015095714"></script>
+  <script src="app.js?v=20261015095714"></script>
+  <script src="resource-curve.js?v=20261015095714"></script>
+  <script src="pp-export.js?v=20261015095714"></script>
+  <script src="bubbles.js?v=20261015095714"></script>
+  <script src="gantt-views.js?v=20261015095714"></script>
+  <script src="photo-bubbles.js?v=20261015095714"></script>
+  <script src="video-gfx.js?v=20261015095714"></script>
+  <script src="video-editor.js?v=20261015095714"></script>
+  <script src="quantities.js?v=20261015095714"></script>
+  <script src="quantities-mf.js?v=20261015095714"></script>
+  <script src="planning-link.js?v=20261015095714"></script>
 </body>
 </html>
