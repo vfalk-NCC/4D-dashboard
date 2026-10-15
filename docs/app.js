@@ -1181,7 +1181,7 @@ function mergeActivityGroups(list) {
 async function selectActivityInModel(it) {
   if (!it) return;
   const targets = (it.members || [it]).filter(m => m.modelId && m.objectId);
-  if (!targets.length) { modelToast("Aktiviteten är inte kopplad till något i modellen"); return; }
+  if (!targets.length) { modelToast(it.members && it.members.length > 1 ? "Aktiviteterna är inte kopplade till något i modellen – koppla dem först (högerklick → 3D-koppling)" : "Aktiviteten är inte kopplad till något i modellen"); return; }
   if (!API || !API.viewer || typeof API.viewer.convertToObjectRuntimeIds !== "function") return;
   try {
     const byModel = {};
@@ -3625,6 +3625,7 @@ function applyGanttMultiSel() {
   if (typeof bubblesSchedule === "function") bubblesSchedule();
   document.querySelectorAll("#ganttChart [data-item-id]").forEach(n => n.classList.toggle("gantt-multisel", ganttMultiSel.has(n.dataset.itemId)));
   let bar = document.getElementById("ganttMultiBar");
+  document.body.classList.toggle("has-multibar", ganttMultiSel.size > 0); // så att meddelanden (toast) hamnar ovanför fältet, inte bakom det
   if (!ganttMultiSel.size) { if (bar) bar.remove(); return; }
   if (!bar) {
     bar = document.createElement("div"); bar.id = "ganttMultiBar"; bar.className = "gantt-multibar";
@@ -3638,10 +3639,13 @@ function applyGanttMultiSel() {
 /* Sätt entreprenör på alla markerade (Ctrl-klick) på en gång: en liten ruta med val bland befintliga entreprenörer (eller skriv ett nytt). Ångra finns. */
 function ganttMultiContractorPop(btn) {
   const old = document.getElementById("ganttMultiCPop"); if (old) { old.remove(); return; }
-  if (!ganttEditable) { modelToast("Slå på Redigerbar för att ändra entreprenör"); return; }
+  if (!ganttEditable) { // slå på Redigerbar själv (som när man dubbelklickar) i stället för en toast som lätt missas
+    const cb = document.getElementById("ganttEditable");
+    if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } else { modelToast("Slå på Redigerbar för att ändra entreprenör"); return; }
+  }
   const ms = ganttMultiMembers(); if (!ms.length) return;
   const cur = [...new Set(ms.map(m => m.contractor || ""))], names = uniqueValues(it => it.contractor);
-  const pop = document.createElement("div"); pop.id = "ganttMultiCPop"; pop.className = "gantt-time-menu"; pop.style.cssText = "position:fixed;z-index:80;min-width:280px;display:flex;flex-direction:column;gap:8px";
+  const pop = document.createElement("div"); pop.id = "ganttMultiCPop"; pop.className = "gantt-time-menu"; pop.style.cssText = "position:fixed;z-index:3100;min-width:280px;display:flex;flex-direction:column;gap:8px";
   pop.innerHTML = `<div class="gtm-title">Entreprenör på ${ganttMultiSel.size} markerade (${ms.length} objekt)</div>
     <input type="text" id="gmcInput" placeholder="Sök eller skriv ny entreprenör…" autocomplete="off" value="${cur.length === 1 ? escapeHtml(cur[0]) : ""}" />
     <div class="gmc-list" id="gmcList">${names.map(n => `<button type="button" class="gmc-opt${cur.length === 1 && cur[0] === n ? " on" : ""}" data-v="${escapeHtml(n)}">${escapeHtml(n)}</button>`).join("")}</div>
@@ -3671,7 +3675,7 @@ function clearGanttMulti() { ganttMultiSel.clear(); const had = ganttIsoOverride
 function pushGanttMulti() { const ms = ganttMultiMembers(); if (ms.length) selectActivityInModel({ members: ms }); }
 function isolateGanttMulti() {
   ganttIsoOverride = ganttMultiMembers().filter(m => m.modelId && m.objectId);
-  if (!ganttIsoOverride.length) { ganttIsoOverride = null; modelToast("De markerade är inte kopplade till modellen"); return; }
+  if (!ganttIsoOverride.length) { ganttIsoOverride = null; modelToast("De markerade aktiviteterna är inte kopplade till objekt i modellen – koppla dem först (högerklick → 3D-koppling)"); return; }
   if (ganttMode === "isolate") { isolateSig = ""; applyGanttIsolate(true); } else setGanttMode("isolate");
 }
 function initGanttMulti() {
