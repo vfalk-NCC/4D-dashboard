@@ -2471,3 +2471,14 @@ section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 
 .gantt-resize { position: relative; }
 .gantt-resize .gr-corner { position: absolute; right: 3px; bottom: 0; color: #94a3b8; transition: color .15s; }
 .gantt-resize:hover .gr-corner, .gantt-resize.drag .gr-corner { color: var(--accent); }
+
+/* Foto med bubblor: förhandsvisning */
+.phb-wrap { position: fixed; inset: 0; z-index: 3300; background: rgba(15,23,42,.6); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.phb-box { background: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.4); max-width: 96vw; max-height: 94vh; display: flex; flex-direction: column; overflow: hidden; }
+.phb-img { overflow: auto; background: #f1f5f9; display: flex; }
+.phb-img img { max-width: 92vw; max-height: 78vh; object-fit: contain; display: block; margin: auto; }
+.phb-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 12px; }
+.phb-info { flex: 1; color: #475569; }
+.phb-bar button { font: inherit; font-size: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
+.phb-bar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media print { .phb-wrap { display: none; } }
