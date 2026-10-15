@@ -60,13 +60,22 @@ seed('plan_items.json', [
   await page.waitForSelector('#ganttPhotoBtn');
   for (const [name, cam] of [['pos', null], ['ang', { position: { x: 0, y: -40, z: 20 }, yaw: 0, pitch: -26.5, fov: 60 }], ['bad', { foo: 1 }]]) {
     await page.evaluate(c => { window.__cam = c; }, cam);
-    await page.click('#ganttPhotoBtn'); await page.waitForSelector('#phbDlg img', { timeout: 15000 });
+    await page.click('#ganttPhotoBtn'); await page.waitForSelector('#phbDlg canvas', { timeout: 15000 });
     const info = await page.textContent('.phb-info'); console.log(name, '->', info);
     if (name !== 'bad' && /kanten|Inga/.test(info)) fail('Bubblor placerades inte: ' + info);
     if (name === 'bad' && !/kanten/.test(info)) fail('Reservläget förväntades: ' + info);
-    if (!/4 bubblor/.test(info)) fail('Antal: ' + info);
-    const src = await page.getAttribute('#phbDlg img', 'src');
-    require('fs').writeFileSync(process.env.PHB_OUT + '/' + name + '.png', Buffer.from(await (await page.evaluate(async s => { const b = await (await fetch(s)).blob(); return Array.from(new Uint8Array(await b.arrayBuffer())); }, src)).map(x => x)));
+    if (!/^4 bubblor/.test(info)) fail('Antal: ' + info);
+    if (name === 'pos') { // dra en bubbla
+      const before = await page.evaluate(() => 1);
+      const bb = await page.locator('#phbCv').boundingBox();
+      await page.mouse.move(bb.x + bb.width * 0.4, bb.y + bb.height * 0.3); await page.mouse.down(); await page.mouse.move(bb.x + bb.width * 0.4 + 40, bb.y + bb.height * 0.3 + 30, { steps: 4 }); await page.mouse.up();
+      const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]);
+      await dl.saveAs(process.env.PHB_OUT + '/foto.pdf');
+      const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('#phbPng')]);
+      await dl2.saveAs(process.env.PHB_OUT + '/foto.png');
+      await page.selectOption('#phbScope', 'marked'); await page.waitForTimeout(500);
+      const i2 = await page.textContent('.phb-info'); if (!/^0 bubblor/.test(i2) || !/markerade/.test(i2)) fail('Bara markerade utan markering: ' + i2);
+    }
     await page.click('#phbClose');
   }
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));

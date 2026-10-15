@@ -2482,3 +2482,6 @@ section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 
 .phb-bar button { font: inherit; font-size: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
 .phb-bar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 @media print { .phb-wrap { display: none; } }
+.phb-img canvas { max-width: 92vw; max-height: 74vh; display: block; margin: auto; touch-action: none; }
+.phb-sel { display: inline-flex; align-items: center; gap: 4px; margin: 0; color: #475569; }
+.phb-sel select { font: inherit; font-size: 12px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 5px; }
