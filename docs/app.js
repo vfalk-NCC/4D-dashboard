@@ -1669,6 +1669,11 @@ function startOfWeekUTC(date) {
   return d;
 }
 
+function isoWeekYear(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + 3); // torsdagen avgör ISO-året
+  return d.getUTCFullYear();
+}
 function isoWeekNumber(date) {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const dayNum = (d.getUTCDay() + 6) % 7;
@@ -3262,13 +3267,13 @@ function buildGanttTimeline(domainStart, domainEnd, domainDays, isFit, pxPerDay)
   const dow = startD.getUTCDay(); // 0 = söndag ... 6 = lördag
   const daysToFirstMonday = dow === 1 ? 0 : (8 - dow) % 7;
   if (daysToFirstMonday > 0) {
-    weekLabels.push(`<span class="gantt-week-label" style="left:0${suffix}">v.${isoWeekNumber(startD)}</span>`);
+    weekLabels.push(`<span class="gantt-week-label" style="left:0${suffix}">v.${isoWeekNumber(startD)} - ${isoWeekYear(startD)}</span>`);
   }
   for (let d = daysToFirstMonday; d <= domainDays; d += 7) {
     const mondayDate = new Date(startD.getTime() + d * 86400000);
     const mondayIso = mondayDate.toISOString().slice(0, 10);
     if (mondayIso > domainEnd) break;
-    weekLabels.push(`<span class="gantt-week-label" style="left:${toUnit(d)}${suffix}">v.${isoWeekNumber(mondayDate)}</span>`);
+    weekLabels.push(`<span class="gantt-week-label" style="left:${toUnit(d)}${suffix}">v.${isoWeekNumber(mondayDate)} - ${isoWeekYear(mondayDate)}</span>`);
   }
 
   // Veckolinjer (vid varje måndag) + helgskuggning (lör-sön) - periodiska
@@ -4835,7 +4840,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   const weeksHtml = Array.from({ length: nWeeks }, (_, i) => {
     const ws = new Date(w0); ws.setUTCDate(ws.getUTCDate() + i * 7);
     const we = new Date(ws); we.setUTCDate(we.getUTCDate() + 6);
-    return `<div class="board-week${i === todayCol ? " board-week-today" : ""}"><b>v.${isoWeekNumber(ws)}</b><span>${escapeHtml(shortDateSv(ws))} – ${escapeHtml(shortDateSv(we))}</span></div>`;
+    return `<div class="board-week${i === todayCol ? " board-week-today" : ""}"><b>v.${isoWeekNumber(ws)} - ${isoWeekYear(ws)}</b><span>${escapeHtml(shortDateSv(ws))} – ${escapeHtml(shortDateSv(we))}</span></div>`;
   }).join("");
 
   const colorKind = ganttColorBy;
