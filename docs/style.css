@@ -2646,3 +2646,10 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .na-post { display: inline-block; font-size: 10px; font-weight: 700; padding: 0 5px; margin-left: 3px; border-radius: 999px; background: #eaf2ff; color: #1d4ed8; border: 1px solid #bcd2fb; }
 .na-posts-sum { margin: 2px 0 6px; font-size: 11.5px; }
 .qmf-sync { margin-left: auto; font-size: 11px; } .qmf-sync.bad { color: #b42318; }
+
+/* Knapparna Aktivitet och Ej kopplade sitter direkt efter pennan i färgförklaringen */
+.gantt-legend .gantt-legend-actions { display: inline-flex; gap: 6px; align-items: center; margin-left: 2px; }
+.gantt-legend-row { display: block; }
+.gantt-legend .gantt-add-inline { height: 20px; font-size: 11px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; }
+#ganttUncoupledBtn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+#ganttUncoupledBtn b { font-weight: 600; opacity: .8; }

@@ -3534,6 +3534,7 @@ function renderGanttLegend() {
     `<span class="gantt-legend-item"><span class="gantt-legend-dot" style="background:${STATUS_COLORS[s]}"></span>${escapeHtml(STATUS_LABELS[s])}</span>`
   ).join("");
   const editHelp = 'Redigerbart läge: dra i en stapel eller lapp för att flytta den, eller i dess vänster-/högerkant för att ändra start eller slut. På tavlan flyttas aktiviteter som beror på den med – håll Shift för att bara flytta den lappen. Dubbelklicka en lapp eller stapel för att redigera den (namn, datum, Väntar på och glapp). Högerklicka för kopplingar och 3D-koppling. Ändringen sparas direkt och kan ångras.';
+  const act = document.getElementById("ganttLegendActions"); if (act && act.parentNode === el) el.removeChild(act); // knapparna följer med efter pennan
   el.innerHTML = statusItems + `
     <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-actual"></span>Verkligt (där ifyllt)</span>
     <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-weekend"></span>Helg</span>
@@ -3542,6 +3543,7 @@ function renderGanttLegend() {
     ${ganttShowBaseline && ganttBaseline2Id ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline2"></span>Jämför: ${escapeHtml(baselineLabel(ganttBaseline2Id))}</span>` : ""}
     ${ganttEditable ? `<span class="gantt-legend-item gl-edit" title="${escapeHtml(editHelp)}" style="cursor:help">✏️</span>` : ""}
   `;
+  if (act) { el.appendChild(act); const n = ganttUncoupledCount(); const nb = document.getElementById("ganttUncoupledN"); if (nb) nb.textContent = n ? `(${n})` : ""; const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); }
   // Tavlans färger (Färga efter): en ruta per entreprenör/område/aktivitet – klicka för att välja egen färg.
   if (ganttView === "board") {
     const kind = ganttColorBy, none = { area: NO_AREA_LABEL, contractor: NO_CONTRACTOR_LABEL, activity: NO_ACTIVITY_LABEL }[kind];
@@ -4221,7 +4223,14 @@ function initGanttTime() {
   dop.value = ganttDoneOp; dopv.textContent = ganttDoneOp;
   dop.oninput = () => { ganttDoneOp = Number(dop.value); dopv.textContent = dop.value; try { localStorage.setItem("4ddash-gantt-time-doneop", dop.value); } catch (e) {} if (ganttIsolate && ganttTime3d && ganttAsOf) { ganttTimeReset(); ganttTimeApply3d(); } };
 }
+/* Filter i Gantt-schemat (Victor 2026-10-15): bara aktiviteter som ännu inte är kopplade till något objekt i modellen. Gäller schemat, utskriften och 3D-läget. */
+let ganttOnlyUncoupled = false; try { ganttOnlyUncoupled = localStorage.getItem("4ddash-gantt-uncoupled") === "1"; } catch (e) { /* */ }
+const ganttIsCoupled = it => !!(it.modelId && it.objectId);
+const ganttActKey = it => it.activityKey || `i:${it.id}`;
+function ganttUncoupledOnly(list) { const coupled = new Set(list.filter(ganttIsCoupled).map(ganttActKey)); return list.filter(it => !ganttIsCoupled(it) && !coupled.has(ganttActKey(it))); }
+function ganttUncoupledCount() { return new Set(ganttUncoupledOnly(getFilteredItems()).map(ganttActKey)).size; }
 function renderGantt(list, target) {
+  if (ganttOnlyUncoupled) list = ganttUncoupledOnly(list);
   // Resurskurvan följer Gantt-schemats urval (filter, sök, dolda områden, period) – ritas om efteråt.
   if (!target && typeof renderResourceCurve === "function") setTimeout(renderResourceCurve, 0);
   // target: ritar i ett annat element (utskriften, se printGantt) - utan anteckningar och interaktion.
@@ -6582,6 +6591,7 @@ function initGanttControls() {
     arrCb.checked = ganttShowArrows;
     arrCb.onchange = () => { ganttShowArrows = arrCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
   }
+  { const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.onclick = () => { ganttOnlyUncoupled = !ganttOnlyUncoupled; try { localStorage.setItem("4ddash-gantt-uncoupled", ganttOnlyUncoupled ? "1" : "0"); } catch (e) { /* */ } ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); renderGantt(getFilteredItems()); }; }
   const addBtn = document.getElementById("ganttAddBtn");
   if (addBtn) addBtn.onclick = () => openNewActivityDialog();
   const blDays = document.getElementById("ganttBaselineDays");

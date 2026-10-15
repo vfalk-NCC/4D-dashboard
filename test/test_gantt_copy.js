@@ -18,6 +18,7 @@ seed('plan_items.json', [
   it('Kontrafor M12', 'PRODUKTION / 7421 Förtjockardel', 'Kontrafor', -2, 8, { model_id: 'M1', object_id: 'o2', progress: 50 }),
   it('Stödmur', 'PRODUKTION / 742C Stödmur', 'Stödmur', -4, 12, { model_id: 'M1', object_id: 'o3', progress: 16 }),
   it('Grovbetong gavel', 'PRODUKTION / 742C Stödmur', 'Gavel', -1, 4, { model_id: 'M1', object_id: 'o4', progress: 80 }),
+  it('Okopplad aktivitet', 'PRODUKTION / 742C Stödmur', 'Okopplat', 2, 6, { model_id: null, object_id: null }),
 ]);
 ['plan_item_activities.json', 'plan_milestones.json', 'plan_deliveries.json', 'plan_item_baseline_history.json'].forEach(f => seed(f, []));
 (async () => {
@@ -72,6 +73,15 @@ seed('plan_items.json', [
   if (!copy || rows.length !== before + 1) fail('Kopian ska sparas som en ny rad: ' + rows.length + ' / ' + before);
   if (copy.model_id || copy.object_id && /^o2$/.test(copy.object_id)) fail('Kopian ska inte vara kopplad till originalets 3D-objekt: ' + JSON.stringify(copy));
   const orig = rows.find(r => r.object_name === 'Kontrafor M12'); if (!orig || copy.start_date !== orig.start_date || copy.end_date !== orig.end_date) fail('Samma datum');
+  // Filter: bara aktiviteter som inte är kopplade i modellen; knapparna sitter vid pennan i färgförklaringen.
+  await page.locator('.gantt-legend-row').screenshot({ path: (process.env.PHB_OUT || '/tmp') + '/legend.png' });
+  const pos = await page.evaluate(() => { const p = document.querySelector('#ganttLegend .gl-edit'), b = document.getElementById('ganttUncoupledBtn'), a = document.getElementById('ganttAddBtn'); const r = x => x.getBoundingClientRect(); return { pencil: !!p, sameRow: p && Math.abs(r(p).top - r(a).top) < 14, after: p && r(a).left > r(p).left, inLegend: !!document.querySelector('#ganttLegend #ganttLegendActions'), n: document.getElementById('ganttUncoupledN').textContent, b: !!b }; });
+  if (!pos.pencil || !pos.inLegend || !pos.sameRow || !pos.after || !pos.n) fail('Knapparna ska ligga efter pennan i färgförklaringen: ' + JSON.stringify(pos));
+  await page.click('#ganttUncoupledBtn'); await page.waitForTimeout(500);
+  const sh = await page.evaluate(() => ({ n: ganttShownItems.length, names: ganttShownItems.map(x => x.objectName).sort().join('|'), pressed: document.getElementById('ganttUncoupledBtn').getAttribute('aria-pressed') }));
+  if (sh.n !== 2 || sh.names !== 'Kontrafor M12 (kopia)|Okopplad aktivitet' || sh.pressed !== 'true') fail('Bara okopplade aktiviteter ska visas: ' + JSON.stringify(sh));
+  await page.click('#ganttUncoupledBtn'); await page.waitForTimeout(400);
+  if ((await page.evaluate(() => ganttShownItems.length)) < 4) fail('Filtret av ska visa alla igen');
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK'); await browser.close(); server.close();
 })().catch(e => { console.error('FEL:', e.message); process.exit(1); });
