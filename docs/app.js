@@ -4188,14 +4188,14 @@ function initGanttTime() {
   } }
   fut.checked = ganttTimeFuture;
   // Färger på Pågående / Klar / Kommande – samma färger som i Inställningar och schemat.
-  document.querySelectorAll("#ganttTimeRow [data-tcol]").forEach(inp => {
+  document.querySelectorAll("#ganttTimeMenu [data-tcol]").forEach(inp => {
     inp.value = STATUS_COLORS[inp.dataset.tcol] || "#888888";
     inp.oninput = () => {
       STATUS_COLORS[inp.dataset.tcol] = inp.value; saveStatusColorOverrides();
       clearTimeout(ganttTimeRender); ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); if (typeof initStatusColorControls === "function") initStatusColorControls(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); }, 200);
     };
   });
-  document.querySelectorAll("#ganttTimeRow [data-topc]").forEach(inp => {
+  document.querySelectorAll("#ganttTimeMenu [data-topc]").forEach(inp => {
     const k = inp.dataset.topc; inp.value = ganttOp[k] === undefined ? 100 : ganttOp[k];
     inp.oninput = () => { ganttOp[k] = Number(inp.value); inp.title = `Opacitet ${LBL_OP[k]}: ${inp.value} %${Number(inp.value) <= 0 ? " (osynligt)" : ""}`; try { localStorage.setItem("4ddash-gantt-time-ops", JSON.stringify(ganttOp)); } catch (e) {} if (ganttIsolate && ganttTime3d && ganttAsOf) { ganttTimeReset(); ganttTimeApply3d(); } };
     inp.title = `Opacitet ${LBL_OP[k]}: ${inp.value} %`;
@@ -6090,9 +6090,13 @@ function setGanttFullscreen(on) {
   if (!on) ganttFsLost(false);
   panel.classList.toggle("gantt-fullscreen", on);
   const fsTools = document.getElementById("ganttFsTools");
-  if (fsTools) fsTools.textContent = ganttFsClean ? "☰ Visa knappar" : "☰ Dölj knappar";
+  if (fsTools) ganttFsToolsPaint(fsTools, ganttFsClean);
   document.body.classList.toggle("gantt-fullscreen-on", on);
-  if (btn) { btn.textContent = on ? "✕ Stäng helskärm" : "⛶ Helskärm"; btn.classList.toggle("active", on); }
+  if (btn) {
+    const ico = on ? '<path d="M5 5l10 10M15 5 5 15"/>' : '<path d="M3.5 7.5v-4h4M16.5 7.5v-4h-4M3.5 12.5v4h4M16.5 12.5v4h-4"/>';
+    btn.innerHTML = `<svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ico}</svg>`;
+    btn.setAttribute("aria-label", on ? "Stäng helskärm" : "Helskärm"); btn.title = on ? "Stäng helskärm (Esc)" : "Helskärm – visa Gantt-schemat i helskärm (Esc stänger)"; btn.classList.toggle("active", on);
+  }
   renderGantt(getFilteredItems()); // kolumnbredden följer den nya ytan
 }
 async function toggleGanttFullscreen() {

@@ -55,7 +55,7 @@ seed('plan_items.json', [
   await page.click('[data-gantt-view="board"]');
   await page.click('[data-gantt-weeks="4"]');
   await page.waitForTimeout(200);
-  const size = () => page.evaluate(() => { const p = document.querySelector('section.panel[data-panel-id="gantt"]').getBoundingClientRect(), c = document.getElementById('ganttChart').getBoundingClientRect(); return { pw: p.width, ph: p.height, top: p.top, ch: c.height, btn: document.getElementById('ganttFullBtn').textContent, fs: document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen') }; });
+  const size = () => page.evaluate(() => { const p = document.querySelector('section.panel[data-panel-id="gantt"]').getBoundingClientRect(), c = document.getElementById('ganttChart').getBoundingClientRect(); return { pw: p.width, ph: p.height, top: p.top, ch: c.height, btn: document.getElementById('ganttFullBtn').getAttribute('aria-label'), fs: document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen') }; });
   const before = await size();
   await page.click('#ganttFullBtn'); await page.waitForTimeout(400);
   const on = await size();
@@ -81,7 +81,7 @@ seed('plan_items.json', [
   await page.click('#ganttFsTools'); await page.waitForTimeout(300);
   if (await page.evaluate(() => getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display) === 'none') fail('Visa knappar utanför helskärm');
   await page.click('#ganttFsTools'); await page.waitForTimeout(300);
-  await page.click('#ganttFsEnter'); await page.waitForTimeout(300);
+  await page.click('#ganttFullBtn'); await page.waitForTimeout(300);
   if (await page.evaluate(() => getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display) !== 'none') fail('Valet att dölja knapparna ska sparas');
   await page.click('#ganttFsTools'); await page.waitForTimeout(300);
   if (await page.evaluate(() => getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display) === 'none') fail('Visa knappar igen');

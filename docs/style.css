@@ -2559,3 +2559,16 @@ section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 
 .gantt-fs-bar button .gp-svg, .gantt-fs-bar button svg { width: 12px; height: 12px; }
 .gantt-fs-bar .gfs-l { display: none; }
 .gantt-fs-bar button#ganttFsTime { padding: 0 5px; }
+
+/* Övre raden som alltid syns: lägesikoner, verktyg och tidsikoner tillsammans med Tid/3D/Foto/Vyer/Dölj/Helskärm */
+.gantt-fs-bar { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 210px); row-gap: 3px; }
+section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
+.gantt-fs-bar .gfs-grp { display: inline-flex; gap: 3px; align-items: center; }
+.gantt-fs-bar .gfs-sep { width: 1px; height: 14px; background: #cbd5e1; margin: 0 2px; }
+.gantt-fs-bar #ganttFsEnter { display: none !important; }
+.gantt-fs-bar .gantt-mode-seg { display: inline-flex; box-shadow: none; }
+.gantt-fs-bar .gantt-mode-seg .gb-ico { box-shadow: none; border-radius: 0; border: 0; border-left: 1px solid var(--border); }
+.gantt-fs-bar .gantt-mode-seg .gb-ico:first-child { border-left: 0; }
+.gantt-fs-bar .gantt-mode-seg .gantt-toolbar-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.gantt-fs-bar .gantt-time-menu-wrap { position: relative; display: inline-flex; }
+.gantt-fs-bar .gantt-time-menu { top: calc(100% + 4px); right: 0; left: auto; }
