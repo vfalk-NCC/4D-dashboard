@@ -6,10 +6,10 @@
    Förslag fylls i automatiskt (väggar → ESE.21 m.m., byggnad efter namn och områdeskod) men kan ändras. Förteckningen ändras aldrig. */
 
 const QMF_KEY = "4ddash-qty-mf", QMF_MAP = "4ddash-qty-map";
-const qmf = { f: { ty: "", po: "", ar: "", by: "" },  posts: [], builds: [], file: "", build: "", typeKey: "", map: { types: {}, areas: {} }, msg: "" };
+const qmf = { f: { ty: "", po: "", ar: "", by: "" },  posts: [], builds: [], file: "", build: "", typeKey: "", map: { types: {}, areas: {}, obj: {}, mvO: {}, mvT: {} }, groupId: true, open: new Set(), msg: "" };
 try { const s = JSON.parse(localStorage.getItem(QMF_KEY) || "null"); if (s && Array.isArray(s.posts)) { qmf.posts = s.posts; qmf.builds = s.builds || []; qmf.file = s.file || ""; } } catch (e) { /* ingen sparad */ }
-try { const m = JSON.parse(localStorage.getItem(QMF_MAP) || "null"); if (m) { let ty = m.types || {}; if (Object.values(ty).some(v => typeof v === "string")) ty = { vol: ty }; /* äldre sparning: bara volym */ qmf.map = { types: ty, areas: m.areas || {} }; qmf.typeKey = m.typeKey || ""; qmf.build = m.build || ""; } } catch (e) { /* standard */ }
-const qmfSave = () => { try { localStorage.setItem(QMF_MAP, JSON.stringify({ ...qmf.map ? { types: qmf.map.types, areas: qmf.map.areas } : {}, typeKey: qmf.typeKey, build: qmf.build })); } catch (e) { /* ingen lagring */ } };
+try { const m = JSON.parse(localStorage.getItem(QMF_MAP) || "null"); if (m) { let ty = m.types || {}; if (Object.values(ty).some(v => typeof v === "string")) ty = { vol: ty }; /* äldre sparning: bara volym */ qmf.map = { types: ty, areas: m.areas || {}, obj: m.obj || {}, mvO: m.mvO || {}, mvT: m.mvT || {} }; qmf.groupId = m.groupId !== false; qmf.typeKey = m.typeKey || ""; qmf.build = m.build || ""; } } catch (e) { /* standard */ }
+const qmfSave = () => { try { localStorage.setItem(QMF_MAP, JSON.stringify({ types: qmf.map.types, areas: qmf.map.areas, obj: qmf.map.obj || {}, mvO: qmf.map.mvO || {}, mvT: qmf.map.mvT || {}, groupId: qmf.groupId, typeKey: qmf.typeKey, build: qmf.build })); } catch (e) { /* ingen lagring */ } };
 const qmfSavePosts = () => { try { localStorage.setItem(QMF_KEY, JSON.stringify({ posts: qmf.posts, builds: qmf.builds, file: qmf.file })); } catch (e) { qmf.msg = "Förteckningen är för stor för att sparas i webbläsaren – den gäller bara tills sidan laddas om."; } };
 
 /* ---- .xlsx utan bibliotek --------------------------------------------------------------------------- */
@@ -89,7 +89,17 @@ async function qmfLoadFile(file) {
 const qmfPosts = () => qmf.posts.filter(p => p.unit === QTY_KINDS[qtyKind()][1]);
 const qmfTypes = () => (qmf.map.types[qtyKind()] = qmf.map.types[qtyKind()] || {});
 const qmfStem = s => String(s || "").toLowerCase().replace(/[^a-zåäö0-9 ]/g, "").replace(/(huset|hus|et|en|n|t)$/i, "").trim();
-const qmfTypeVal = o => String(o.flat[qmf.typeKey] === undefined ? "(saknas)" : o.flat[qmf.typeKey]);
+const qmfRawName = o => String(o.flat[qmf.typeKey] === undefined ? "(saknas)" : o.flat[qmf.typeKey]);
+/* Typ = namnet utan objektets eget ID (Revit: "Basic Wall:Concrete - 1000:1788329" → "Basic Wall:Concrete - 1000"), så att samma typ blir en rad. */
+const qmfTypeVal = o => (qmf.groupId !== false ? qmfRawName(o).replace(/\s*[:#]\s*\d{3,}$/, "") : qmfRawName(o));
+const qmfObjKey = o => `${o.modelId}|${o.objectId || o.rid}`;
+/* Post för ett objekt i ett mängdslag: objektets egen koppling om den finns, annars typens. */
+function qmfEffPost(o, k) { k = k || qtyKind(); const ov = (qmf.map.obj[k] || {})[qmfObjKey(o)]; if (ov !== undefined) return ov; return (qmf.map.types[k] || {})[qmfTypeVal(o)] || ""; }
+/* Flyttad till ett annat mängdslag (posten har en annan enhet)? Objektets egen flytt går före typens. */
+function qmfMovedOf(o) { const k = (qmf.map.mvO || {})[qmfObjKey(o)] || (qmf.map.mvT || {})[qmfTypeVal(o)]; return k && k !== qtyKind() && qmfEffPost(o, k) ? k : ""; }
+/* Vilket mängdslag hanterar en post? Enheten avgör; m² delas mellan Form (posten nämner form) och Yta en sida. */
+function qmfKindOfPost(p) { if (p.unit === "m²") return /form/i.test(`${p.ref} ${p.label}`) ? "form" : "area"; return (Object.entries(QTY_KINDS).find(([, v]) => v[1] === p.unit) || [])[0] || ""; }
+
 const qmfAreaOf = o => String((o.item && o.item.area) || "").split("/").map(x => x.trim()).filter(Boolean).pop() || "(utan område)";
 /* Förslag: typ → post efter namnet (Revit-familjer), område → byggnad efter namn och områdeskod (742A/742B → samma kod som 742 Sikthall …). */
 function qmfSuggestPost(t) {
@@ -122,8 +132,17 @@ function qmfAutoMap() {
   qmfSave();
 }
 /* Vilket annat mängdslag (om något) en typ är flyttad till – t.ex. en sandwichvägg som listas i m³ men posten är i m². */
-const qmfKindOfUnit = u => (Object.entries(QTY_KINDS).find(([, v]) => v[1] === u) || [])[0] || "";
-function qmfMovedTo(t) { const k = (qmf.map.mv || {})[t]; return k && k !== qtyKind() && (qmf.map.types[k] || {})[t] ? k : ""; }
+/* Fråga med flera knappar; svarar med knappens nyckel ("" = avbryt). */
+function qmfAsk(text, buttons) {
+  return new Promise(res => {
+    const w = document.createElement("div"); w.className = "qmf-ask";
+    w.innerHTML = `<div class="qmf-ask-box"><div class="qmf-ask-t">${qtyEsc(text)}</div><div class="qmf-ask-b">${buttons.map(([k, t], i) => `<button type="button" data-k="${qtyEsc(k)}"${i === 0 ? ' class="primary"' : ""}>${qtyEsc(t)}</button>`).join("")}</div></div>`;
+    (document.fullscreenElement || document.body).appendChild(w);
+    const done = k => { w.remove(); document.removeEventListener("keydown", key, true); res(k); }, key = e => { if (e.key === "Escape") { e.stopPropagation(); done(""); } };
+    w.addEventListener("click", e => { const b = e.target.closest("button[data-k]"); if (b) done(b.dataset.k); else if (e.target === w) done(""); }); document.addEventListener("keydown", key, true);
+    const f = w.querySelector("button"); if (f) f.focus();
+  });
+}
 /* Söklista (kombinationsruta) i stället för webbläsarens rullgardin: sök/filtrera och välj. groups: [{ label, items: [{ v, t, dis }] }] */
 function qmfCombo(se, groups, onPick) {
   document.querySelectorAll(".qmf-combo").forEach(x => x.remove());
@@ -165,8 +184,8 @@ function qmfCompare() {
   all.forEach(o => {
     const v = qtyValue(o); if (v === null) return;
     if (!qtyPass(o)) return;
-    const post = qmfTypes()[qmfTypeVal(o)], r = post && rows.get(post);
-    if (!r) { if (!post && qmfMovedTo(qmfTypeVal(o))) { movedOther++; return; } unmapped++; unmappedVol += v; return; }
+    const post = qmfEffPost(o), r = post && rows.get(post);
+    if (!r) { if (!post && qmfMovedOf(o)) { movedOther++; return; } unmapped++; unmappedVol += v; return; }
     const b = qmf.map.areas[qmfAreaOf(o)] || "";
     if (sel && b !== sel) { otherBuild++; return; }
     r.tot += v; r.n++; r.objs.push(o); if (qtyDone(o)) r.klar += v;
@@ -188,13 +207,20 @@ function qmfRender() {
   const types = new Map(), areas = new Map();
   qty.objs.forEach(o => { const t = qmfTypeVal(o), a = qmfAreaOf(o), v = qtyValue(o) ?? 0;
     const te = types.get(t) || { n: 0, v: 0, objs: [] }; te.n++; te.v += v; te.objs.push(o); types.set(t, te); const ae = areas.get(a) || { n: 0, v: 0, objs: [] }; ae.n++; ae.v += v; ae.objs.push(o); areas.set(a, ae); });
-  const postOpts = (sel, t) => { const mv = !sel && t !== undefined ? qmfMovedTo(t) : ""; const mp = mv ? qmf.posts.find(p => p.key === qmf.map.types[mv][t]) : null;
-    return `<option value="">(ingen post)</option>${mp ? `<option value="__moved" selected>→ ${E(QTY_KINDS[mv][0])}: ${E(mp.ref)} – ${E(mp.label.slice(0, 80))} [${E(mp.unit)}]</option>` : ""}${qmf.posts.filter(p => p.key === sel).map(p => `<option value="${E(p.key)}" selected>${E(p.ref)} – ${E(p.label.slice(0, 100))} [${E(p.unit)}]</option>`).join("")}`; };
+  const postLabel = k => { const p = qmf.posts.find(x => x.key === k); return p ? `${p.ref} – ${p.label.slice(0, 100)} [${p.unit}]` : ""; };
+  const objPostText = o => { const k = qmfEffPost(o), ex = Object.keys(QTY_KINDS).filter(x => x !== qtyKind() && qmfEffPost(o, x)).map(x => { const p = qmf.posts.find(y => y.key === qmfEffPost(o, x)); return `${QTY_KINDS[x][1]}: ${p ? p.ref : "?"}`; }); return (k ? postLabel(k) : "(ingen post)") + (ex.length ? `  ·  även ${ex.join(", ")}` : ""); };
+  const grpRows = ([t, e]) => {
+    const texts = [...new Set(e.objs.map(objPostText))], shown = texts.length === 1 ? texts[0] : `Blandat (${texts.length} olika)`, open = qmf.open.has(t);
+    let h = `<tr class="qmf-click qmf-grp" data-tyrow="${E(t)}" data-ptxt="${E(texts.join(" | ").toLowerCase())}" title="Klicka för att markera de ${e.n} objekten i TC"><td><button type="button" class="qmf-tog" data-tog="${E(t)}" title="${open ? "Dölj" : "Visa"} objekten i typen – välj post per objekt">${open ? "▾" : "▸"}</button> ${E(t)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ty="${E(t)}"><option>${E(shown)}</option></select></td></tr>`;
+    if (open) { const ob = [...e.objs].sort((a, b) => (qtyValue(b) || 0) - (qtyValue(a) || 0)); h += ob.slice(0, 300).map(o => `<tr class="qmf-click qmf-obj" data-og="${E(t)}" data-ok="${E(qmfObjKey(o))}" title="Klicka för att markera objektet i TC"><td class="qmf-objn">${E(qmfRawName(o))}</td><td class="num">1</td><td class="num">${qtyFmt(qtyValue(o) ?? 0)}</td><td><select data-ob="${E(qmfObjKey(o))}" data-og="${E(t)}"><option>${E(objPostText(o))}</option></select></td></tr>`).join("") + (ob.length > 300 ? `<tr class="qmf-obj"><td colspan="4" class="hint">… ${ob.length - 300} objekt till – dra ner antalet med sök eller välj post för hela typen.</td></tr>` : ""); }
+    return h;
+  };
   const bOpts = sel => `<option value="">(ingen byggnad)</option>${qmf.builds.map(b => `<option value="${E(b)}"${sel === b ? " selected" : ""}>${E(b)}</option>`).join("")}`;
   const C = qmfCompare(), u = QTY_KINDS[qtyKind()][1];
   html += `<details class="qmf-map" open><summary>1. Vilken post är objekten? <span class="hint">(per ${E(qmf.typeKey || "egenskap")})</span></summary>
-      <label class="qty-row">Typ-egenskap <select id="qmfTypeKey">${[...qty.keys.keys()].map(k => `<option value="${E(k)}"${qmf.typeKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>
-      <div class="hint qmf-flt-n"></div><table class="qty-table"><thead><tr><th>Typ i modellen<input type="search" class="qmf-flt" data-flt="ty" placeholder="Sök typ…" value="${E(qmf.f.ty)}" /></th><th class="num">Objekt</th><th class="num">${u}</th><th>Post i förteckningen<input type="search" class="qmf-flt" data-flt="po" placeholder="Sök post… (eller ”ingen”)" value="${E(qmf.f.po)}" /></th></tr></thead><tbody>${[...types].sort((a, b) => b[1].v - a[1].v).map(([t, e]) => `<tr class="qmf-click" data-tyrow="${E(t)}" title="Klicka för att markera de ${e.n} objekten i TC"><td>${E(t)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ty="${E(t)}">${postOpts(qmfTypes()[t], t)}</select></td></tr>`).join("")}</tbody></table></details>
+      <label class="qty-row">Typ-egenskap <select id="qmfTypeKey">${[...qty.keys.keys()].map(k => `<option value="${E(k)}"${qmf.typeKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label><label class="qmf-chk qty-row" title="Revit-namn slutar ofta på objektets eget ID (…:1788329). Då blir varje objekt en egen typ. Med den här kryssrutan grupperas objekten per typ, och du kan ändå välja post per objekt (▸)."><input type="checkbox" id="qmfGroupId"${qmf.groupId !== false ? " checked" : ""} /> Gruppera bort objektets ID i namnet</label>
+      <div class="hint">Klicka på ▸ för att se objekten i en typ och välja post för ett enskilt objekt. Ändrar du ett enskilt objekt får du frågan om det ska gälla bara det eller alla i typen.</div>
+      <div class="hint qmf-flt-n"></div><table class="qty-table"><thead><tr><th>Typ i modellen<input type="search" class="qmf-flt" data-flt="ty" placeholder="Sök typ…" value="${E(qmf.f.ty)}" /></th><th class="num">Objekt</th><th class="num">${u}</th><th>Post i förteckningen<input type="search" class="qmf-flt" data-flt="po" placeholder="Sök post… (eller ”ingen”)" value="${E(qmf.f.po)}" /></th></tr></thead><tbody>${[...types].sort((a, b) => b[1].v - a[1].v).map(grpRows).join("")}</tbody></table></details>
     <details class="qmf-map" open><summary>2. Vilken byggnad hör området till? <span class="hint">(Områdena i Gantt-schemat)</span></summary>
       <div class="hint qmf-flt-n"></div><table class="qty-table"><thead><tr><th>Område i Gantt<input type="search" class="qmf-flt" data-flt="ar" placeholder="Sök område…" value="${E(qmf.f.ar)}" /></th><th class="num">Objekt</th><th class="num">${u}</th><th>Byggnad i förteckningen<input type="search" class="qmf-flt" data-flt="by" placeholder="Sök byggnad… (eller ”ingen”)" value="${E(qmf.f.by)}" /></th></tr></thead><tbody>${[...areas].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([a, e]) => `<tr class="qmf-click" data-arrow="${E(a)}" title="Klicka för att markera de ${e.n} objekten i TC"><td>${E(a)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ar="${E(a)}">${bOpts(qmf.map.areas[a])}</select></td></tr>`).join("")}</tbody></table></details>
     <div class="qty-row"><label>Byggnad <select id="qmfBuild"><option value="">Alla byggnader</option>${qmf.builds.map(b => `<option value="${E(b)}"${qmf.build === b ? " selected" : ""}>${E(b)}</option>`).join("")}</select></label><span class="hint">Klara vid ${E(qtyAt())} enligt Ganttens regel</span></div>
@@ -207,6 +233,7 @@ function qmfRender() {
     const fi = q("#qmfFile"); if (fi) fi.onchange = () => { if (fi.files && fi.files[0]) qmfLoadFile(fi.files[0]); };
     const cl = q("#qmfClear"); if (cl) cl.onclick = () => { qmf.posts = []; qmf.builds = []; qmf.file = ""; qmf.msg = ""; try { localStorage.removeItem(QMF_KEY); } catch (e) { /* */ } qmfRender(); };
     if (!hasMf || !hasObjs) return;
+    if (q("#qmfGroupId")) q("#qmfGroupId").onchange = e => { qmf.groupId = e.target.checked; qmf.open.clear(); qmfSave(); qmfAutoMap(); qmfRender(); };
     q("#qmfTypeKey").onchange = e => { qmf.typeKey = e.target.value; qmfSave(); qmfAutoMap(); qmfRender(); };
     // Sök/filtrera raderna (utan omritning): alla ord ska finnas; för Post/Byggnad söks i den valda postens text.
     const applyFlt = () => {
@@ -214,9 +241,10 @@ function qmfRender() {
       [["tr[data-tyrow]", "ty", "po"], ["tr[data-arrow]", "ar", "by"]].forEach(([sel, k1, k2]) => {
         const w1 = words(qmf.f[k1]), w2 = words(qmf.f[k2]); let shown = 0, all = 0;
         host.querySelectorAll(sel).forEach(tr => {
-          const t1 = (tr.dataset.tyrow || tr.dataset.arrow || "").toLowerCase(), se = tr.querySelector("select"), t2 = se ? (se.options[se.selectedIndex] ? se.options[se.selectedIndex].text : "").toLowerCase() : "";
+          const t1 = (tr.dataset.tyrow || tr.dataset.arrow || "").toLowerCase(), se = tr.querySelector("select"), t2 = tr.dataset.ptxt !== undefined ? tr.dataset.ptxt : (se ? (se.options[se.selectedIndex] ? se.options[se.selectedIndex].text : "").toLowerCase() : "");
           const show = ok(t1, w1) && ok(t2, w2); tr.style.display = show ? "" : "none"; all++; if (show) shown++;
         });
+        host.querySelectorAll("tr.qmf-obj").forEach(r => { const g = r.dataset.og ? host.querySelector(`tr[data-tyrow="${CSS.escape(r.dataset.og)}"]`) : null; r.style.display = g && g.style.display === "none" ? "none" : ""; });
         const th = host.querySelector(`[data-flt="${k1}"]`); if (th) { const tb = th.closest("table"); if (tb) tb.classList.toggle("qmf-filtered", w1.length > 0 || w2.length > 0); const c = tb && tb.parentElement.querySelector(".qmf-flt-n"); if (c) c.textContent = w1.length || w2.length ? `${shown} av ${all} rader visas` : ""; }
       });
     };
@@ -225,25 +253,45 @@ function qmfRender() {
     applyFlt();
     // Klick på en rad markerar de objekt som raden räknats på i TC.
     const pick = (list, label) => { if (!list || !list.length) { if (typeof modelToast === "function") modelToast("Inga objekt på den raden"); return; } qtySelectRows(list); if (typeof modelToast === "function") modelToast(`${list.length} objekt markerade i TC${label ? " – " + label : ""}`); };
-    host.querySelectorAll("tr[data-tyrow]").forEach(tr => tr.addEventListener("click", e => { if (e.target.closest("select")) return; const t = types.get(tr.dataset.tyrow); pick(t && t.objs, tr.dataset.tyrow.split(":")[0]); }));
+    host.querySelectorAll("tr[data-tyrow]").forEach(tr => tr.addEventListener("click", e => { if (e.target.closest("select, button")) return; const t = types.get(tr.dataset.tyrow); pick(t && t.objs, tr.dataset.tyrow.split(":")[0]); }));
+    const byKey = new Map(qty.objs.map(o => [qmfObjKey(o), o]));
+    host.querySelectorAll("tr.qmf-obj[data-ok]").forEach(tr => tr.addEventListener("click", e => { if (e.target.closest("select")) return; const o = byKey.get(tr.dataset.ok); pick(o ? [o] : [], "objekt"); }));
+    host.querySelectorAll("[data-tog]").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); const y = scrollY; qmf.open.has(b.dataset.tog) ? qmf.open.delete(b.dataset.tog) : qmf.open.add(b.dataset.tog); qmfRender(); scrollTo(0, y); }));
     host.querySelectorAll("tr[data-arrow]").forEach(tr => tr.addEventListener("click", e => { if (e.target.closest("select")) return; const a = areas.get(tr.dataset.arrow); pick(a && a.objs, tr.dataset.arrow); }));
     host.querySelectorAll("tr[data-postrow]").forEach(tr => tr.addEventListener("click", () => { const r = C.list.find(x => x.p.key === tr.dataset.postrow); pick(r && r.objs, r && r.p.ref); }));
     const cur = qtyKind(), curU = QTY_KINDS[cur][1], kname = k => QTY_KINDS[k][0];
     const postGroups = (t, selKey) => {
       const g = [{ label: `Poster i ${curU} – gäller mängdslaget ${kname(cur)}`, items: [{ id: "", v: "", t: "(ingen post)", cur: !selKey }, ...qmf.posts.filter(p => p.unit === curU).map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, cur: p.key === selKey }))] }];
-      [...new Set(qmf.posts.filter(p => p.unit !== curU).map(p => p.unit))].sort().forEach(u => { const k = qmfKindOfUnit(u), ps = qmf.posts.filter(p => p.unit === u);
-        g.push({ label: k ? `Poster i ${u} – väljer du en av dem flyttas typen till mängdslaget ${kname(k)}` : `Poster i ${u} – inget mängdslag för den enheten`, items: ps.map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, dis: !k }))}); });
+      const other = qmf.posts.filter(p => p.unit !== curU), kinds = [...new Set(other.map(p => qmfKindOfPost(p)))].sort();
+      kinds.forEach(k => { const ps = other.filter(p => qmfKindOfPost(p) === k), u = ps[0].unit;
+        g.push({ label: k ? `Poster i ${u} – väljer du en av dem läggs objekten till i mängdslaget ${kname(k)} (de finns kvar i ${kname(cur)})` : `Poster i ${u} – inget mängdslag för den enheten`, items: ps.map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, dis: !k })) }); });
       return g;
     };
+    /* Välj post: för en hel typ, eller för ett enskilt objekt (då frågar vi om det ska gälla alla i typen). */
+    const unitKind = it => (it.post ? qmfKindOfPost(it.post) : cur);
+    const delOv = (objs, kinds) => objs.forEach(o => { const ok = qmfObjKey(o); kinds.forEach(k => { if (qmf.map.obj[k]) delete qmf.map.obj[k][ok]; }); });
+    /* Mängdslagen lever sina egna liv: en form-post (m²) ligger "ovanpå" objektet, som fortfarande har sin volym (m³) att mängda. Väljer du en post i en annan
+       enhet läggs objektet därför TILL i det mängdslaget – det finns kvar i det nuvarande tills du väljer "(ingen post)" där. */
+    const applyGroup = (t, objs, it) => {
+      const k = unitKind(it);
+      if (!it.post || k === cur) { qmfTypes()[t] = it.v; delOv(objs, [cur]); }
+      else { qmf.map.types[k] = qmf.map.types[k] || {}; qmf.map.types[k][t] = it.v; delOv(objs, [k]); if (typeof modelToast === "function") modelToast(`Alla ${objs.length} objekt i typen lades till i mängdslaget ${kname(k)} (post ${it.post.ref}). De finns kvar i ${kname(cur)} – välj "(ingen post)" där om de inte ska mängdas som ${QTY_KINDS[cur][1]}.`); }
+    };
+    const applyObj = (o, it) => {
+      const k = unitKind(it), ok = qmfObjKey(o);
+      if (!it.post || k === cur) (qmf.map.obj[cur] = qmf.map.obj[cur] || {})[ok] = it.v;
+      else { (qmf.map.obj[k] = qmf.map.obj[k] || {})[ok] = it.v; if (typeof modelToast === "function") modelToast(`Objektet lades till i mängdslaget ${kname(k)} (post ${it.post.ref}). Det finns kvar i ${kname(cur)} – välj "(ingen post)" där om det inte ska mängdas som ${QTY_KINDS[cur][1]}.`); }
+    };
     host.querySelectorAll("select[data-ty]").forEach(se => se.addEventListener("mousedown", e => {
-      e.preventDefault(); const t = se.dataset.ty;
-      qmfCombo(se, postGroups(t, qmfTypes()[t] || ""), it => {
-        const k = it.post ? qmfKindOfUnit(it.post.unit) : cur;
-        if (!it.post || k === cur) { qmfTypes()[t] = it.v; if (qmf.map.mv) delete qmf.map.mv[t]; }
-        else { // posten har en annan enhet: typen flyttas till mängdslaget som hanterar den enheten, och lämnar det nuvarande
-          qmf.map.types[k] = qmf.map.types[k] || {}; qmf.map.types[k][t] = it.v; qmfTypes()[t] = ""; (qmf.map.mv = qmf.map.mv || {})[t] = k;
-          if (typeof modelToast === "function") modelToast(`Typen flyttad till mängdslaget ${kname(k)} (post ${it.post.ref}). Byt mängdslag ovan för att se den.`);
-        }
+      e.preventDefault(); const t = se.dataset.ty, objs = (types.get(t) || {}).objs || [], eff = [...new Set(objs.map(o => qmfEffPost(o)))];
+      qmfCombo(se, postGroups(t, eff.length === 1 ? eff[0] : "__mixed"), it => { applyGroup(t, objs, it); qmfSave(); qmfRender(); });
+    }));
+    host.querySelectorAll("select[data-ob]").forEach(se => se.addEventListener("mousedown", e => {
+      e.preventDefault(); const o = byKey.get(se.dataset.ob), t = se.dataset.og, objs = (types.get(t) || {}).objs || []; if (!o) return;
+      qmfCombo(se, postGroups(t, qmfEffPost(o)), async it => {
+        let scope = "obj";
+        if (objs.length > 1) { scope = await qmfAsk(`Gäller valet bara det här objektet, eller alla ${objs.length} objekt av typen "${t}"?`, [["obj", "Bara det här objektet"], ["all", `Alla ${objs.length} i typen`], ["", "Avbryt"]]); if (!scope) return; }
+        if (scope === "all") applyGroup(t, objs, it); else applyObj(o, it);
         qmfSave(); qmfRender();
       });
     }));

@@ -2632,3 +2632,13 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .qmf-combo-i.cur { font-weight: 700; }
 .qmf-combo-i.dis { color: #94a3b8; cursor: default; }
 .qmf-map select { cursor: pointer; }
+
+.qmf-tog { border: 0; background: none; cursor: pointer; padding: 0 4px; color: #64748b; font-size: 12px; }
+.qmf-objn { padding-left: 28px !important; color: #475569; }
+.qmf-obj td { background: #f8fafc !important; font-size: 11.5px; }
+.qmf-chk { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: #475569; }
+.qmf-ask { position: fixed; inset: 0; z-index: 3400; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; }
+.qmf-ask-box { background: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.35); padding: 16px 18px; max-width: 460px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.qmf-ask-b { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.qmf-ask-b button { font: inherit; font-size: 12px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; }
+.qmf-ask-b button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }

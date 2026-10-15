@@ -27,7 +27,7 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 1000 } }); const page = await ctx.newPage();
   const errors = [];
-  page.on('pageerror', e => errors.push(e.message)); page.on('dialog', d => d.accept());
+  page.on('pageerror', e => { errors.push(e.message); console.log('PAGEERR', e.message); }); page.on('dialog', d => d.accept());
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `
     const P = ${JSON.stringify(P)}; const ids = Object.keys(P); window.__sel = [];
     window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({
@@ -122,17 +122,33 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
       const ty = await page.evaluate(() => document.querySelector('select[data-ty]').dataset.ty);
       const prev = await page.evaluate(ty => ({ vol: (qmf.map.types.vol || {})[ty], form: (qmf.map.types.form || {})[ty] }), ty);
       await page.dispatchEvent('select[data-ty]', 'mousedown'); await page.waitForSelector('.qmf-combo');
-      const heads = await page.evaluate(() => [...document.querySelectorAll('.qmf-combo-g')].map(g => g.textContent)); if (!heads.some(h => /Poster i m³/.test(h)) || !heads.some(h => /Poster i m².*flyttas typen/.test(h))) fail('Grupper i söklistan: ' + heads.join(' | '));
+      const heads = await page.evaluate(() => [...document.querySelectorAll('.qmf-combo-g')].map(g => g.textContent)); if (!heads.some(h => /Poster i m³/.test(h)) || !heads.some(h => /Poster i m².*läggs objekten till/.test(h))) fail('Grupper i söklistan: ' + heads.join(' | '));
       await page.fill('.qmf-combo-q', 'grundsulor'); const hit = await page.evaluate(() => [...document.querySelectorAll('.qmf-combo-i')].map(x => x.textContent)); if (hit.length < 1 || !hit.every(x => /grundsulor/i.test(x))) fail('Sök i söklistan: ' + hit.join(' | '));
       await page.fill('.qmf-combo-q', 'xyz-finns-inte'); if (!/Inga poster/.test(await page.textContent('.qmf-combo-list'))) fail('Inga träffar'); await page.keyboard.press('Escape');
-      // välj en m²-post för en m³-typ
+      // välj en m²-post för en m³-typ: objekten läggs TILL i Form, och finns kvar i Betong (form ligger "ovanpå" objektet)
       await page.dispatchEvent('select[data-ty]', 'mousedown'); await page.waitForSelector('.qmf-combo');
-      const m2 = await page.evaluate(() => { const post = qmf.posts.find(p => p.unit === 'm²'); const el = [...document.querySelectorAll('.qmf-combo-i')].find(x => x.textContent.startsWith(post.ref + ' –')); el.click(); return post.key; });
+      const m2 = await page.evaluate(() => { const post = qmf.posts.find(p => p.unit === 'm²' && /form/i.test(p.ref + ' ' + p.label)); const el = [...document.querySelectorAll('.qmf-combo-i')].find(x => x.textContent.startsWith(post.ref + ' –')); el.click(); return post.key; });
       await page.waitForTimeout(200);
-      const mv = await page.evaluate(ty => ({ vol: (qmf.map.types.vol || {})[ty], form: (qmf.map.types.form || {})[ty], mv: (qmf.map.mv || {})[ty], moved: qmfMovedTo(ty), n: qmfCompare().movedOther }), ty);
-      if (mv.vol !== '' || mv.form !== m2 || mv.mv !== 'form' || mv.moved !== 'form' || !(mv.n >= 1)) fail('Typen ska flyttas till Form m²: ' + JSON.stringify(mv));
-      if (!/→ Form/.test(await page.evaluate(() => document.querySelector('select[data-ty]').selectedOptions[0].textContent))) fail('Raden ska visa att typen flyttats');
-      await page.evaluate(([ty, prev]) => { if (prev.form === undefined) delete qmf.map.types.form[ty]; else qmf.map.types.form[ty] = prev.form; qmf.map.types.vol[ty] = prev.vol; delete qmf.map.mv[ty]; qmfRender(); }, [ty, prev]); }
+      const mv = await page.evaluate(ty => ({ vol: (qmf.map.types.vol || {})[ty], form: (qmf.map.types.form || {})[ty] }), ty);
+      if (mv.form !== m2 || mv.vol !== prev.vol) fail('Formposten ska läggas till utan att ta bort betongposten: ' + JSON.stringify({ mv, prev, m2 }));
+      if (!/även m²/.test(await page.evaluate(() => document.querySelector('select[data-ty]').options[0].textContent))) fail('Raden ska visa att typen även finns i ett annat mängdslag');
+      await page.evaluate(([ty, prev]) => { if (prev.form === undefined) delete qmf.map.types.form[ty]; else qmf.map.types.form[ty] = prev.form; qmfRender(); }, [ty, prev]);
+      // per objekt: expandera typen, välj post för ett enskilt objekt – frågan om bara det eller alla
+      await page.evaluate(ty => { qmf.open.add(ty); qmfRender(); }, ty);
+      const nObj = await page.evaluate(ty => document.querySelectorAll('tr.qmf-obj[data-og]').length, ty);
+      if (nObj >= 1) { const multi = await page.evaluate(ty => (qmfObjsOf = null, [...document.querySelectorAll('tr[data-tyrow]')].find(r => r.dataset.tyrow === ty).children[1].textContent), ty);
+        await page.dispatchEvent('select[data-ob]', 'mousedown'); await page.waitForSelector('.qmf-combo');
+        const pickKey = await page.evaluate(() => { const p = qmf.posts.find(x => x.unit === 'm³'); [...document.querySelectorAll('.qmf-combo-i')].find(x => x.textContent.startsWith(p.ref + ' –') && !x.classList.contains('cur')) .click(); return p.key; }).catch(() => null);
+        if (Number(multi) > 1) { await page.waitForSelector('.qmf-ask'); await page.click('.qmf-ask button[data-k="obj"]'); await page.waitForTimeout(200);
+          const ov = await page.evaluate(() => Object.values(qmf.map.obj.vol || {}).length); if (ov < 1) fail('Valet för ett objekt ska sparas som objektets egen koppling'); }
+        await page.evaluate(() => { qmf.map.obj = {}; qmfRender(); }); }
+      await page.evaluate(ty => { qmf.open.delete(ty); qmfRender(); }, ty); }
+    { const g = await page.evaluate(() => { const K = qmf.typeKey; const o = { modelId: 'm', objectId: 'a', flat: { [K]: 'Basic Wall:Concrete - Cast-in-Place - 1000:1788329' } }, o2 = { modelId: 'm', objectId: 'b', flat: { [K]: 'Basic Wall:Concrete - Cast-in-Place - 1000:1788331' } };
+        const r = { a: qmfTypeVal(o), same: qmfTypeVal(o) === qmfTypeVal(o2), raw: qmfRawName(o) }; qmf.groupId = false; r.off = qmfTypeVal(o); qmf.groupId = true;
+        qmf.map.obj.vol = { 'm|a': 'X' }; r.eff = qmfEffPost(o, 'vol'); r.eff2 = qmfEffPost(o2, 'vol') === ((qmf.map.types.vol || {})[qmfTypeVal(o2)] || ''); delete qmf.map.obj.vol;
+        const kk = qty.cfg.kind; qty.cfg.kind = 'area'; const vk = Object.keys(qty.objs[0].flat).find(k => /volume$/i.test(k)); const w = { flat: { [vk]: 6 }, hz: 3, bx: 0.2, by: 5 }; qty.volFactor = 1; r.area = qtyValue(w); qty.cfg.kind = kk; return r; });
+      if (g.a !== 'Basic Wall:Concrete - Cast-in-Place - 1000' || !g.same || g.off !== g.raw || g.eff !== 'X' || !g.eff2) fail('Gruppering bort objekt-ID och objektets egen koppling: ' + JSON.stringify(g));
+      if (Math.abs(g.area - 30) > 1e-6) fail('Yta en sida = volym ÷ tjocklek (6 ÷ 0,2 = 30): ' + g.area); }
     { // Antal (st) räknar objekt.
       await page.click('[data-qkind="cnt"]'); await page.waitForTimeout(300);
       const cn = await page.evaluate(() => ({ tot: qtyPivot().total, n: qtyPivot().nObj, val: !!document.getElementById('qtyVal') })); if (cn.tot !== cn.n || cn.val) fail('Antal (st): summan ska vara antalet objekt: ' + JSON.stringify(cn));
