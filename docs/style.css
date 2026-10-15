@@ -2575,3 +2575,14 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .qty-presets { display: inline-flex; gap: 4px; }
 .qty-presets button { font: inherit; font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; background: #fff; cursor: pointer; }
 .qty-presets button:hover { background: #eaf2ff; border-color: #bcd2fb; }
+
+/* Övre raden: alla ikonknappar exakt lika stora (26 × 18 px, ikon 12 px) */
+.gantt-fs-bar button, .gantt-fs-bar .gantt-mode-seg .gb-ico { box-sizing: border-box; width: 26px; min-width: 26px; max-width: 26px; height: 18px; padding: 0; }
+.gantt-fs-bar button svg, .gantt-fs-bar button .gp-svg, .gantt-fs-bar .gantt-refresh-ico { width: 12px; height: 12px; min-width: 12px; }
+.gantt-fs-bar .gb-caret, .gantt-fs-bar .gantt-refresh-lbl { display: none; }
+.gantt-fs-bar .gantt-time-menu-wrap { display: inline-flex; }
+.gantt-add-inline { height: 18px; padding: 0 8px; font-size: 11px; display: inline-flex; align-items: center; }
+
+.gantt-legend-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+.gantt-legend-row .gantt-legend { flex: 0 1 auto; }
+.gantt-legend-row .gantt-add-inline { margin: 4px 0; }

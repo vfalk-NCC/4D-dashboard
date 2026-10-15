@@ -340,7 +340,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   console.log('OK: Ctrl-klick markerar flera aktiviteter – pushas till 3D, Bara dessa, Esc rensar');
   // Info-bubblor i 3D: en per aktivitet med namn, datum, framdrift, område och aktivitet; följer Ctrl-markeringen; av = borttagna.
   await page.evaluate(() => { window.__mk = []; window.__mkRm = []; ganttAsOf = addDaysIso(items.find(x => x.objectId === 'G7').startDate, 1); }); // datumet är inte längre dagens: sätt ett där aktiviteterna pågår
-  await page.click('#bubbleBtn'); await page.waitForTimeout(1200);
+  await page.evaluate(() => bubblesToggle()); await page.waitForTimeout(1200);
   let mk = await page.evaluate(() => (window.__mk || []).slice(-1)[0]);
   if (!mk || !mk.length || !/\d+ %/.test(mk[0].text) || !/\d/.test(mk[0].text.split('\n')[1] || '') || mk[0].start.positionZ !== 5200 || !/^#[0-9a-f]{6}$/i.test(mk[0].color || '') || mk[0].text.split('\n').some(l => l.length > 30)) fail('Bubbla med datum och framdrift: ' + JSON.stringify(mk && mk[0]));
   const arr = await page.evaluate(() => (window.__ar || []).slice(-1)[0]); if (!arr || !arr.length || arr[0].end.positionZ !== 3000 || arr[0].start.positionZ !== 5200) fail('Linje från bubblan till objektet: ' + JSON.stringify(arr));
@@ -349,7 +349,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (!mk || mk.length !== 1 || !/Schakt/.test(mk[0].text)) fail('Bubbla bara för det markerade: ' + JSON.stringify(mk));
   if (!(await page.evaluate(() => (window.__mkRm || []).length))) fail('Gamla bubblor tas bort vid ny uppsättning');
   await page.evaluate(() => { ganttMultiSel.clear(); applyGanttMultiSel(); });
-  await page.click('#bubbleBtn'); await page.waitForTimeout(800);
+  await page.evaluate(() => bubblesToggle()); await page.waitForTimeout(800);
   const nRm = await page.evaluate(() => window.__mkRm.length); await page.waitForTimeout(900);
   if (await page.evaluate(() => bubbleIds.length)) fail('Av: alla bubblor borttagna');
   console.log('OK: info-bubblor i 3D – datum, framdrift, område, aktivitet; följer markeringen; av = borta');
@@ -422,7 +422,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('#ganttRefreshBtn'); await page.waitForTimeout(100);
   if (!(await page.evaluate(() => document.getElementById('ganttRefreshBtn').classList.contains('spin')))) fail('Uppdatera ska snurra medan den hämtar');
   await page.waitForTimeout(2500);
-  if (!/^Uppdatera$/.test((await page.innerText('#ganttRefreshBtn')).trim())) fail('Uppdatera: texten ska gå tillbaka');
+  if (!/^Uppdatera$/.test((await page.textContent('#ganttRefreshBtn')).trim())) fail('Uppdatera: texten ska gå tillbaka');
   console.log('OK: Uppdatera-knapp i Gantt');
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK');
