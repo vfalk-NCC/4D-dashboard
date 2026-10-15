@@ -6461,7 +6461,7 @@ function initGanttControls() {
     refBtn.classList.remove("spin");
     setTimeout(() => { refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdatera"; }, 1800);
   };
-  initGanttTime(); initGanttMulti(); if (typeof initBubbles === "function") initBubbles();
+  initGanttTime(); initGanttMulti(); initGanttResize(); if (typeof initBubbles === "function") initBubbles();
   syncGanttModeUi();
   const lmBtn = document.getElementById("ganttLoadModelsBtn"); if (lmBtn) lmBtn.onclick = loadCoupledModelsDash;
   const ppxBtn = document.getElementById("ganttPpExportBtn"); if (ppxBtn) ppxBtn.onclick = () => openPpExportDialog();
@@ -8599,4 +8599,27 @@ function onExportExcel() {
 // enkel kolumn så resultatet blir en ren rapport.
 function onExportPdf() {
   window.print();
+}
+
+/* Handtag under Gantt-schemat: dra för att ställa höjden (sparas i webbläsaren, dubbelklick = automatisk höjd). */
+function initGanttResize() {
+  const chart = document.getElementById("ganttChart"); if (!chart || document.getElementById("ganttResize")) return;
+  const KEY = "4ddash-gantt-height";
+  const apply = h => { if (h) { chart.style.height = h + "px"; chart.style.maxHeight = "none"; chart.style.overflow = "auto"; } else { chart.style.height = chart.style.maxHeight = chart.style.overflow = ""; } };
+  try { const h = parseInt(localStorage.getItem(KEY), 10); if (h >= 80) apply(h); } catch (e) {}
+  const grip = document.createElement("div"); grip.id = "ganttResize"; grip.className = "gantt-resize"; grip.title = "Dra för att ställa höjden – dubbelklicka för automatisk höjd";
+  grip.innerHTML = "<span></span>"; chart.after(grip);
+  let y0 = 0, h0 = 0;
+  grip.addEventListener("pointerdown", e => {
+    e.preventDefault(); y0 = e.clientY; h0 = chart.getBoundingClientRect().height; grip.setPointerCapture(e.pointerId); grip.classList.add("drag");
+    document.body.style.userSelect = "none";
+  });
+  grip.addEventListener("pointermove", e => { if (!grip.classList.contains("drag")) return; apply(Math.round(Math.max(80, Math.min(h0 + e.clientY - y0, innerHeight * 3)))); });
+  const end = () => {
+    if (!grip.classList.contains("drag")) return; grip.classList.remove("drag"); document.body.style.userSelect = "";
+    try { if (chart.style.height) localStorage.setItem(KEY, parseInt(chart.style.height, 10)); } catch (e) {}
+    if (typeof drawGanttArrows === "function") try { drawGanttArrows(chart); } catch (e) {}
+  };
+  grip.addEventListener("pointerup", end); grip.addEventListener("pointercancel", end);
+  grip.addEventListener("dblclick", () => { apply(0); try { localStorage.removeItem(KEY); } catch (e) {} });
 }

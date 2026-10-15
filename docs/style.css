@@ -2460,3 +2460,11 @@ html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavi
 
 /* Meddelanden ovanför markeringsfältet (annars döljs de bakom det) */
 body.has-multibar .model-toast { bottom: 74px; z-index: 3200; }
+
+/* Höjdhandtag under Gantt-schemat */
+.gantt-resize { height: 14px; margin-top: 2px; display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none; border-radius: 6px; }
+.gantt-resize span { width: 44px; height: 4px; border-radius: 3px; background: #cbd5e1; transition: background .15s, width .15s; }
+.gantt-resize:hover span, .gantt-resize.drag span { background: var(--accent); width: 64px; }
+section.panel.gantt-fullscreen .gantt-resize { display: none; }
+@media print { .gantt-resize { display: none; } }
+section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 0 !important; max-height: none !important; }
