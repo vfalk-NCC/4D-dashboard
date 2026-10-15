@@ -180,7 +180,6 @@ function phbDrawList(ctx, st) {
     if (r.t === "h") {
       ctx.fillStyle = r.col; ctx.fillRect(x + 8 * kk, ty + 2 * kk, 4 * kk, 24 * kk);
       ctx.fillStyle = "#111827"; ctx.font = `700 ${12.5 * kk}px ${PHB_FAM}`; ctx.fillText(r.name, x + 18 * kk, ty + 8 * kk);
-      ctx.textAlign = "right"; ctx.font = `700 ${11.5 * kk}px ${PHB_FAM}`; ctx.fillText(`${r.prog} %`, x + L.W - 10 * kk, ty + 8 * kk); ctx.textAlign = "left";
       ctx.fillStyle = "#e5e7eb"; phbRR(ctx, x + 18 * kk, ty + 18 * kk, L.W - 28 * kk, 5 * kk, 3 * kk); ctx.fill();
       if (r.prog > 0) { ctx.fillStyle = r.col; phbRR(ctx, x + 18 * kk, ty + 18 * kk, Math.max(5 * kk, (L.W - 28 * kk) * r.prog / 100), 5 * kk, 3 * kk); ctx.fill(); }
       ty += 30 * kk;
@@ -372,7 +371,7 @@ function phbPdfList(L, f) {
   L.lines.forEach(r => {
     if (r.t === "h") {
       o += `${phbRgb(r.col)} rg ${phbN(8 * kk * f)} ${phbN(h - (ty + 26) * kk * f)} ${phbN(4 * kk * f)} ${phbN(24 * kk * f)} re f `;
-      o += T("F2", 12.5, "0.07 0.09 0.15", 18, ty + 12, r.name) + T("F2", 11.5, "0.07 0.09 0.15", L.W - 10, ty + 12, r.prog + " %", true) + bar(18, ty + 18, L.W - 28, 5, r.prog, r.col);
+      o += T("F2", 12.5, "0.07 0.09 0.15", 18, ty + 12, r.name) + bar(18, ty + 18, L.W - 28, 5, r.prog, r.col);
       ty += 30;
     } else {
       o += `${phbRgb(r.col)} rg ${phbCirclePdf(26 * kk * f, h - (ty + 9) * kk * f, 4 * kk * f)} f `;
