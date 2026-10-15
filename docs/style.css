@@ -2586,3 +2586,32 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .gantt-legend-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
 .gantt-legend-row .gantt-legend { flex: 0 1 auto; }
 .gantt-legend-row .gantt-add-inline { margin: 4px 0; }
+
+/* Mängdavtagning i samma stil som Gantt-fliken: verktygskort med rader, segmentknappar, chips och ikonknappar */
+.qty-box { gap: 8px; }
+.qty-hint { font-size: 12px; color: var(--muted); margin: 0; }
+.qty-head { margin-bottom: 0; }
+.qty-head .gantt-toolbar-field input[type="text"] { font-size: 11px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 3px; width: 150px; }
+.qty-head .gantt-toolbar-field select { max-width: 260px; }
+.qty-seg .gantt-seg-btn { padding: 3px 10px; font-size: 11.5px; }
+.qty-read { display: inline-flex; align-items: center; gap: 5px; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; height: 24px; padding: 0 12px; }
+.qty-read:hover { background: #0a52de; }
+.qty-notes .hint { margin: 0; font-size: 11.5px; }
+.qty-card { border: 1px solid var(--border); border-radius: 8px; background: #fff; overflow: auto; }
+.qty-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.qty-table thead th { background: #f6f4ef; color: #475569; font-size: 11px; font-weight: 700; text-transform: none; letter-spacing: .01em; border-bottom: 1px solid #ddd6c8; padding: 6px 10px; position: sticky; top: 0; }
+.qty-table td { padding: 5px 10px; border-bottom: 1px solid #eef0f3; }
+.qty-table tbody tr:nth-child(even) td { background: #fbfbfc; }
+.qty-table tbody tr:hover td { background: #eaf2ff; }
+.qty-table tfoot td { border-top: 2px solid #cbd5e1; background: #f8fafc; font-weight: 700; }
+.qty-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.qty-actions .gantt-toolbar-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; }
+.qty-props { font-size: 12px; color: var(--muted); }
+.qmf-box { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 10px; }
+.qmf-h { font-size: 13px; font-weight: 700; color: #334155; text-transform: uppercase; letter-spacing: .03em; }
+.qmf-box input[type="file"] { font-size: 11.5px; }
+.qmf-box select, .qmf-box input[type="text"] { font-size: 11px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 3px; background: #fff; }
+.qmf-box button { font: inherit; font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
+.qmf-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.qmf-table thead th { background: #f6f4ef; border-bottom: 1px solid #ddd6c8; padding: 6px 10px; font-size: 11px; }
+.qmf-table td { padding: 5px 10px; border-bottom: 1px solid #eef0f3; }

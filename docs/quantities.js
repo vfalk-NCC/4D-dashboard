@@ -4,10 +4,10 @@
    Inget sparas någonstans; resultatet kan exporteras som CSV (öppnas i Excel). */
 
 const QTY_KEY = "4ddash-qty";
-const qty = { cfg: { scope: "gantt", phase: "klar", date: "", from: "", kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", exclude: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
+const qty = { cfg: { scope: "gantt", phase: "klar", date: "", from: "", formTop: false, kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", exclude: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
 try { Object.assign(qty.cfg, JSON.parse(localStorage.getItem(QTY_KEY) || "{}")); } catch (e) { /* standard */ }
 /* Mängdslag: Betong (volym m³), Form (yta m²), Kantform/längd (m), Armering/vikt (kg). Varje slag minns sin egenskap. */
-const QTY_KINDS = { vol: ["Betong – volym (m³)", "m³", /calculated\s*geometry\s*values\s*\/\s*volume$/i, /volume|volym/i], form: ["Form – yta (m²)", "m²", /calculated\s*geometry\s*values\s*\/\s*(total\s*)?surface\s*area$/i, /surface|side\s*area|form|area|yta/i], len: ["Längd (m)", "m", /calculated\s*geometry\s*values\s*\/\s*length$/i, /length|längd/i], kg: ["Armering/vikt (kg)", "kg", /calculated\s*geometry\s*values\s*\/\s*weight$/i, /weight|vikt|mass/i] };
+const QTY_KINDS = { vol: ["Betong – volym (m³)", "m³", /calculated\s*geometry\s*values\s*\/\s*volume$/i, /volume|volym/i], form: ["Form – sidoyta (m², utan över-/underyta)", "m²", /calculated\s*geometry\s*values\s*\/\s*(total\s*)?surface\s*area$/i, /surface|side\s*area|form|area|yta/i], len: ["Längd (m)", "m", /calculated\s*geometry\s*values\s*\/\s*length$/i, /length|längd/i], kg: ["Armering/vikt (kg)", "kg", /calculated\s*geometry\s*values\s*\/\s*weight$/i, /weight|vikt|mass/i] };
 const qtyKind = () => QTY_KINDS[qty.cfg.kind] ? qty.cfg.kind : "vol";
 const qtySave = () => { try { localStorage.setItem(QTY_KEY, JSON.stringify(qty.cfg)); } catch (e) { /* ingen lagring */ } };
 const qtyEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -94,6 +94,10 @@ function qtyPickDefaults() {
 }
 /* Enheten i rådata: volym i TC:s egenskaper kan vara m³ eller mm³. Jämförs med objektens omslutande låda (i meter) om det går. */
 async function qtyUnitCheck() {
+  await qtyUnitCheck0();
+  if (qtyKind() === "form") { await qtyVolFactor(); await qtyLoadBoxes(); const n = qty.objs.filter(o => qtyFormDeduct(o) === null).length; qty.unitNote += `${qty.unitNote ? " " : ""}${qty.cfg.formTop ? "Hela ytan räknas (inklusive över- och underyta)." : "Över- och underyta är avdragna (formyta = sidoytor)."}${n && !qty.cfg.formTop ? ` ${n} objekt saknar volym eller höjd och räknas med hela ytan.` : ""}`; }
+}
+async function qtyUnitCheck0() {
   qty.factor = 1; qty.unitNote = "";
   const u = qty.cfg.unit, kind = qtyKind();
   if (u !== "auto") { qty.factor = Number(u) || 1; qty.unitNote = `Enhet vald: ÷ ${qty.factor.toLocaleString("sv-SE")}.`; return; }
@@ -117,10 +121,33 @@ function qtyPass(o) {
   if (inc.length && !inc.some(t => vals.some(v => v.includes(t)))) return false;
   return !(exc.length && exc.some(t => vals.some(v => v.includes(t))));
 }
+/* Formyta (Victor 2026-10-15): "Surface area" i modellen räknar även över- och underyta, och de formas inte. Formytan = hela ytan − 2 × (volym ÷ höjd),
+   alltså sidoytorna; höjden är objektets utsträckning i höjdled (z) i modellen. Stämmer för stående och liggande prismor (väggar, plattor, sulor,
+   pelare); för sluttande eller böjda objekt är det en uppskattning. Kryssrutan "Räkna med över- och underyta" ger hela ytan som förut. */
+const qtyVolKey = o => { if (o._vk !== undefined) return o._vk; const K = QTY_KINDS.vol, ks = Object.keys(o.flat); return (o._vk = ks.find(k => K[2].test(k)) || ks.find(k => /(^|\/\s*)volume$/i.test(k)) || ""); };
+function qtyFormDeduct(o) {
+  if (!(o.hz > 0.001)) return null; const k = qtyVolKey(o), raw = k ? qtyNum(o.flat[k]) : null; if (raw === null || !(raw > 0)) return null;
+  return 2 * (raw / (qty.volFactor || 1)) / o.hz;
+}
+function qtyValue(o) {
+  const raw = qty.cfg.valKey ? qtyNum(o.flat[qty.cfg.valKey]) : null; if (raw === null) return null;
+  let v = raw / (qty.factor || 1);
+  if (qtyKind() === "form" && !qty.cfg.formTop) { const d = qtyFormDeduct(o); if (d !== null) v = Math.max(0, v - d); }
+  return v;
+}
+/* Höjd (z) per objekt ur TC:s omslutande lådor – behövs för formytan. */
+async function qtyLoadBoxes() {
+  const V = API && API.viewer; if (!V || typeof V.getObjectBoundingBoxes !== "function") return;
+  const byM = new Map(); qty.objs.filter(o => o.hz === undefined && o.rid !== undefined && o.rid !== null).forEach(o => (byM.get(o.modelId) || byM.set(o.modelId, []).get(o.modelId)).push(o));
+  for (const [m, list] of byM) for (let i = 0; i < list.length; i += 300) {
+    const ch = list.slice(i, i + 300);
+    try { const bb = await V.getObjectBoundingBoxes(m, ch.map(o => o.rid)), by = new Map(bb.map(b => [b.id, b.boundingBox])); ch.forEach(o => { const b = by.get(o.rid); o.hz = b ? b.max.z - b.min.z : 0; }); } catch (e) { ch.forEach(o => { o.hz = 0; }); }
+  }
+}
 /* Summering: rader × kolumner. */
 function qtyPivot() {
   const C = qty.cfg, f = qty.factor || 1;
-  const val = o => { const raw = C.valKey ? qtyNum(o.flat[C.valKey]) : null; return raw === null ? null : raw / f; };
+  const val = o => qtyValue(o);
   const get = (o, k) => (!k ? "" : QTY_ACT_KEYS[k] ? QTY_ACT_KEYS[k](o) : (o.flat[k] === undefined ? "(saknas)" : String(o.flat[k])));
   const rows = new Map(), cols = new Set(); let total = 0, nObj = 0, nNo = 0;
   qty.objs.forEach(o => {
@@ -158,40 +185,52 @@ function qtyRender0() {
   const host = document.getElementById("qtyBox"); if (!host) return;
   const C = qty.cfg, E = qtyEsc, hasData = qty.objs.length > 0;
   const keyOpts = (sel, withNone, acts) => `${withNone ? `<option value="">(ingen)</option>` : ""}${acts ? Object.keys(QTY_ACT_KEYS).map(k => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)}</option>`).join("") : ""}${[...qty.keys].map(([k, e]) => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)} (${e.n})</option>`).join("")}`;
-  host.innerHTML = `<div class="qty-hint">Tar fram mängder ur modellen för de objekt som <b>Ganttens regel</b> räknar som klara (eller alla), så att du kan jämföra mot mängdförteckningen. Mängderna läses ur TC:s egna egenskaper, t.ex. <i>Calculated Geometry Values → Volume</i>. Inget ändras eller sparas.</div>
-    <div class="qty-row">
-      <label>Urval <select id="qtyScope"><option value="gantt"${C.scope === "gantt" ? " selected" : ""}>Det som visas i Gantt-schemat</option><option value="all"${C.scope === "all" ? " selected" : ""}>Hela planen</option><option value="sel"${C.scope === "sel" ? " selected" : ""}>Markerat i TC</option></select></label>
-      ${C.scope !== "sel" ? `<label>Läge <select id="qtyPhase"><option value="klar"${C.phase === "klar" ? " selected" : ""}>Klara</option><option value="period"${C.phase === "period" ? " selected" : ""}>Klara under period</option><option value="all"${C.phase === "all" ? " selected" : ""}>Alla (oavsett läge)</option></select></label>
-      ${C.phase === "period" ? `<label title="Första dagen i perioden – bara det som blev klart från och med den här dagen räknas">Från <input type="date" id="qtyFrom" value="${E(C.from || addDaysIso(qtyAt(), -6))}" /></label>` : ""}
-      ${C.phase === "klar" || C.phase === "period" ? `<label title="${C.phase === "period" ? "Sista dagen i perioden" : "Klara enligt Ganttens regel vid det här datumet"}">${C.phase === "period" ? "Till" : "Datum"} <input type="date" id="qtyDate" value="${E(C.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO())}" /></label><button type="button" id="qtyToday" title="Använd dagens datum">Idag</button>` : ""}` : ""}
-      <button type="button" id="qtyRead" class="primary">Läs mängder</button><span id="qtyMsg" class="hint"></span></div>
-    ${hasData ? `<div class="qty-row">
-      <label title="Vad som ska summeras: betong (volym), form (yta), längd eller vikt">Mängdslag <select id="qtyKind">${Object.entries(QTY_KINDS).map(([k, v]) => `<option value="${k}"${qtyKind() === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select></label>
-      <label>Mängd <select id="qtyVal">${qtyNumKeys().map(k => `<option value="${E(k)}"${C.valKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>
-      <label>Rader efter <select id="qtyRowKey">${keyOpts(C.rowKey, false, true)}</select></label>
-      <label>Kolumner efter <select id="qtyColKey">${keyOpts(C.colKey, true, true)}</select></label>
-      <label title="Visa bara objekt där någon egenskap innehåller något av orden (flera ord med komma, t.ex. Concrete, Betong)">Innehåller <input type="text" id="qtyFilter" value="${E(C.filter)}" placeholder="t.ex. Concrete, Betong" /></label>
-      <label title="Lämna bort objekt där någon egenskap innehåller något av orden (t.ex. Steel, Stål för att inte räkna stålpålar som betong)">Utesluter <input type="text" id="qtyExclude" value="${E(C.exclude || "")}" placeholder="t.ex. Steel, Stål" /></label>
-      <span class="qty-presets" title="Snabbval som fyller i Innehåller/Utesluter – ändra orden så de passar egenskaperna i din modell"><button type="button" data-qpre="all">Allt</button><button type="button" data-qpre="concrete">Bara betong</button><button type="button" data-qpre="steel">Bara stål</button></span>
-      <label title="Enheten på mängden i modellen. Auto jämför volymen med objektens mått.">Enhet <select id="qtyUnit">${[["auto", "Auto"], ["1", "som i modellen"], ["1000", "÷ 1 000"], ["1000000", "÷ 1 000 000 (mm² → m²)"], ["1000000000", "÷ 1 000 000 000 (mm³ → m³)"]].map(([v, t]) => `<option value="${v}"${String(C.unit) === v ? " selected" : ""}>${t}</option>`).join("")}</select></label></div>
-      <div class="hint">${E(qty.unitNote || "")}</div>
-      ${C.phase === "period" ? `<div class="hint"><b>Klart under perioden ${E(qtyFrom())} – ${E(qtyAt())}</b> (klart senast ${E(qtyAt())}, men inte redan klart före ${E(qtyFrom())}).</div>` : ""}
-      <div id="qtyTable"></div>
-      <div class="qty-row"><button type="button" id="qtyCsv">Exportera CSV (Excel)</button><button type="button" id="qtyAllSel" title="Markera alla objekt i tabellen i TC">Markera alla i TC</button></div>
+  const seg = (attr, cur, opts) => `<div class="gantt-seg qty-seg" role="group">${opts.map(([v, t, tip]) => `<button type="button" class="gantt-seg-btn${cur === v ? " active" : ""}" ${attr}="${v}"${tip ? ` title="${E(tip)}"` : ""}>${t}</button>`).join("")}</div>`;
+  const ic = d => `<svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const kindOpts = Object.entries(QTY_KINDS).map(([k, v]) => [k, { vol: "Betong m³", form: "Form m²", len: "Längd m", kg: "Vikt kg" }[k] || v[0], v[0]]);
+  host.innerHTML = `<div class="qty-hint">Mängder ur modellen för de objekt som <b>Ganttens regel</b> räknar som klara (eller alla), att jämföra mot mängdförteckningen. Läses ur TC:s egna egenskaper. Inget ändras eller sparas.</div>
+    <div class="gantt-head qty-head">
+      <div class="gantt-head-row">
+        <span class="gantt-sub-label">Urval</span>${seg("data-qscope", C.scope, [["gantt", "Gantt-schemat", "Det som visas i Gantt-schemat"], ["all", "Hela planen"], ["sel", "Markerat i TC"]])}
+        ${C.scope !== "sel" ? `<span class="gantt-sub-label">Läge</span>${seg("data-qphase", C.phase, [["klar", "Klara"], ["period", "Under period", "Klara under en period (Från–Till)"], ["all", "Alla", "Alla oavsett läge"]])}
+        ${C.phase === "period" ? `<label class="gantt-toolbar-field" title="Första dagen i perioden – bara det som blev klart från och med den här dagen räknas">Från <input type="date" id="qtyFrom" value="${E(C.from || addDaysIso(qtyAt(), -6))}" /></label>` : ""}
+        ${C.phase === "klar" || C.phase === "period" ? `<label class="gantt-toolbar-field" title="${C.phase === "period" ? "Sista dagen i perioden" : "Klara enligt Ganttens regel vid det här datumet"}">${C.phase === "period" ? "Till" : "Datum"} <input type="date" id="qtyDate" value="${E(C.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO())}" /></label><button type="button" id="qtyToday" class="gantt-chip" title="Använd dagens datum">Idag</button>` : ""}` : ""}
+        <span class="gantt-head-spacer"></span><span id="qtyMsg" class="hint"></span>
+        <button type="button" id="qtyRead" class="gantt-toolbar-btn qty-read">${ic('<path d="M4 10a6 6 0 0 1 10.5-4L16 7.5M16 3v4.5h-4.5M16 10a6 6 0 0 1-10.5 4L4 12.5M4 17v-4.5h4.5"/>')}<span>Läs mängder</span></button>
+      </div>
+      ${hasData ? `<div class="gantt-head-row gantt-head-sub">
+        <span class="gantt-sub-label" title="Vad som ska summeras">Mängdslag</span>${seg("data-qkind", qtyKind(), kindOpts)}
+        ${qtyKind() === "form" ? `<label class="gantt-pill" title="Av: bara sidoytorna (formyta). På: hela ytan, även över- och underyta som inte formas."><input type="checkbox" id="qtyFormTop"${C.formTop ? " checked" : ""} /> Med över-/underyta</label>` : ""}
+        <label class="gantt-toolbar-field">Mängd <select id="qtyVal">${qtyNumKeys().map(k => `<option value="${E(k)}"${C.valKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>
+        <label class="gantt-toolbar-field" title="Enheten på mängden i modellen. Auto jämför volymen med objektens mått.">Enhet <select id="qtyUnit">${[["auto", "Auto"], ["1", "som i modellen"], ["1000", "÷ 1 000"], ["1000000", "÷ 1 000 000 (mm² → m²)"], ["1000000000", "÷ 1 000 000 000 (mm³ → m³)"]].map(([v, t]) => `<option value="${v}"${String(C.unit) === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+      </div>
+      <div class="gantt-head-row gantt-head-sub">
+        <label class="gantt-toolbar-field">Rader efter <select id="qtyRowKey">${keyOpts(C.rowKey, false, true)}</select></label>
+        <label class="gantt-toolbar-field">Kolumner efter <select id="qtyColKey">${keyOpts(C.colKey, true, true)}</select></label>
+        <label class="gantt-toolbar-field" title="Visa bara objekt där någon egenskap innehåller något av orden (flera ord med komma, t.ex. Concrete, Betong)">Innehåller <input type="text" id="qtyFilter" value="${E(C.filter)}" placeholder="t.ex. Concrete, Betong" /></label>
+        <label class="gantt-toolbar-field" title="Lämna bort objekt där någon egenskap innehåller något av orden (t.ex. Steel, Stål för att inte räkna stålpålar som betong)">Utesluter <input type="text" id="qtyExclude" value="${E(C.exclude || "")}" placeholder="t.ex. Steel, Stål" /></label>
+        <span class="gantt-chips qty-presets" title="Snabbval som fyller i Innehåller/Utesluter – ändra orden så de passar egenskaperna i din modell"><button type="button" class="gantt-chip" data-qpre="all">Allt</button><button type="button" class="gantt-chip" data-qpre="concrete">Bara betong</button><button type="button" class="gantt-chip" data-qpre="steel">Bara stål</button></span>
+      </div>` : ""}
+    </div>
+    ${hasData ? `<div class="qty-notes"><div class="hint">${E(qty.unitNote || "")}</div>
+      ${C.phase === "period" ? `<div class="hint"><b>Klart under perioden ${E(qtyFrom())} – ${E(qtyAt())}</b> (klart senast ${E(qtyAt())}, men inte redan klart före ${E(qtyFrom())}).</div>` : ""}</div>
+      <div id="qtyTable" class="qty-card"></div>
+      <div class="qty-actions"><button type="button" id="qtyCsv" class="gantt-toolbar-btn" title="Exportera tabellen som CSV (öppnas i Excel)">${ic('<path d="M10 3v9m0 0-3-3m3 3 3-3M4 14v2.5h12V14"/>')}<span>CSV (Excel)</span></button><button type="button" id="qtyAllSel" class="gantt-toolbar-btn" title="Markera alla objekt i tabellen i TC">${ic('<path d="M5 3l11 6.5-5 1.5-1.5 5z"/>')}<span>Markera alla i TC</span></button></div>
       <details class="qty-props"><summary>Egenskaper som hittades (${qty.keys.size})</summary><div class="qty-proplist">${[...qty.keys].map(([k, e]) => `<div><b>${E(k)}</b> <span class="hint">${e.n} obj · ex: ${E(String(e.sample).slice(0, 60))}</span></div>`).join("")}</div></details>` : ""}`;
   const q = s => host.querySelector(s), put = (k, v) => { qty.cfg[k] = v; qtySave(); };
-  q("#qtyScope").onchange = e => { put("scope", e.target.value); qtyRender(); };
-  if (q("#qtyPhase")) q("#qtyPhase").onchange = e => { put("phase", e.target.value); qtyRender(); };
+  host.querySelectorAll("[data-qscope]").forEach(b => b.onclick = () => { put("scope", b.dataset.qscope); qtyRender(); });
+  host.querySelectorAll("[data-qphase]").forEach(b => b.onclick = () => { put("phase", b.dataset.qphase); qtyRender(); });
   if (q("#qtyDate")) q("#qtyDate").onchange = e => { put("date", e.target.value); if (C.phase === "period") qtyRender(); };
   if (q("#qtyFrom")) q("#qtyFrom").onchange = e => { put("from", e.target.value); qtyRender(); };
   if (q("#qtyToday")) q("#qtyToday").onclick = () => { put("date", todayISO()); qtyRender(); };
   q("#qtyRead").onclick = qtyRead;
   if (!hasData) return;
-  q("#qtyKind").onchange = async e => { put("kind", e.target.value); qtyPickDefaults(); qtySave(); await qtyUnitCheck(); if (typeof qmfAutoMap === "function" && typeof qmf !== "undefined" && qmf.posts.length) qmfAutoMap(); qtyRender(); };
+  host.querySelectorAll("[data-qkind]").forEach(b => b.onclick = async () => { put("kind", b.dataset.qkind); qtyPickDefaults(); qtySave(); await qtyUnitCheck(); if (typeof qmfAutoMap === "function" && typeof qmf !== "undefined" && qmf.posts.length) qmfAutoMap(); qtyRender(); });
   q("#qtyVal").onchange = async e => { put("valKey", e.target.value); qty.cfg.valKeys = { ...(qty.cfg.valKeys || {}), [qtyKind()]: e.target.value }; qtySave(); await qtyUnitCheck(); qtyRender(); };
   q("#qtyRowKey").onchange = e => { put("rowKey", e.target.value); qtyRender(); };
   q("#qtyColKey").onchange = e => { put("colKey", e.target.value); qtyRender(); };
   q("#qtyFilter").onchange = e => { put("filter", e.target.value); qtyRender(); };
+  if (q("#qtyFormTop")) q("#qtyFormTop").onchange = async e => { put("formTop", e.target.checked); await qtyUnitCheck(); qtyRender(); };
   q("#qtyExclude").onchange = e => { put("exclude", e.target.value); qtyRender(); };
   host.querySelectorAll("[data-qpre]").forEach(b => b.onclick = () => {
     const P = { all: ["", ""], concrete: ["Concrete, Betong", "Steel, Stål, Rebar, Armering, Pile, Påle"], steel: ["Steel, Stål, Pile, Påle, Rebar, Armering", ""] }[b.dataset.qpre];
@@ -207,3 +246,13 @@ function qtyRender0() {
 function qtyAfterRender() { const host = document.getElementById("qtyBox"); if (!host) return; let b = document.getElementById("qmfBox"); if (!b) { b = document.createElement("div"); b.id = "qmfBox"; b.className = "qmf-box"; host.appendChild(b); } if (typeof qmfRender === "function") qmfRender(); }
 function initQuantities() { if (document.getElementById("qtyBox")) qtyRender(); }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initQuantities); else setTimeout(initQuantities, 0);
+
+/* Volymens enhet (m³ eller mm³) för formytans avdrag – jämförs med objektens omslutande lådor. */
+async function qtyVolFactor() {
+  qty.volFactor = 1; const f = qty.factor || 1; if (qty.cfg.unit !== "auto") { qty.volFactor = f === 1 ? 1 : f === 1e6 ? 1e9 : Math.pow(f, 1.5); return; }
+  const V = API && API.viewer; if (!V || typeof V.getObjectBoundingBoxes !== "function") { qty.volFactor = f === 1e6 ? 1e9 : 1; return; }
+  const ratios = [], by = new Map(); qty.objs.filter(o => qtyVolKey(o) && qtyNum(o.flat[qtyVolKey(o)]) > 0).slice(0, 40).forEach(o => (by.get(o.modelId) || by.set(o.modelId, []).get(o.modelId)).push(o));
+  for (const [m, list] of by) { try { const bb = await V.getObjectBoundingBoxes(m, list.map(o => o.rid)), mp = new Map(bb.map(b => [b.id, b.boundingBox])); list.forEach(o => { const b = mp.get(o.rid); if (!b) return; const ref = (b.max.x - b.min.x) * (b.max.y - b.min.y) * (b.max.z - b.min.z); if (ref > 0) ratios.push(qtyNum(o.flat[qtyVolKey(o)]) / ref); }); } catch (e) { /* ingen kontroll */ } }
+  if (!ratios.length) { qty.volFactor = f === 1e6 ? 1e9 : 1; return; }
+  ratios.sort((a, b) => a - b); qty.volFactor = ratios[ratios.length >> 1] > 1e4 ? 1e9 : 1;
+}

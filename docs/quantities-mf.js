@@ -128,7 +128,7 @@ function qmfCompare() {
   qmfPosts().forEach(p => rows.set(p.key, { p, k: sumB(p.k, sel), pr: sumB(p.p, sel), klar: 0, tot: 0, n: 0 }));
   let unmapped = 0, unmappedVol = 0, otherBuild = 0;
   all.forEach(o => {
-    const raw = qty.cfg.valKey ? qtyNum(o.flat[qty.cfg.valKey]) : null; if (raw === null) return; const v = raw / f;
+    const v = qtyValue(o); if (v === null) return;
     if (!qtyPass(o)) return;
     const post = qmfTypes()[qmfTypeVal(o)], r = post && rows.get(post);
     if (!r) { unmapped++; unmappedVol += v; return; }
@@ -151,7 +151,7 @@ function qmfRender() {
   let html = `<h3 class="qmf-h">Jämför mot mängdförteckningen <span class="hint">· mängdslag: ${E(QTY_KINDS[qtyKind()][0])} (byts ovan)</span></h3><div class="qty-row"><label>Mängdförteckning (.xlsx) <input type="file" id="qmfFile" accept=".xlsx" /></label>${hasMf ? `<span class="hint">✓ ${E(qmf.file)} · ${qmf.posts.length} poster · ${qmf.builds.length} byggnader</span><button type="button" id="qmfClear">Ta bort</button>` : ""}<span class="hint" id="qmfMsg">${E(qmf.msg)}</span></div>`;
   if (!hasMf || !hasObjs) { host.innerHTML = html + `<div class="hint">${!hasMf ? "Välj mängdförteckningen (Excel). Filen läses bara i din webbläsare och ändras inte." : "Tryck på Läs mängder ovan först."}</div>`; wire(); return; }
   const types = new Map(), areas = new Map();
-  qty.objs.forEach(o => { const t = qmfTypeVal(o), a = qmfAreaOf(o), raw = qty.cfg.valKey ? qtyNum(o.flat[qty.cfg.valKey]) : null, v = raw === null ? 0 : raw / (qty.factor || 1);
+  qty.objs.forEach(o => { const t = qmfTypeVal(o), a = qmfAreaOf(o), v = qtyValue(o) ?? 0;
     const te = types.get(t) || { n: 0, v: 0 }; te.n++; te.v += v; types.set(t, te); const ae = areas.get(a) || { n: 0, v: 0 }; ae.n++; ae.v += v; areas.set(a, ae); });
   const postOpts = sel => `<option value="">(ingen post)</option>${qmfPosts().map(p => `<option value="${E(p.key)}"${sel === p.key ? " selected" : ""}>${E(p.ref)} – ${E(p.label.slice(0, 100))} [${E(p.unit)}]</option>`).join("")}`;
   const bOpts = sel => `<option value="">(ingen byggnad)</option>${qmf.builds.map(b => `<option value="${E(b)}"${sel === b ? " selected" : ""}>${E(b)}</option>`).join("")}`;

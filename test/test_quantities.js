@@ -82,7 +82,7 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     // Klara under period: långt tillbaka = samma som Klara; Från efter Till = inget; UI:t visar Från/Till.
     await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.date = ''; qty.cfg.from = ''; qtyRender(); });
     const base = await page.evaluate(() => qtyPivot().total);
-    await page.selectOption('#qtyPhase', 'period'); await page.waitForSelector('#qtyFrom');
+    await page.click('[data-qphase="period"]'); await page.waitForSelector('#qtyFrom');
     const per = await page.evaluate(() => { const r = {}; qty.cfg.from = '2000-01-01'; r.old = qtyPivot().total; qty.cfg.from = addDaysIso(qtyAt(), 1); r.after = qtyPivot().total; qty.cfg.from = ''; r.def = qtyFrom(); qtyRender(); r.hint = document.querySelector('#qtyBox').textContent.includes('Klart under perioden'); return r; });
     if (Math.abs(per.old - base) > 0.001 || per.after !== 0 || !per.hint) fail('Klara under period: ' + JSON.stringify({ base, per }));
     await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.from = ''; qtyRender(); });
@@ -107,13 +107,18 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     await page.evaluate(() => { const t = Object.keys(qmf.map.types.vol).find(k => /^Wall/.test(k)); qmf.map.types.vol[t] = qmf.posts.find(p => p.ref === 'ESE.1').key; qmfRender(); });
     K = await cmp('Fläkthus'); if (K['ESE.1'][2] !== 2.5) fail('Ändrad typ→post ska slå igenom: ' + JSON.stringify(K));
     // Form (m²): mängdslaget byter egenskap, enhet och poster; typ → ESB-post föreslås.
-    await page.selectOption('#qtyKind', 'form'); await page.waitForTimeout(400);
+    await page.evaluate(() => { qty.cfg.formTop = true; }); // hela ytan (som förut) i den här kontrollen
+    await page.click('[data-qkind="form"]'); await page.waitForTimeout(400);
     const FM = await page.evaluate(() => ({ key: qty.cfg.valKey, f: qty.factor, u: qtyUnitLabel(), types: Object.fromEntries(Object.entries(qmf.map.types.form || {}).map(([k, v]) => [k.split(':')[0], (qmf.posts.find(p => p.key === v) || {}).label])), posts: qmfPosts().length }));
     if (!/Surface Area$/.test(FM.key) || FM.f !== 1e6 || FM.u !== 'm²' || !/väggar/.test(FM.types.Wall || '') || !/grundsulor/.test(FM.types['Foundation Slab'] || '') || FM.posts < 2) fail('Mängdslag Form: ' + JSON.stringify(FM));
+    // Formyta utan över-/underyta: hela ytan − 2 × volym ÷ höjd (höjd = lådans z-mått i mocken).
+    { const R2 = await page.evaluate(async () => { const o = qty.objs.find(x => qtyFormDeduct(x) !== null); const full = (qtyNum(o.flat[qty.cfg.valKey]) / qty.factor); qty.cfg.formTop = true; const a = qtyValue(o); qty.cfg.formTop = false; const b = qtyValue(o); return { full, a, b, d: qtyFormDeduct(o), hz: o.hz, vf: qty.volFactor }; });
+      if (Math.abs(R2.a - R2.full) > 1e-6 || !(R2.b < R2.a) || Math.abs((R2.a - R2.b) - R2.d) > 1e-6 || !(R2.hz > 0)) fail('Formyta: sidoyta ska vara hela ytan minus över-/underytan: ' + JSON.stringify(R2));
+      await page.evaluate(() => { qty.cfg.formTop = true; }); }
     const A = v => 6 * Math.pow(v, 2 / 3);
     const fk = await page.evaluate(b => { qmf.build = b; qmfRender(); const c = qmfCompare(); return c.list.map(r => [r.p.label.split(' › ').pop().slice(0, 12), r.k, r.pr, Math.round(r.klar * 100) / 100]); }, 'Krosshall');
     const fg = fk.find(r => r[1] === 750); if (!fg || fg[1] !== 750 || Math.abs(fg[3] - Math.round((A(6) + A(4)) * 100) / 100) > 0.02) fail('Form per byggnad (grundsulor Krosshall): ' + JSON.stringify(fk));
-    await page.selectOption('#qtyKind', 'vol'); await page.waitForTimeout(300);
+    await page.click('[data-qkind="vol"]'); await page.waitForTimeout(300);
     if ((await page.evaluate(() => qty.cfg.valKey)).match(/Surface/)) fail('Tillbaka till betong ska välja volym igen');
     // Klick på en rad markerar objekten i TC.
     await page.evaluate(() => { window.__sel = []; }); await page.click('#qtyTable tbody tr'); await page.waitForTimeout(300);
