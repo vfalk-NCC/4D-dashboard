@@ -2485,3 +2485,18 @@ section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 
 .phb-img canvas { max-width: 92vw; max-height: 74vh; display: block; margin: auto; touch-action: none; }
 .phb-sel { display: inline-flex; align-items: center; gap: 4px; margin: 0; color: #475569; }
 .phb-sel select { font: inherit; font-size: 12px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 5px; }
+
+/* Sparade vyer */
+.gv-pop { position: fixed; z-index: 3300; width: 340px; max-height: 70vh; overflow-y: auto; background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 10px 28px rgba(15,23,42,.22); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.gv-hint { margin: 0; }
+.gv-new { display: flex; gap: 6px; }
+.gv-name { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.gv-pop button { font: inherit; font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 4px; background: #fff; cursor: pointer; }
+.gv-pop button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.gv-list { display: flex; flex-direction: column; gap: 4px; }
+.gv-row { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 8px; }
+.gv-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.gv-t b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gv-t .hint { margin: 0; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gv-del { color: #64748b; }
+@media print { .gv-pop { display: none; } }
