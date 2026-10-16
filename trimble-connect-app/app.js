@@ -1,0 +1,8895 @@
+/* =========================================================================
+   4D-dashboard – Trimble Connect Extension
+   ---------------------------------------------------------------------
+   Fristående extension som visar nyckeltal, statusfördelning och
+   framdrift (uppdelat på område/entreprenör) för samma planeringsdata
+   som 4D-planering skriver till (plan_items.json i det privata GitHub-
+   repot vfalk-NCC/4D-data, se github-storage.js).
+   Läser plan_items/plan_item_comments (skriver aldrig till dem), men
+   skriver via små formulär till fem separata tabeller (milstolpar,
+   bemanning, leveransplan, säkerhet, besiktningar) – se README.md.
+   Bygger på trimble-connect-workspace-api. Se:
+   https://developer.trimble.com/docs/connect/workspace-api/
+   ========================================================================= */
+
+let API = null;              // Workspace API-instans
+let projectId = null;        // Aktuellt Trimble Connect-projekt
+let projectName = "";       // projektets namn (rubrik i utskrifter)
+/* Planeringskälla (Victors önskemål 2026-10-06, samma växel som i 4D-planering): "excel" =
+   4-veckorsplaneringen (projects/<id>/), "pp" = Powerproject-tidplanen (projects/<id>/pp/). Bara
+   planeringens egna tabeller byts; milstolpar, leveranser, hinder m.m. är gemensamma. */
+let planSource = "excel";
+const PLAN_SOURCE_TABLES = new Set(["plan_items", "plan_item_activities", "plan_item_comments", "plan_item_progress_history", "plan_item_baseline_history", "plan_baseline", "plan_baselines"]);
+const planSourceKey = () => "4ddash-source-" + projectId;
+let items = [];               // Cache av samtliga planeringsposter (från backend, ofiltrerat)
+let activities = [];           // plan_item_activities (delaktiviteter) - läses read-only, skrivs bara av 4D-planering
+let baselineHistory = [];      // plan_item_baseline_history - historik över start_date/end_date-ändringar, se logBaselineHistory i 4D-planering + saveItemSchedule här
+let ganttHighlightChainId = null; // vilket objekts beroendekedja (om något) som just nu är highlightad i Gantt-schemat, se toggleGanttDependencyChain
+let ganttEditable = false;    // "Redigerbar Gantt" - tillåter dra-för-att-schemalägga-om direkt på staplarna, se initGanttEditableToggle
+let ganttDrag = null;          // pågående drag-interaktion i Gantt-schemat (null om ingen), se onGanttBarPointerDown
+let ganttExpandedIds = new Set(); // vilka objekt (plan_item.id) som just nu visar sina delaktiviteter i Gantt-schemat
+let ganttShowActual = false;      // kryssrutan "Visa verkligt" i Gantt-schemat
+let ganttSearch = "";             // sökrutan i Gantt-schemat (Victor 2026-10-06)
+let ganttShowArrows = true;       // pilar för kopplingarna + animerad knuff vid dragning (går att släcka)
+// Baseline (Victors önskemål 2026-10-06): baseline_start_date/baseline_end_date som en grå stapel
+// under den planerade. Sätts vid importen i 4D-planering (förra importen, en .ppb-baseline eller
+// Excels "Plan. start/slut"); planBaselineMeta säger varifrån (pp/plan_baseline.json, sista raden).
+let ganttShowBaseline = false;
+let ganttBaselineDaysOnly = false; // "Bara ± dagar": bara förskjutningen (+5 d), inga baseline-linjer (Victor 2026-10-06)
+let ganttBaselineColor = "#f59e0b"; // valbar (Victor 2026-10-06: "otydlig … gult eller välja färg")
+let planBaselineMeta = null;
+// Namngivna baselines (Victor 2026-10-06): huvudbaselinen "main" (baseline_start_date/baseline_end_date,
+// t.ex. Kontraktstidplan) och revisioner (baselines[id] på raderna). planBaselines = registret
+// (plan_baselines.json: id, name, source …). Visa en, eller jämför mot två samtidigt.
+let planBaselines = [];
+let ganttBaselineId = "main", ganttBaseline2Id = "", ganttBaselineColor2 = "#2563eb";
+// Läsbarhetsinställningar för Gantt-schemat (Victors förfrågan 2026-09-17
+// om att göra det tydligare) - sparas i localStorage, se GANTT_PREFS_KEY.
+let ganttGroupBy = "";             // "" | "area" | "contractor" | "activity"
+let ganttSortBy = "startDate";     // "startDate" | "contractor" | "status" | "name"
+let ganttDensity = "compact";      // "compact" | "comfortable"
+let ganttZoomPxPerDay = null;      // null = "Anpassa" (procentbaserat, fyller bredden) annars antal px/dag
+let ganttCollapsedGroups = new Set(); // vilka grupper (nyckel: "<ganttGroupBy>:<gruppnamn>") som är hopfällda
+let ganttHiddenGroups = new Set();    // dolda grupper (samma nyckel) – högerklick på gruppens rubrik (Victor 2026-10-08)
+let ganttRangeStart = null;        // eget visat datumintervall (annars auto utifrån objektens datum)
+let ganttRangeEnd = null;
+let ganttTooltipEl = null;         // återanvänd DOM-nod för hover-/fokustooltip, se ensureGanttTooltip()
+const GANTT_PREFS_KEY = "4ddash-gantt-prefs";
+let ganttView = "bars";            // "bars" (klassiska staplar) | "board" (post-it-tavla per vecka)
+let ganttColorBy = "contractor";   // tavlans lappfärg: "contractor" | "area" | "activity"
+let ganttBoardScrolled = false;    // tavlan har scrollats till dagens vecka en gång
+let GANTT_MAX_ROWS = 1500; // tidslinjen: fler objekt än så slås ihop per aktivitet
+let ganttBoardFullText = false;    // tavlan: hela namnet på alla lappar (Victor 2026-10-08)
+let ganttBoardOneLine = true;      // tavlan: lapparna på en rad (Victors önskemål 2026-10-06)
+const GANTT_ZOOM_LEVELS = [3, 6, 10, 18, 30, 50]; // px per dag, stigande zoomnivåer
+// Bredden (px) som toggle- och etikettkolumnerna + mellanrummen äter av varje
+// rad (.gantt-row { grid-template-columns: 14px 110px 1fr; gap: 6px; }) -
+// 14 + 110 + 2*6 = 136. Används för att räkna ut .gantt-inner:s totala bredd
+// vid inzoomning så att spårkolumnen (1fr) får exakt domainDays*pxPerDay px,
+// se buildGanttTimeline/renderGantt.
+const GANTT_ROW_PREFIX_PX = 136;
+const GANTT_MONTH_NAMES_SV = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+let settings = {
+  githubToken: "",             // fine-grained PAT scopead till vfalk-NCC/4D-data, se GITHUB_TOKEN_SETUP.md
+  latitude: "",
+  longitude: "",
+  locationName: "",
+  watchMilestoneDays: 7        // "Bevakning": varna om en milstolpe ligger inom så här många dagar, se renderWatchBanner
+};
+// Aktiv filtrering – tomt värde ("") betyder "alla" för respektive fält.
+let filters = {
+  area: [],
+  activity: [],  // flera aktiviteter (aktivitetens namn, t.ex. "Grundplintar linje I-H"); tom = alla
+  contractor: []   // flera entreprenörer (Victor 2026-10-08); tom = alla
+};
+
+// Svenska visningsnamn och färger per statusvärde - samma som i
+// 4D-planering, så de två apparna känns igen som en helhet.
+const STATUS_LABELS = {
+  ej_planerad: "Ej planerad",
+  planerad: "Planerad",
+  pagaende: "Pågående",
+  forsenad: "Försenad",
+  klar: "Klar",
+  pausad: "Pausad"
+};
+// DEFAULT_STATUS_COLORS är de ursprungliga, fasta standardfärgerna (bl.a.
+// för "Återställ standardfärger"-knappen). STATUS_COLORS är samma objekt
+// till att börja med, men muteras (INTE byts ut - const skyddar bara mot
+// omtilldelning, inte mot att ändra egenskaperna) av sparade, egna färger
+// vid start (se loadStatusColorOverrides) och när användaren ändrar en
+// färg i Inställningar (se initStatusColorControls). Allt som läser
+// STATUS_COLORS[status] på andra ställen i filen (donut, statusfördelning,
+// Gantt-schemat) behöver därför inte ändras - de får automatiskt de
+// senaste färgerna nästa gång de renderas.
+const DEFAULT_STATUS_COLORS = {
+  ej_planerad: "#cbd5e1",
+  planerad: "#94a3b8",
+  pagaende: "#f5a623",
+  forsenad: "#e5484d",
+  klar: "#3fb950",
+  pausad: "#a1a1aa"
+};
+const STATUS_COLORS = { ...DEFAULT_STATUS_COLORS };
+const STATUS_COLORS_KEY = "4ddash-status-colors";
+const STATUS_ORDER = ["ej_planerad", "planerad", "pagaende", "forsenad", "klar", "pausad"];
+
+const NO_AREA_LABEL = "Utan område";
+const NO_ACTIVITY_LABEL = "Utan aktivitet";
+const NO_CONTRACTOR_LABEL = "Utan entreprenör";
+
+// Hur många veckor framåt (denna vecka + kommande) som visas i
+// "Kommande veckor"-panelen (4-veckors lookahead).
+const LOOKAHEAD_WEEKS = 4;
+
+// Max antal objektnamn som visas per kategori i en lookahead-veckas kort
+// innan resten döljs bakom "+ N till".
+const LOOKAHEAD_LIST_MAX = 6;
+
+// Max antal rader att visa i "Försenade objekt"-listan.
+const DELAYED_LIST_MAX = 15;
+
+// plan_item_comments ligger numera i en egen fil per projekt
+// (projects/<projectId>/plan_item_comments.json), så ingen filtrering på
+// projekt behövs vid läsning - filens innehåll ÄR projektets kommentarer.
+const COMMENTS_SHOWN = 20;
+let recentComments = []; // Cache av senast hämtade kommentarer (ofiltrerat på projekt)
+
+/* ---------------------------------------------------------------------
+   Nya tabeller (dashboard-funktioner, migration_3_dashboard_features.sql)
+   ------------------------------------------------------------------- */
+const PROGRESS_HISTORY_FETCH_LIMIT = 20000;
+const MILESTONES_FETCH_LIMIT = 500;
+const STAFFING_FETCH_LIMIT = 2000;
+const DELIVERIES_FETCH_LIMIT = 2000;
+const SAFETY_FETCH_LIMIT = 2000;
+const INSPECTIONS_FETCH_LIMIT = 5000;
+
+// Hur många veckor (denna vecka + kommande) som visas i bemanningspanelen
+// – samma fönster-koncept som "Kommande veckor".
+const STAFFING_WEEKS = 3;
+
+/* ---------------------------------------------------------------------
+   Hinder + Leveransplan handlingar
+   ------------------------------------------------------------------- */
+
+let progressHistory = []; // plan_item_progress_history, ofiltrerat på item-filter
+let milestones = [];      // plan_milestones
+let staffing = [];        // plan_staffing
+let deliveries = [];      // plan_deliveries
+let documentDeliveries = []; // plan_document_deliveries
+let safetyEvents = [];    // plan_safety_events
+let inspections = [];     // plan_inspections
+let blockers = [];        // plan_blockers
+let blockerComments = []; // plan_blocker_comments (alla hinders kommentarer, ofiltrerat)
+let expandedBlockerId = null; // Vilket hinder som just nu har sin kommentarstråd öppen
+let weather = null;       // Senaste svar från Open-Meteo (eller null)
+let weatherError = null;  // Läsbar felorsak om väderhämtningen misslyckas
+
+// Håller reda på om en rad just nu redigeras inline (id, eller null om
+// inget redigeras) – ett fält per panel som stödjer redigering.
+let editingState = {
+  milestone: null,
+  staffing: null,
+  delivery: null,
+  documentDelivery: null,
+  safety: null,
+  inspection: null,
+  blocker: null
+};
+
+// Håller det objekt som (eventuellt) just valts i 3D-modellen för
+// respektive lägg till/redigera-formulär (Hinder, Kvalitet/besiktningar,
+// Säkerhet) – se "Objektval i 3D-modellen" längre ner.
+let newBlockerModelObject = emptyModelObjectRef();
+let editBlockerModelObject = emptyModelObjectRef();
+let newInspectionModelObject = emptyModelObjectRef();
+let editInspectionModelObject = emptyModelObjectRef();
+let newSafetyModelObject = emptyModelObjectRef();
+let editSafetyModelObject = emptyModelObjectRef();
+
+const DELIVERY_STATUS_OPTIONS = ["planerad", "på väg", "levererad", "försenad"];
+const DELIVERY_STATUS_COLORS = {
+  planerad: "#94a3b8",
+  "på väg": "#0b5fff",
+  levererad: "#3fb950",
+  försenad: "#e5484d"
+};
+
+const SAFETY_EVENT_TYPES = ["tillbud", "olycka", "skyddsrond", "riskobservation"];
+const SAFETY_SEVERITIES = ["låg", "medel", "hög"];
+const SEVERITY_COLORS = { "låg": "#3fb950", medel: "#f5a623", hög: "#e5484d" };
+
+const INSPECTION_TYPES = ["egenkontroll", "besiktning", "slutbesiktning", "myndighetsbesiktning"];
+const INSPECTION_RESULTS = ["godkänd", "anmärkning", "underkänd"];
+const INSPECTION_RESULT_COLORS = { "godkänd": "#3fb950", "anmärkning": "#f5a623", "underkänd": "#e5484d" };
+
+// Påverkan på produktion – fritextfält på Hinder, men med förslag precis
+// som säkerhets-/besiktningstyperna (se categoryOptions nedan).
+const BLOCKER_IMPACT_SUGGESTIONS = ["Ingen påverkan", "Mindre försening", "Stopp i aktivitet", "Stopp i flera aktiviteter"];
+
+// Namnet ovan (SAFETY_EVENT_TYPES/INSPECTION_TYPES) är bara förslag i en
+// datalist – fältet är fritext i både databasen och UI:t, så vem som helst
+// kan skriva in en egen kategori som sedan också dyker upp som förslag
+// nästa gång (se categoryOptions nedan).
+function categoryOptions(fixedList, dataList, keyFn) {
+  const set = new Set(fixedList);
+  dataList.forEach(item => {
+    const v = keyFn(item);
+    if (v) set.add(v);
+  });
+  return [...set];
+}
+
+// Swedish korta beskrivningar för WMO weather_code (Open-Meteo).
+const WMO_DESCRIPTIONS = {
+  0: "Klart", 1: "Mest klart", 2: "Delvis molnigt", 3: "Mulet",
+  45: "Dimma", 48: "Rimfrostdimma",
+  51: "Lätt duggregn", 53: "Duggregn", 55: "Kraftigt duggregn",
+  56: "Lätt underkylt duggregn", 57: "Underkylt duggregn",
+  61: "Lätt regn", 63: "Regn", 65: "Kraftigt regn",
+  66: "Lätt underkylt regn", 67: "Underkylt regn",
+  71: "Lätt snöfall", 73: "Snöfall", 75: "Kraftigt snöfall", 77: "Snökorn",
+  80: "Lätta regnskurar", 81: "Regnskurar", 82: "Kraftiga regnskurar",
+  85: "Lätta snöbyar", 86: "Kraftiga snöbyar",
+  95: "Åska", 96: "Åska med hagel", 99: "Kraftig åska med hagel"
+};
+function weatherDescription(code) {
+  return WMO_DESCRIPTIONS[code] || "Okänt väder";
+}
+
+// Emoji som speglar vädret, samma WMO weather_code som beskrivningarna
+// ovan. is_day (0/1 från Open-Meteo) används för att skilja sol/måne.
+const WMO_EMOJIS = {
+  0: { day: "☀️", night: "🌙" },
+  1: { day: "🌤️", night: "🌙" },
+  2: { day: "⛅", night: "☁️" },
+  3: { day: "☁️", night: "☁️" },
+  45: { day: "🌫️", night: "🌫️" },
+  48: { day: "🌫️", night: "🌫️" },
+  51: { day: "🌦️", night: "🌦️" },
+  53: { day: "🌦️", night: "🌦️" },
+  55: { day: "🌧️", night: "🌧️" },
+  56: { day: "🌧️", night: "🌧️" },
+  57: { day: "🌧️", night: "🌧️" },
+  61: { day: "🌦️", night: "🌦️" },
+  63: { day: "🌧️", night: "🌧️" },
+  65: { day: "🌧️", night: "🌧️" },
+  66: { day: "🌧️", night: "🌧️" },
+  67: { day: "🌧️", night: "🌧️" },
+  71: { day: "🌨️", night: "🌨️" },
+  73: { day: "🌨️", night: "🌨️" },
+  75: { day: "❄️", night: "❄️" },
+  77: { day: "❄️", night: "❄️" },
+  80: { day: "🌦️", night: "🌧️" },
+  81: { day: "🌧️", night: "🌧️" },
+  82: { day: "⛈️", night: "⛈️" },
+  85: { day: "🌨️", night: "🌨️" },
+  86: { day: "❄️", night: "❄️" },
+  95: { day: "⛈️", night: "⛈️" },
+  96: { day: "⛈️", night: "⛈️" },
+  99: { day: "⛈️", night: "⛈️" }
+};
+function weatherEmoji(code, isDay) {
+  const entry = WMO_EMOJIS[code];
+  if (!entry) return "🌡️";
+  return isDay === 0 ? entry.night : entry.day;
+}
+
+/* ---------------------------------------------------------------------
+   Lösenordsgrind - enbart en klientsidesspärr (koden och all data är
+   fortsatt fullt synlig för den som öppnar utvecklarverktygen), inte
+   riktig säkerhet. Rätt lösenord låser upp och kommer ihåg valet i
+   localStorage så man inte behöver skriva om det varje gång.
+   ------------------------------------------------------------------- */
+const ACCESS_PASSWORD = "ändra-mig";
+const ACCESS_STORAGE_KEY = "4ddash-unlocked";
+
+function isUnlocked() {
+  try {
+    return window.localStorage.getItem(ACCESS_STORAGE_KEY) === "1";
+  } catch (e) {
+    return false;
+  }
+}
+
+function bindAccessGate() {
+  const input = document.getElementById("accessPassword");
+  const errorEl = document.getElementById("accessError");
+  const submit = () => {
+    if (input.value === ACCESS_PASSWORD) {
+      try { window.localStorage.setItem(ACCESS_STORAGE_KEY, "1"); } catch (e) {}
+      document.getElementById("accessGate").classList.add("hidden");
+      initApp();
+    } else {
+      errorEl.classList.remove("hidden");
+      input.value = "";
+      input.focus();
+    }
+  };
+  document.getElementById("btnAccessSubmit").onclick = submit;
+  input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
+  input.focus();
+}
+
+/* ---------------------------------------------------------------------
+   Init
+   ------------------------------------------------------------------- */
+window.addEventListener("DOMContentLoaded", boot);
+
+function boot() {
+  if (isUnlocked()) {
+    document.getElementById("accessGate").classList.add("hidden");
+    initApp();
+  } else {
+    bindAccessGate();
+  }
+}
+
+async function initApp() {
+  loadLocalSettings();
+  loadStatusColorOverrides();
+  bindUI();
+
+  API = await TrimbleConnectWorkspace.connect(window.parent, (event, data) => onTcEvent(event, data), 30000);
+
+  const project = await API.project.getProject();
+  projectId = project.id;
+  projectName = project.name || "";
+  try { planSource = localStorage.getItem(planSourceKey()) === "pp" ? "pp" : "excel"; } catch (e) { planSource = "excel"; }
+  renderPlanSourceUi();
+  document.querySelectorAll("#planSourceBar [data-src]").forEach(b => { b.onclick = () => setPlanSource(b.dataset.src); });
+
+  await refreshAll();
+  if (typeof qmfSyncLoad === "function") qmfSyncLoad();
+  if (typeof gvRestore === "function") { try { await gvRestore(); } catch (e) { console.warn("Hämta vy", e); } }
+}
+
+function bindUI() {
+  document.getElementById("btnRefresh").onclick = refreshAll;
+  document.getElementById("btnSettings").onclick = () => toggle("settingsDialog", true);
+  document.getElementById("btnCloseSettings").onclick = () => toggle("settingsDialog", false);
+  document.getElementById("btnSaveSettings").onclick = onSaveSettings;
+  document.getElementById("btnExportExcel").onclick = onExportExcel;
+  document.getElementById("btnExportIcs").onclick = onExportIcs;
+  document.getElementById("btnExportPdf").onclick = onExportPdf;
+
+  initPanelCollapse();
+  initPanelVisibility();
+  initStatusColorControls();
+
+  document.getElementById("githubToken").value = settings.githubToken;
+  document.getElementById("settingsLatitude").value = settings.latitude || "";
+  document.getElementById("settingsLongitude").value = settings.longitude || "";
+  document.getElementById("settingsLocationName").value = settings.locationName || "";
+  document.getElementById("settingsWatchDays").value = Number.isFinite(settings.watchMilestoneDays) ? settings.watchMilestoneDays : 7;
+  updateConnectionWarning();
+
+  initAreaFilter();
+  initActivityFilter(); initSavedFilters();
+  initContractorFilter();
+  document.getElementById("btnResetFilters").onclick = onResetFilters;
+
+  initGanttControls();
+}
+
+function toggle(id, show) {
+  document.getElementById(id).classList.toggle("hidden", !show);
+}
+
+/* ---------------------------------------------------------------------
+   Minimera/expandera block – varje panel får en liten "−"/"+"-knapp i
+   sin rubrik, plus en global knapp i headern som minimerar/expanderar
+   alla block på en gång. Läget sparas per panel i localStorage så att
+   det inte nollställs vid nästa uppdatering/inläsning.
+   ------------------------------------------------------------------- */
+const PANEL_COLLAPSE_KEY = "4ddash-collapsed";
+
+function loadCollapsedPanels() {
+  try {
+    const raw = window.localStorage.getItem(PANEL_COLLAPSE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveCollapsedPanels(set) {
+  try {
+    window.localStorage.setItem(PANEL_COLLAPSE_KEY, JSON.stringify([...set]));
+  } catch (e) { /* ignorera */ }
+}
+
+function initPanelCollapse() {
+  const collapsed = loadCollapsedPanels();
+  const panels = document.querySelectorAll(".panel[data-panel-id]");
+
+  panels.forEach(panel => {
+    const id = panel.dataset.panelId;
+    const h2 = panel.querySelector("h2");
+    if (!h2) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "panel-collapse-btn";
+    btn.title = "Minimera/expandera det här blocket";
+    h2.appendChild(btn);
+
+    const apply = () => {
+      const isCollapsed = collapsed.has(id);
+      panel.classList.toggle("collapsed", isCollapsed);
+      btn.textContent = isCollapsed ? "+" : "−";
+    };
+    apply();
+
+    btn.onclick = () => {
+      if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+      saveCollapsedPanels(collapsed);
+      apply();
+      updateCollapseAllLabel();
+    };
+  });
+
+  document.getElementById("btnCollapseAll").onclick = () => {
+    const panelIds = [...panels].map(p => p.dataset.panelId);
+    const allCollapsed = panelIds.every(id => collapsed.has(id));
+    panelIds.forEach(id => {
+      if (allCollapsed) collapsed.delete(id); else collapsed.add(id);
+    });
+    saveCollapsedPanels(collapsed);
+    panels.forEach(panel => {
+      const isCollapsed = collapsed.has(panel.dataset.panelId);
+      panel.classList.toggle("collapsed", isCollapsed);
+      const btn = panel.querySelector(".panel-collapse-btn");
+      if (btn) btn.textContent = isCollapsed ? "+" : "−";
+    });
+    updateCollapseAllLabel();
+  };
+
+  function updateCollapseAllLabel() {
+    const btnAll = document.getElementById("btnCollapseAll");
+    const panelIds = [...panels].map(p => p.dataset.panelId);
+    const allCollapsed = panelIds.length > 0 && panelIds.every(id => collapsed.has(id));
+    btnAll.title = allCollapsed ? "Expandera alla block" : "Minimera alla block";
+    btnAll.textContent = allCollapsed ? "⊞" : "⊟";
+  }
+  updateCollapseAllLabel();
+}
+
+/* ---------------------------------------------------------------------
+   Synliga block – till skillnad från minimering (ovan) döljer detta
+   blocket helt (ingen rubrik ens), och styr dessutom vad som tas med i
+   Excel- och PDF-exporten (se onExportExcel/onExportPdf + hiddenPanels
+   nedan). Kryssrutorna byggs dynamiskt utifrån samtliga [data-panel-id]
+   och läget sparas direkt i localStorage, samma mönster som
+   collapsedPanels men en helt separat, egen inställning.
+   ------------------------------------------------------------------- */
+const PANEL_VISIBILITY_KEY = "4ddash-hidden-panels";
+let hiddenPanels = new Set();
+
+function loadHiddenPanels() {
+  try {
+    const raw = window.localStorage.getItem(PANEL_VISIBILITY_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveHiddenPanels() {
+  try {
+    window.localStorage.setItem(PANEL_VISIBILITY_KEY, JSON.stringify([...hiddenPanels]));
+  } catch (e) { /* ignorera */ }
+}
+
+function initPanelVisibility() {
+  hiddenPanels = loadHiddenPanels();
+  const panels = document.querySelectorAll(".panel[data-panel-id]");
+  const listEl = document.getElementById("panelVisibilityList");
+
+  const applyPanel = (panel) => {
+    panel.classList.toggle("panel-hidden", hiddenPanels.has(panel.dataset.panelId));
+  };
+  panels.forEach(applyPanel);
+
+  if (listEl) {
+    listEl.innerHTML = [...panels].map(panel => {
+      const id = panel.dataset.panelId;
+      const h2 = panel.querySelector("h2");
+      // Ta bara den ursprungliga textnoden (h2:s första barn) som titel -
+      // minimera-knappen som initPanelCollapse lägger till är ett senare
+      // barn i h2 och ska inte hamna med i kryssrutans etikett.
+      const title = h2 && h2.childNodes[0] ? h2.childNodes[0].textContent.trim() : id;
+      const checked = hiddenPanels.has(id) ? "" : "checked";
+      return `<label><input type="checkbox" class="panel-visibility-check" data-panel-id="${escapeHtml(id)}" ${checked} /> ${escapeHtml(title)}</label>`;
+    }).join("");
+
+    listEl.querySelectorAll(".panel-visibility-check").forEach(cb => {
+      cb.onchange = () => {
+        const id = cb.dataset.panelId;
+        if (cb.checked) hiddenPanels.delete(id); else hiddenPanels.add(id);
+        saveHiddenPanels();
+        const panel = document.querySelector(`.panel[data-panel-id="${id}"]`);
+        if (panel) applyPanel(panel);
+      };
+    });
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Statusfärger – låter dig byta ut de sex statusfärgerna (används av
+   Gantt-schemat, cirkeldiagrammet och statusfördelningen) mot egna, se
+   Victors förfrågan 2026-09-17. Sparas direkt i webbläsaren (samma
+   "ingen Spara-knapp behövs"-mönster som Synliga block ovan).
+   ------------------------------------------------------------------- */
+function loadStatusColorOverrides() {
+  try {
+    const raw = window.localStorage.getItem(STATUS_COLORS_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    STATUS_ORDER.forEach(s => {
+      if (typeof saved[s] === "string" && /^#[0-9a-fA-F]{6}$/.test(saved[s])) {
+        STATUS_COLORS[s] = saved[s];
+      }
+    });
+  } catch (e) {
+    console.warn("Kunde inte läsa sparade statusfärger", e);
+  }
+}
+
+function saveStatusColorOverrides() {
+  try {
+    window.localStorage.setItem(STATUS_COLORS_KEY, JSON.stringify(STATUS_COLORS));
+  } catch (e) {
+    console.warn("Kunde inte spara statusfärger", e);
+  }
+}
+
+function initStatusColorControls() {
+  const listEl = document.getElementById("statusColorList");
+  if (!listEl) return;
+
+  listEl.innerHTML = STATUS_ORDER.map(s => `
+    <label class="status-color-row">
+      <input type="color" data-status="${escapeHtml(s)}" value="${escapeHtml(STATUS_COLORS[s])}" />
+      ${escapeHtml(STATUS_LABELS[s])}
+    </label>`).join("");
+
+  listEl.querySelectorAll('input[type="color"]').forEach(inp => {
+    inp.oninput = () => {
+      STATUS_COLORS[inp.dataset.status] = inp.value;
+      saveStatusColorOverrides();
+      renderAll();
+    };
+  });
+
+  const resetBtn = document.getElementById("btnResetStatusColors");
+  if (resetBtn) {
+    resetBtn.onclick = () => {
+      Object.assign(STATUS_COLORS, DEFAULT_STATUS_COLORS);
+      try { window.localStorage.removeItem(STATUS_COLORS_KEY); } catch (e) { /* ignorera */ }
+      initStatusColorControls(); // rita om inputfälten med återställda värden
+      renderAll();
+    };
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Filtrering (område / aktivitet / entreprenör)
+   ------------------------------------------------------------------- */
+function onFilterChange() {
+  renderAll();
+}
+
+function onResetFilters() {
+  filters = { area: [], activity: [], contractor: [] };
+  renderAreaFilter(); renderActivityFilter(); renderContractorFilter();
+  renderAll();
+}
+
+// "Utan entreprenör/område/aktivitet" (Victor 2026-10-08): ett eget val i filtret för poster där fältet är tomt.
+const FILTER_NONE = "__utan__";
+const filterHit = (want, v) => !want || (want === FILTER_NONE ? !v : v === want);
+function getFilteredItems() {
+  const cs = filters.contractor || [], as = filters.area || [];
+  return items.filter(it => (!as.length || as.some(w => filterHit(w, it.area))) && ((filters.activity || []).length ? filters.activity.some(w => filterHit(w, it.objectName)) : true) && (!cs.length || cs.some(w => filterHit(w, it.contractor))));
+}
+
+// Fyller filtrets tre <select>-fält med de värden som faktiskt finns i
+// datan just nu. Behåller vald filtrering om värdet fortfarande finns
+// kvar i listan efter en omhämtning, annars nollställs det.
+function populateFilterOptions() {
+  // Område: flera kan väljas – val som inte längre finns i datan släpps.
+  { const av = new Set(uniqueValues(it => it.area)), hasNoneA = items.some(it => !it.area); filters.area = (filters.area || []).filter(v => v === FILTER_NONE ? hasNoneA : av.has(v)); renderAreaFilter(); }
+  { const nv = new Set(uniqueValues(it => it.objectName)), hasNoneN = items.some(it => !it.objectName); filters.activity = (filters.activity || []).filter(v => v === FILTER_NONE ? hasNoneN : nv.has(v)); renderActivityFilter(); }
+  // Entreprenör: flera kan väljas – val som inte längre finns i datan släpps.
+  const cv = new Set(uniqueValues(it => it.contractor)), hasNone = items.some(it => !it.contractor);
+  filters.contractor = (filters.contractor || []).filter(v => v === FILTER_NONE ? hasNone : cv.has(v));
+  renderContractorFilter();
+}
+
+/* Entreprenörsfiltret med flera val (Victor 2026-10-08): en knapp som öppnar en lista att bocka i,
+   med sök, "Utan entreprenör" och Alla. Gäller hela dashboarden som de andra filtren. */
+function contractorFilterLabel() {
+  const cs = filters.contractor || [];
+  if (!cs.length) return "Alla entreprenörer";
+  if (cs.length === 1) return cs[0] === FILTER_NONE ? NO_CONTRACTOR_LABEL : cs[0];
+  return `${cs.length} entreprenörer`;
+}
+function renderContractorFilter() {
+  const b = document.getElementById("filterContractorBtn");
+  if (b) { b.textContent = contractorFilterLabel() + " ▾"; b.classList.toggle("on", !!(filters.contractor || []).length); b.title = (filters.contractor || []).map(v => v === FILTER_NONE ? NO_CONTRACTOR_LABEL : v).join("\n") || "Alla entreprenörer"; }
+  const p = document.getElementById("contractorFilterPop");
+  if (p) fillContractorPop(p);
+}
+function initContractorFilter() {
+  const b = document.getElementById("filterContractorBtn");
+  if (!b) return;
+  b.onclick = e => { e.stopPropagation(); if (document.getElementById("contractorFilterPop")) closeContractorPop(); else openContractorPop(b); };
+  renderContractorFilter();
+}
+function openContractorPop(btn) {
+  closeContractorPop(); closeAreaPop(); closeActivityPop(); closeSavedPop();
+  const p = document.createElement("div");
+  p.id = "contractorFilterPop"; p.className = "gantt-group-picker cf-pop";
+  p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök entreprenör…" />
+    <div class="ggp-acts"><button type="button" data-cf="all" title="Rensa alla val – visa allt">Rensa allt</button><button type="button" data-cf="match">Välj alla</button><button type="button" data-cf="unmatch" class="hidden">Avmarkera träffarna</button></div>
+    <div class="ggp-list"></div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(4, Math.min(r.left, innerWidth - 340)) + "px";
+  p.style.top = (r.bottom + 4) + "px";
+  p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px";
+  const search = p.querySelector(".ggp-search");
+  search.oninput = () => fillContractorPop(p);
+  p.querySelector(".ggp-acts").onclick = e => {
+    const a = e.target.closest("[data-cf]"); if (!a) return;
+    if (a.dataset.cf === "all") filters.contractor = [];
+    else if (a.dataset.cf === "unmatch") { const hit = new Set(contractorOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)); filters.contractor = (filters.contractor || []).filter(v => !hit.has(v)); }
+    else filters.contractor = [...new Set([...(filters.contractor || []), ...contractorOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)])];
+    renderContractorFilter(); renderAll();
+  };
+  p.querySelector(".ggp-list").onchange = e => {
+    const c = e.target.closest("input[data-v]"); if (!c) return;
+    const set = new Set(filters.contractor || []);
+    if (c.checked) set.add(c.dataset.v); else set.delete(c.dataset.v);
+    filters.contractor = [...set];
+    renderContractorFilter(); renderAll();
+  };
+  fillContractorPop(p);
+  setTimeout(() => document.addEventListener("mousedown", contractorPopOutside, true), 0);
+  document.addEventListener("keydown", contractorPopKey, true);
+  search.focus();
+}
+function contractorOptions() {
+  return [...(items.some(it => !it.contractor) ? [{ value: FILTER_NONE, label: NO_CONTRACTOR_LABEL, none: true }] : []), ...uniqueValues(it => it.contractor).map(v => ({ value: v, label: v }))];
+}
+function fillContractorPop(p) {
+  const q = p.querySelector(".ggp-search").value.trim().toLowerCase(), sel = new Set(filters.contractor || []);
+  const opts = contractorOptions().filter(o => !q || o.label.toLowerCase().includes(q));
+  { const mb = p.querySelector('[data-cf="match"]'); mb.classList.remove("hidden"); mb.textContent = q ? "Välj träffarna" : "Välj alla"; }
+  p.querySelector('[data-cf="unmatch"]').classList.toggle("hidden", !q);
+  p.querySelector(".ggp-list").innerHTML = opts.map(o => `<label class="ggp-row" title="${escapeHtml(o.label)}"><input type="checkbox" data-v="${escapeHtml(o.value)}"${sel.has(o.value) ? " checked" : ""} /><span${o.none ? ' class="cf-none"' : ""}>${escapeHtml(o.label)}</span></label>`).join("") || `<div class="ggp-empty">Inga träffar</div>`;
+}
+function contractorPopOutside(e) { const p = document.getElementById("contractorFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterContractorBtn") closeContractorPop(); }
+function contractorPopKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeContractorPop(); } }
+function closeContractorPop() {
+  document.getElementById("contractorFilterPop")?.remove();
+  document.removeEventListener("mousedown", contractorPopOutside, true);
+  document.removeEventListener("keydown", contractorPopKey, true);
+}
+
+/* Områdesfiltret med flera val (Victor 2026-10-14): en knapp som öppnar en lista med en liten ruta framför varje område, med sök, "Utan område" och Alla. */
+function areaFilterLabel() {
+  const as = filters.area || [];
+  if (!as.length) return "Alla områden";
+  if (as.length === 1) return as[0] === FILTER_NONE ? NO_AREA_LABEL : as[0];
+  return `${as.length} områden`;
+}
+function renderAreaFilter() {
+  const b = document.getElementById("filterAreaBtn");
+  if (b) { b.textContent = areaFilterLabel() + " ▾"; b.classList.toggle("on", !!(filters.area || []).length); b.title = (filters.area || []).map(v => v === FILTER_NONE ? NO_AREA_LABEL : v).join("\n") || "Alla områden"; }
+  const p = document.getElementById("areaFilterPop");
+  if (p) fillAreaPop(p);
+}
+function initAreaFilter() {
+  const b = document.getElementById("filterAreaBtn"); if (!b) return;
+  b.onclick = e => { e.stopPropagation(); if (document.getElementById("areaFilterPop")) closeAreaPop(); else openAreaPop(b); };
+  renderAreaFilter();
+}
+function areaOptions() { return [...(items.some(it => !it.area) ? [{ value: FILTER_NONE, label: NO_AREA_LABEL, none: true }] : []), ...uniqueValues(it => it.area).map(v => ({ value: v, label: v }))]; }
+function openAreaPop(btn) {
+  closeAreaPop(); closeContractorPop(); closeActivityPop(); closeSavedPop();
+  const p = document.createElement("div");
+  p.id = "areaFilterPop"; p.className = "gantt-group-picker cf-pop";
+  p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök område…" />
+    <div class="ggp-acts"><button type="button" data-af="all" title="Rensa alla val – visa allt">Rensa allt</button><button type="button" data-af="match">Välj alla</button><button type="button" data-af="unmatch" class="hidden">Avmarkera träffarna</button></div>
+    <div class="ggp-list"></div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(4, Math.min(r.left, innerWidth - 360)) + "px"; p.style.top = (r.bottom + 4) + "px"; p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px"; p.style.minWidth = "320px";
+  const search = p.querySelector(".ggp-search");
+  search.oninput = () => fillAreaPop(p);
+  p.querySelector(".ggp-acts").onclick = e => {
+    const a = e.target.closest("[data-af]"); if (!a) return;
+    if (a.dataset.af === "all") filters.area = [];
+    else if (a.dataset.af === "unmatch") { const hit = new Set(areaOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)); filters.area = (filters.area || []).filter(v => !hit.has(v)); }
+    else filters.area = [...new Set([...(filters.area || []), ...areaOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)])];
+    renderAreaFilter(); renderAll();
+  };
+  p.querySelector(".ggp-list").onchange = e => {
+    const c = e.target.closest("input[data-v]"); if (!c) return;
+    const set = new Set(filters.area || []); if (c.checked) set.add(c.dataset.v); else set.delete(c.dataset.v);
+    filters.area = [...set]; renderAreaFilter(); renderAll();
+  };
+  fillAreaPop(p);
+  setTimeout(() => document.addEventListener("mousedown", areaPopOutside, true), 0);
+  document.addEventListener("keydown", areaPopKey, true);
+  search.focus();
+}
+function fillAreaPop(p) {
+  const q = p.querySelector(".ggp-search").value.trim().toLowerCase(), sel = new Set(filters.area || []);
+  const opts = areaOptions().filter(o => !q || o.label.toLowerCase().includes(q));
+  { const mb = p.querySelector('[data-af="match"]'); mb.classList.remove("hidden"); mb.textContent = q ? "Välj träffarna" : "Välj alla"; }
+  p.querySelector('[data-af="unmatch"]').classList.toggle("hidden", !q);
+  p.querySelector(".ggp-list").innerHTML = opts.map(o => `<label class="ggp-row" title="${escapeHtml(o.label)}"><input type="checkbox" data-v="${escapeHtml(o.value)}"${sel.has(o.value) ? " checked" : ""} /><span${o.none ? ' class="cf-none"' : ""}>${escapeHtml(o.label)}</span></label>`).join("") || `<div class="hint">Inga träffar.</div>`;
+}
+function areaPopOutside(e) { const p = document.getElementById("areaFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterAreaBtn") closeAreaPop(); }
+function areaPopKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeAreaPop(); } }
+function closeAreaPop() {
+  document.getElementById("areaFilterPop")?.remove();
+  document.removeEventListener("mousedown", areaPopOutside, true);
+  document.removeEventListener("keydown", areaPopKey, true);
+}
+
+/* Aktivitetsfiltret med flera val (Victor 2026-10-15): samma lista som för områden, men med aktiviteternas namn (t.ex. "Grundplintar linje I-H"), med sök, "Utan område" och Alla. */
+function activityFilterLabel() {
+  const as = filters.activity || [];
+  if (!as.length) return "Alla aktiviteter";
+  if (as.length === 1) return as[0] === FILTER_NONE ? NO_ACTIVITY_LABEL : as[0];
+  return `${as.length} aktiviteter`;
+}
+function renderActivityFilter() {
+  const b = document.getElementById("filterActivityBtn");
+  if (b) { b.textContent = activityFilterLabel() + " ▾"; b.classList.toggle("on", !!(filters.activity || []).length); b.title = (filters.activity || []).map(v => v === FILTER_NONE ? NO_ACTIVITY_LABEL : v).join("\n") || "Alla aktiviteter"; }
+  const p = document.getElementById("activityFilterPop");
+  if (p) fillActivityPop(p);
+}
+function initActivityFilter() {
+  const b = document.getElementById("filterActivityBtn"); if (!b) return;
+  b.onclick = e => { e.stopPropagation(); if (document.getElementById("activityFilterPop")) closeActivityPop(); else openActivityPop(b); };
+  renderActivityFilter();
+}
+function activityOptions() { return [...(items.some(it => !it.objectName) ? [{ value: FILTER_NONE, label: NO_ACTIVITY_LABEL, none: true }] : []), ...uniqueValues(it => it.objectName).map(v => ({ value: v, label: v }))]; }
+function openActivityPop(btn) {
+  closeActivityPop(); closeContractorPop(); closeAreaPop(); closeSavedPop();
+  const p = document.createElement("div");
+  p.id = "activityFilterPop"; p.className = "gantt-group-picker cf-pop";
+  p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök aktivitet…" />
+    <div class="ggp-acts"><button type="button" data-aa="all" title="Rensa alla val – visa allt">Rensa allt</button><button type="button" data-aa="match">Välj alla</button><button type="button" data-aa="unmatch" class="hidden">Avmarkera träffarna</button></div>
+    <div class="ggp-list"></div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(4, Math.min(r.left, innerWidth - 360)) + "px"; p.style.top = (r.bottom + 4) + "px"; p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px"; p.style.minWidth = "320px";
+  const search = p.querySelector(".ggp-search");
+  search.oninput = () => fillActivityPop(p);
+  p.querySelector(".ggp-acts").onclick = e => {
+    const a = e.target.closest("[data-aa]"); if (!a) return;
+    if (a.dataset.aa === "all") filters.activity = [];
+    else if (a.dataset.aa === "unmatch") { const hit = new Set(activityOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)); filters.activity = (filters.activity || []).filter(v => !hit.has(v)); }
+    else filters.activity = [...new Set([...(filters.activity || []), ...activityOptions().filter(o => o.label.toLowerCase().includes(search.value.trim().toLowerCase())).map(o => o.value)])];
+    renderActivityFilter(); renderAll();
+  };
+  p.querySelector(".ggp-list").onchange = e => {
+    const c = e.target.closest("input[data-v]"); if (!c) return;
+    const set = new Set(filters.activity || []); if (c.checked) set.add(c.dataset.v); else set.delete(c.dataset.v);
+    filters.activity = [...set]; renderActivityFilter(); renderAll();
+  };
+  fillActivityPop(p);
+  setTimeout(() => document.addEventListener("mousedown", activityPopOutside, true), 0);
+  document.addEventListener("keydown", activityPopKey, true);
+  search.focus();
+}
+function fillActivityPop(p) {
+  const q = p.querySelector(".ggp-search").value.trim().toLowerCase(), sel = new Set(filters.activity || []);
+  const opts = activityOptions().filter(o => !q || o.label.toLowerCase().includes(q));
+  { const mb = p.querySelector('[data-aa="match"]'); mb.classList.remove("hidden"); mb.textContent = q ? "Välj träffarna" : "Välj alla"; }
+  p.querySelector('[data-aa="unmatch"]').classList.toggle("hidden", !q);
+  p.querySelector(".ggp-list").innerHTML = opts.map(o => `<label class="ggp-row" title="${escapeHtml(o.label)}"><input type="checkbox" data-v="${escapeHtml(o.value)}"${sel.has(o.value) ? " checked" : ""} /><span${o.none ? ' class="cf-none"' : ""}>${escapeHtml(o.label)}</span></label>`).join("") || `<div class="hint">Inga träffar.</div>`;
+}
+function activityPopOutside(e) { const p = document.getElementById("activityFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterActivityBtn") closeActivityPop(); }
+function activityPopKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeActivityPop(); } }
+function closeActivityPop() {
+  document.getElementById("activityFilterPop")?.remove();
+  document.removeEventListener("mousedown", activityPopOutside, true);
+  document.removeEventListener("keydown", activityPopKey, true);
+}
+
+/* Sparade filter (Victor 2026-10-15): det man filtrerat på (områden, aktiviteter, entreprenörer) sparas under ett namn och återställs med ett klick.
+   Sparas i webbläsaren per projekt. Valen är de ibockade värdena – tillkommer nya aktiviteter senare behöver filtret sparas om. */
+const savedFiltersKey = () => `4ddash-saved-filters:${typeof projectId !== "undefined" && projectId ? projectId : "_"}`;
+function savedFiltersGet() { try { const v = JSON.parse(localStorage.getItem(savedFiltersKey()) || "[]"); return Array.isArray(v) ? v.filter(x => x && x.name) : []; } catch (e) { return []; } }
+function savedFiltersPut(list) { try { localStorage.setItem(savedFiltersKey(), JSON.stringify(list.slice(0, 40))); } catch (e) { modelToast("Kunde inte spara (webbläsarens lagring är avstängd)"); } }
+const filtersCount = () => (filters.area || []).length + (filters.activity || []).length + (filters.contractor || []).length;
+function savedFilterSummary(f) { const n = (a, w) => (a && a.length ? `${a.length} ${w}` : ""); return [n(f.area, "områden"), n(f.activity, "aktiviteter"), n(f.contractor, "entreprenörer")].filter(Boolean).join(" · ") || "inga filter"; }
+function initSavedFilters() {
+  const b = document.getElementById("filterSavedBtn"); if (!b) return;
+  b.onclick = e => { e.stopPropagation(); if (document.getElementById("savedFilterPop")) closeSavedPop(); else openSavedPop(b); };
+}
+function openSavedPop(btn) {
+  closeSavedPop(); closeAreaPop(); closeActivityPop(); closeContractorPop();
+  const p = document.createElement("div"); p.id = "savedFilterPop"; p.className = "gantt-group-picker cf-pop sf-pop";
+  p.innerHTML = `<div class="sf-new"><input type="text" class="ggp-search sf-name" maxlength="50" placeholder="Namn på filtret, t.ex. Utan sandwich" /><button type="button" class="sf-save primary" title="Spara de valda områdena, aktiviteterna och entreprenörerna just nu">Spara nuvarande</button></div>
+    <div class="hint sf-hint"></div><div class="ggp-list sf-list"></div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect(); p.style.left = Math.max(4, Math.min(r.left, innerWidth - 380)) + "px"; p.style.top = (r.bottom + 4) + "px"; p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px"; p.style.minWidth = "340px";
+  const q = s2 => p.querySelector(s2), name = q(".sf-name");
+  const fill = () => {
+    const list = savedFiltersGet(), n = filtersCount();
+    q(".sf-hint").textContent = n ? `Nuvarande filter: ${savedFilterSummary(filters)}.` : "Inget filter är på just nu – bocka i områden, aktiviteter eller entreprenörer först.";
+    q(".sf-save").disabled = !n;
+    q(".sf-list").innerHTML = list.map((f, i) => `<div class="ggp-row sf-row" data-i="${i}" title="Använd filtret"><span class="sf-n"><b>${escapeHtml(f.name)}</b><span class="hint"> · ${escapeHtml(savedFilterSummary(f))}</span></span><button type="button" class="sf-del" title="Ta bort det sparade filtret" aria-label="Ta bort">✕</button></div>`).join("") || `<div class="hint">Inga sparade filter ännu.</div>`;
+  };
+  const apply = f => { filters.area = (f.area || []).slice(); filters.activity = (f.activity || []).slice(); filters.contractor = (f.contractor || []).slice(); renderAreaFilter(); renderActivityFilter(); renderContractorFilter(); renderAll(); modelToast(`Filtret "${f.name}" används`); };
+  q(".sf-save").onclick = () => {
+    const nm = name.value.trim() || `Filter ${savedFiltersGet().length + 1}`, list = savedFiltersGet(), i = list.findIndex(x => x.name.toLowerCase() === nm.toLowerCase());
+    if (i >= 0 && !confirm(`Det finns redan ett filter som heter "${list[i].name}". Ersätta det med det du filtrerat på nu?`)) return;
+    const f = { name: nm, area: (filters.area || []).slice(), activity: (filters.activity || []).slice(), contractor: (filters.contractor || []).slice(), at: new Date().toISOString() };
+    if (i >= 0) list[i] = f; else list.push(f);
+    savedFiltersPut(list); name.value = ""; fill(); modelToast(`Filtret "${nm}" sparat`);
+  };
+  name.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") q(".sf-save").click(); else if (e.key === "Escape") closeSavedPop(); };
+  q(".sf-list").onclick = e => {
+    const row = e.target.closest(".sf-row"); if (!row) return; const list = savedFiltersGet(), f = list[Number(row.dataset.i)]; if (!f) return;
+    if (e.target.closest(".sf-del")) { if (confirm(`Ta bort det sparade filtret "${f.name}"?`)) { list.splice(Number(row.dataset.i), 1); savedFiltersPut(list); fill(); } return; }
+    apply(f); closeSavedPop();
+  };
+  fill(); setTimeout(() => document.addEventListener("mousedown", savedPopOutside, true), 0); document.addEventListener("keydown", savedPopKey, true); name.focus();
+}
+function savedPopOutside(e) { const p = document.getElementById("savedFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterSavedBtn") closeSavedPop(); }
+function savedPopKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeSavedPop(); } }
+function closeSavedPop() { document.getElementById("savedFilterPop")?.remove(); document.removeEventListener("mousedown", savedPopOutside, true); document.removeEventListener("keydown", savedPopKey, true); }
+
+function uniqueValues(keyFn) {
+  const set = new Set();
+  items.forEach(it => {
+    const v = keyFn(it);
+    if (v) set.add(v);
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "sv"));
+}
+
+function fillSelect(id, filterKey, values, allLabel, noneLabel = "") {
+  const el = document.getElementById(id);
+  const current = filters[filterKey];
+
+  el.innerHTML = [`<option value="">${escapeHtml(allLabel)}</option>`]
+    .concat(noneLabel ? [`<option value="${FILTER_NONE}">${escapeHtml(noneLabel)}</option>`] : [])
+    .concat(values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`))
+    .join("");
+
+  if (current && (values.includes(current) || (current === FILTER_NONE && noneLabel))) {
+    el.value = current;
+  } else {
+    filters[filterKey] = "";
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, ch => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[ch]));
+}
+
+/* ---------------------------------------------------------------------
+   Inställningar (lagras lokalt i webbläsaren för denna extension)
+   ------------------------------------------------------------------- */
+function loadLocalSettings() {
+  try {
+    const raw = window.localStorage.getItem("4ddash-settings");
+    if (raw) settings = { ...settings, ...JSON.parse(raw) };
+  } catch (e) { /* ignorera */ }
+  // Normalisera ev. gammalt sparat decimalkomma (se normalizeCoord).
+  settings.latitude = normalizeCoord(settings.latitude);
+  settings.longitude = normalizeCoord(settings.longitude);
+}
+
+function onSaveSettings() {
+  settings.githubToken = document.getElementById("githubToken").value.trim();
+  // Normalisera decimalkomma till punkt direkt vid sparande – annars
+  // tolkas t.ex. "63,82" som ogiltigt tal (Number("63,82") === NaN) och
+  // väderpanelen visar bara "ange koordinater", även om användaren har
+  // fyllt i fälten. Skriv tillbaka det normaliserade värdet i fälten så
+  // att det syns vad som faktiskt sparades.
+  const latRaw = document.getElementById("settingsLatitude").value.trim();
+  const lonRaw = document.getElementById("settingsLongitude").value.trim();
+  settings.latitude = normalizeCoord(latRaw);
+  settings.longitude = normalizeCoord(lonRaw);
+  settings.locationName = document.getElementById("settingsLocationName").value.trim();
+  document.getElementById("settingsLatitude").value = settings.latitude;
+  document.getElementById("settingsLongitude").value = settings.longitude;
+  const watchDaysRaw = Number(document.getElementById("settingsWatchDays").value);
+  settings.watchMilestoneDays = Number.isFinite(watchDaysRaw) && watchDaysRaw >= 0 ? watchDaysRaw : 7;
+  document.getElementById("settingsWatchDays").value = settings.watchMilestoneDays;
+  window.localStorage.setItem("4ddash-settings", JSON.stringify(settings));
+  updateConnectionWarning();
+  toggle("settingsDialog", false);
+  refreshAll();
+}
+
+// Byter ut ett svenskt decimalkomma mot punkt och trimmar whitespace,
+// utan att på annat sätt ändra värdet (så "63,82" blir "63.82" men
+// "63.82" lämnas orörd).
+function normalizeCoord(value) {
+  return String(value || "").trim().replace(",", ".");
+}
+
+function isBackendConfigured() {
+  return Boolean(settings.githubToken);
+}
+
+// Väder kräver bara koordinater (ingen Supabase-koppling). Tolererar
+// svenskt decimalkomma (se normalizeCoord) och validerar att värdena
+// faktiskt ligger inom giltigt lat/long-intervall.
+function parsedCoords() {
+  const lat = Number(normalizeCoord(settings.latitude));
+  const lon = Number(normalizeCoord(settings.longitude));
+  return { lat, lon };
+}
+
+function isWeatherConfigured() {
+  if (settings.latitude === "" || settings.longitude === "" ||
+      settings.latitude === undefined || settings.longitude === undefined) return false;
+  const { lat, lon } = parsedCoords();
+  return Number.isFinite(lat) && Number.isFinite(lon) &&
+    lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+}
+
+function updateConnectionWarning() {
+  const el = document.getElementById("connectionWarning");
+  if (!el) return;
+  if (isBackendConfigured()) {
+    el.classList.add("hidden");
+    el.innerText = "";
+  } else {
+    el.classList.remove("hidden");
+    el.innerText = "⚠️ Ingen databas ansluten – öppna inställningarna (kugghjulet) och ange GitHub-token. Se GITHUB_TOKEN_SETUP.md.";
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Hämta data + rita om allt
+   ------------------------------------------------------------------- */
+async function refreshAll() {
+  await Promise.all([
+    fetchItems(),
+    fetchActivities(),
+    fetchRecentComments(),
+    fetchProgressHistory(),
+    fetchBaselineHistory(),
+    fetchBaselineMeta(),
+    fetchBaselineRegistry(),
+    fetchMilestones(),
+    fetchStaffing(),
+    fetchDeliveries(),
+    fetchDocumentDeliveries(),
+    fetchSafetyEvents(),
+    fetchInspections(),
+    fetchBlockers(),
+    fetchBlockerComments(),
+    fetchWeather()
+  ]);
+  populateFilterOptions();
+  try { await Promise.race([applyFollowLinks(), new Promise(r => setTimeout(r, 4000))]); } catch (e) { console.warn("Följa aktivitet", e); }
+  renderAll();
+  updateLastUpdated();
+}
+
+// Ritar om alla paneler utifrån den aktuella filtreringen. Anropas både
+// efter en ny hämtning och varje gång användaren ändrar ett filter (utan
+// att hämta om data från Supabase).
+function renderAll() {
+  renderWatchBanner();
+  renderKpis();
+  renderStatusDonut();
+  renderStatusChart();
+  const filtered = getFilteredItems();
+  renderScurve(filtered);
+  renderLookahead(filtered);
+  renderGantt(filtered);
+  renderMilestones();
+  renderDelayedList(filtered);
+  renderGroupProgress("areaProgress", filtered, it => it.area, NO_AREA_LABEL);
+  renderGroupProgress("contractorProgress", filtered, it => it.contractor, NO_CONTRACTOR_LABEL);
+  renderStability();
+  renderCycleTime(filtered);
+  renderStaffing();
+  renderResourceHours(filtered);
+  renderDeliveries();
+  renderDocumentDeliveries();
+  renderSafety();
+  renderInspections();
+  renderBlockers();
+  renderWeather();
+  renderComments(filtered);
+}
+
+// Byggar sökvägen till en tabells JSON-fil i det privata datarepot
+// (vfalk-NCC/4D-data), en mapp per Trimble-projekt. Se github-storage.js.
+function tablePath(table) {
+  const sub = planSource === "pp" && PLAN_SOURCE_TABLES.has(table) ? "pp/" : "";
+  return `projects/${encodeURIComponent(projectId)}/${sub}${table}.json`;
+}
+function renderPlanSourceUi() {
+  document.body.classList.toggle("src-pp", planSource === "pp");
+  document.querySelectorAll("#planSourceBar [data-src]").forEach(b => {
+    const on = b.dataset.src === planSource;
+    b.classList.toggle("active", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+async function setPlanSource(src) {
+  src = src === "pp" ? "pp" : "excel";
+  if (src === planSource) return;
+  planSource = src;
+  try { localStorage.setItem(planSourceKey(), src); } catch (e) {}
+  renderPlanSourceUi();
+  // Filtren och ångra-stacken hör till den förra planeringen.
+  filters = { area: [], activity: [], contractor: [] };
+  renderAreaFilter(); renderActivityFilter(); renderContractorFilter();
+  if (typeof scheduleUndo !== "undefined") { scheduleUndo.length = 0; scheduleRedo.length = 0; updateUndoButtons(); }
+  ganttBoardScrolled = false;
+  await refreshAll();
+}
+
+async function fetchItems() {
+  if (!isBackendConfigured()) {
+    items = [];
+    return;
+  }
+  try {
+    items = (await ghReadJSON(settings.githubToken, tablePath("plan_items"))).map(fromRow);
+    await fetchGanttColors();
+  } catch (e) {
+    console.error("Kunde inte hämta planeringsdata", e);
+    items = [];
+  }
+}
+
+// Delaktiviteter (plan_item_activities) - skrivs bara av 4D-planering (se
+// dess app.js/saveActivitiesForItem). Dashboarden läser dem read-only, för
+// Gantt-schemat (infällbara delaktivitetsrader under respektive objekt).
+async function fetchActivities() {
+  if (!isBackendConfigured()) {
+    activities = [];
+    return;
+  }
+  try {
+    activities = await ghReadJSON(settings.githubToken, tablePath("plan_item_activities"));
+  } catch (e) {
+    console.error("Kunde inte hämta delaktiviteter", e);
+    activities = [];
+  }
+}
+
+/* Status mot dagens datum (Victor 2026-10-06: "det vi måste utgå ifrån är väl dagens datum"):
+   den sparade statusen sattes vid importen eller för hand och blir inaktuell när dagarna går, så
+   den visade statusen räknas fram i dag – samma regler som 4D-planering (liveItemStatus/
+   computeItemPhase): Klar (100 %, verkligt avslut eller klarmarkerad) och Pausad står kvar;
+   annars slutdatum passerat = försenad, framdrift (minst 1 %) = pågående, startdatum passerat
+   utan framdrift = försenad, i övrigt planerad. */
+function liveStatusOfRow(row) {
+  const stored = row.status === "ej_planerad" ? "planerad" : (row.status || "planerad");
+  if (!row.start_date) return stored;
+  const todayStr = todayISO(), today = new Date(todayStr);
+  const start = new Date(row.start_date), plannedEnd = row.end_date ? new Date(row.end_date) : null;
+  const progress = Number(row.progress) || 0;
+  let actualEnd = row.actual_end_date ? new Date(row.actual_end_date) : null;
+  if (!actualEnd && (stored === "klar" || progress >= 100)) actualEnd = plannedEnd || start;
+  if (actualEnd && (stored === "klar" || progress >= 100) && actualEnd > today) actualEnd = today;
+  if (actualEnd && actualEnd <= today) return "klar";
+  if (stored === "pausad") return "pausad";
+  const hasProgress = progress >= 1;
+  let actualStart = hasProgress && row.actual_start_date ? new Date(row.actual_start_date) : null;
+  if (hasProgress && (!actualStart || actualStart > today)) actualStart = start < today ? start : today;
+  const started = actualStart && actualStart <= today;
+  if (today < start && !started) return "planerad";
+  if (plannedEnd && today > plannedEnd) return "forsenad";
+  return started ? "pagaende" : "forsenad";
+}
+
+function fromRow(row) {
+  return {
+    id: row.id,
+    objectName: (row.object_name || "").trim(),
+    status: liveStatusOfRow(row),
+    storedStatus: row.status || "planerad",
+    progress: Number.isFinite(row.progress) ? row.progress : 0,
+    area: (row.area || "").trim(),
+    activity: (row.activity || "").trim(),
+    contractor: (row.contractor || "").trim(),
+    startDate: row.start_date || null,
+    endDate: row.end_date || null,
+    actualStartDate: row.actual_start_date || null,
+    actualEndDate: row.actual_end_date || null,
+    baselineStartDate: row.baseline_start_date || null,
+    baselineEndDate: row.baseline_end_date || null,
+    baselines: row.baselines && typeof row.baselines === "object" && !Array.isArray(row.baselines) ? row.baselines : null,
+    estimatedHours: Number.isFinite(row.estimated_hours) ? row.estimated_hours : null,
+    // Resurser per aktivitet (Powerproject-importen eller "Avancerat (resurser)"): [{ name, qty, hours, start, end }].
+    resources: Array.isArray(row.resources) ? row.resources.filter(r => r && r.name) : null,
+    // Används av Gantt-schemat för att kunna markera objektet i 3D-modellen
+    // vid klick på dess namn - se selectGanttItemInModel().
+    modelId: row.model_id ?? null,
+    objectId: row.object_id ?? null,
+    dependsOn: Array.isArray(row.depends_on) ? row.depends_on.map(String) : [],
+    // Glapp per koppling (Victor 2026-10-07): { föregångarens id: dagar } – + = väntetid, − = överlapp.
+    depLags: row.dep_lags && typeof row.dep_lags === "object" && !Array.isArray(row.dep_lags) ? row.dep_lags : {},
+    // Samma aktivitet kopplad till flera 3D-objekt (en rad per objekt i
+    // 4D-planering) - se mergeActivityGroups.
+    activityKey: row.group_id ? `g:${row.group_id}` : (row.source_key ? `s:${row.source_key}` : null),
+    origin: row.origin || null,
+    // Temporär (4D-planering, Victor 2026-10-09): t.ex. en mobilkran – syns i 3D bara mellan start och slut.
+    temporary: row.temporary === true,
+    bubbleOff: row.bubble_off === true, // ingen bubbla för det här temporära objektet
+    // Egen färg/opacitet efter slut (Victor 2026-10-13): så att färdigt arbete inte blir ett skal som döljer det innanför.
+    doneColor: /^#[0-9a-f]{6}$/i.test(String(row.done_color || "")) ? row.done_color : null,
+    doneOpacity: Number.isFinite(Number(row.done_opacity)) && row.done_opacity !== null && row.done_opacity !== "" ? Math.max(0, Math.min(100, Number(row.done_opacity))) : null,
+    // Rivning (Victor 2026-10-13): syns även före start, försvinner efter slut.
+    demolition: row.demolition === true,
+    // Följer en annan aktivitet (Victor 2026-10-16, t.ex. en egen mobilkran som ska följa en Powerproject-aktivitet även efter ny import).
+    follows: normFollow(row.follows)
+  };
+}
+function normFollow(f) {
+  if (!f || typeof f !== "object" || Array.isArray(f) || (!f.id && !f.key)) return null;
+  const n = v => (Number.isFinite(Number(v)) && v !== "" && v !== null ? Math.round(Number(v)) : 0);
+  return { id: f.id ? String(f.id) : null, key: f.key ? String(f.key) : null, mode: f.mode === "start" || f.mode === "end" ? f.mode : "span", d0: n(f.d0), d1: n(f.d1) };
+}
+
+/* En aktivitet med flera 3D-objekt lagras som en rad per objekt (med egna
+   datum om objekten har olika delaktiviteter). I Kommande veckor och
+   Gantt-tavlan slås de ihop till en post per aktivitet, med tidigaste start
+   och senaste slut, så samma aktivitet inte syns som N likadana lappar. */
+function mergeActivityGroups(list) {
+  const byKey = new Map();
+  list.forEach(it => {
+    if (!it.activityKey) return;
+    if (!byKey.has(it.activityKey)) byKey.set(it.activityKey, []);
+    byKey.get(it.activityKey).push(it);
+  });
+  const out = [];
+  const done = new Set();
+  list.forEach(it => {
+    const members = it.activityKey ? byKey.get(it.activityKey) : null;
+    if (!members || members.length < 2) { out.push(it); return; }
+    if (done.has(it.activityKey)) return;
+    done.add(it.activityKey);
+    const starts = members.map(m => m.startDate).filter(Boolean).sort();
+    const ends = members.map(m => m.endDate).filter(Boolean).sort();
+    const late = members.find(m => m.status === "forsenad");
+    const progress = Math.round(members.reduce((sum, m) => sum + (Number(m.progress) || 0), 0) / members.length);
+    const bs = members.map(m => m.baselineStartDate).filter(Boolean).sort(), be = members.map(m => m.baselineEndDate).filter(Boolean).sort();
+    out.push({ ...members[0], startDate: starts[0] || null, endDate: ends[ends.length - 1] || null,
+      baselineStartDate: bs[0] || null, baselineEndDate: be[be.length - 1] || null,
+      baselines: (() => {
+        const out = {};
+        members.forEach(m => Object.entries(m.baselines || {}).forEach(([id, v]) => {
+          if (!Array.isArray(v) || !v[0] || !v[1]) return;
+          out[id] = out[id] ? [v[0] < out[id][0] ? v[0] : out[id][0], v[1] > out[id][1] ? v[1] : out[id][1]] : [v[0], v[1]];
+        }));
+        return Object.keys(out).length ? out : null;
+      })(),
+      status: late ? "forsenad" : members[0].status, progress, members, temporary: members.some(m => m.temporary), bubbleOff: members.some(m => m.bubbleOff), demolition: members.some(m => m.demolition) });
+  });
+  return out;
+}
+
+/** Markerar en post (eller alla objekt i en sammanslagen aktivitet) i 3D och zoomar dit
+    (Victor 2026-10-06: "markeras och zoomas det objektet in i TC"). */
+const ganttRuntimeIdCache = new Map(); // "modelId:objectId" -> runtimeId
+const ganttExtObjectIdCache = new Map(); // "modelId:runtimeId" -> objectId
+
+async function selectActivityInModel(it) {
+  if (!it) return;
+  const targets = (it.members || [it]).filter(m => m.modelId && m.objectId);
+  if (!targets.length) { modelToast(it.members && it.members.length > 1 ? "Aktiviteterna är inte kopplade till något i modellen – koppla dem först (högerklick → 3D-koppling)" : "Aktiviteten är inte kopplad till något i modellen"); return; }
+  if (!API || !API.viewer || typeof API.viewer.convertToObjectRuntimeIds !== "function") return;
+  try {
+    const byModel = {};
+    targets.forEach(m => { (byModel[m.modelId] = byModel[m.modelId] || []).push(m.objectId); });
+    const modelKeys = Object.keys(byModel);
+    const modelObjectIds = [];
+
+    const results = await Promise.all(modelKeys.map(async (modelId) => {
+      const objIds = byModel[modelId];
+      const uncached = [];
+      const resolved = [];
+
+      objIds.forEach(id => {
+        const k = `${modelId}:${id}`;
+        if (ganttRuntimeIdCache.has(k)) {
+          const cachedRid = ganttRuntimeIdCache.get(k);
+          if (cachedRid !== null) resolved.push(cachedRid);
+        } else {
+          uncached.push(id);
+        }
+      });
+
+      if (uncached.length > 0) {
+        try {
+          const rids = await API.viewer.convertToObjectRuntimeIds(modelId, uncached);
+          uncached.forEach((id, idx) => {
+            const rid = rids && rids[idx] !== undefined && rids[idx] !== null ? rids[idx] : null;
+            ganttRuntimeIdCache.set(`${modelId}:${id}`, rid);
+            if (rid !== null) resolved.push(rid);
+          });
+        } catch (e) {
+          console.warn("Hoppar över modell som inte är inläst", modelId, e);
+        }
+      }
+
+      return resolved.length ? { modelId, objectRuntimeIds: resolved } : null;
+    }));
+
+    results.forEach(res => { if (res) modelObjectIds.push(res); });
+    if (!modelObjectIds.length) { modelToast("Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); return; }
+    ownModelSelectionUntil = Date.now() + 1500; // vår egen markering ska inte studsa tillbaka till schemat
+    await API.viewer.setSelection({ modelObjectIds }, "set");
+    // Zooma in: Trimbles egen "zooma till markering" – samma anrop som 4D-planering (setCamera med
+    // bara objekten; med en animeringsinställning ignorerades anropet i TC, Victor 2026-10-06).
+    if (typeof API.viewer.setCamera === "function") {
+      try { await API.viewer.setCamera({ modelObjectIds }); } catch (e) { console.warn("Kunde inte zooma in", e); }
+    }
+    const n = modelObjectIds.reduce((a, m) => a + m.objectRuntimeIds.length, 0);
+    modelToast(`Markerad och inzoomad i modellen${n > 1 ? ` (${n} objekt)` : ""}${document.fullscreenElement ? " – stäng helskärmen för att se den" : ""}`);
+  } catch (e) {
+    console.warn("Kunde inte markera i 3D-modellen", e);
+  }
+}
+/* Kort bekräftelse nere i hörnet, ev. med en knapp (action: { label, fn }). */
+let modelToastTimer = null;
+function modelToast(text, action) {
+  let t = document.getElementById("modelToast");
+  if (!t) { t = document.createElement("div"); t.id = "modelToast"; t.className = "model-toast"; }
+  overlayHost().appendChild(t);
+  t.textContent = text;
+  if (action) {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = action.label;
+    b.onclick = () => { t.classList.remove("show"); action.fn(); };
+    t.appendChild(b);
+  }
+  t.classList.toggle("has-action", !!action);
+  t.classList.add("show");
+  clearTimeout(modelToastTimer);
+  modelToastTimer = setTimeout(() => t.classList.remove("show"), action ? 6000 : 2600);
+}
+
+/* ----- Koppla en lapp till 3D-objekt (Victor 2026-10-07: "koppla objekt direkt från ganttschemat").
+   Högerklick → "Koppla i 3D-modellen": en list överst visar hur många objekt som är markerade i
+   modellen; Koppla sparar dem på aktiviteten. Samma uppbyggnad som 4D-planering: en rad per objekt
+   (kopior av raden med samma group_id); en okopplad rad får det första objektet. Går att ångra. */
+let coupleState = null; // { it, members, sel: [{ modelId, objectId }] }
+async function readModelSelectionIds() {
+  if (!API || !API.viewer || typeof API.viewer.getSelection !== "function") return null;
+  const out = [];
+  let sel = [];
+  try { sel = await API.viewer.getSelection(); } catch (e) { return null; }
+  for (const m of sel || []) {
+    const rids = m.objectRuntimeIds || [];
+    if (!rids.length) continue;
+    let ext = [];
+    try { ext = await API.viewer.convertToObjectIds(m.modelId, rids); } catch (e) { continue; }
+    (ext || []).forEach(id => { if (id !== undefined && id !== null && id !== "") out.push({ modelId: m.modelId, objectId: String(id) }); });
+  }
+  const seen = new Set();
+  return out.filter(o => { const k = `${o.modelId}|${o.objectId}`; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+function startCoupleMode(it) {
+  if (!it) return;
+  if (!ganttEditable) {
+    modelToast("Slå på Redigerbar för att koppla till 3D-modellen", { label: "Slå på", fn: () => { const cb = document.getElementById("ganttEditable"); if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } startCoupleMode(it); } });
+    return;
+  }
+  stopCoupleMode();
+  hideGanttTooltip();
+  // Modellen syns inte i helskärm – gå ur den så att man kan markera.
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  // Hela aktiviteten (alla dess rader), även när tavlan visar en lapp per objekt.
+  coupleState = { it, members: it.activityKey ? items.filter(x => x.activityKey === it.activityKey) : (it.members || [it]).slice(), sel: [] };
+  const bar = document.createElement("div");
+  bar.className = "couple-bar";
+  bar.innerHTML = `<span class="couple-ico">🧊</span><span class="couple-txt">Koppla <b>${escapeHtml(tipShort(itemLabel(it), 50))}</b> – markera objekten i modellen</span>
+    <span class="couple-n">0 markerade</span><button type="button" class="couple-go primary" disabled>Koppla</button><button type="button" class="couple-cancel">Avbryt</button>`;
+  document.body.appendChild(bar);
+  bar.querySelector(".couple-cancel").onclick = stopCoupleMode;
+  bar.querySelector(".couple-go").onclick = () => commitCouple();
+  document.addEventListener("keydown", coupleKey, true);
+  const n = document.querySelector(`#ganttChart [data-item-id="${CSS.escape(String(it.id))}"]`);
+  if (n) n.classList.add("couple-target");
+  updateCoupleBar();
+}
+function coupleKey(e) { if (e.key === "Escape" && coupleState) { e.stopPropagation(); stopCoupleMode(); } }
+function stopCoupleMode() {
+  coupleState = null;
+  document.querySelectorAll(".couple-bar").forEach(b => b.remove());
+  document.querySelectorAll(".couple-target").forEach(n => n.classList.remove("couple-target"));
+  document.removeEventListener("keydown", coupleKey, true);
+}
+async function updateCoupleBar() {
+  if (!coupleState) return;
+  const st = coupleState, sel = await readModelSelectionIds();
+  if (st !== coupleState) return;
+  const bar = document.querySelector(".couple-bar");
+  if (!bar) return;
+  if (sel === null) { bar.querySelector(".couple-n").textContent = "Modellen är inte ansluten"; return; }
+  const have = new Set(st.members.filter(m => m.modelId && m.objectId).map(m => `${m.modelId}|${m.objectId}`));
+  st.sel = sel.filter(o => !have.has(`${o.modelId}|${o.objectId}`));
+  const already = sel.length - st.sel.length;
+  bar.querySelector(".couple-n").textContent = `${st.sel.length} markerade${already ? ` · ${already} redan kopplade` : ""}`;
+  bar.querySelector(".couple-go").disabled = !st.sel.length;
+  bar.querySelector(".couple-go").textContent = st.sel.length ? `Koppla ${st.sel.length} objekt` : "Koppla";
+}
+async function commitCouple() {
+  const st = coupleState;
+  if (!st) return;
+  await updateCoupleBar();
+  if (!st.sel.length) return;
+  const objs = st.sel.slice(), name = itemLabel(st.it);
+  // Objekt som redan hör till andra aktiviteter: fråga först (de blir kopplade till båda).
+  const others = objs.filter(o => items.some(x => x.modelId === o.modelId && String(x.objectId) === o.objectId));
+  if (others.length && !(await dashConfirm(`${others.length} av objekten är redan kopplade till andra aktiviteter.\n\nKoppla dem till "${name}" också?`, { ok: "Koppla ändå" }))) return;
+  stopCoupleMode();
+  const memberIds = new Set(st.members.map(m => String(m.id)));
+  const nowIso = new Date().toISOString();
+  let before = [], added = [], subsAdded = [], finalRows = [];
+  try {
+    await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => {
+      const mine = arr.filter(r => memberIds.has(String(r.id)));
+      if (!mine.length) throw new Error("Aktiviteten finns inte längre i filen – ladda om sidan.");
+      before = mine.map(r => ({ ...r }));
+      const groupId = mine.find(r => r.group_id)?.group_id || ghNewId();
+      const free = mine.find(r => !r.model_id); // okopplad rad (t.ex. från Powerproject) får första objektet
+      const base = mine[0];
+      added = [];
+      const upd = new Map(mine.map(r => [r.id, { ...r, group_id: groupId, updated_at: nowIso }]));
+      objs.forEach((o, i) => {
+        if (i === 0 && free) { upd.set(free.id, { ...upd.get(free.id), model_id: o.modelId, object_id: o.objectId }); return; }
+        added.push({ ...base, id: ghNewId(), model_id: o.modelId, object_id: o.objectId, group_id: groupId, created_at: nowIso, updated_at: nowIso });
+      });
+      finalRows = [...upd.values(), ...added];
+      return [...arr.map(r => upd.get(r.id) || r), ...added];
+    }, objs.length === 1 ? `Koppla ${name} till 3D-objekt` : `Koppla ${name} till ${objs.length} 3D-objekt`);
+    // Kopiorna får samma delaktiviteter som den första raden (som i 4D-planering).
+    const src = activities.filter(a => String(a.plan_item_id) === String(before[0].id));
+    if (src.length && added.length) {
+      subsAdded = added.flatMap(r => src.map(a => ({ ...a, id: ghNewId(), plan_item_id: r.id })));
+      try { await ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"), arr => [...arr, ...subsAdded], `Delaktiviteter för nya 3D-objekt: ${name}`); }
+      catch (e) { console.warn("Kunde inte kopiera delaktiviteterna", e); subsAdded = []; }
+    }
+  } catch (e) { alert("Kunde inte koppla: " + e.message); return; }
+  items = items.filter(x => !memberIds.has(String(x.id))).concat(finalRows.map(fromRow));
+  activities = activities.concat(subsAdded);
+  renderAll();
+  modelToast(`"${tipShort(name, 36)}" kopplad till ${objs.length} objekt i modellen`, { label: "Ångra", fn: async () => {
+    try {
+      const addedIds = new Set(added.map(r => r.id)), prev = new Map(before.map(r => [r.id, r]));
+      await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => arr.filter(r => !addedIds.has(r.id)).map(r => prev.get(r.id) || r), `Ångra 3D-koppling: ${name}`);
+      if (subsAdded.length) { const sIds = new Set(subsAdded.map(a => a.id)); await ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"), arr => arr.filter(a => !sIds.has(a.id)), `Ångra 3D-koppling: ${name}`); activities = activities.filter(a => !sIds.has(a.id)); }
+      items = items.filter(x => !addedIds.has(x.id) && !prev.has(x.id)).concat(before.map(fromRow));
+      renderAll();
+    } catch (e) { alert("Kunde inte ångra: " + e.message); }
+  } });
+}
+
+/* ----- Markering i modellen → Gantt-schemat (Victor 2026-10-06: "tvärtom") -------------------
+   Markerar man objekt i Trimble Connect letar schemat upp deras aktiviteter: scrollar dit, fäller
+   ut hopfällda grupper, pulserar två gånger och behåller en ram så länge objekten är markerade.
+   Reagerar bara när Gantt-schemat syns, och inte på dashboardens egen markering (klick på en lapp). */
+let ownModelSelectionUntil = 0;
+let naPopSync = null, naPopTimer = null; // redigeringsdialogen för en aktivitet är öppen: modellens markering bockas i dess objektlista
+let ganttModelSel = new Set();      // plan_item-id:n som är markerade i modellen
+let modelSelTimer = null;
+function onTcEvent(event) {
+  if (event !== "viewer.onSelectionChanged" && event !== "extension.onSelectionChanged") return;
+  if (naPopSync && Date.now() >= ownModelSelectionUntil) { clearTimeout(naPopTimer); naPopTimer = setTimeout(() => { if (naPopSync) naPopSync(); }, 200); }
+  if (coupleState) { clearTimeout(modelSelTimer); modelSelTimer = setTimeout(updateCoupleBar, 200); return; }
+  clearTimeout(modelSelTimer);
+  modelSelTimer = setTimeout(syncGanttFromModel, 200);
+}
+function ganttPanelVisible() {
+  const p = document.querySelector('section.panel[data-panel-id="gantt"]');
+  return !!(p && p.offsetParent !== null && !p.classList.contains("collapsed"));
+}
+async function syncGanttFromModel() {
+  if (Date.now() < ownModelSelectionUntil || !ganttPanelVisible()) return;
+  if (!API || !API.viewer || typeof API.viewer.getSelection !== "function") return;
+  let sel;
+  try { sel = await API.viewer.getSelection(); } catch (e) { return; }
+  const ids = new Set();
+  let objects = 0;
+  for (const m of sel || []) {
+    const rids = m.objectRuntimeIds || [];
+    if (!rids.length) continue;
+    objects += rids.length;
+
+    const uncachedRids = [];
+    const resolvedExtIds = [];
+
+    rids.forEach(rid => {
+      const k = `${m.modelId}:${rid}`;
+      if (ganttExtObjectIdCache.has(k)) {
+        const extId = ganttExtObjectIdCache.get(k);
+        if (extId !== null) resolvedExtIds.push(extId);
+      } else {
+        uncachedRids.push(rid);
+      }
+    });
+
+    if (uncachedRids.length > 0) {
+      try {
+        const ext = await API.viewer.convertToObjectIds(m.modelId, uncachedRids);
+        uncachedRids.forEach((rid, idx) => {
+          const extId = ext && ext[idx] !== undefined && ext[idx] !== null ? ext[idx] : null;
+          ganttExtObjectIdCache.set(`${m.modelId}:${rid}`, extId);
+          if (extId !== null) resolvedExtIds.push(extId);
+        });
+      } catch (e) {
+        console.warn("Kunde inte konvertera runtime-ID i modell", m.modelId, e);
+      }
+    }
+
+    const set = new Set((resolvedExtIds || []).map(String));
+    items.forEach(it => { if (it.modelId === m.modelId && set.has(String(it.objectId))) ids.add(String(it.id)); });
+  }
+  ganttModelSel = ids;
+  if (!ids.size) {
+    applyGanttModelSel(false);
+    if (objects) modelToast(objects === 1 ? "Objektet är inte kopplat till någon aktivitet" : "Objekten är inte kopplade till någon aktivitet");
+    return;
+  }
+  // Hopfällda grupper som innehåller träffarna fälls ut.
+  const hits = items.filter(it => ids.has(String(it.id)));
+  let opened = false;
+  if (ganttGroupBy) hits.forEach(it => { const k = `${ganttGroupBy}:${ganttGroupKeyFor(it)}`; if (ganttCollapsedGroups.has(k)) { ganttCollapsedGroups.delete(k); opened = true; } });
+  if (opened) { saveGanttPrefs(); renderGantt(getFilteredItems()); }
+  const shown = applyGanttModelSel(true);
+  const acts = new Set(hits.map(it => it.activityKey || it.id)).size;
+  if (!shown) {
+    const first = hits.slice().sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")))[0];
+    const hidden = ganttSearch && !hits.some(ganttSearchMatch) ? "döljs av sökningen" : "ligger utanför vald period";
+    modelToast(`${acts === 1 ? "Aktiviteten" : `${acts} aktiviteter`} ${hidden}`, hidden === "döljs av sökningen"
+      ? { label: "Rensa sökningen", fn: () => { const s2 = document.getElementById("ganttSearch"); if (s2) s2.value = ""; ganttSearch = ""; renderGantt(getFilteredItems()); applyGanttModelSel(true); } }
+      : first && first.startDate ? { label: "Visa", fn: () => ganttJumpToDate(first.startDate) } : null);
+  } else if (acts > 1) modelToast(`${acts} aktiviteter markerade från modellen`);
+}
+/* Ramen (och pulsen när pulse=true) på aktiviteterna som är markerade i modellen. Returnerar antal i bild. */
+function applyGanttModelSel(pulse) {
+  const chart = document.getElementById("ganttChart");
+  if (!chart) return 0;
+  chart.querySelectorAll(".model-sel").forEach(x => x.classList.remove("model-sel", "model-sel-pulse"));
+  if (!ganttModelSel.size) return 0;
+  const els = [];
+  chart.querySelectorAll(".pnote[data-item-id]").forEach(n => {
+    const it = items.find(x => String(x.id) === n.dataset.itemId);
+    const ids = it ? [it.id, ...items.filter(x => it.activityKey && x.activityKey === it.activityKey ).map(x => x.id)] : [n.dataset.itemId];
+    if (ids.some(id => ganttModelSel.has(String(id)))) els.push(n);
+  });
+  chart.querySelectorAll(".gantt-bar[data-item-id]").forEach(b => { if (ganttModelSel.has(b.dataset.itemId)) els.push(b); });
+  els.forEach(x => { x.classList.add("model-sel"); if (pulse) { x.classList.remove("model-sel-pulse"); void x.offsetWidth; x.classList.add("model-sel-pulse"); } });
+  if (pulse && els[0]) els[0].scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  return els.length;
+}
+/* Visa fyra veckor från veckan då aktiviteten startar. */
+function ganttJumpToDate(iso) {
+  const ws = startOfWeekUTC(parseDate(iso)), we = new Date(ws); we.setUTCDate(we.getUTCDate() + 27);
+  ganttRangeStart = ws.toISOString().slice(0, 10); ganttRangeEnd = we.toISOString().slice(0, 10);
+  const a = document.getElementById("ganttRangeStart"), b = document.getElementById("ganttRangeEnd");
+  if (a) a.value = ganttRangeStart; if (b) b.value = ganttRangeEnd;
+  document.querySelectorAll("[data-gantt-weeks], #ganttRangeReset").forEach(c => c.classList.remove("active"));
+  saveGanttPrefs();
+  updateGanttRangeStatus(document.getElementById("ganttRangeStatus"));
+  renderGantt(getFilteredItems());
+  applyGanttModelSel(true);
+}
+
+// Hämtar kommentarerna för det här projektet. Med GitHub-lagringen ligger
+// varje projekts kommentarer redan i en egen fil (projects/<id>/...),
+// så till skillnad från den gamla Supabase-lösningen (en delad tabell
+// utan project_id, filtrerad client-side) behövs ingen global hämtning +
+// filtrering längre. Läser bara – dashboarden skriver aldrig kommentarer.
+async function fetchRecentComments() {
+  if (!isBackendConfigured()) {
+    recentComments = [];
+    return;
+  }
+  try {
+    recentComments = await ghReadJSON(settings.githubToken, tablePath("plan_item_comments"));
+  } catch (e) {
+    console.error("Kunde inte hämta kommentarer", e);
+    recentComments = [];
+  }
+}
+
+// Framdriftshistorik (S-kurva). Fylls på av 4D-planering varje gång
+// progress/status ändras (se logProgressHistory i dess app.js) –
+// dashboarden läser bara.
+async function fetchProgressHistory() {
+  if (!isBackendConfigured()) { progressHistory = []; return; }
+  try {
+    progressHistory = await ghReadJSON(settings.githubToken, tablePath("plan_item_progress_history"));
+  } catch (e) {
+    console.error("Kunde inte hämta framdriftshistorik", e);
+    progressHistory = [];
+  }
+}
+
+// Baseline-historik (start_date/end_date över tid) - fylls på av 4D-planering
+// varje gång ett objekts datum ändras (se logBaselineHistory i dess app.js),
+// samt av dashboarden själv vid en dra-och-släpp-omschemaläggning i Gantt-
+// schemat (se saveItemSchedule). Dashboarden läser den och visar
+// "Planstabilitet" (renderStability) - Victors förfrågan 2026-09-21 om att
+// se hur PLANEN själv har ändrats över tid, inte bara planerat vs verkligt.
+async function fetchBaselineHistory() {
+  if (!isBackendConfigured()) { baselineHistory = []; return; }
+  try {
+    baselineHistory = await ghReadJSON(settings.githubToken, tablePath("plan_item_baseline_history"));
+  } catch (e) {
+    console.error("Kunde inte hämta baseline-historik", e);
+    baselineHistory = [];
+  }
+}
+
+async function fetchBaselineMeta() {
+  if (!isBackendConfigured()) { planBaselineMeta = null; return; }
+  try {
+    const log = await ghReadJSON(settings.githubToken, tablePath("plan_baseline"));
+    planBaselineMeta = Array.isArray(log) && log.length ? log[log.length - 1] : null;
+  } catch (e) { planBaselineMeta = null; }
+}
+/* Baseline-färgen som CSS-variabel (--bl) på diagrammet, förklaringen och utskriften. */
+function applyBaselineColor(el) {
+  [el, document.getElementById("ganttChart"), document.getElementById("ganttLegend")].forEach(x => { if (x) { x.style.setProperty("--bl", ganttBaselineColor); x.style.setProperty("--bl2", ganttBaselineColor2); } });
+}
+/* "Bara ± dagar" syns bara när Baseline är på. */
+function syncBlDaysPill() {
+  const pill = document.getElementById("ganttBaselineDaysPill");
+  if (pill) pill.classList.toggle("hidden", !ganttShowBaseline);
+}
+/* Väljarna för baseline (syns när det finns mer än en). Ett sparat val som inte längre finns faller
+   tillbaka på den första. */
+function syncBaselinePicker() {
+  const box = document.getElementById("ganttBlPick"), s1 = document.getElementById("ganttBaselineSel"), s2 = document.getElementById("ganttBaseline2Sel");
+  const list = availableBaselines();
+  if (list.length && !list.some(b => b.id === ganttBaselineId)) ganttBaselineId = list[0].id;
+  if (ganttBaseline2Id && (!list.some(b => b.id === ganttBaseline2Id) || ganttBaseline2Id === ganttBaselineId)) ganttBaseline2Id = "";
+  if (!box || !s1 || !s2) return;
+  box.classList.toggle("hidden", !ganttShowBaseline || list.length < 2);
+  const opt = (b, sel) => `<option value="${escapeHtml(b.id)}"${b.id === sel ? " selected" : ""}>${escapeHtml(b.name)}</option>`;
+  s1.innerHTML = list.map(b => opt(b, ganttBaselineId)).join("");
+  s2.innerHTML = `<option value="">– jämför inte –</option>` + list.filter(b => b.id !== ganttBaselineId).map(b => opt(b, ganttBaseline2Id)).join("");
+}
+async function fetchBaselineRegistry() {
+  if (!isBackendConfigured()) { planBaselines = []; return; }
+  try { planBaselines = await ghReadJSON(settings.githubToken, tablePath("plan_baselines")); }
+  catch (e) { planBaselines = []; }
+}
+/* En aktivitets datum i baseline id: [start, slut] eller null. */
+function blOf(it, id = ganttBaselineId) {
+  if (!it || !id) return null;
+  if (id === "main") return it.baselineStartDate && it.baselineEndDate ? [it.baselineStartDate, it.baselineEndDate] : null;
+  const v = it.baselines && it.baselines[id];
+  return Array.isArray(v) && v[0] && v[1] ? v : null;
+}
+/* Baselines som finns: registret, plus det som finns på raderna utan registerpost. */
+function availableBaselines() {
+  const ids = new Set();
+  if (items.some(it => blOf(it, "main"))) ids.add("main");
+  planBaselines.forEach(b => { if (b && b.id && (b.id === "main" ? ids.has("main") : items.some(it => blOf(it, b.id)))) ids.add(b.id); });
+  items.forEach(it => Object.keys(it.baselines || {}).forEach(id => ids.add(id)));
+  return [...ids].map(id => ({ id, name: baselineName(id) }));
+}
+function baselineName(id) {
+  const r = planBaselines.find(b => b && b.id === id);
+  return (r && r.name) || (id === "main" ? "Baseline" : id);
+}
+/* Baseline-stapelns text: namn och varifrån den kommer. */
+function baselineLabel(id = ganttBaselineId) {
+  const r = planBaselines.find(b => b && b.id === id);
+  if (r) return [r.name, r.source && r.source !== r.name ? r.source : ""].filter(Boolean).join(" · ");
+  if (id !== "main") return id;
+  if (planBaselineMeta && planBaselineMeta.label) return planBaselineMeta.label;
+  return planSource === "pp" ? "" : "Plan. start/slut från Excel";
+}
+/* Hur mycket slutet (annars starten) har flyttats mot baseline, i dagar; null om ingen baseline. */
+function baselineShiftDays(it, id = ganttBaselineId) {
+  const b = blOf(it, id);
+  if (!b || !it.startDate || !it.endDate) return null;
+  return daysBetweenIso(b[1], it.endDate) || daysBetweenIso(b[0], it.startDate);
+}
+const shiftText = d => (d > 0 ? `+${d} d` : `${d} d`);
+
+async function fetchMilestones() {
+  if (!isBackendConfigured()) { milestones = []; return; }
+  try {
+    milestones = await ghReadJSON(settings.githubToken, tablePath("plan_milestones"));
+  } catch (e) {
+    console.error("Kunde inte hämta milstolpar", e);
+    milestones = [];
+  }
+}
+
+async function fetchStaffing() {
+  if (!isBackendConfigured()) { staffing = []; return; }
+  try {
+    staffing = await ghReadJSON(settings.githubToken, tablePath("plan_staffing"));
+  } catch (e) {
+    console.error("Kunde inte hämta bemanning", e);
+    staffing = [];
+  }
+}
+
+async function fetchDeliveries() {
+  if (!isBackendConfigured()) { deliveries = []; return; }
+  try {
+    deliveries = await ghReadJSON(settings.githubToken, tablePath("plan_deliveries"));
+  } catch (e) {
+    console.error("Kunde inte hämta leveransplan", e);
+    deliveries = [];
+  }
+}
+
+async function fetchSafetyEvents() {
+  if (!isBackendConfigured()) { safetyEvents = []; return; }
+  try {
+    safetyEvents = await ghReadJSON(settings.githubToken, tablePath("plan_safety_events"));
+  } catch (e) {
+    console.error("Kunde inte hämta säkerhetshändelser", e);
+    safetyEvents = [];
+  }
+}
+
+async function fetchInspections() {
+  if (!isBackendConfigured()) { inspections = []; return; }
+  try {
+    inspections = await ghReadJSON(settings.githubToken, tablePath("plan_inspections"));
+  } catch (e) {
+    console.error("Kunde inte hämta besiktningar", e);
+    inspections = [];
+  }
+}
+
+// Väder är helt fristående från Supabase (annan origin, inget API-nyckel-
+// krav). Ett fel här (nätverk, dåliga koordinater, m.m.) ska aldrig få
+// resten av sidan att sluta fungera – därför fångas allt i try/catch och
+// vi faller tillbaka på weather = null, vilket renderWeather() visar ett
+// hint för.
+async function fetchWeather() {
+  weather = null;
+  weatherError = null;
+  if (!isWeatherConfigured()) return;
+  const { lat, lon } = parsedCoords();
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current=temperature_2m,precipitation,wind_speed_10m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&timezone=auto&forecast_days=4`;
+    const res = await fetch(url);
+    if (res.ok) {
+      weather = await res.json();
+    } else {
+      let detail = "";
+      try { detail = (await res.json()).reason || ""; } catch (_) { /* ignorera */ }
+      weatherError = `Open-Meteo svarade ${res.status}${detail ? ": " + detail : ""}.`;
+      weather = null;
+    }
+  } catch (e) {
+    console.error("Kunde inte hämta väderdata", e);
+    weatherError = "Nätverksfel vid hämtning av väderdata (kontrollera internetuppkopplingen).";
+    weather = null;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Datumhjälpfunktioner (UTC-baserade så att "idag" och datumfält från
+   databasen jämförs konsekvent, oavsett webbläsarens tidszon).
+   ------------------------------------------------------------------- */
+function parseDate(value) {
+  if (!value) return null;
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00Z` : value;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function todayUTC() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+// Dagens datum som "YYYY-MM-DD" (UTC), samma format som databasens date-fält.
+function todayISO() {
+  return todayUTC().toISOString().slice(0, 10);
+}
+
+// Formaterar ett date-/timestamp-värde från databasen på svenskt vis
+// (t.ex. "2026-09-04" eller en ISO-tidsstämpel).
+function formatDateSv(value) {
+  const d = parseDate(value);
+  return d ? d.toLocaleDateString("sv-SE", { timeZone: "UTC" }) : "";
+}
+
+// De N kommande veckofönstren (denna vecka + N-1 framåt), samma
+// veckoindelning som "Kommande veckor"-panelen.
+function currentWeekWindows(n) {
+  const start0 = startOfWeekUTC(todayUTC());
+  const weeks = [];
+  for (let i = 0; i < n; i++) {
+    const start = new Date(start0);
+    start.setUTCDate(start.getUTCDate() + i * 7);
+    weeks.push({ start, label: i === 0 ? "Denna vecka" : `Vecka ${isoWeekNumber(start)}` });
+  }
+  return weeks;
+}
+
+function startOfWeekUTC(date) {
+  const day = (date.getUTCDay() + 6) % 7; // Måndag = 0
+  const d = new Date(date);
+  d.setUTCDate(d.getUTCDate() - day);
+  return d;
+}
+
+function isoWeekYear(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + 3); // torsdagen avgör ISO-året
+  return d.getUTCFullYear();
+}
+function isoWeekNumber(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNum = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - dayNum + 3); // torsdag samma vecka
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const firstDayNum = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNum + 3);
+  return 1 + Math.round((d - firstThursday) / (7 * 24 * 60 * 60 * 1000));
+}
+
+function relativeTime(value) {
+  const d = parseDate(value);
+  if (!d) return "";
+  const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return "just nu";
+  if (diffMin < 60) return `${diffMin} min sedan`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `${diffH} tim sedan`;
+  const diffD = Math.round(diffH / 24);
+  if (diffD < 7) return `${diffD} dygn sedan`;
+  return d.toLocaleDateString("sv-SE");
+}
+
+function truncate(str, max) {
+  return str.length > max ? str.slice(0, max - 1) + "…" : str;
+}
+
+// Namnet att visa för ett objekt i listor – objektnamnet om det finns,
+// annars område + aktivitet som fallback.
+function itemLabel(it) {
+  return it.objectName || [it.area, it.activity].filter(Boolean).join(" · ") || "Okänt objekt";
+}
+
+function updateLastUpdated() {
+  const el = document.getElementById("lastUpdated");
+  if (!el) return;
+  if (!isBackendConfigured()) {
+    el.innerText = "";
+    return;
+  }
+  const now = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  el.innerText = `Senast uppdaterad: ${pad(now.getHours())}:${pad(now.getMinutes())} (${items.length} objekt)`;
+}
+
+// Meddelande att visa i en panel när det inte finns något att rita.
+// Skiljer mellan "ingen databas", "tomt projekt" och "filtret gav träff
+// på noll objekt", så det alltid är tydligt varför panelen är tom.
+function emptyMessage() {
+  if (!isBackendConfigured()) return "Ingen databas ansluten ännu.";
+  if (items.length === 0) return "Inga planerade objekt hittades för det här projektet.";
+  return "Inga objekt matchar den valda filtreringen.";
+}
+
+/* ---------------------------------------------------------------------
+   Statistik
+   ------------------------------------------------------------------- */
+function computeStats(list) {
+  const total = list.length;
+  const byStatus = {};
+  STATUS_ORDER.forEach(s => { byStatus[s] = 0; });
+  let progressSum = 0;
+
+  list.forEach(it => {
+    if (byStatus[it.status] === undefined) byStatus[it.status] = 0;
+    byStatus[it.status]++;
+    progressSum += it.progress;
+  });
+
+  const done = byStatus.klar || 0;
+  const delayed = byStatus.forsenad || 0;
+  const notPlanned = byStatus.ej_planerad || 0;
+  const avgProgress = total > 0 ? Math.round(progressSum / total) : 0;
+
+  // Av de klarmarkerade objekten: hur många blev klara EFTER planerat
+  // slutdatum (utifrån det nya fältet "Verkligt avslut" i 4D-planering).
+  // Objekt som klarmarkerats utan ett ifyllt verkligt avslut (äldre data,
+  // eller inget planerat slutdatum satt) räknas inte som försent klara här
+  // - vi vet helt enkelt inte, så vi gissar inte åt fel håll.
+  const doneLate = list.filter(it =>
+    it.status === "klar" && it.actualEndDate && it.endDate && it.actualEndDate > it.endDate
+  ).length;
+
+  return { total, byStatus, done, delayed, notPlanned, avgProgress, doneLate };
+}
+
+/* ---------------------------------------------------------------------
+   Översikt (KPI-rutnät)
+   ------------------------------------------------------------------- */
+function renderKpis() {
+  const el = document.getElementById("kpiGrid");
+  const list = getFilteredItems();
+  const s = computeStats(list);
+
+  if (s.total === 0) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const donePct = Math.round((s.done / s.total) * 100);
+  const delayedPct = Math.round((s.delayed / s.total) * 100);
+
+  const tiles = [
+    { value: s.total, label: "Objekt totalt", accent: "" },
+    { value: `${donePct}%`, label: "Klara", accent: "accent-done" },
+    { value: `${delayedPct}%`, label: "Försenade", accent: "accent-delayed" },
+    { value: `${s.avgProgress}%`, label: "Snittframdrift", accent: "accent-progress" },
+    { value: s.notPlanned, label: "Ej planerade", accent: "" },
+    { value: s.doneLate, label: "Klara, men försent", accent: "accent-delayed", title: "Klarmarkerade objekt vars verkliga avslut låg efter planerat slutdatum" }
+  ];
+
+  el.innerHTML = tiles.map(t => `
+    <div class="kpi-tile ${t.accent}"${t.title ? ` title="${escapeHtml(t.title)}"` : ""}>
+      <div class="kpi-value">${t.value}</div>
+      <div class="kpi-label">${t.label}</div>
+    </div>`).join("");
+}
+
+// Cirkeldiagram (donut) över statusfördelningen, som komplement till
+// KPI-rutnätet i Översikt-panelen. Samma STATUS_ORDER/STATUS_COLORS/
+// STATUS_LABELS som Statusfördelning-panelens stapeldiagram, ritat som
+// inline SVG (ingen extern chart-bibliotek).
+function renderStatusDonut() {
+  const el = document.getElementById("statusDonut");
+  if (!el) return;
+
+  const list = getFilteredItems();
+  const s = computeStats(list);
+
+  if (s.total === 0) {
+    el.innerHTML = "";
+    return;
+  }
+
+  const size = 140;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = 52;
+  const strokeWidth = 22;
+  const circumference = 2 * Math.PI * r;
+
+  let offset = 0;
+  const segments = STATUS_ORDER.map(status => {
+    const count = s.byStatus[status] || 0;
+    if (count === 0) return "";
+    const fraction = count / s.total;
+    const dash = fraction * circumference;
+    const gap = circumference - dash;
+    const seg = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${STATUS_COLORS[status]}"
+      stroke-width="${strokeWidth}" stroke-dasharray="${dash} ${gap}" stroke-dashoffset="${-offset}"
+      transform="rotate(-90 ${cx} ${cy})"><title>${escapeHtml(STATUS_LABELS[status])}: ${count} (${Math.round(fraction * 100)}%)</title></circle>`;
+    offset += dash;
+    return seg;
+  }).join("");
+
+  const legend = STATUS_ORDER.filter(status => (s.byStatus[status] || 0) > 0).map(status => {
+    const count = s.byStatus[status] || 0;
+    const pct = Math.round((count / s.total) * 100);
+    return `
+      <div class="donut-legend-row">
+        <span class="donut-legend-swatch" style="background:${STATUS_COLORS[status]}"></span>
+        <span class="donut-legend-label">${escapeHtml(STATUS_LABELS[status])}</span>
+        <span class="donut-legend-value">${count} (${pct}%)</span>
+      </div>`;
+  }).join("");
+
+  el.innerHTML = `
+    <div class="donut-wrap">
+      <svg viewBox="0 0 ${size} ${size}" class="donut-svg" role="img" aria-label="Statusfördelning">
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${strokeWidth}"></circle>
+        ${segments}
+        <text x="${cx}" y="${cy - 4}" text-anchor="middle" class="donut-center-value">${s.total}</text>
+        <text x="${cx}" y="${cy + 12}" text-anchor="middle" class="donut-center-label">objekt</text>
+      </svg>
+      <div class="donut-legend">${legend}</div>
+    </div>`;
+}
+
+/* ---------------------------------------------------------------------
+   Statusfördelning
+   ------------------------------------------------------------------- */
+function renderStatusChart() {
+  const el = document.getElementById("statusChart");
+  const list = getFilteredItems();
+  const s = computeStats(list);
+
+  if (s.total === 0) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const maxCount = Math.max(...STATUS_ORDER.map(status => s.byStatus[status] || 0), 1);
+
+  el.innerHTML = STATUS_ORDER.map(status => {
+    const count = s.byStatus[status] || 0;
+    const widthPct = Math.round((count / maxCount) * 100);
+    return `
+      <div class="status-row">
+        <span class="status-label">${STATUS_LABELS[status]}</span>
+        <span class="status-track"><span class="status-fill" style="width:${widthPct}%;background:${STATUS_COLORS[status]}"></span></span>
+        <span class="status-count">${count} (${Math.round((count / s.total) * 100)}%)</span>
+      </div>`;
+  }).join("");
+}
+
+/* ---------------------------------------------------------------------
+   S-kurva (framdrift över tid) – "Planerat" = andel objekt vars
+   slutdatum har passerat vid respektive veckas slut (kumulativt).
+   "Utfall" = genomsnittlig progress vecka för vecka, hämtad ur
+   plan_item_progress_history (närmast föregående/samma tidpunkt som
+   veckans slut), eller objektets nuvarande progress för innevarande
+   vecka. Byggs från tidigaste tillgängliga vecka (start_date eller
+   historik, den tidigaste av de två) fram till och med innevarande
+   vecka, med samma veckoindelning som "Kommande veckor".
+   ------------------------------------------------------------------- */
+function computeScurve(list) {
+  const currentWeekStart = startOfWeekUTC(todayUTC());
+
+  let earliest = null;
+  list.forEach(it => {
+    const sd = parseDate(it.startDate);
+    if (sd && (!earliest || sd < earliest)) earliest = sd;
+  });
+  progressHistory.forEach(h => {
+    const rd = parseDate(h.recorded_at);
+    if (rd && (!earliest || rd < earliest)) earliest = rd;
+  });
+
+  let earliestWeekStart;
+  if (earliest) {
+    earliestWeekStart = startOfWeekUTC(earliest);
+  } else {
+    earliestWeekStart = new Date(currentWeekStart);
+    earliestWeekStart.setUTCDate(earliestWeekStart.getUTCDate() - 8 * 7);
+  }
+  if (earliestWeekStart > currentWeekStart) earliestWeekStart = new Date(currentWeekStart);
+
+  const weeks = [];
+  let cursor = new Date(earliestWeekStart);
+  let guard = 0;
+  while (cursor <= currentWeekStart && guard < 260) {
+    weeks.push(new Date(cursor));
+    cursor = new Date(cursor);
+    cursor.setUTCDate(cursor.getUTCDate() + 7);
+    guard++;
+  }
+  if (weeks.length === 0) weeks.push(new Date(currentWeekStart));
+
+  const total = list.length;
+
+  const historyByItem = new Map();
+  progressHistory.forEach(h => {
+    if (!historyByItem.has(h.plan_item_id)) historyByItem.set(h.plan_item_id, []);
+    historyByItem.get(h.plan_item_id).push(h);
+  });
+  historyByItem.forEach(arr => arr.sort((a, b) => parseDate(a.recorded_at) - parseDate(b.recorded_at)));
+
+  return weeks.map((weekStart, idx) => {
+    const weekEnd = new Date(weekStart);
+    weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+    weekEnd.setUTCHours(23, 59, 59, 999);
+    const isCurrentWeek = idx === weeks.length - 1;
+
+    let plannedDone = 0;
+    list.forEach(it => {
+      const ed = parseDate(it.endDate);
+      if (ed && ed <= weekEnd) plannedDone++;
+    });
+    const planned = total > 0 ? Math.round((plannedDone / total) * 100) : 0;
+
+    let sum = 0, count = 0;
+    list.forEach(it => {
+      if (isCurrentWeek) {
+        sum += it.progress;
+        count++;
+        return;
+      }
+      const hist = historyByItem.get(it.id);
+      if (!hist) return;
+      let best = null;
+      for (const h of hist) {
+        const rd = parseDate(h.recorded_at);
+        if (rd && rd <= weekEnd) best = h;
+        else break;
+      }
+      if (best) { sum += best.progress; count++; }
+    });
+    const utfall = count > 0 ? Math.round(sum / count) : null;
+
+    return { weekStart, label: `v${isoWeekNumber(weekStart)}`, planned, utfall };
+  });
+}
+
+function renderScurve(list) {
+  const el = document.getElementById("scurveChart");
+
+  if (list.length === 0) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const points = computeScurve(list);
+  const W = 640, H = 220, ML = 30, MR = 10, MT = 10, MB = 24;
+  const innerW = W - ML - MR, innerH = H - MT - MB;
+  const n = points.length;
+  const xFor = i => (n <= 1 ? ML + innerW / 2 : ML + (innerW * i) / (n - 1));
+  const yFor = v => MT + innerH - (Math.max(0, Math.min(100, v)) / 100) * innerH;
+
+  const gridLines = [0, 25, 50, 75, 100].map(v => {
+    const y = yFor(v);
+    return `<line x1="${ML}" y1="${y}" x2="${W - MR}" y2="${y}" class="scurve-grid" />
+      <text x="${ML - 5}" y="${y + 3}" class="scurve-axis-label" text-anchor="end">${v}</text>`;
+  }).join("");
+
+  const plannedPts = points.map((p, i) => `${xFor(i)},${yFor(p.planned)}`).join(" ");
+  const utfallPts = points
+    .map((p, i) => (p.utfall !== null ? `${xFor(i)},${yFor(p.utfall)}` : null))
+    .filter(Boolean)
+    .join(" ");
+
+  const step = Math.max(1, Math.ceil(n / 8));
+  const xLabels = points.map((p, i) => (i % step === 0 || i === n - 1)
+    ? `<text x="${xFor(i)}" y="${H - 6}" class="scurve-axis-label" text-anchor="middle">${escapeHtml(p.label)}</text>`
+    : "").join("");
+
+  el.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" class="scurve-svg" role="img" aria-label="Framdrift över tid">
+      ${gridLines}
+      <polyline points="${plannedPts}" class="scurve-line scurve-line-planned" />
+      ${utfallPts ? `<polyline points="${utfallPts}" class="scurve-line scurve-line-utfall" />` : ""}
+      ${xLabels}
+    </svg>
+    <div class="scurve-legend">
+      <span class="scurve-legend-item"><span class="scurve-swatch scurve-swatch-planned"></span>Planerat</span>
+      <span class="scurve-legend-item"><span class="scurve-swatch scurve-swatch-utfall"></span>Utfall</span>
+    </div>`;
+}
+
+/* ---------------------------------------------------------------------
+   Framdrift per grupp (område / entreprenör) – genomsnittlig progress
+   (%) inom gruppen, ritad som en horisontell stapel, plus antal objekt
+   och antal försenade i gruppen.
+   ------------------------------------------------------------------- */
+function computeGroupProgress(list, keyFn, fallbackLabel) {
+  const map = new Map();
+
+  list.forEach(it => {
+    const raw = keyFn(it);
+    const key = raw ? raw : fallbackLabel;
+    if (!map.has(key)) map.set(key, { count: 0, progressSum: 0, delayed: 0 });
+    const g = map.get(key);
+    g.count++;
+    g.progressSum += it.progress;
+    if (it.status === "forsenad") g.delayed++;
+  });
+
+  const groups = Array.from(map.entries()).map(([label, g]) => ({
+    label,
+    count: g.count,
+    avgProgress: g.count ? Math.round(g.progressSum / g.count) : 0,
+    delayed: g.delayed
+  }));
+
+  // Alfabetisk (svensk) sortering, men "Utan område"/"Utan entreprenör"
+  // hamnar alltid sist eftersom den gruppen är minst relevant att titta på.
+  groups.sort((a, b) => {
+    if (a.label === fallbackLabel) return 1;
+    if (b.label === fallbackLabel) return -1;
+    return a.label.localeCompare(b.label, "sv");
+  });
+
+  return groups;
+}
+
+function renderGroupProgress(containerId, list, keyFn, fallbackLabel) {
+  const el = document.getElementById(containerId);
+
+  if (list.length === 0) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const groups = computeGroupProgress(list, keyFn, fallbackLabel);
+
+  el.innerHTML = groups.map(g => `
+    <div class="progress-row">
+      <span class="progress-label" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
+      <span class="progress-track"><span class="progress-fill" style="width:${g.avgProgress}%"></span></span>
+      <span class="progress-value">${g.avgProgress}%</span>
+      <span class="progress-meta">${g.count} obj${g.delayed ? ` · ${g.delayed} försenade` : ""}</span>
+    </div>`).join("");
+}
+
+/* ---------------------------------------------------------------------
+   Cykeltidsanalys - jämför planerad varaktighet (startDate -> endDate) mot
+   verklig varaktighet per aktivitet, för klarmarkerade objekt som har
+   start-, slut- och verkligt avslutsdatum ifyllda. Ett positivt
+   snittavvikelse-värde betyder att aktiviteten i snitt tar LÄNGRE tid än
+   planerat. Se Victors förfrågan 2026-09-17.
+
+   Verklig varaktighet räknas numera från "Verklig start" (actualStartDate)
+   när den finns ifylld - annars faller den tillbaka på samma proxy som
+   innan (planerat startdatum -> verkligt avslut), eftersom de flesta
+   befintliga objekt ännu inte har någon verklig start ifylld. Se Victors
+   fråga 2026-09-17 ("Om man fyller i detta så tänker jag att man kan få en
+   väldigt kraftfull uppföljning...") - med verklig start blir cykeltiden
+   den FAKTISKA tiden objektet tog, inte bara hur sent det blev klart
+   relativt en planerad starttidpunkt som kanske aldrig stämde. Gruppen
+   visar hur många av objekten som räknats med riktig verklig start
+   (realStartCount), så skillnaden i tillförlitlighet syns i UI:t.
+   ------------------------------------------------------------------- */
+function daysBetweenIso(fromStr, toStr) {
+  const days = Math.round((new Date(toStr) - new Date(fromStr)) / 86400000);
+  return Number.isFinite(days) ? days : null;
+}
+
+// Lägger till (eller drar ifrån, med ett negativt tal) `days` dagar på ett
+// "YYYY-MM-DD"-datum och returnerar resultatet i samma format. Används vid
+// dra-och-släpp-omschemaläggning i Gantt-schemat (se onGanttBarPointerMove).
+function addDaysIso(dateStr, days) {
+  const d = parseDate(dateStr);
+  if (!d) return dateStr;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function computeCycleTimeByActivity(list) {
+  const map = new Map();
+  list.forEach(it => {
+    if (it.status !== "klar" || !it.startDate || !it.endDate || !it.actualEndDate) return;
+    const planned = daysBetweenIso(it.startDate, it.endDate);
+    const usesRealStart = Boolean(it.actualStartDate);
+    const actual = daysBetweenIso(usesRealStart ? it.actualStartDate : it.startDate, it.actualEndDate);
+    if (planned === null || actual === null) return;
+    const key = (it.activity || "").trim() || NO_ACTIVITY_LABEL;
+    if (!map.has(key)) map.set(key, { label: key, count: 0, plannedSum: 0, actualSum: 0, realStartCount: 0 });
+    const g = map.get(key);
+    g.count++;
+    g.plannedSum += planned;
+    g.actualSum += actual;
+    if (usesRealStart) g.realStartCount++;
+  });
+
+  const groups = Array.from(map.values()).map(g => ({
+    label: g.label,
+    count: g.count,
+    realStartCount: g.realStartCount,
+    avgPlanned: Math.round((g.plannedSum / g.count) * 10) / 10,
+    avgActual: Math.round((g.actualSum / g.count) * 10) / 10,
+    avgDeviation: Math.round(((g.actualSum - g.plannedSum) / g.count) * 10) / 10
+  }));
+
+  // Störst avvikelse (längst över planerad tid) överst - det är där det är
+  // mest intressant att titta på framöver.
+  groups.sort((a, b) => b.avgDeviation - a.avgDeviation || a.label.localeCompare(b.label, "sv"));
+  return groups;
+}
+
+function renderCycleTime(list) {
+  const el = document.getElementById("cycleTimeChart");
+  const groups = computeCycleTimeByActivity(list);
+
+  if (groups.length === 0) {
+    el.innerHTML = `<div class="hint">${isBackendConfigured() ? "Inga klarmarkerade objekt med start-, slut- och verkligt avslutsdatum ännu." : emptyMessage()}</div>`;
+    return;
+  }
+
+  const maxDays = Math.max(1, ...groups.map(g => Math.max(g.avgPlanned, g.avgActual)));
+
+  el.innerHTML = groups.map(g => {
+    const overBudget = g.avgDeviation > 0;
+    const plannedPct = Math.min(100, Math.round((g.avgPlanned / maxDays) * 100));
+    const actualPct = Math.min(100, Math.round((g.avgActual / maxDays) * 100));
+    const deviationLabel = g.avgDeviation === 0 ? "i tid" : `${overBudget ? "+" : ""}${g.avgDeviation} d`;
+    return `
+      <div class="cycle-time-row">
+        <span class="cycle-time-label" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
+        <div class="cycle-time-bars">
+          <div class="cycle-time-bar-line">
+            <span class="cycle-time-bar-caption">Planerat</span>
+            <span class="cycle-time-track"><span class="cycle-time-fill planned" style="width:${plannedPct}%"></span></span>
+            <span class="cycle-time-bar-value">${g.avgPlanned} d</span>
+          </div>
+          <div class="cycle-time-bar-line">
+            <span class="cycle-time-bar-caption">Verkligt</span>
+            <span class="cycle-time-track"><span class="cycle-time-fill ${overBudget ? "actual-over" : "actual-under"}" style="width:${actualPct}%"></span></span>
+            <span class="cycle-time-bar-value">${g.avgActual} d</span>
+          </div>
+        </div>
+        <span class="cycle-time-meta">${deviationLabel} snitt · ${g.count} obj${g.realStartCount > 0 ? ` · ${g.realStartCount} av ${g.count} med verklig start` : ""}</span>
+      </div>`;
+  }).join("");
+}
+
+/* ---------------------------------------------------------------------
+   Kommande veckor (4-veckors lookahead) – "Denna vecka" + 3 kommande
+   veckor, med objektnamn (inte bara antal) uppdelat på: aktiva objekt,
+   planerade starter, klara aktiviteter, försenade aktiviteter och
+   aktiviteter med ett öppet hinder (korsreferens mot Hinder-panelen).
+   ------------------------------------------------------------------- */
+function itemHasOpenBlocker(it) {
+  // plan_item_id/affected_item_ids är numera UUID-strängar (inte bigint),
+  // så jämförelsen görs som strängar - Number() på en UUID ger NaN.
+  return blockers.some(b => !b.is_resolved && (
+    String(b.plan_item_id) === String(it.id) ||
+    (Array.isArray(b.affected_item_ids) && b.affected_item_ids.map(String).includes(String(it.id)))
+  ));
+}
+
+function computeLookahead(list) {
+  const weekStart = startOfWeekUTC(todayUTC());
+  const weeks = [];
+
+  for (let i = 0; i < LOOKAHEAD_WEEKS; i++) {
+    const start = new Date(weekStart);
+    start.setUTCDate(start.getUTCDate() + i * 7);
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 6);
+    weeks.push({
+      start, end,
+      label: i === 0 ? "Denna vecka" : `Vecka ${isoWeekNumber(start)}`,
+      active: [], starting: [], done: [], delayed: [], blocked: []
+    });
+  }
+
+  list.forEach(it => {
+    const sd = parseDate(it.startDate);
+    const ed = parseDate(it.endDate);
+    weeks.forEach(w => {
+      const activeThisWeek = sd && ed && sd <= w.end && ed >= w.start;
+      const startingThisWeek = sd && sd >= w.start && sd <= w.end;
+      const dueThisWeek = ed && ed >= w.start && ed <= w.end;
+
+      if (activeThisWeek || startingThisWeek || dueThisWeek) w.active.push(it);
+      if (startingThisWeek) w.starting.push(it);
+      if (dueThisWeek && it.status === "klar") w.done.push(it);
+      if (dueThisWeek && it.status === "forsenad") w.delayed.push(it);
+      if ((activeThisWeek || startingThisWeek || dueThisWeek) && itemHasOpenBlocker(it)) w.blocked.push(it);
+    });
+  });
+
+  return weeks;
+}
+
+/* Kommande veckor som post-it-lappar (Victors synpunkt 2026-09-28: "det
+   står vad som ska göras men inte vilket område"). Varje vecka får en rad
+   med nyckeltal som också fungerar som filter, och aktiviteterna samlas på
+   en lapp per område i en svag, egen färg (samma färg som området har i
+   Gantt-schemats tavla). */
+const LOOKAHEAD_NOTE_MAX = 7;
+const WEEKDAYS_SV = ["sön", "mån", "tis", "ons", "tor", "fre", "lör"];
+const lookaheadFilter = new Map();   // veckoindex -> "active"|"starting"|"done"|"delayed"|"blocked"
+const lookaheadExpanded = new Set(); // "vecka|område" som visar alla rader
+
+function shortDateSv(d) {
+  return `${d.getUTCDate()} ${GANTT_MONTH_NAMES_SV[d.getUTCMonth()]}`;
+}
+function weekdayDateSv(value) {
+  const d = parseDate(value);
+  return d ? `${WEEKDAYS_SV[d.getUTCDay()]} ${d.getUTCDate()}/${d.getUTCMonth() + 1}` : "";
+}
+
+function lookaheadItemHtml(it, w) {
+  const sd = parseDate(it.startDate), ed = parseDate(it.endDate);
+  const starting = sd && sd >= w.start && sd <= w.end;
+  const due = ed && ed >= w.start && ed <= w.end;
+  const tags = [];
+  if (itemHasOpenBlocker(it)) tags.push(`<span class="la-tag la-tag-blocked">⛔ Hinder</span>`);
+  if (it.status === "forsenad") tags.push(`<span class="la-tag la-tag-late">Försenad</span>`);
+  if (starting) tags.push(`<span class="la-tag la-tag-start">Start ${escapeHtml(weekdayDateSv(it.startDate))}</span>`);
+  else if (due && it.status === "klar") tags.push(`<span class="la-tag la-tag-done">✓ Klar</span>`);
+  else if (due) tags.push(`<span class="la-tag">Slut ${escapeHtml(weekdayDateSv(it.endDate))}</span>`);
+  const name = itemLabel(it);
+  const sub = [it.activity && !name.includes(it.activity) ? it.activity : "", it.contractor, it.members ? `⛓ ${it.members.length} objekt` : ""].filter(Boolean).join(" · ");
+  const canSelect = (it.members || [it]).some(m => m.modelId && m.objectId);
+  return `<li class="la-item${starting ? " la-item-start" : ""}"${canSelect ? ` data-action="la-select" data-item-id="${escapeHtml(String(it.id))}" title="Klicka för att markera i 3D-modellen"` : ""}>
+      <span class="la-dot" style="background:${STATUS_COLORS[it.status] || STATUS_COLORS.planerad}" title="${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}"></span>
+      <span class="la-text"><span class="la-name">${escapeHtml(name)}</span>${sub ? `<span class="la-sub">${escapeHtml(sub)}</span>` : ""}</span>
+      <span class="la-tags">${tags.join("")}</span>
+    </li>`;
+}
+
+function renderLookahead(list) {
+  const el = document.getElementById("lookaheadChart");
+
+  if (list.length === 0) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const weeks = computeLookahead(mergeActivityGroups(list));
+  const cats = [
+    { key: "active", label: "pågår", cls: "" },
+    { key: "starting", label: "startar", cls: "la-chip-start" },
+    { key: "done", label: "klara", cls: "la-chip-done" },
+    { key: "delayed", label: "försenade", cls: "la-chip-late" },
+    { key: "blocked", label: "med hinder", cls: "la-chip-blocked" }
+  ];
+
+  el.innerHTML = weeks.map((w, wi) => {
+    const filter = lookaheadFilter.get(wi) || "active";
+    const shown = w[filter] || [];
+    // En lapp per område, sorterade på områdesnamn.
+    const byArea = new Map();
+    shown.forEach(it => {
+      const key = it.area || NO_AREA_LABEL;
+      if (!byArea.has(key)) byArea.set(key, []);
+      byArea.get(key).push(it);
+    });
+    const areaKeys = [...byArea.keys()].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+    const notes = areaKeys.map(area => {
+      const c = softColor("area", area);
+      const areaItems = [...new Map(byArea.get(area).map(it => [it.id, it])).values()].sort((a, b) => {
+        const sa = parseDate(a.startDate), sb = parseDate(b.startDate);
+        const aStart = sa && sa >= w.start && sa <= w.end, bStart = sb && sb >= w.start && sb <= w.end;
+        if (aStart !== bStart) return aStart ? -1 : 1;
+        return (a.startDate || "").localeCompare(b.startDate || "") || itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true });
+      });
+      const expKey = `${wi}|${area}`;
+      const expanded = lookaheadExpanded.has(expKey);
+      const visibleItems = expanded ? areaItems : areaItems.slice(0, LOOKAHEAD_NOTE_MAX);
+      const rest = areaItems.length - visibleItems.length;
+      return `<div class="la-note" style="--bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink};">
+          <div class="la-note-head"><span class="la-note-title" title="${escapeHtml(area)}">${escapeHtml(area)}</span><span class="la-note-count">${areaItems.length}</span></div>
+          <ul class="la-list">${visibleItems.map(it => lookaheadItemHtml(it, w)).join("")}</ul>
+          ${rest > 0 ? `<button type="button" class="la-more" data-action="la-expand" data-key="${escapeHtml(expKey)}">+ ${rest} till</button>`
+            : (expanded && areaItems.length > LOOKAHEAD_NOTE_MAX ? `<button type="button" class="la-more" data-action="la-expand" data-key="${escapeHtml(expKey)}">Visa färre</button>` : "")}
+        </div>`;
+    }).join("");
+
+    const end = w.end;
+    const chips = cats.map(c => {
+      const n = new Set((w[c.key] || []).map(it => it.id)).size;
+      return `<button type="button" class="la-chip ${c.cls}${filter === c.key ? " active" : ""}${n === 0 ? " zero" : ""}" data-action="la-filter" data-week="${wi}" data-filter="${c.key}"><b>${n}</b> ${c.label}</button>`;
+    }).join("");
+    const emptyText = { active: "Inget pågår den här veckan.", starting: "Inget startar den här veckan.", done: "Inget klarmarkerat den här veckan.", delayed: "Inget försenat den här veckan.", blocked: "Inga hinder den här veckan." }[filter];
+
+    return `
+    <div class="la-week${wi === 0 ? " la-week-current" : ""}">
+      <div class="la-week-head">
+        <div class="la-week-title">
+          <span class="la-week-name">${escapeHtml(w.label)}</span>
+          <span class="la-week-dates">v.${isoWeekNumber(w.start)} · ${escapeHtml(shortDateSv(w.start))} – ${escapeHtml(shortDateSv(end))}</span>
+        </div>
+        <div class="la-chips">${chips}</div>
+      </div>
+      ${notes ? `<div class="la-notes">${notes}</div>` : `<div class="la-empty">${emptyText}</div>`}
+    </div>`;
+  }).join("");
+
+  el.querySelectorAll('[data-action="la-filter"]').forEach(btn => {
+    btn.onclick = () => { lookaheadFilter.set(Number(btn.dataset.week), btn.dataset.filter); renderLookahead(list); };
+  });
+  el.querySelectorAll('[data-action="la-expand"]').forEach(btn => {
+    btn.onclick = () => {
+      const k = btn.dataset.key;
+      if (lookaheadExpanded.has(k)) lookaheadExpanded.delete(k); else lookaheadExpanded.add(k);
+      renderLookahead(list);
+    };
+  });
+  const merged = new Map(weeks.flatMap(w => w.active.concat(w.starting, w.done, w.delayed, w.blocked)).map(it => [String(it.id), it]));
+  el.querySelectorAll('[data-action="la-select"]').forEach(li => {
+    li.onclick = () => selectActivityInModel(merged.get(li.dataset.itemId));
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Svaga "post-it"-färger per område/entreprenör/aktivitet. Tilldelas i
+   bokstavsordning över ALLA inlästa objekt (inte bara filtret), så samma
+   område har samma färg i Kommande veckor och i Gantt-schemat, och
+   färgerna inte hoppar när man filtrerar.
+   ------------------------------------------------------------------- */
+const SOFT_PALETTE = [
+  { bg: "#fff6bf", bd: "#e9cf5b", ink: "#5c4a00" }, // gul
+  { bg: "#dbeafe", bd: "#8fb4ec", ink: "#1e3a70" }, // blå
+  { bg: "#dcf5e6", bd: "#83cda4", ink: "#155a37" }, // mint
+  { bg: "#ffe3cf", bd: "#f0ad7a", ink: "#743a07" }, // persika
+  { bg: "#ece3ff", bd: "#b9a0f0", ink: "#40277a" }, // lila
+  { bg: "#d6f2f3", bd: "#7cc5c8", ink: "#0f5357" }, // turkos
+  { bg: "#ffdfe8", bd: "#ee9ab2", ink: "#761e3b" }, // rosa
+  { bg: "#edf6d2", bd: "#b1d271", ink: "#435710" }, // lime
+  { bg: "#f2e9d8", bd: "#cbb189", ink: "#574222" }, // sand
+  { bg: "#e2f1fd", bd: "#86c2ea", ink: "#0d4a6e" }, // himmel
+  { bg: "#fde4e1", bd: "#e9a39b", ink: "#76261d" }, // korall
+  { bg: "#eceff3", bd: "#b3bcc8", ink: "#37404c" }  // grå
+];
+let softColorMaps = null, softColorItemsRef = null;
+/* Egna färger (Victor 2026-10-08): välj färg per entreprenör/område/aktivitet. Sparas i projektet
+   (gantt_colors.json, en egen fil: [{ key: "contractor:NCC", color: "#rrggbb" }]) så att alla ser
+   samma färger, också i utskriften. Lappens bakgrund, kant och text räknas fram ur färgen. */
+let ganttCustomColors = new Map();
+const softFromHex = new Map();
+function softColorFromHex(hex) {
+  if (softFromHex.has(hex)) return softFromHex.get(hex);
+  const n = parseInt(hex.slice(1), 16), c = [n >> 16 & 255, n >> 8 & 255, n & 255];
+  const mix = (t, w) => "#" + c.map(v => Math.round(v + (t - v) * w).toString(16).padStart(2, "0")).join("");
+  const r = { bg: mix(255, 0.78), bd: mix(255, 0.25), ink: mix(0, 0.55) };
+  softFromHex.set(hex, r);
+  return r;
+}
+async function fetchGanttColors() {
+  if (!isBackendConfigured()) { ganttCustomColors = new Map(); return; }
+  try {
+    const arr = await ghReadJSON(settings.githubToken, tablePath("gantt_colors"));
+    ganttCustomColors = new Map((Array.isArray(arr) ? arr : []).filter(x => x && x.key && /^#[0-9a-f]{6}$/i.test(x.color || "")).map(x => [x.key, x.color.toLowerCase()]));
+  } catch (e) { console.warn("Kunde inte läsa egna Gantt-färger", e); }
+}
+async function setGanttColor(kind, key, hex) {
+  const k = `${kind}:${key}`, before = ganttCustomColors.get(k);
+  if (hex) ganttCustomColors.set(k, hex.toLowerCase()); else ganttCustomColors.delete(k);
+  renderGantt(getFilteredItems());
+  try {
+    await ghWriteJSON(settings.githubToken, tablePath("gantt_colors"), arr => [...(Array.isArray(arr) ? arr : []).filter(x => x && x.key !== k), ...(hex ? [{ key: k, color: hex.toLowerCase() }] : [])], hex ? `Gantt-färg: ${key}` : `Gantt-färg återställd: ${key}`);
+  } catch (e) {
+    if (before) ganttCustomColors.set(k, before); else ganttCustomColors.delete(k);
+    renderGantt(getFilteredItems());
+    alert("Kunde inte spara färgen: " + e.message);
+  }
+}
+/* Öppnar webbläsarens färgväljare för en entreprenör/ett område/en aktivitet. */
+function pickGanttColor(kind, key) {
+  const inp = document.createElement("input");
+  inp.type = "color"; inp.value = ganttCustomColors.get(`${kind}:${key}`) || softColor(kind, key).bd;
+  inp.style.cssText = "position:fixed;left:-100px;top:0;opacity:0;";
+  document.body.appendChild(inp);
+  inp.addEventListener("change", () => { setGanttColor(kind, key, inp.value); inp.remove(); });
+  inp.addEventListener("blur", () => setTimeout(() => inp.remove(), 500));
+  inp.click();
+}
+function softColor(kind, key) {
+  const own = ganttCustomColors.get(`${kind}:${key}`);
+  if (own) return softColorFromHex(own);
+  if (!softColorMaps || softColorItemsRef !== items) {
+    softColorItemsRef = items;
+    softColorMaps = {};
+    [["area", NO_AREA_LABEL], ["contractor", NO_CONTRACTOR_LABEL], ["activity", NO_ACTIVITY_LABEL]].forEach(([k, none]) => {
+      const keys = [...new Set(items.map(it => it[k] || none))].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+      softColorMaps[k] = new Map(keys.map((v, i) => [v, SOFT_PALETTE[i % SOFT_PALETTE.length]]));
+    });
+  }
+  const map = softColorMaps[kind];
+  if (map && map.has(key)) return map.get(key);
+  let h = 0;
+  for (const ch of String(key || "")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return SOFT_PALETTE[h % SOFT_PALETTE.length];
+}
+
+/* ---------------------------------------------------------------------
+   Generella CRUD-hjälpfunktioner mot GitHub-lagringen (används av
+   Milstolpar, Bemanning, Leveransplan, Säkerhet och
+   Kvalitet/besiktningar nedan) – samlar ihop felhantering på ett ställe
+   istället för att upprepa den i varje sektion. Namnen (supaInsert/
+   supaUpdate/supaDelete) är kvar från Supabase-tiden för att undvika att
+   röra alla anropsställen i varje panel - det är bara det som händer
+   inuti som bytts ut.
+   ------------------------------------------------------------------- */
+async function supaInsert(table, body) {
+  try {
+    const row = { id: ghNewId(), ...body };
+    await ghWriteJSON(settings.githubToken, tablePath(table), (arr) => [...arr, row], `Ny rad i ${table}`);
+    return true;
+  } catch (e) {
+    console.error(`Kunde inte lägga till i ${table}`, e);
+    alert("Kunde inte spara – nätverksfel. Försök igen.");
+    return false;
+  }
+}
+
+async function supaUpdate(table, id, body) {
+  try {
+    await ghWriteJSON(
+      settings.githubToken,
+      tablePath(table),
+      (arr) => arr.map((r) => (String(r.id) === String(id) ? { ...r, ...body } : r)),
+      `Uppdatera rad i ${table}`
+    );
+    return true;
+  } catch (e) {
+    console.error(`Kunde inte uppdatera i ${table}`, e);
+    alert("Kunde inte spara ändringen – nätverksfel. Försök igen.");
+    return false;
+  }
+}
+
+/**
+ * Sparar en ny start-/slutdatum-kombination för ett objekt efter en
+ * dra-och-släpp-omschemaläggning i Gantt-schemat (Victors förfrågan
+ * 2026-09-21: "Gantt-schemat är read-only i dashboarden"). Till skillnad
+ * från supaUpdate ("tyst" generisk CRUD) uppdaterar den här ÄVEN den
+ * lokala items-cachen direkt (optimistiskt, precis som 4D-planerings eget
+ * sparflöde) och loggar en baseline-historikrad - samma logg som
+ * logBaselineHistory i 4D-planerings app.js skriver, så "Planstabilitet"
+ * (renderStability) fångar ändringar oavsett vilken app de gjordes i.
+ */
+async function saveItemSchedule(it, newStart, newEnd) {
+  const plan = emptyPlan();
+  plan.items.set(it.id, { startDate: newStart, endDate: newEnd });
+  const conflicts = planConflicts(new Set([it.id]), plan);
+  if (conflicts.length && !(await dashConfirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`, { ok: "Flytta ändå" }))) { renderGantt(getFilteredItems()); return; }
+  await applySchedulePlan(plan, `Ändrade ${itemLabel(it)}`);
+}
+
+/* ---------------------------------------------------------------------
+   Omplanering (Gantt-staplar och tavla) med ångra/gör om - Victors
+   förfrågan 2026-09-28. En "plan" är de nya datumen för ett antal objekt
+   (plan_items) och delaktiviteter (plan_item_activities). Allt i en
+   ändring skrivs i en skrivning per fil, loggas i baseline-historiken
+   (Planstabilitet) och läggs på ångra-stacken med de gamla datumen.
+   Helger är tillåtna - datum flyttas i hela kalenderdagar.
+   ------------------------------------------------------------------- */
+const scheduleUndo = [];
+const scheduleRedo = [];
+
+function emptyPlan() { return { items: new Map(), acts: new Map(), deps: new Map(), lags: new Map(), fields: new Map() }; }
+function planSize(plan) { return plan.items.size + plan.acts.size + (plan.deps ? plan.deps.size : 0) + (plan.lags ? plan.lags.size : 0) + (plan.fields ? plan.fields.size : 0); }
+/* Glappet (dagar) på kopplingen pred -> succ, eller undefined om inget glapp är satt. */
+const lagLabel = lag => `${lag > 0 ? "+" : lag < 0 ? "−" : "±"}${Math.abs(lag)} d`;
+function lagOf(succ, predId) { const v = succ && succ.depLags ? succ.depLags[String(predId)] : undefined; return Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : undefined; }
+/* ----- Följ en annan aktivitet (Victor 2026-10-16) --------------------------------------------------------
+   En egen aktivitet (t.ex. "Mobilkran") kan följa en annan, typiskt en Powerproject-aktivitet: samma period, samma start eller samma slut
+   (med förskjutning i dagar). Länken pekar på aktivitetens id och dess source_key, så den överlever en ny Powerproject-import (raderna behåller
+   sina id:n). Datumen läggs om när data hämtas, när aktiviteten ändras i schemat och när importen är klar. */
+function followSpan(f, selfId) {
+  const own = String(selfId);
+  let members = null;
+  const byId = f.id ? items.find(x => String(x.id) === f.id) : null;
+  if (byId && String(byId.id) !== own) members = byId.activityKey ? items.filter(x => x.activityKey === byId.activityKey) : [byId];
+  else if (f.key) members = items.filter(x => x.activityKey === "s:" + f.key);
+  members = (members || []).filter(x => String(x.id) !== own && x.startDate && x.endDate);
+  if (!members.length) return null;
+  return { start: members.map(x => x.startDate).sort()[0], end: members.map(x => x.endDate).sort().pop() };
+}
+function followDates(f, t, dur) {
+  let st, en;
+  if (f.mode === "end") { en = addDaysIso(t.end, f.d1); st = addDaysIso(en, -dur); }
+  else if (f.mode === "start") { st = addDaysIso(t.start, f.d0); en = addDaysIso(st, dur); }
+  else { st = addDaysIso(t.start, f.d0); en = addDaysIso(t.end, f.d1); if (en < st) en = st; }
+  return { startDate: st, endDate: en };
+}
+let followWriting = false;
+async function applyFollowLinks() {
+  const changed = new Map();
+  for (let pass = 0; pass < 4; pass++) {
+    let any = false;
+    items.forEach(it => {
+      if (!it.follows || !it.startDate || !it.endDate) return;
+      const t = followSpan(it.follows, it.id); if (!t) return;
+      const n = followDates(it.follows, t, daysBetweenIso(it.startDate, it.endDate));
+      if (n.startDate !== it.startDate || n.endDate !== it.endDate) {
+        it.startDate = n.startDate; it.endDate = n.endDate; changed.set(String(it.id), n); any = true;
+        it.status = liveStatusOfRow({ status: it.storedStatus, start_date: it.startDate, end_date: it.endDate, actual_start_date: it.actualStartDate, actual_end_date: it.actualEndDate, progress: it.progress });
+      }
+    });
+    if (!any) break;
+  }
+  if (!changed.size) return 0;
+  if (typeof isBackendConfigured === "function" && isBackendConfigured() && !followWriting) {
+    followWriting = true;
+    try {
+      const now = new Date().toISOString();
+      await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => arr.map(r => { const n = changed.get(String(r.id)); return n ? { ...r, start_date: n.startDate, end_date: n.endDate, updated_at: now } : r; }), `Aktiviteter följde med sin aktivitet (${changed.size} st)`);
+      modelToast(`${changed.size} aktivitet${changed.size > 1 ? "er" : ""} följde med den aktivitet de är kopplade till`);
+    } catch (e) { console.warn("Kunde inte spara följda aktiviteter (försöker igen vid nästa hämtning)", e); }
+    finally { followWriting = false; }
+  }
+  if (typeof ganttTimeReset === "function") ganttTimeReset();
+  renderAll();
+  return changed.size;
+}
+/* Flyttar man själv en aktivitet som följer en annan behålls läget: förskjutningen räknas om från de nya datumen. */
+function followKeepOffsets(plan) {
+  plan.fields = plan.fields || new Map();
+  plan.items.forEach((d, id) => {
+    const it = items.find(x => String(x.id) === String(id)); if (!it || !it.follows) return;
+    const cur = plan.fields.get(id); if (cur && "follows" in cur) return;
+    const t = followSpan(it.follows, it.id); if (!t) return;
+    const nf = { ...it.follows };
+    if (nf.mode !== "end") nf.d0 = daysBetweenIso(t.start, d.startDate);
+    if (nf.mode !== "start") nf.d1 = daysBetweenIso(t.end, d.endDate);
+    if (nf.d0 !== it.follows.d0 || nf.d1 !== it.follows.d1) plan.fields.set(id, { ...(cur || {}), follows: nf });
+  });
+}
+const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary", bubbleOff: "bubble_off", demolition: "demolition", doneColor: "done_color", doneOpacity: "done_opacity", follows: "follows" };
+function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
+function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
+
+/** Flyttar objekten (och deras delaktiviteter) deltaDays dagar. */
+function planShift(ids, deltaDays, plan) {
+  if (!deltaDays) return plan;
+  items.forEach(it => {
+    if (!ids.has(it.id) || !it.startDate || !it.endDate) return;
+    const c = curItemDates(it, plan);
+    plan.items.set(it.id, { startDate: addDaysIso(c.startDate, deltaDays), endDate: addDaysIso(c.endDate, deltaDays) });
+  });
+  activities.forEach(a => {
+    if (!ids.has(a.plan_item_id)) return;
+    const c = curActDates(a, plan);
+    plan.acts.set(a.id, {
+      start_date: c.start_date ? addDaysIso(c.start_date, deltaDays) : c.start_date,
+      end_date: c.end_date ? addDaysIso(c.end_date, deltaDays) : c.end_date
+    });
+  });
+  return plan;
+}
+
+function planMove(targetIds, deltaDays, withDeps, plan = emptyPlan()) {
+  planShift(targetIds, deltaDays, plan);
+  if (withDeps) pushDependents(targetIds, plan);
+  return plan;
+}
+
+/**
+ * Skjuter fram aktiviteter som annars skulle krocka med något de väntar på
+ * (Victors val 2026-09-28): en beroende aktivitet flyttas bara om dess
+ * föregångare nu slutar SENARE än förut och på/efter dess start - och då
+ * precis så mycket att den startar dagen efter. Den dras aldrig bakåt.
+ * Överlappade den redan innan behålls samma överlapp. Hela aktiviteten
+ * (alla objekt) flyttas lika mycket, och det fortplantar sig nedåt i kedjan.
+ * Objekten användaren själv flyttar (targetIds) rörs inte.
+ */
+function pushDependents(targetIds, plan) {
+  const byId = itemsByIdAll();
+  const groupOf = it => it.activityKey ? items.filter(x => x.activityKey === it.activityKey) : [it];
+  for (let guard = 0; guard < 500; guard++) {
+    let pushed = false;
+    const done = new Set();
+    for (const it of items) {
+      if (targetIds.has(it.id) || done.has(it.id) || !it.startDate) continue;
+      const members = groupOf(it).filter(m => !targetIds.has(m.id));
+      members.forEach(m => done.add(m.id));
+      let need = 0, lagNeed = null, plainMoved = false, floor = -Infinity;
+      members.forEach(m => (m.dependsOn || []).forEach(pid => {
+        const p = byId.get(pid);
+        if (!p || !p.endDate) return;
+        const inPlan = plan.items.has(pid);
+        const newEnd = curItemDates(p, plan).endDate, oldEnd = p.endDate;
+        const curStart = curItemDates(m, plan).startDate;
+        const lag = lagOf(m, pid);
+        if (lag !== undefined) {
+          // Konstant glapp (Victor 2026-10-07): start = föregångarens slut + 1 + glapp – åt båda hållen.
+          if (!inPlan || newEnd === oldEnd) return;
+          const d = daysBetweenIso(curStart, addDaysIso(newEnd, 1 + lag));
+          lagNeed = lagNeed === null ? d : Math.max(lagNeed, d);
+          return;
+        }
+        if (oldEnd < m.startDate) floor = Math.max(floor, daysBetweenIso(curStart, addDaysIso(newEnd, 1)));
+        if (!inPlan || newEnd <= oldEnd) return;
+        const target = oldEnd >= m.startDate
+          ? addDaysIso(m.startDate, daysBetweenIso(oldEnd, newEnd))  // överlappade redan - behåll överlappet
+          : addDaysIso(newEnd, 1);                                     // starta dagen efter
+        need = Math.max(need, daysBetweenIso(curStart, target));
+        plainMoved = true;
+      }));
+      // Ett glapp får dra tillbaka aktiviteten – men aldrig före det en koppling utan glapp kräver.
+      if (lagNeed !== null) need = Math.max(plainMoved ? need : -Infinity, lagNeed, floor);
+      if (need !== 0) {
+        planShift(new Set(members.map(m => m.id)), need, plan);
+        pushed = true;
+      }
+    }
+    if (!pushed) break;
+  }
+  return plan;
+}
+
+/** Objekt som efter planen startar innan något de väntar på är klart (och inte gjorde det förut). */
+function planConflicts(targetIds, plan) {
+  const byId = itemsByIdAll();
+  const out = [];
+  targetIds.forEach(id => {
+    const m = byId.get(id);
+    if (!m || !m.startDate) return;
+    const ns = curItemDates(m, plan).startDate;
+    (m.dependsOn || []).forEach(pid => {
+      const p = byId.get(pid);
+      if (!p || p.status === "klar" || !p.endDate || lagOf(m, pid) !== undefined) return; // glapp: hålls automatiskt
+      const pe = curItemDates(p, plan).endDate;
+      if (pe >= ns && !(p.endDate >= m.startDate)) out.push({ m, p, pe });
+    });
+  });
+  // En rad per föregångare räcker (samma aktivitet kan ha flera objekt).
+  const seen = new Set();
+  return out.filter(c => { const k = `${itemLabel(c.m)}|${c.p.id}`; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+function conflictText(conflicts) {
+  return conflicts.slice(0, 4).map(c => `• "${itemLabel(c.m)}" startar innan "${itemLabel(c.p)}" är klar (slutar ${c.pe})`).join("\n") +
+    (conflicts.length > 4 ? `\n… och ${conflicts.length - 4} till` : "");
+}
+
+/**
+ * Ändrar start (edge "left") eller slut ("right") för en aktivitet. För en
+ * aktivitet med flera objekt flyttas kanten på de objekt (och
+ * delaktiviteter) som ligger i aktivitetens ytterkant. Förlängs slutet
+ * flyttas beroende aktiviteter med lika mycket.
+ */
+function planResize(targetIds, edge, deltaDays, withDeps, plan = emptyPlan()) {
+  if (!deltaDays) return plan;
+  const members = items.filter(it => targetIds.has(it.id) && it.startDate && it.endDate);
+  if (!members.length) return plan;
+  const cur = members.map(m => ({ m, c: curItemDates(m, plan) }));
+  if (edge === "left") {
+    const g = cur.map(x => x.c.startDate).sort()[0];
+    cur.filter(x => x.c.startDate === g).forEach(({ m, c }) => {
+      let ns = addDaysIso(c.startDate, deltaDays);
+      if (ns > c.endDate) ns = c.endDate;
+      plan.items.set(m.id, { startDate: ns, endDate: c.endDate });
+      activities.filter(a => a.plan_item_id === m.id).forEach(a => {
+        const ac = curActDates(a, plan);
+        if (ac.start_date !== c.startDate) return;
+        let s2 = addDaysIso(ac.start_date, deltaDays);
+        if (ac.end_date && s2 > ac.end_date) s2 = ac.end_date;
+        plan.acts.set(a.id, { start_date: s2, end_date: ac.end_date });
+      });
+    });
+  } else {
+    const ends = cur.map(x => x.c.endDate).sort();
+    const g = ends[ends.length - 1];
+    cur.filter(x => x.c.endDate === g).forEach(({ m, c }) => {
+      let ne = addDaysIso(c.endDate, deltaDays);
+      if (ne < c.startDate) ne = c.startDate;
+      plan.items.set(m.id, { startDate: c.startDate, endDate: ne });
+      activities.filter(a => a.plan_item_id === m.id).forEach(a => {
+        const ac = curActDates(a, plan);
+        if (ac.end_date !== c.endDate) return;
+        let e2 = addDaysIso(ac.end_date, deltaDays);
+        if (ac.start_date && e2 < ac.start_date) e2 = ac.start_date;
+        plan.acts.set(a.id, { start_date: ac.start_date, end_date: e2 });
+      });
+    });
+    if (withDeps) pushDependents(targetIds, plan);
+  }
+  return plan;
+}
+
+/** Gamla datum för allt som planen ändrar (för ångra). */
+function planBefore(plan) {
+  const before = emptyPlan();
+  plan.items.forEach((_, id) => {
+    const it = items.find(x => x.id === id);
+    if (it) before.items.set(id, { startDate: it.startDate, endDate: it.endDate });
+  });
+  plan.acts.forEach((_, id) => {
+    const a = activities.find(x => x.id === id);
+    if (a) before.acts.set(id, { start_date: a.start_date, end_date: a.end_date });
+  });
+  if (plan.deps) plan.deps.forEach((_, id) => {
+    const it = items.find(x => x.id === id);
+    if (it) before.deps.set(id, (it.dependsOn || []).slice());
+  });
+  // Glappen sparas även när bara kopplingarna ändras – en borttagen koppling tar med sig sitt glapp.
+  new Set([...(plan.lags ? plan.lags.keys() : []), ...(plan.deps ? plan.deps.keys() : [])]).forEach(id => {
+    const it = items.find(x => x.id === id);
+    if (it) before.lags.set(id, { ...(it.depLags || {}) });
+  });
+  if (plan.fields) plan.fields.forEach((f, id) => {
+    const it = items.find(x => x.id === id);
+    if (it) before.fields.set(id, Object.fromEntries(Object.keys(f).map(k => [k, it[k] ?? null])));
+  });
+  return before;
+}
+
+function applyPlanLocally(plan) {
+  items.forEach(it => {
+    const d = plan.items.get(it.id); if (d) { it.startDate = d.startDate; it.endDate = d.endDate; }
+    const dep = plan.deps && plan.deps.get(it.id); if (dep) it.dependsOn = dep.slice();
+    const lg = plan.lags && plan.lags.get(it.id); if (lg) it.depLags = { ...lg };
+    if (dep && it.depLags) it.depLags = Object.fromEntries(Object.entries(it.depLags).filter(([k]) => dep.includes(k)));
+    const f = plan.fields && plan.fields.get(it.id); if (f) Object.assign(it, f);
+    // Status räknas mot dagens datum – nya datum eller ny framdrift kan ändra den.
+    if (d || (f && "progress" in f)) it.status = liveStatusOfRow({ status: it.storedStatus, start_date: it.startDate, end_date: it.endDate, actual_start_date: it.actualStartDate, actual_end_date: it.actualEndDate, progress: it.progress });
+  });
+  activities.forEach(a => { const d = plan.acts.get(a.id); if (d) { a.start_date = d.start_date; a.end_date = d.end_date; } });
+}
+
+async function writePlan(plan) {
+  const now = new Date().toISOString();
+  const writes = [];
+  const deps = plan.deps || new Map(), lags = plan.lags || new Map(), fields = plan.fields || new Map();
+  if (plan.items.size || deps.size || lags.size || fields.size) {
+    writes.push(ghWriteJSON(settings.githubToken, tablePath("plan_items"),
+      arr => arr.map(r => {
+        const d = plan.items.get(r.id), dep = deps.get(r.id), lg = lags.get(r.id), f = fields.get(r.id);
+        if (!d && !dep && !lg && !f) return r;
+        const out = { ...r, ...(d ? { start_date: d.startDate, end_date: d.endDate } : {}), ...(dep ? { depends_on: dep.slice() } : {}), updated_at: now };
+        if (lg) out.dep_lags = { ...lg };
+        if (dep && out.dep_lags) out.dep_lags = Object.fromEntries(Object.entries(out.dep_lags).filter(([k]) => dep.includes(k)));
+        if (out.dep_lags && !Object.keys(out.dep_lags).length) delete out.dep_lags;
+        if (f) Object.entries(f).forEach(([k, v]) => { if (FIELD_COLS[k]) out[FIELD_COLS[k]] = v; });
+        return out;
+      }),
+      fields.size ? `Ändrade aktivitet i Gantt/tavla (${fields.size} objekt)` : plan.items.size ? `Omplanering i Gantt/tavla (${plan.items.size} objekt)` : `Beroenden på tavlan (${deps.size || lags.size} objekt)`));
+  }
+  if (plan.acts.size) {
+    writes.push(ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"),
+      arr => arr.map(r => { const d = plan.acts.get(r.id); return d ? { ...r, ...d } : r; }),
+      "Omplanering av delaktiviteter i Gantt/tavla"));
+  }
+  await Promise.all(writes);
+  if (plan.items.size) {
+    try {
+      await ghWriteJSON(settings.githubToken, tablePath("plan_item_baseline_history"),
+        arr => [...arr, ...[...plan.items].map(([id, d]) => ({
+          id: ghNewId(), plan_item_id: id, project_id: projectId, start_date: d.startDate, end_date: d.endDate, recorded_at: now
+        }))],
+        "Logga baseline-historik (omplanering i Gantt/tavla)");
+      await fetchBaselineHistory();
+    } catch (e) {
+      console.error("Kunde inte logga baseline-historik för omplaneringen", e);
+    }
+  }
+}
+
+let scheduleStatusTimer = null;
+function setScheduleStatus(text) {
+  const el = document.getElementById("ganttRangeStatus");
+  if (!el) return;
+  clearTimeout(scheduleStatusTimer);
+  el.classList.remove("error");
+  el.innerText = text;
+  scheduleStatusTimer = setTimeout(() => updateGanttRangeStatus(el), 6000);
+}
+
+async function applySchedulePlan(plan, label, opts = {}) {
+  if (!planSize(plan)) return false;
+  if (opts.record !== false) followKeepOffsets(plan);
+  const before = opts.before || planBefore(plan);
+  applyPlanLocally(plan);
+  if (opts.record !== false) {
+    scheduleUndo.push({ label, before, after: plan });
+    if (scheduleUndo.length > 50) scheduleUndo.shift();
+    scheduleRedo.length = 0;
+  }
+  updateUndoButtons();
+  renderAll();
+  setScheduleStatus(`${label} – sparar…`);
+  try {
+    await writePlan(plan);
+    setScheduleStatus(`✓ ${label}`);
+    renderStability();
+    applyFollowLinks(); // de som följer en flyttad aktivitet följer med
+    return true;
+  } catch (e) {
+    console.error("Kunde inte spara omplaneringen", e);
+    applyPlanLocally(before);
+    if (opts.record !== false) scheduleUndo.pop();
+    updateUndoButtons();
+    renderAll();
+    alert("Kunde inte spara ändringen: " + e.message);
+    return false;
+  }
+}
+
+async function undoSchedule() {
+  const e = scheduleUndo.pop();
+  if (!e) return;
+  scheduleRedo.push(e);
+  await applySchedulePlan(e.before, `Ångrade: ${e.label}`, { record: false, before: e.after });
+}
+async function redoSchedule() {
+  const e = scheduleRedo.pop();
+  if (!e) return;
+  scheduleUndo.push(e);
+  await applySchedulePlan(e.after, `Gjorde om: ${e.label}`, { record: false, before: e.before });
+}
+function updateUndoButtons() {
+  const u = document.getElementById("ganttUndo"), r = document.getElementById("ganttRedo");
+  if (u) { u.disabled = !scheduleUndo.length; u.title = scheduleUndo.length ? `Ångra: ${scheduleUndo[scheduleUndo.length - 1].label} (Ctrl+Z)` : "Inget att ångra"; }
+  if (r) { r.disabled = !scheduleRedo.length; r.title = scheduleRedo.length ? `Gör om: ${scheduleRedo[scheduleRedo.length - 1].label} (Ctrl+Y)` : "Inget att göra om"; }
+}
+
+async function supaDelete(table, id, confirmMsg) {
+  if (!(await dashConfirm(confirmMsg || "Ta bort den här raden?", { danger: true }))) return false;
+  try {
+    await ghWriteJSON(
+      settings.githubToken,
+      tablePath(table),
+      (arr) => arr.filter((r) => String(r.id) !== String(id)),
+      `Ta bort rad i ${table}`
+    );
+    // plan_blockers -> plan_blocker_comments motsvarar den gamla FK-
+    // cascade:n (on delete cascade) som Postgres skötte automatiskt -
+    // måste göras manuellt här eftersom GitHub-lagringen inte har någon
+    // motsvarighet till foreign keys.
+    if (table === "plan_blockers") {
+      await ghWriteJSON(
+        settings.githubToken,
+        tablePath("plan_blocker_comments"),
+        (arr) => arr.filter((c) => String(c.blocker_id) !== String(id)),
+        "Ta bort hinderkommentarer (cascade)"
+      );
+    }
+    return true;
+  } catch (e) {
+    console.error(`Kunde inte ta bort från ${table}`, e);
+    alert("Kunde inte ta bort raden – nätverksfel. Försök igen.");
+    return false;
+  }
+}
+
+// Rå SVG-ikoner för redigera/ta bort, återanvänds i varje panel som
+// stödjer det. currentColor gör att de ärver textfärgen (funkar i
+// både ljust och eventuellt mörkt tema).
+const ICON_EDIT = `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13.5 3.5l3 3L7 16l-3.5 1 1-3.5 9-9z"/></svg>`;
+const ICON_TRASH = `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h12M8 6V4.5A1.5 1.5 0 0 1 9.5 3h1A1.5 1.5 0 0 1 12 4.5V6M6 6l.6 10.2A1.5 1.5 0 0 0 8.1 17.6h3.8a1.5 1.5 0 0 0 1.5-1.4L14 6"/></svg>`;
+const ICON_SAVE = `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5l3.5 3.5L16 5"/></svg>`;
+const ICON_CANCEL = `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5l10 10M15 5L5 15"/></svg>`;
+const ICON_ATTACHMENT = `<svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14.5 7.5l-6 6a2.5 2.5 0 0 1-3.5-3.5l6.5-6.5a1.7 1.7 0 0 1 2.4 2.4L7.4 12.4a.9.9 0 0 1-1.3-1.3l5.6-5.6"/></svg>`;
+
+function rowActionsHtml(type, id) {
+  return `
+    <span class="row-actions">
+      <button type="button" class="icon-btn row-edit-btn" data-type="${type}" data-id="${id}" title="Redigera">${ICON_EDIT}</button>
+      <button type="button" class="icon-btn row-delete-btn" data-type="${type}" data-id="${id}" title="Ta bort">${ICON_TRASH}</button>
+    </span>`;
+}
+
+/* ---------------------------------------------------------------------
+   Bilagor (PDF/bilder) på Säkerhet och Kvalitet/besiktningar – laddas upp
+   som binärfiler i det privata GitHub-repot (github-storage.js), under
+   projects/<projectId>/attachments/<folder>/. Fältet attachment_url
+   (namnet är kvar från Supabase-tiden) innehåller numera repo-sökvägen,
+   inte en publik URL - repot är privat så det finns ingen sådan. Visning
+   kräver därför ett autentiserat anrop (ghReadBinaryUrl) som görs
+   asynkront efter att raderna renderats, se resolveAttachmentLinks().
+   ------------------------------------------------------------------- */
+function isImageAttachment(name) {
+  return /\.(png|jpe?g|gif|webp|heic|bmp)$/i.test(name || "");
+}
+
+function attachmentsFolderPath(folder) {
+  return `projects/${encodeURIComponent(projectId)}/attachments/${folder}`;
+}
+
+async function uploadAttachment(file, folder) {
+  if (!file) return null;
+  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+  const path = `${attachmentsFolderPath(folder)}/${Date.now()}_${safeName}`;
+  try {
+    await ghUploadBinary(settings.githubToken, path, file, `Lägg till bilaga (${folder})`);
+    return { url: path, name: file.name };
+  } catch (e) {
+    console.error("Kunde inte ladda upp bilaga", e);
+    alert("Kunde inte ladda upp filen – nätverksfel. Försök igen.");
+    return null;
+  }
+}
+
+async function deleteAttachmentBestEffort(path) {
+  if (!path) return;
+  await ghDeleteBinary(settings.githubToken, path, "Ta bort bilaga");
+}
+
+function renderAttachment(path, name) {
+  if (!path) return "";
+  const isImg = isImageAttachment(name || path);
+  return `<a class="attachment ${isImg ? "attachment-image" : "attachment-file"}" data-attachment-path="${escapeHtml(path)}" href="#" target="_blank" rel="noopener">
+    ${isImg ? `<img data-attachment-img alt="${escapeHtml(name || "Bilaga")}" />` : `${ICON_ATTACHMENT}${escapeHtml(name || "Bilaga")}`}
+  </a>`;
+}
+
+/** Slår upp de bilagor som just renderats (data-attachment-path) och sätter
+ *  en blob:-URL som href/src, en i taget, eftersom repot är privat och inte
+ *  kan länkas till direkt. Körs asynkront efter att innerHTML satts. */
+async function resolveAttachmentLinks(container) {
+  const links = container.querySelectorAll("[data-attachment-path]:not([data-resolved])");
+  for (const link of links) {
+    link.setAttribute("data-resolved", "1");
+    const path = link.getAttribute("data-attachment-path");
+    try {
+      const blobUrl = await ghReadBinaryUrl(settings.githubToken, path);
+      link.href = blobUrl;
+      const img = link.querySelector("[data-attachment-img]");
+      if (img) img.src = blobUrl;
+    } catch (e) {
+      console.warn("Kunde inte hämta bilaga", path, e);
+      link.title = "Kunde inte hämta bilagan";
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Objektval i 3D-modellen – används av Hinder, Kvalitet/besiktningar och
+   Säkerhet istället för att koppla till ett planerat objekt (plan_items).
+   Användaren markerar ett objekt i Trimble Connects 3D-vy och klickar
+   sedan på knappen, som läser av markeringen via Workspace API:et
+   (API.viewer.getSelection/getObjectProperties). Se
+   https://developer.trimble.com/docs/connect/workspace-api/ – "Selection"
+   är en lista av { modelId, objectRuntimeIds }, och ett läsbart namn
+   hämtas (bästa försök) från ObjectProperties.product.name.
+   ------------------------------------------------------------------- */
+const ICON_TARGET = `<svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="6.5"/><circle cx="10" cy="10" r="1.4" fill="currentColor" stroke="none"/><path d="M10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3"/></svg>`;
+
+function emptyModelObjectRef() {
+  return { model_id: null, model_object_id: null, model_object_name: null };
+}
+
+function modelObjectRefFromRow(row) {
+  return {
+    model_id: row && row.model_id ? row.model_id : null,
+    model_object_id: row && row.model_object_id !== undefined ? row.model_object_id : null,
+    model_object_name: row && row.model_object_name ? row.model_object_name : null
+  };
+}
+
+// Läser av den aktuella markeringen i 3D-vyn och fyller `ref` (muterar
+// objektet, precis som editingState) med modell-id, objekt-id och ett
+// (bästa försök) läsbart namn.
+async function pickModelObjectInto(ref) {
+  if (!API || !API.viewer || typeof API.viewer.getSelection !== "function") {
+    alert("3D-modellen är inte tillgänglig just nu (extensionen verkar inte vara ansluten till vyn).");
+    return;
+  }
+  try {
+    const selection = await API.viewer.getSelection();
+    const first = Array.isArray(selection)
+      ? selection.find(s => s && Array.isArray(s.objectRuntimeIds) && s.objectRuntimeIds.length > 0)
+      : null;
+    if (!first) {
+      alert("Markera ett objekt i 3D-modellen och klicka sedan på knappen igen.");
+      return;
+    }
+    const modelId = first.modelId;
+    const runtimeId = first.objectRuntimeIds[0];
+    let name = `Objekt ${runtimeId}`;
+    try {
+      const props = await API.viewer.getObjectProperties(modelId, [runtimeId]);
+      if (props && props[0]) {
+        name = (props[0].product && props[0].product.name) || props[0].class || name;
+      }
+    } catch (e) { /* behåll fallback-namnet ovan */ }
+    ref.model_id = modelId;
+    ref.model_object_id = runtimeId;
+    ref.model_object_name = name;
+  } catch (e) {
+    console.error("Kunde inte hämta markering från 3D-modellen", e);
+    alert("Kunde inte hämta markering från 3D-modellen.");
+  }
+}
+
+// Markerar (highlightar) ett tidigare valt objekt i 3D-vyn igen – en liten
+// bekvämlighet så man kan hitta tillbaka till objektet i modellen.
+async function highlightModelObject(ref) {
+  if (!ref || !ref.model_id || ref.model_object_id === null || ref.model_object_id === undefined) return;
+  if (!API || !API.viewer || typeof API.viewer.setSelection !== "function") {
+    alert("3D-modellen är inte tillgänglig just nu.");
+    return;
+  }
+  try {
+    await API.viewer.setSelection({ modelId: ref.model_id, objectRuntimeIds: [Number(ref.model_object_id)] }, "set");
+  } catch (e) {
+    console.error("Kunde inte markera objektet i 3D-modellen", e);
+    alert("Kunde inte markera objektet i 3D-modellen.");
+  }
+}
+
+function modelObjectPickerHtml(ref, wrapperId, btnId, clearBtnId) {
+  const hasPicked = Boolean(ref.model_object_name);
+  return `
+    <div class="model-object-picker" id="${wrapperId}">
+      <button type="button" class="model-pick-btn" id="${btnId}" title="Markera ett objekt i 3D-vyn och klicka här">
+        ${hasPicked ? "📦 " + escapeHtml(ref.model_object_name) : "Välj objekt i modell"}
+      </button>
+      ${hasPicked ? `<button type="button" class="icon-btn model-pick-clear" id="${clearBtnId}" title="Rensa objektval">${ICON_CANCEL}</button>` : ""}
+    </div>`;
+}
+
+function bindModelObjectPicker(ref, wrapperId, btnId, clearBtnId) {
+  const rerender = () => {
+    const wrapper = document.getElementById(wrapperId);
+    if (!wrapper) return;
+    wrapper.outerHTML = modelObjectPickerHtml(ref, wrapperId, btnId, clearBtnId);
+    bindModelObjectPicker(ref, wrapperId, btnId, clearBtnId);
+  };
+  const btn = document.getElementById(btnId);
+  if (btn) btn.onclick = async () => { await pickModelObjectInto(ref); rerender(); };
+  const clearBtn = document.getElementById(clearBtnId);
+  if (clearBtn) clearBtn.onclick = () => {
+    ref.model_id = null;
+    ref.model_object_id = null;
+    ref.model_object_name = null;
+    rerender();
+  };
+}
+
+// Liten "hitta i modellen"-knapp för sparade rader (Hinder/Kvalitet/
+// Säkerhet) som redan har ett objekt kopplat.
+function modelObjectBadgeHtml(row) {
+  if (!row || !row.model_object_name) return "";
+  return `<button type="button" class="model-object-badge" data-model-id="${escapeHtml(row.model_id || "")}" data-model-object-id="${row.model_object_id ?? ""}" title="Markera objektet i 3D-modellen">${ICON_TARGET} ${escapeHtml(row.model_object_name)}</button>`;
+}
+
+function bindModelObjectBadges(el) {
+  el.querySelectorAll(".model-object-badge").forEach(btn => {
+    btn.onclick = () => highlightModelObject({
+      model_id: btn.dataset.modelId,
+      model_object_id: btn.dataset.modelObjectId
+    });
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Gantt-schema - en rad per objekt (planerat start-slut), infällbar för
+   att visa delaktiviteter (plan_item_activities, skrivs av 4D-planering)
+   som egna, mindre staplar under objektet. Kryssrutan "Visa verkligt"
+   lägger till en extra stapel med verklig start/avslut (där ifyllt) bredvid
+   den planerade - bara för objektraderna, delaktiviteter har inga egna
+   verkliga datum ännu (bara planerade). Se Victors förfrågan 2026-09-17.
+
+   Läsbarhetsuppdatering (samma dag, Victors förfrågan om tydlighet):
+   grid-/helglinjer + idag-markör i tidsaxeln, anpassningsbart datumintervall,
+   custom hover-/fokustooltips, framdrift-fyllda staplar, färgförklaring,
+   gruppering/sortering/densitet/zoom och klick-för-3D-markering. Se
+   README.md för en sammanfattning riktad till Victor.
+   ------------------------------------------------------------------- */
+
+// Läser sparade Gantt-inställningar från localStorage (se GANTT_PREFS_KEY)
+// in i de globala ganttXxx-variablerna. Trasig/saknad data ignoreras tyst -
+// då används bara de vanliga standardvärdena som redan är satta ovan.
+function loadGanttPrefs() {
+  try {
+    const raw = window.localStorage.getItem(GANTT_PREFS_KEY);
+    if (!raw) return;
+    const prefs = JSON.parse(raw);
+    if (typeof prefs.groupBy === "string") ganttGroupBy = prefs.groupBy;
+    if (typeof prefs.sortBy === "string") ganttSortBy = prefs.sortBy;
+    if (prefs.density === "compact" || prefs.density === "comfortable") ganttDensity = prefs.density;
+    if (prefs.zoomPxPerDay === null || Number.isFinite(prefs.zoomPxPerDay)) ganttZoomPxPerDay = prefs.zoomPxPerDay;
+    if (Array.isArray(prefs.collapsedGroups)) ganttCollapsedGroups = new Set(prefs.collapsedGroups);
+    if (Array.isArray(prefs.hiddenGroups)) ganttHiddenGroups = new Set(prefs.hiddenGroups);
+    if (typeof prefs.rangeStart === "string" || prefs.rangeStart === null) ganttRangeStart = prefs.rangeStart;
+    if (typeof prefs.rangeEnd === "string" || prefs.rangeEnd === null) ganttRangeEnd = prefs.rangeEnd;
+    if (typeof prefs.editable === "boolean") ganttEditable = prefs.editable;
+    if (prefs.view === "bars" || prefs.view === "board") ganttView = prefs.view;
+    if (["contractor", "area", "activity"].includes(prefs.colorBy)) ganttColorBy = prefs.colorBy;
+    if (typeof prefs.boardOneLine === "boolean") ganttBoardOneLine = prefs.boardOneLine;
+    if (typeof prefs.boardFullText === "boolean") ganttBoardFullText = prefs.boardFullText;
+    if (typeof prefs.baseline === "boolean") ganttShowBaseline = prefs.baseline;
+    if (typeof prefs.baselineDaysOnly === "boolean") ganttBaselineDaysOnly = prefs.baselineDaysOnly;
+    if (typeof prefs.arrows === "boolean") ganttShowArrows = prefs.arrows;
+    if (/^#[0-9a-f]{6}$/i.test(prefs.baselineColor || "")) ganttBaselineColor = prefs.baselineColor;
+    if (/^#[0-9a-f]{6}$/i.test(prefs.baselineColor2 || "")) ganttBaselineColor2 = prefs.baselineColor2;
+    if (typeof prefs.baselineId === "string" && prefs.baselineId) ganttBaselineId = prefs.baselineId;
+    if (typeof prefs.baseline2Id === "string") ganttBaseline2Id = prefs.baseline2Id;
+  } catch (e) {
+    console.warn("Kunde inte läsa sparade Gantt-inställningar", e);
+  }
+}
+
+// OBS: "Visa verkligt" (ganttShowActual) sparas medvetet INTE här - den ska
+// alltid stå av vid sidladdning, se deklarationen av variabeln.
+function saveGanttPrefs() {
+  try {
+    window.localStorage.setItem(GANTT_PREFS_KEY, JSON.stringify({
+      groupBy: ganttGroupBy,
+      sortBy: ganttSortBy,
+      density: ganttDensity,
+      zoomPxPerDay: ganttZoomPxPerDay,
+      collapsedGroups: [...ganttCollapsedGroups],
+      hiddenGroups: [...ganttHiddenGroups],
+      rangeStart: ganttRangeStart,
+      rangeEnd: ganttRangeEnd,
+      editable: ganttEditable,
+      view: ganttView,
+      colorBy: ganttColorBy,
+      boardOneLine: ganttBoardOneLine,
+      boardFullText: ganttBoardFullText,
+      baseline: ganttShowBaseline,
+      baselineDaysOnly: ganttBaselineDaysOnly,
+      arrows: ganttShowArrows,
+      baselineColor: ganttBaselineColor,
+      baselineColor2: ganttBaselineColor2,
+      baselineId: ganttBaselineId,
+      baseline2Id: ganttBaseline2Id
+    }));
+  } catch (e) {
+    console.warn("Kunde inte spara Gantt-inställningar", e);
+  }
+}
+
+/* ----- Dölj grupper (Victor 2026-10-08) -------------------------------------------------------------
+   Högerklick på en grupps rubrik (område, entreprenör eller aktivitet – det man grupperar på):
+   Dölj, Visa bara den här, Visa alla. Dolda grupper syns som en rad ovanför schemat där de kan tas
+   fram igen med ett klick. Valet sparas i webbläsaren som övriga Gantt-inställningar. */
+const ganttGroupName = key => key.slice(key.indexOf(":") + 1);
+const ganttHiddenNow = () => ganttGroupBy ? [...ganttHiddenGroups].filter(k => k.startsWith(ganttGroupBy + ":")) : [];
+/* Listan utan dolda grupper – samma för skärmen och utskriften. */
+function ganttWithoutHidden(list) {
+  const hs = new Set(ganttHiddenNow());
+  return hs.size ? list.filter(it => !hs.has(`${ganttGroupBy}:${ganttGroupKeyFor(it)}`)) : list;
+}
+function setGanttHidden(fn) { fn(); saveGanttPrefs(); renderGantt(getFilteredItems()); }
+function openGanttGroupMenu(e, key) {
+  closeGanttGroupMenu();
+  const all = [...new Set(getFilteredItems().map(it => `${ganttGroupBy}:${ganttGroupKeyFor(it)}`))];
+  const hiddenHere = [...ganttHiddenGroups].filter(k => k.startsWith(ganttGroupBy + ":"));
+  const m = document.createElement("div");
+  m.id = "ganttGroupMenu"; m.className = "gantt-group-menu"; m.setAttribute("role", "menu");
+  const name = escapeHtml(tipShort(ganttGroupName(key), 34));
+  m.innerHTML = `<div class="ggm-head">${name}</div>
+    <button type="button" data-gm="hide">Dölj "${name}"</button>
+    <button type="button" data-gm="only"${all.length < 2 ? " disabled" : ""}>Visa bara "${name}"</button>
+    <button type="button" data-gm="all"${hiddenHere.length ? "" : " disabled"}>Visa alla${hiddenHere.length ? ` (${hiddenHere.length} dolda)` : ""}</button>
+    <hr /><button type="button" data-gm="color">Välj färg…</button>
+    ${ganttCustomColors.has(key) ? `<button type="button" data-gm="uncolor">Standardfärg</button>` : ""}`;
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(e.clientX, innerWidth - r.width - 4)) + "px";
+  m.style.top = Math.max(4, Math.min(e.clientY, innerHeight - r.height - 4)) + "px";
+  m.addEventListener("click", ev => {
+    const b = ev.target.closest("[data-gm]");
+    if (!b || b.disabled) return;
+    closeGanttGroupMenu();
+    if (b.dataset.gm === "hide") setGanttHidden(() => ganttHiddenGroups.add(key));
+    else if (b.dataset.gm === "color") pickGanttColor(ganttGroupBy, ganttGroupName(key));
+    else if (b.dataset.gm === "uncolor") setGanttColor(ganttGroupBy, ganttGroupName(key), null);
+    else if (b.dataset.gm === "only") setGanttHidden(() => all.forEach(k => { if (k !== key) ganttHiddenGroups.add(k); else ganttHiddenGroups.delete(k); }));
+    else setGanttHidden(() => hiddenHere.forEach(k => ganttHiddenGroups.delete(k)));
+  });
+  setTimeout(() => document.addEventListener("mousedown", ganttGroupMenuOutside, true), 0);
+  document.addEventListener("keydown", ganttGroupMenuKey, true);
+}
+function ganttGroupMenuKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeGanttGroupMenu(); } }
+function ganttGroupMenuOutside(e) { const m = document.getElementById("ganttGroupMenu"); if (m && !m.contains(e.target)) closeGanttGroupMenu(); }
+function closeGanttGroupMenu() { document.getElementById("ganttGroupMenu")?.remove(); document.removeEventListener("mousedown", ganttGroupMenuOutside, true); document.removeEventListener("keydown", ganttGroupMenuKey, true); }
+/* Dolda grupper (Victor 2026-10-08: "ser konstigt ut när man döljer många"): en kompakt rad ovanför
+   schemat – "Områden: 4 av 58 visas ▾" – som öppnar en lista med bockrutor (bock = visas), sök,
+   Visa alla och Dölj alla. */
+const GANTT_GROUP_PLURAL = { area: "Områden", contractor: "Entreprenörer", activity: "Aktiviteter" };
+function ganttAllGroupKeys() {
+  return [...new Set(getFilteredItems().map(it => `${ganttGroupBy}:${ganttGroupKeyFor(it)}`))]
+    .sort((a, b) => ganttGroupName(a).localeCompare(ganttGroupName(b), "sv", { numeric: true }));
+}
+function renderGanttHiddenBar(el, hidden) {
+  let bar = document.getElementById("ganttHiddenBar");
+  const openPick = document.getElementById("ganttGroupPicker");
+  if (!hidden.length) { if (bar) bar.remove(); if (openPick) fillGanttGroupPicker(openPick); return; } // listan får vara öppen tills man klickar utanför
+  if (!bar) { bar = document.createElement("div"); bar.id = "ganttHiddenBar"; bar.className = "gantt-hidden-bar"; el.parentNode.insertBefore(bar, el); }
+  const all = ganttAllGroupKeys(), shown = all.filter(k => !ganttHiddenGroups.has(k)).length;
+  bar.innerHTML = `<button type="button" class="ghb-pick" title="Välj vilka som visas">${GANTT_GROUP_PLURAL[ganttGroupBy] || "Grupper"}: <b>${shown} av ${all.length}</b> visas ▾</button><button type="button" class="ghb-all">Visa alla</button>`;
+  bar.querySelector(".ghb-pick").onclick = e => { e.stopPropagation(); if (document.getElementById("ganttGroupPicker")) closeGanttGroupPicker(); else openGanttGroupPicker(bar.querySelector(".ghb-pick")); };
+  bar.querySelector(".ghb-all").onclick = () => { closeGanttGroupPicker(); setGanttHidden(() => hidden.forEach(k => ganttHiddenGroups.delete(k))); };
+  if (openPick) fillGanttGroupPicker(openPick);
+}
+function openGanttGroupPicker(btn) {
+  closeGanttGroupPicker();
+  const p = document.createElement("div");
+  p.id = "ganttGroupPicker"; p.className = "gantt-group-picker";
+  p.innerHTML = `<input type="search" class="ggp-search" placeholder="Sök…" />
+    <div class="ggp-acts"><button type="button" data-ga="all">Visa alla</button><button type="button" data-ga="none">Dölj alla</button><button type="button" data-ga="match" class="hidden">Visa bara träffarna</button></div>
+    <div class="ggp-list"></div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(4, Math.min(r.left, innerWidth - 340)) + "px";
+  p.style.top = (r.bottom + 4) + "px";
+  p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px";
+  const search = p.querySelector(".ggp-search");
+  search.oninput = () => fillGanttGroupPicker(p);
+  p.querySelector(".ggp-acts").onclick = e => {
+    const b = e.target.closest("[data-ga]"); if (!b) return;
+    const all = ganttAllGroupKeys(), q = search.value.trim().toLowerCase(), hit = k => ganttGroupName(k).toLowerCase().includes(q);
+    if (b.dataset.ga === "all") setGanttHidden(() => all.forEach(k => ganttHiddenGroups.delete(k)));
+    else if (b.dataset.ga === "none") setGanttHidden(() => all.forEach(k => ganttHiddenGroups.add(k)));
+    else setGanttHidden(() => all.forEach(k => { if (hit(k)) ganttHiddenGroups.delete(k); else ganttHiddenGroups.add(k); }));
+    fillGanttGroupPicker(p);
+  };
+  p.querySelector(".ggp-list").onchange = e => {
+    const c = e.target.closest("input[data-k]"); if (!c) return;
+    setGanttHidden(() => { if (c.checked) ganttHiddenGroups.delete(c.dataset.k); else ganttHiddenGroups.add(c.dataset.k); });
+  };
+  fillGanttGroupPicker(p);
+  setTimeout(() => document.addEventListener("mousedown", ganttGroupPickerOutside, true), 0);
+  document.addEventListener("keydown", ganttGroupPickerKey, true);
+  window.addEventListener("scroll", closeGanttGroupPicker, { once: true });
+  search.focus();
+}
+function fillGanttGroupPicker(p) {
+  const q = p.querySelector(".ggp-search").value.trim().toLowerCase();
+  const keys = ganttAllGroupKeys().filter(k => !q || ganttGroupName(k).toLowerCase().includes(q));
+  p.querySelector('[data-ga="match"]').classList.toggle("hidden", !q);
+  p.querySelector(".ggp-list").innerHTML = keys.map(k => `<label class="ggp-row" title="${escapeHtml(ganttGroupName(k))}"><input type="checkbox" data-k="${escapeHtml(k)}"${ganttHiddenGroups.has(k) ? "" : " checked"} /><span>${escapeHtml(ganttGroupName(k))}</span></label>`).join("") || `<div class="ggp-empty">Inga träffar</div>`;
+}
+function ganttGroupPickerOutside(e) {
+  const p = document.getElementById("ganttGroupPicker");
+  if (p && !p.contains(e.target) && !e.target.closest("#ganttHiddenBar .ghb-pick")) closeGanttGroupPicker();
+}
+function ganttGroupPickerKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeGanttGroupPicker(); } }
+function closeGanttGroupPicker() {
+  document.getElementById("ganttGroupPicker")?.remove();
+  document.removeEventListener("mousedown", ganttGroupPickerOutside, true);
+  document.removeEventListener("keydown", ganttGroupPickerKey, true);
+}
+function ganttGroupKeyFor(it) {
+  if (ganttGroupBy === "area") return it.area || NO_AREA_LABEL;
+  if (ganttGroupBy === "contractor") return it.contractor || NO_CONTRACTOR_LABEL;
+  if (ganttGroupBy === "activity") return it.activity || NO_ACTIVITY_LABEL;
+  return "";
+}
+
+function ganttComparator(sortBy) {
+  const keyOf = it => {
+    switch (sortBy) {
+      case "contractor": return (it.contractor || "").toLowerCase();
+      case "status": return String(STATUS_ORDER.indexOf(it.status)).padStart(2, "0");
+      case "name": return itemLabel(it).toLowerCase();
+      case "startDate":
+      default: return it.startDate || "";
+    }
+  };
+  return (a, b) => {
+    const ka = keyOf(a), kb = keyOf(b);
+    if (ka < kb) return -1;
+    if (ka > kb) return 1;
+    // Sekundärsortering på startdatum så ordningen blir stabil/förutsägbar
+    // även när huvudnyckeln är lika (t.ex. samma entreprenör/status).
+    return (a.startDate || "").localeCompare(b.startDate || "");
+  };
+}
+
+// Bygger dels de CSS-bakgrundslager (grid-/helglinjer + idag-markör) som
+// sätts som CSS-variabler på .gantt-inner och ärvs ner till varje
+// .gantt-track (se style.css), dels HTML för själva linjalraden (månads-,
+// vecko- och idag-etiketter). Allt positioneras i samma enhet (% i
+// "Anpassa"-läge, px i zoomat läge) som gantt-staplarna, via samma toUnit.
+function buildGanttTimeline(domainStart, domainEnd, domainDays, isFit, pxPerDay) {
+  const suffix = isFit ? "%" : "px";
+  const toUnit = days => isFit ? (days / domainDays * 100) : (days * pxPerDay);
+
+  const layers = [];      // {image, pos, size, repeat} - först i listan hamnar överst (mest synlig)
+  const monthLabels = [];
+  const weekLabels = [];
+  let todayLabel = "";
+
+  const startD = parseDate(domainStart);
+  const endD = parseDate(domainEnd);
+
+  // Månadsetiketter + en linje vid varje månadsskifte inom intervallet.
+  let cursor = new Date(Date.UTC(startD.getUTCFullYear(), startD.getUTCMonth(), 1));
+  while (cursor <= endD) {
+    const isoStart = cursor.toISOString().slice(0, 10);
+    const labelIso = isoStart > domainStart ? isoStart : domainStart;
+    const labelOffset = Math.max(0, daysBetweenIso(domainStart, labelIso));
+    monthLabels.push(`<span class="gantt-month-label" style="left:${toUnit(labelOffset)}${suffix}">${GANTT_MONTH_NAMES_SV[cursor.getUTCMonth()]} ${cursor.getUTCFullYear()}</span>`);
+    if (isoStart > domainStart) {
+      const lineOffset = daysBetweenIso(domainStart, isoStart);
+      layers.push({
+        image: "linear-gradient(var(--gantt-grid-month), var(--gantt-grid-month))",
+        pos: `${toUnit(lineOffset)}${suffix} 0`, size: "1px 100%", repeat: "no-repeat"
+      });
+    }
+    cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1));
+  }
+
+  // Veckoetiketter (ISO-veckonummer) - en per måndag inom intervallet, plus
+  // en extra längst till vänster om intervallet börjar mitt i en vecka.
+  const dow = startD.getUTCDay(); // 0 = söndag ... 6 = lördag
+  const daysToFirstMonday = dow === 1 ? 0 : (8 - dow) % 7;
+  if (daysToFirstMonday > 0) {
+    weekLabels.push(`<span class="gantt-week-label" style="left:0${suffix}">v.${isoWeekNumber(startD)} - ${isoWeekYear(startD)}</span>`);
+  }
+  for (let d = daysToFirstMonday; d <= domainDays; d += 7) {
+    const mondayDate = new Date(startD.getTime() + d * 86400000);
+    const mondayIso = mondayDate.toISOString().slice(0, 10);
+    if (mondayIso > domainEnd) break;
+    weekLabels.push(`<span class="gantt-week-label" style="left:${toUnit(d)}${suffix}">v.${isoWeekNumber(mondayDate)} - ${isoWeekYear(mondayDate)}</span>`);
+  }
+
+  // Veckolinjer (vid varje måndag) + helgskuggning (lör-sön) - periodiska
+  // mönster (period 7 dagar), förskjutna så periodgränsen hamnar på måndagar.
+  const period = toUnit(7);
+  const weekendStart = toUnit(5);
+  layers.push({
+    image: `repeating-linear-gradient(to right, var(--gantt-grid-week) 0 1px, transparent 1px ${period}${suffix})`,
+    pos: `${toUnit(daysToFirstMonday)}${suffix} 0`, size: "auto", repeat: "repeat"
+  });
+  layers.push({
+    image: `repeating-linear-gradient(to right, transparent 0 ${weekendStart}${suffix}, var(--gantt-weekend-solid) ${weekendStart}${suffix} ${period}${suffix})`,
+    pos: `${toUnit(daysToFirstMonday)}${suffix} 0`, size: "auto", repeat: "repeat"
+  });
+
+  // Dagens datum - tydlig linje + etikett, om den ligger inom det visade intervallet.
+  const today = ganttMarkerIso();
+  if (today >= domainStart && today <= domainEnd) {
+    const offset = daysBetweenIso(domainStart, today);
+    layers.unshift({
+      image: "linear-gradient(var(--accent), var(--accent))",
+      pos: `${toUnit(offset)}${suffix} 0`, size: "2px 100%", repeat: "no-repeat"
+    });
+    todayLabel = `<span class="gantt-today-label" style="left:${toUnit(offset)}${suffix}">Idag</span>`;
+  }
+
+  const gridStyle = {
+    image: layers.map(l => l.image).join(", "),
+    pos: layers.map(l => l.pos).join(", "),
+    size: layers.map(l => l.size).join(", "),
+    repeat: layers.map(l => l.repeat).join(", ")
+  };
+
+  const rulerHtml = `
+    <div class="gantt-row gantt-ruler-row">
+      <span></span><span></span>
+      <div class="gantt-ruler-track">${monthLabels.join("")}${weekLabels.join("")}${todayLabel}</div>
+    </div>`;
+
+  return { gridStyle, rulerHtml };
+}
+
+/* ---------------------------------------------------------------------
+   Custom hover-/fokustooltip för Gantt-staplarna - en återanvänd DOM-nod
+   (skapas lazy, hängs på <body> så den aldrig klipps av .gantt-charts
+   overflow:auto). Innehåll skickas som färdig HTML (byggd med escapeHtml,
+   samma mönster som resten av appen), nyckeltat via data-gantt-tip så vi
+   slipper HTML-i-attribut-eskapering.
+   ------------------------------------------------------------------- */
+/* Var tipsrutor och menyer läggs: i webbläsarens helskärm syns bara helskärmselementet (Gantt-
+   panelen) – allt utanför den (t.ex. tipsrutan i body) blir osynligt (Victor 2026-10-06). */
+const overlayHost = () => document.fullscreenElement || document.body;
+document.addEventListener("fullscreenchange", () => { if (ganttTooltipEl) overlayHost().appendChild(ganttTooltipEl); });
+
+function ensureGanttTooltip() {
+  if (ganttTooltipEl) return ganttTooltipEl;
+  const el = document.createElement("div");
+  el.className = "gantt-tooltip hidden";
+  el.setAttribute("role", "tooltip");
+  overlayHost().appendChild(el);
+  ganttTooltipEl = el;
+  return el;
+}
+
+function positionGanttTooltip(evt) {
+  const el = ganttTooltipEl;
+  if (!el) return;
+  const pad = 14;
+  let x = evt.clientX + pad;
+  let y = evt.clientY + pad;
+  const rect = el.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth - 4) x = evt.clientX - rect.width - pad;
+  if (y + rect.height > window.innerHeight - 4) y = evt.clientY - rect.height - pad;
+  el.style.left = `${Math.max(4, x)}px`;
+  el.style.top = `${Math.max(4, y)}px`;
+}
+
+function showGanttTooltip(evt, html) {
+  const el = ensureGanttTooltip();
+  el.innerHTML = html;
+  el.classList.remove("hidden");
+  positionGanttTooltip(evt);
+}
+
+// Tangentbordsfokus har ingen muspekare att positionera efter - placera
+// tooltipen strax under den fokuserade stapeln istället (samma detaljnivå
+// som vid hover, se interaction.md "Same details on keyboard focus").
+function showGanttTooltipAt(targetEl, html) {
+  const el = ensureGanttTooltip();
+  el.innerHTML = html;
+  el.classList.remove("hidden");
+  const rect = targetEl.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - el.offsetWidth - 4, Math.max(4, rect.left));
+  el.style.left = `${left}px`;
+  el.style.top = `${rect.bottom + 6}px`;
+}
+
+function hideGanttTooltip() {
+  if (ganttTooltipPinnedEl) clearGanttFocus(document.getElementById("ganttChart"));
+  if (ganttTooltipEl) { ganttTooltipEl.classList.add("hidden"); ganttTooltipEl.classList.remove("pinned"); ganttTooltipEl.style.visibility = ""; }
+  ganttTooltipPinnedEl = null;
+  applyArrowHot(document.getElementById("ganttChart"), null);
+}
+/* Tipsrutan visas bara när man klickar på en aktivitet (Victor 2026-10-06: annars hamnar den i vägen
+   för pilarna när man pekar). Den läggs bredvid aktiviteten – under, eller över om det inte får plats –
+   och står kvar tills man klickar någon annanstans, trycker Esc eller scrollar. */
+let ganttTooltipPinnedEl = null, ganttTooltipPinnedAt = 0;
+function pinGanttTooltip(targetEl, html) {
+  if (!targetEl || !html) return;
+  const el = ensureGanttTooltip();
+  el.innerHTML = html;
+  el.classList.remove("hidden");
+  el.classList.add("pinned");
+  const r = targetEl.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  const left = Math.min(window.innerWidth - w - 6, Math.max(6, r.left));
+  const below = r.bottom + 8, above = r.top - h - 8;
+  el.style.left = `${left}px`;
+  el.style.top = `${below + h <= window.innerHeight - 6 || above < 6 ? below : above}px`;
+  ganttTooltipPinnedEl = targetEl;
+  ganttTooltipPinnedAt = Date.now();
+  applyArrowHot(document.getElementById("ganttChart"), null);
+}
+document.addEventListener("pointerdown", e => {
+  if (!ganttTooltipPinnedEl || !ganttTooltipEl || ganttTooltipEl.classList.contains("hidden")) return;
+  if (ganttTooltipEl.contains(e.target) || ganttTooltipPinnedEl.contains(e.target)) return;
+  hideGanttTooltip();
+}, true);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && ganttTooltipPinnedEl) hideGanttTooltip(); });
+// Scroll: fokus och tipsrutan står kvar – rutan följer aktiviteten (döljs tillfälligt om den hamnar
+// utanför bild). Bara klick utanför eller Esc släpper (Victor 2026-10-06).
+document.addEventListener("scroll", () => {
+  const t = ganttTooltipPinnedEl, el = ganttTooltipEl;
+  if (!t || !el || el.classList.contains("hidden")) return;
+  if (!t.isConnected) { hideGanttTooltip(); return; }
+  const r = t.getBoundingClientRect(), h = el.offsetHeight, w = el.offsetWidth;
+  const visible = r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth;
+  el.style.visibility = visible ? "" : "hidden";
+  const below = r.bottom + 8, above = r.top - h - 8;
+  el.style.left = `${Math.min(window.innerWidth - w - 6, Math.max(6, r.left))}px`;
+  el.style.top = `${below + h <= window.innerHeight - 6 || above < 6 ? below : above}px`;
+}, true);
+
+function ganttTooltipRow(label, value) {
+  return `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${escapeHtml(label)}</span><span class="gantt-tooltip-value">${escapeHtml(value)}</span></div>`;
+}
+
+/* Tipsrutan (Victor 2026-10-06: "popup-fönstret ser inte så bra ut"): datum som "ons 4/11",
+   baseline i ett eget avsnitt med namnet en gång och förskjutningen som en färgad etikett,
+   beroenden som korta listor (högst 3 + "N till"). */
+const tipShort = (t, n = 44) => { t = String(t || ""); return t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t; };
+function tipDate(v) {
+  const d = parseDate(v);
+  if (!d) return "?";
+  return weekdayDateSv(v) + (d.getUTCFullYear() !== todayUTC().getUTCFullYear() ? ` ${d.getUTCFullYear()}` : "");
+}
+const tipRange = (a, b) => (a === b ? tipDate(a) : `${tipDate(a)} – ${tipDate(b)}`);
+/* Tooltiparna räknas fram först när de visas (2026-10-08): att bygga dem för alla lappar/staplar
+   vid varje omritning tog sekunder med många objekt. Ett värde kan vara en funktion som
+   anropas vid första get() – resultatet sparas. */
+class LazyTipMap extends Map {
+  get(k) { const v = super.get(k); if (typeof v !== "function") return v; const html = v(); super.set(k, html); return html; }
+}
+/* Hela texten på lappen man pekar på (Victor 2026-10-08): en större lapp vars namn är avkortat fälls ut
+   till full höjd ovanpå de andra – utan att något flyttas (negativ marginal tar upp den extra höjden). */
+function bindNotePeek(el) {
+  if (!window.matchMedia || !window.matchMedia("(hover: hover)").matches) return; // pekskärm: tipsrutan räcker
+  el.querySelectorAll(".pnote:not(.pnote-one)").forEach(n => {
+    n.addEventListener("mouseenter", () => {
+      const t = n.querySelector(".pnote-title");
+      if (!t || n.classList.contains("pnote-peek") || el.classList.contains("board-fulltext")) return;
+      const h0 = n.getBoundingClientRect().height, t0 = t.getBoundingClientRect().height;
+      n.classList.add("pnote-peek");
+      if (t.getBoundingClientRect().height <= t0 + 1) { n.classList.remove("pnote-peek"); return; } // ryms redan
+      const extra = n.getBoundingClientRect().height - h0;
+      if (extra > 0) n.style.marginBottom = `${-extra}px`;
+    });
+    n.addEventListener("mouseleave", () => { n.classList.remove("pnote-peek"); n.style.marginBottom = ""; });
+  });
+}
+/* Resurserna på en aktivitet (samma för alla dess objekt): "4 pers · 320 h" och en rad per resurs. */
+function resOf(it) { const m = (it.members || [it]).find(x => x.resources && x.resources.length); return m ? m.resources : []; }
+function resSummaryText(it) {
+  const rs = resOf(it); if (!rs.length) return "";
+  const q = rs.reduce((a, r) => a + (Number(r.qty) || 0), 0), h = rs.reduce((a, r) => a + (Number(r.hours) || 0), 0);
+  return `${(Math.round(q * 10) / 10).toLocaleString("sv-SE")} pers · ${Math.round(h).toLocaleString("sv-SE")} h`;
+}
+function resDetailText(it) { return resOf(it).map(r => `${r.name}: ${(Math.round((Number(r.qty) || 0) * 10) / 10).toLocaleString("sv-SE")} pers, ${Math.round(Number(r.hours) || 0).toLocaleString("sv-SE")} h`).join("\n"); }
+function ganttTooltipHtmlForItem(it, depById) {
+  const e = escapeHtml;
+  const row = (k, vHtml) => `<div class="gantt-tooltip-row"><span class="gantt-tooltip-key">${e(k)}</span><span class="gantt-tooltip-value">${vHtml}</span></div>`;
+  const st = STATUS_COLORS[it.status] || STATUS_COLORS.planerad;
+  const rows = [
+    row("Status", `<i class="gantt-tip-dot" style="background:${st}"></i>${e(STATUS_LABELS[it.status] || it.status)}`),
+    row("Planerat", e(tipRange(it.startDate, it.endDate))),
+    row("Framdrift", `${Math.round(Number(it.progress) || 0)} %`)
+  ];
+  if (it.actualStartDate || it.actualEndDate) rows.push(row("Verkligt", e(`${it.actualStartDate ? tipDate(it.actualStartDate) : "?"} – ${it.actualEndDate ? tipDate(it.actualEndDate) : "pågår"}`)));
+  if (it.contractor) rows.push(row("Entreprenör", e(it.contractor)));
+  if (resOf(it).length) rows.push(row("Resurser", resOf(it).map(r => `${e(r.name)} <b>${(Math.round((Number(r.qty) || 0) * 10) / 10).toLocaleString("sv-SE")} pers</b> · ${Math.round(Number(r.hours) || 0).toLocaleString("sv-SE")} h`).join("<br>")));
+  if (it.demolition) rows.push(row("Rivning", `syns före start, tas bort efter ${e(tipDate(it.actualEndDate || it.endDate))}`));
+  if (it.temporary) rows.push(row("Temporär", `syns i 3D ${e(tipRange(it.startDate, it.actualEndDate || it.endDate))} <span class="gantt-tip-dim">· tas bort sedan</span>`));
+  if (it.origin === "manuell") rows.push(row("Källa", "Egen aktivitet <span class=\"gantt-tip-dim\">· finns inte i Powerproject</span>"));
+  let html = `<div class="gantt-tooltip-title">${e(itemLabel(it))}</div>${rows.join("")}`;
+  // Baseline: namnet (och källan) en gång, datumen, förskjutningen som etikett.
+  const bl = [ganttBaselineId, ganttShowBaseline ? ganttBaseline2Id : ""].filter(Boolean).map(id => ({ id, b: blOf(it, id) })).filter(x => x.b);
+  if (bl.length) {
+    html += `<div class="gantt-tip-sec">${bl.map(({ id, b }) => {
+      const d = baselineShiftDays(it, id), r = planBaselines.find(x => x && x.id === id);
+      const name = id === "main" && !r ? "Baseline" : baselineName(id), src = r && r.source && r.source !== r.name ? r.source : (id === "main" && !r ? baselineLabel(id) : "");
+      const chip = d ? `<span class="gantt-tip-chip ${d > 0 ? "later" : "earlier"}">${Math.abs(d)} d ${d > 0 ? "senare" : "tidigare"}</span>` : `<span class="gantt-tip-chip same">oförändrad</span>`;
+      return `<div class="gantt-tip-bl"><div class="gantt-tip-sec-h"><i class="gantt-tip-bar" style="background:${id === ganttBaselineId ? ganttBaselineColor : ganttBaselineColor2}"></i>${e(tipShort(name, 30))}${src && src !== name ? ` <span>· ${e(tipShort(src, 28))}</span>` : ""}</div><div>${e(tipRange(b[0], b[1]))} ${chip}</div></div>`;
+    }).join("")}</div>`;
+  }
+  // Beroendekedjan (Victors förfrågan 2026-09-21): vad den väntar på och vad som väntar på den.
+  const list = (arr, fmt) => { const shown = arr.slice(0, 3).map(fmt); return shown.join("") + (arr.length > 3 ? `<li class="gantt-tip-more">+ ${arr.length - 3} till</li>` : ""); };
+  // Väntar på (direkta föregångare) och Efterföljande (direkta efterföljare) – en rad per aktivitet,
+  // även när den har flera objekt; hela kedjan framåt som en egen rad (Victor 2026-10-06).
+  const deps = [];
+  if (depById) {
+    const mem = it.members || [it];
+    const own = new Set(mem.map(m => String(m.id)));
+    const actKey = x => x.activityKey || `id:${x.id}`;
+    const uniq = arr => { const seen = new Set(); return arr.filter(x => { const k = actKey(x); if (seen.has(k)) return false; seen.add(k); return true; }); };
+    const statusTxt = x => x.status !== "klar" ? ` <span class="gantt-tip-dim">· ${e(STATUS_LABELS[x.status] || x.status)}</span>` : " ✓";
+    const preds = uniq([...new Set(mem.flatMap(m => m.dependsOn || []).map(String))].filter(id => !own.has(id)).map(id => depById.get(id)).filter(Boolean));
+    const succs = uniq(items.filter(x => !own.has(String(x.id)) && (x.dependsOn || []).some(d => own.has(String(d)))))
+      .sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")));
+    const lagTip = x => { const l = mem.map(m => lagOf(m, x.id)).find(v => v !== undefined); return l === undefined ? "" : ` <span class="gantt-tip-lag">glapp ${e(lagLabel(l))}</span>`; };
+    { const fm = mem.map(m => m.follows).find(Boolean); if (fm) { const t = followSpan(fm, mem[0].id), nm = (() => { const x = fm.id ? items.find(i => String(i.id) === fm.id) : null; return x ? itemLabel(x) : "aktivitet"; })(); deps.push(`<div class="gantt-tip-sec-h">Följer</div><ul><li>${e(tipShort(nm))}${t ? ` <span class="gantt-tip-dim">· ${e(tipRange(t.start, t.end))}</span>` : ""}</li></ul>`); } }
+    if (preds.length) deps.push(`<div class="gantt-tip-sec-h">Väntar på</div><ul>${list(preds, x => `<li>${e(tipShort(x.objectName || x.objectId || "?"))}${statusTxt(x)}${lagTip(x)}</li>`)}</ul>`);
+    if (succs.length) deps.push(`<div class="gantt-tip-sec-h">Efterföljande</div><ul>${list(succs, x => `<li>${e(tipShort(x.objectName || x.objectId || "?"))}${x.startDate ? ` <span class="gantt-tip-dim">· ${e(tipDate(x.startDate))}</span>` : ""}</li>`)}</ul>`);
+    const chain = uniq(downstreamOf(it.id, depById).filter(x => !own.has(String(x.id))));
+    if (chain.length > succs.length) deps.push(`<div class="gantt-tip-chain">Påverkar totalt <b>${chain.length}</b> aktiviteter längre fram i kedjan</div>`);
+  }
+  if (deps.length) html += `<div class="gantt-tip-sec">${deps.join("")}</div>`;
+  return html;
+}
+
+function ganttTooltipHtmlForActual(it) {
+  const rows = [ganttTooltipRow("Verkligt", `${it.actualStartDate} – ${it.actualEndDate}`)];
+  return `<div class="gantt-tooltip-title">${escapeHtml(itemLabel(it))}</div>${rows.join("")}`;
+}
+
+function ganttTooltipHtmlForActivity(a, parentItem) {
+  const rows = [ganttTooltipRow("Datum", `${a.start_date} – ${a.end_date}`)];
+  if (Number.isFinite(a.estimated_hours)) rows.push(ganttTooltipRow("Uppskattade timmar", String(a.estimated_hours)));
+  if (parentItem) rows.push(ganttTooltipRow("Tillhör", itemLabel(parentItem)));
+  return `<div class="gantt-tooltip-title">${escapeHtml(a.name || "(namnlös delaktivitet)")}</div>${rows.join("")}`;
+}
+
+// Färgförklaringen är statisk (beror inte på den aktuella datan), så den
+// byggs en gång vid start snarare än om och om igen i varje renderGantt.
+function renderGanttLegend() {
+  const el = document.getElementById("ganttLegend");
+  if (!el) return;
+  const statusItems = STATUS_ORDER.map(s =>
+    `<span class="gantt-legend-item"><span class="gantt-legend-dot" style="background:${STATUS_COLORS[s]}"></span>${escapeHtml(STATUS_LABELS[s])}</span>`
+  ).join("");
+  const editHelp = 'Redigerbart läge: dra i en stapel eller lapp för att flytta den, eller i dess vänster-/högerkant för att ändra start eller slut. På tavlan flyttas aktiviteter som beror på den med – håll Shift för att bara flytta den lappen. Dubbelklicka en lapp eller stapel för att redigera den (namn, datum, Väntar på och glapp). Högerklicka för kopplingar och 3D-koppling. Ändringen sparas direkt och kan ångras.';
+  const act = document.getElementById("ganttLegendActions"); if (act && act.parentNode === el) el.removeChild(act); // knapparna följer med efter pennan
+  el.innerHTML = statusItems + `
+    <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-actual"></span>Verkligt (där ifyllt)</span>
+    <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-weekend"></span>Helg</span>
+    <span class="gantt-legend-item gl-bars-only"><span class="gantt-legend-dot gantt-legend-today"></span>Idag</span>
+    ${ganttShowBaseline ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline"></span>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : ""}
+    ${ganttShowBaseline && ganttBaseline2Id ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline2"></span>Jämför: ${escapeHtml(baselineLabel(ganttBaseline2Id))}</span>` : ""}
+    ${ganttEditable ? `<span class="gantt-legend-item gl-edit" title="${escapeHtml(editHelp)}" style="cursor:help">✏️</span>` : ""}
+  `;
+  if (act) { el.appendChild(act); const n = ganttUncoupledCount(); const nb = document.getElementById("ganttUncoupledN"); if (nb) nb.textContent = n ? `(${n})` : ""; const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); const on = ganttOwnCount(), onb = document.getElementById("ganttOwnN"); if (onb) onb.textContent = on ? `(${on})` : ""; const ob = document.getElementById("ganttOwnBtn"); if (ob) ob.setAttribute("aria-pressed", String(ganttOnlyOwn)); }
+  // Tavlans färger (Färga efter): en ruta per entreprenör/område/aktivitet – klicka för att välja egen färg.
+  if (ganttView === "board") {
+    const kind = ganttColorBy, none = { area: NO_AREA_LABEL, contractor: NO_CONTRACTOR_LABEL, activity: NO_ACTIVITY_LABEL }[kind];
+    const keys = [...new Set(getFilteredItems().map(it => it[kind] || none))].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+    if (keys.length && keys.length <= 40) {
+      const label = { area: "Område", contractor: "Entreprenör", activity: "Aktivitet" }[kind];
+      el.insertAdjacentHTML("beforeend", `<div class="gantt-colorkey"><span class="gck-lbl">${label}:</span>${keys.map(k => {
+        const c = softColor(kind, k), own = ganttCustomColors.has(`${kind}:${k}`);
+        return `<button type="button" class="gck-chip${own ? " own" : ""}" data-ck="${escapeHtml(k)}" style="--bg:${c.bg};--bd:${c.bd};--ink:${c.ink}" title="Klicka för att välja färg${own ? " – högerklicka för standardfärg" : ""}">${escapeHtml(tipShort(k, 26))}</button>`;
+      }).join("")}</div>`);
+      el.querySelectorAll(".gck-chip").forEach(b => {
+        b.onclick = () => pickGanttColor(kind, b.dataset.ck);
+        b.oncontextmenu = e => { if (!ganttCustomColors.has(`${kind}:${b.dataset.ck}`)) return; e.preventDefault(); setGanttColor(kind, b.dataset.ck, null); };
+      });
+    }
+  }
+}
+
+// Markerar (selekterar) ett Gantt-objekt i 3D-modellen, om det har en känd
+// modell-/objekt-koppling (modelId/objectId, se fromRow). Till skillnad
+// från highlightModelObject (som används av Hinder/Säkerhet/Besiktningar
+// och kräver en redan konverterad runtime-ID) gör den här konverteringen
+// från externt objekt-ID till runtime-ID direkt vid klick - samma mönster
+// som 4D-planerings modellmarkering. Misslyckas tyst (objektet finns
+// kanske inte i den just nu inlästa modellversionen) - det här är en
+// bekvämlighetsfunktion, inte kritisk för Gantt-schemats huvudsyfte.
+async function selectGanttItemInModel(it) {
+  return selectActivityInModel(it);
+}
+
+/* ----- Visa endast kopplade (Victor 2026-10-13): släcker allt i 3D-modellen utom objekten som är kopplade till
+   aktiviteterna som visas i Gantt-schemat just nu (efter filter, sökning och dolda grupper). Följer schemat medan
+   knappen är intryckt; ett tryck till visar hela modellen igen. Trimble Connects egen isolering (isolateEntities). */
+/* Tidslinje-dragaren över schemat (Victor 2026-10-13): ett valfritt datum som ersätter "Idag"-markeringen och
+   styr vilka objekt som visas i 3D (de som hunnit starta). null = av. */
+/* Färgskala efter datum: objektens färg från tidig till sen start (eller slut) mellan två färger man väljer. */
+let ganttScale = { on: false, by: "start", a: "#2563eb", b: "#dc2626" }, ganttScaleR = null;
+function ganttScaleHex(t) {
+  const iso = ganttScale.by === "end" ? t.endDate : t.startDate; if (!iso) return null;
+  if (!ganttScaleR || ganttScaleR.by !== ganttScale.by || ganttScaleR.n !== items.length) {
+    const ds = items.map(x => (ganttScale.by === "end" ? x.endDate : x.startDate)).filter(Boolean).map(x => Date.parse(x.slice(0, 10) + "T00:00:00Z")).filter(Number.isFinite);
+    ganttScaleR = { by: ganttScale.by, n: items.length, t0: ds.length ? Math.min(...ds) : 0, t1: ds.length ? Math.max(...ds) : 0 };
+  }
+  const R = ganttScaleR, v = Date.parse(iso.slice(0, 10) + "T00:00:00Z"), k = R.t1 > R.t0 ? Math.max(0, Math.min(1, (v - R.t0) / (R.t1 - R.t0))) : 0;
+  const h = x => [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16)), A = h(ganttScale.a), B = h(ganttScale.b);
+  return "#" + A.map((c, i) => Math.round(c + (B[i] - c) * k).toString(16).padStart(2, "0")).join("");
+}
+let ganttStrict = false, ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
+const ganttMarkerIso = () => todayISO(); // "Idag"-linjen står kvar; datumet för tidslinjen är dragstrecket (se renderGanttScrub)
+let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
+/* Läget för en aktivitet vid ett datum (samma regler som 4D-planering, Victor 2026-10-02/13): pågående kräver minst 1 % framdrift –
+   har startdatumet passerat utan det är aktiviteten försenad; efter planerat slut utan att vara klar är den också försenad. */
+function ganttPhaseAt(m, d) {
+  if (ganttStrict) { // Följ datum: bara start- och slutdatum – framdriften (procent) och status ignoreras
+    const s = m.startDate || "", e = m.endDate || "";
+    if (s && d < s) return "planerad";
+    if (e && d > e) return "klar";
+    return "pagaende";
+  }
+  const prog = Number(m.progress) || 0, end = m.endDate, start = m.startDate;
+  const done = !!m.actualEndDate || prog >= 100 || m.status === "klar";
+  if (done && (m.actualEndDate || end) && (m.actualEndDate || end) < d) return "klar";
+  // Påbörjad (samma som computeItemPhase i 4D-planering): framdrift minst 1 % betyder att arbetet är igång från verklig start, annars från
+  // planerad start. Dagens datum spelar ingen roll. Ett datum FÖRE det är "planerad" (objekt ska inte synas före tidslinjen nått dem).
+  const aStart = prog >= 1 ? (m.actualStartDate || start || null) : null;
+  const started = !!aStart && aStart <= d;
+  if (start && start > d && !started) return "planerad";
+  if (end && end < d) return done ? "klar" : "forsenad";
+  return started ? "pagaende" : "forsenad";
+}
+/* ---- Flera aktiviteter markerade med Ctrl/Cmd-klick (Victor 2026-10-13): visas samtidigt i 3D och kan isoleras. ---- */
+const ganttMultiSel = new Set(); // aktivitets-id (strängar)
+let ganttIsoOverride = null, ganttMultiTimer = null; // ganttIsoOverride: bara de markerade (objektlista) i läget Kopplade
+/* Schemat visar EN lapp per aktivitet (objekten med samma aktivitetsnyckel är sammanslagna), men listan som ritas innehåller
+   en rad per objekt – så alla objekt i aktiviteten hämtas via aktivitetsnyckeln (annars blev det bara ett objekt per aktivitet). */
+const ganttMultiItems = () => [...ganttMultiSel].map(id => ganttShownItems.find(x => String(x.id) === id) || items.find(x => String(x.id) === id)).filter(Boolean);
+const ganttMultiMembers = () => {
+  const out = new Map();
+  ganttMultiItems().forEach(it => { (it.members || (it.activityKey ? items.filter(x => x.activityKey === it.activityKey) : [it])).forEach(m => out.set(String(m.id), m)); if (!it.activityKey && !it.members) out.set(String(it.id), it); });
+  return [...out.values()];
+};
+function applyGanttMultiSel() {
+  if (typeof bubblesSchedule === "function") bubblesSchedule();
+  document.querySelectorAll("#ganttChart [data-item-id]").forEach(n => n.classList.toggle("gantt-multisel", ganttMultiSel.has(n.dataset.itemId)));
+  let bar = document.getElementById("ganttMultiBar");
+  document.body.classList.toggle("has-multibar", ganttMultiSel.size > 0); // så att meddelanden (toast) hamnar ovanför fältet, inte bakom det
+  if (!ganttMultiSel.size) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement("div"); bar.id = "ganttMultiBar"; bar.className = "gantt-multibar";
+    bar.innerHTML = `<b id="ganttMultiN"></b><button type="button" data-mb="show" title="Markera och zooma i 3D">Visa i 3D</button><button type="button" data-mb="only" title="Släck allt utom de markerade">Bara dessa</button><button type="button" data-mb="contractor" title="Sätt samma entreprenör på alla markerade (kräver Redigerbar)">Entreprenör…</button><button type="button" data-mb="clear" title="Rensa (Esc)">✕</button>`;
+    (document.fullscreenElement || document.body).appendChild(bar);
+    bar.onclick = e => { const b = e.target.closest("[data-mb]"); if (!b) return; const a = b.dataset.mb;
+      if (a === "clear") clearGanttMulti(); else if (a === "show") pushGanttMulti(); else if (a === "only") isolateGanttMulti(); else if (a === "contractor") ganttMultiContractorPop(b); };
+  }
+  document.getElementById("ganttMultiN").textContent = `${ganttMultiSel.size} markerade`;
+}
+/* Sätt entreprenör på alla markerade (Ctrl-klick) på en gång: en liten ruta med val bland befintliga entreprenörer (eller skriv ett nytt). Ångra finns. */
+function ganttMultiContractorPop(btn) {
+  const old = document.getElementById("ganttMultiCPop"); if (old) { old.remove(); return; }
+  if (!ganttEditable) { // slå på Redigerbar själv (som när man dubbelklickar) i stället för en toast som lätt missas
+    const cb = document.getElementById("ganttEditable");
+    if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } else { modelToast("Slå på Redigerbar för att ändra entreprenör"); return; }
+  }
+  const ms = ganttMultiMembers(); if (!ms.length) return;
+  const cur = [...new Set(ms.map(m => m.contractor || ""))], names = uniqueValues(it => it.contractor);
+  const pop = document.createElement("div"); pop.id = "ganttMultiCPop"; pop.className = "gantt-time-menu"; pop.style.cssText = "position:fixed;z-index:3100;min-width:280px;display:flex;flex-direction:column;gap:8px";
+  pop.innerHTML = `<div class="gtm-title">Entreprenör på ${ganttMultiSel.size} markerade (${ms.length} objekt)</div>
+    <input type="text" id="gmcInput" placeholder="Sök eller skriv ny entreprenör…" autocomplete="off" value="${cur.length === 1 ? escapeHtml(cur[0]) : ""}" />
+    <div class="gmc-list" id="gmcList">${names.map(n => `<button type="button" class="gmc-opt${cur.length === 1 && cur[0] === n ? " on" : ""}" data-v="${escapeHtml(n)}">${escapeHtml(n)}</button>`).join("")}</div>
+    <div class="hint">${cur.length === 1 && cur[0] ? `Nu: ${escapeHtml(cur[0])}` : cur.length > 1 ? "De har olika entreprenörer nu – de får alla samma." : "Ingen entreprenör satt nu."} Tomt fält = ta bort entreprenören.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" id="gmcCancel">Avbryt</button><button type="button" id="gmcOk" class="primary">Sätt på alla</button></div>`;
+  document.body.appendChild(pop);
+  const r = btn.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 300)) + "px"; pop.style.top = Math.max(8, r.top - pop.offsetHeight - 8) + "px";
+  const inp = pop.querySelector("#gmcInput"); inp.focus(); inp.select();
+  const lst = pop.querySelector("#gmcList");
+  const filt = () => { const q = inp.value.trim().toLowerCase(); let n = 0; lst.querySelectorAll(".gmc-opt").forEach(b => { const ok = !q || b.dataset.v.toLowerCase().includes(q); b.style.display = ok ? "" : "none"; if (ok) n++; }); lst.style.display = n ? "" : "none"; };
+  inp.addEventListener("input", filt); filt();
+  lst.addEventListener("click", e => { const b = e.target.closest(".gmc-opt"); if (!b) return; inp.value = b.dataset.v; lst.querySelectorAll(".gmc-opt").forEach(x => x.classList.toggle("on", x === b)); inp.focus(); });
+  lst.addEventListener("dblclick", e => { if (e.target.closest(".gmc-opt")) go(); });
+  const close = () => { pop.remove(); document.removeEventListener("pointerdown", off, true); };
+  const off = ev => { if (!pop.contains(ev.target) && !btn.contains(ev.target)) close(); };
+  setTimeout(() => document.addEventListener("pointerdown", off, true), 0);
+  const go = async () => {
+    const v = inp.value.trim(); close();
+    const plan = emptyPlan(); ms.forEach(m => { if ((m.contractor || "") !== v) plan.fields.set(m.id, { contractor: v || null }); });
+    if (!planSize(plan)) { setScheduleStatus("Inga ändringar"); return; }
+    await applySchedulePlan(plan, `Entreprenör${v ? " " + tipShort(v, 30) : " borttagen"} på ${ms.length} objekt`);
+  };
+  pop.querySelector("#gmcOk").onclick = go; pop.querySelector("#gmcCancel").onclick = close;
+  inp.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") go(); else if (e.key === "Escape") close(); };
+}
+function clearGanttMulti() { ganttMultiSel.clear(); const had = ganttIsoOverride; ganttIsoOverride = null; applyGanttMultiSel(); if (had && ganttMode === "isolate") scheduleGanttIsolate(); }
+function pushGanttMulti() { const ms = ganttMultiMembers(); if (ms.length) selectActivityInModel({ members: ms }); }
+function isolateGanttMulti() {
+  ganttIsoOverride = ganttMultiMembers().filter(m => m.modelId && m.objectId);
+  if (!ganttIsoOverride.length) { ganttIsoOverride = null; modelToast("De markerade aktiviteterna är inte kopplade till objekt i modellen – koppla dem först (högerklick → 3D-koppling)"); return; }
+  if (ganttMode === "isolate") { isolateSig = ""; applyGanttIsolate(true); } else setGanttMode("isolate");
+}
+function initGanttMulti() {
+  const chart = document.getElementById("ganttChart"); if (!chart || chart.dataset.multi) return; chart.dataset.multi = "1";
+  chart.addEventListener("click", e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const n = e.target.closest(".pnote[data-item-id], .gantt-bar[data-item-id], .gantt-label[data-item-id]");
+    if (!n) return;
+    e.preventDefault(); e.stopPropagation();
+    const id = n.dataset.itemId;
+    if (ganttMultiSel.has(id)) ganttMultiSel.delete(id); else ganttMultiSel.add(id);
+    applyGanttMultiSel();
+    // "Pusha": markeringen i 3D följer direkt (kort fördröjning så att flera klick i rad blir en markering).
+    clearTimeout(ganttMultiTimer); ganttMultiTimer = setTimeout(() => { if (ganttMultiSel.size) pushGanttMulti(); }, 450);
+  }, true);
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && ganttMultiSel.size && !document.querySelector(".ui-dlg-wrap, .board-pop")) clearGanttMulti(); });
+}
+function ganttCoupledTargets() {
+  const seen = new Set(), out = [], timed = !!(ganttAsOf && ganttTime3d);
+  (ganttIsoOverride && !timed ? ganttIsoOverride : ganttShownItems.flatMap(it => it.members || [it])).forEach(m => {
+    if (!m.modelId || !m.objectId) return;
+    let phase = "";
+    if (timed) {
+      // Läget vid valt datum: klar efter slutet, pågående mellan start och slut, annars kommande (dolt om inte "Visa kommande").
+      const end = m.actualEndDate && m.actualEndDate > (m.endDate || "") ? m.actualEndDate : m.endDate;
+      phase = ganttPhaseAt(m, ganttAsOf);
+      // Temporär finns bara mellan start och slut; Rivning syns före start men försvinner efter slut (slutet = verkligt slut om det finns).
+      const tEnd = m.actualEndDate || m.endDate;
+      if (m.temporary && ((m.startDate && m.startDate > ganttAsOf) || (tEnd && tEnd < ganttAsOf))) phase = "dold";
+      else if (m.temporary) phase = "tempon"; // temporär mellan start och slut: modellens originalfärg
+      else if (m.demolition) { if (tEnd && tEnd < ganttAsOf) phase = "dold"; else if (phase === "planerad") phase = "planerad_syns"; }
+      if (phase === "planerad" && !ganttTimeFuture) phase = "dold"; // släckt i 3D vid det här datumet
+      if (phase === "planerad_syns") phase = "planerad"; // rivning före start: syns alltid
+      if ((phase === "pagaende" || phase === "forsenad" || phase === "planerad") && Number(ganttOp[phase]) <= 0) phase = "dold"; // opacitet 0 = osynligt
+    }
+    const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase, startDate: m.startDate || "", endDate: m.endDate || "", doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity, contractor: m.contractor || "" }); }
+  });
+  return out;
+}
+let ganttColored = false;
+/* Runtime-id för objekt-id i en modell. Ett enda objekt som inte finns i den inlästa modellversionen får inte stoppa
+   resten (då blev hela modellen osynlig): vid fel provas objekten ett och ett. { map: id -> runtime-id|null, modelFailed } */
+async function dashRuntimeIds(V, modelId, ids) {
+  const map = new Map();
+  try {
+    const r = await V.convertToObjectRuntimeIds(modelId, ids);
+    ids.forEach((id, i) => map.set(id, r && r[i] !== undefined && r[i] !== null ? r[i] : null));
+    return { map, modelFailed: false };
+  } catch (e) {
+    if (/model id|not been loaded|not loaded/i.test(String((e && (e.message || e)) || ""))) return { map, modelFailed: true };
+    let ok = 0;
+    for (const id of ids) {
+      try { const [r] = await V.convertToObjectRuntimeIds(modelId, [id]); map.set(id, r !== undefined && r !== null ? r : null); ok++; }
+      catch (e2) { map.set(id, null); }
+    }
+    return { map, modelFailed: !ok && ids.length > 0 && /model/i.test(String((e && e.message) || "")) };
+  }
+}
+/* ---- Tidslinjen i 3D i realtid: omvandlingen till runtime-id görs en gång (cache) och vid varje datum ändras bara de
+   objekt som byter läge – så att man kan dra i dragaren och se bygget växa. Anropen köas (ett i taget, senaste datumet vinner). */
+const ganttRidCache = new Map(); // "modell|objekt" -> runtime-id (eller null)
+let ganttPhaseNow = new Map(), ganttTimeBusy = false, ganttTimePending = false, ganttTimeBase = false, ganttDoneOp = 30;
+const hexToRgbaObj = (hex, op) => ({ r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16), a: Math.round(Math.max(0, Math.min(1, op)) * 255) });
+function ganttTimeColorOf(t) {
+  if (t.phase === "tempon") return "reset";
+  if (t.phase === "klar" && ganttDoneOrig && !t.doneColor && t.doneOpacity === null) return "reset"; // klart i modellens originalfärg (Victor 2026-10-16)
+  if (ganttScale.on && !(t.phase === "klar" && (t.doneColor || t.doneOpacity !== null))) { // egen färg efter slut ligger överst
+    const hx = ganttScaleHex(t); if (hx) return hexToRgbaObj(hx, (t.phase === "klar" ? ganttDoneOp : (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase])) / 100);
+  }
+  if (t.phase === "klar") return hexToRgbaObj(t.doneColor || STATUS_COLORS.klar, (t.doneOpacity !== null ? t.doneOpacity : ganttDoneOp) / 100);
+  if (t.phase === "pagaende" && ganttByContractor) return hexToRgbaObj(ganttContractorHex(t.contractor), (ganttOp.pagaende === undefined ? 100 : ganttOp.pagaende) / 100);
+  return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase]) / 100);
+}
+/* Pågående i entreprenörens färg (Victor 2026-10-15): samma färger som entreprenörsraden och tavlan (egen vald färg, annars paletten), så man ser vem som är var. */
+let ganttByContractor = false, ganttDoneOrig = false;
+function ganttContractorHex(name) {
+  const key = name || NO_CONTRACTOR_LABEL, own = ganttCustomColors.get(`contractor:${key}`);
+  return own || softColor("contractor", key).bd;
+}
+/* Opacitet per status i 3D-tidslinjen (Victor 2026-10-14): pågående, försenad och kommande (klart har sitt eget "Klart"-reglage ovan). 0 = osynligt. */
+const LBL_OP = { pagaende: "pågående", forsenad: "försenad", planerad: "kommande" };
+const ganttOp = { pagaende: 100, forsenad: 100, planerad: 100 };
+try { Object.assign(ganttOp, JSON.parse(localStorage.getItem("4ddash-gantt-time-ops") || "{}")); } catch (e) { /* standard */ }
+let ganttVisSig = "";
+/* Pulserande ljus på pågående objekt (Victor 2026-10-13): färgen på det som pågår andas mellan statusfärgen och ett ljust gult –
+   ett tydligt "här händer det nu" i Trimble Connect. Bara pågående objekt rörs, med några få anrop per steg. */
+/* Markera pågående i Trimble Connect (Victor 2026-10-13): de pågående objekten väljs med TC:s egen markering, så de "lyses upp". */
+let ganttSelAct = false, ganttSelActSig = "", ganttSelActOwn = false, ganttActiveGroups = [];
+async function ganttSelActSync() {
+  const V = API && API.viewer; if (!V || typeof V.setSelection !== "function") return;
+  if (!ganttSelAct || ganttMode !== "time" || !ganttAsOf) {
+    if (ganttSelActOwn) { ganttSelActOwn = false; ganttSelActSig = ""; try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: [] }, "set"); } catch (e) { /* ignorera */ } }
+    return;
+  }
+  const sig = ganttActiveGroups.map(g => g.modelId + ":" + g.rids.slice().sort().join(".")).sort().join("|");
+  if (sig === ganttSelActSig) return;
+  ganttSelActSig = sig;
+  try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: ganttActiveGroups.map(g => ({ modelId: g.modelId, objectRuntimeIds: g.rids })) }, "set"); ganttSelActOwn = true; } catch (e) { console.warn("Kunde inte markera pågående", e); }
+}
+/* Inställningar för pulsen (färger, hastighet, stil, styrka) – sparas per användare. a tom = pågående-färgen. */
+const GANTT_PULSE_PRESETS = { gul: ["", "#fff7c2", "Gul (standard)"], rod: ["#e5484d", "#ffd6d6", "Röd ↔ ljusröd"], vit: ["#111827", "#ffffff", "Mörk ↔ vit"], bla: ["#2563eb", "#bfdbfe", "Blå ↔ ljusblå"], gron: ["#16a34a", "#bbf7d0", "Grön ↔ ljusgrön"], orange: ["#f5a623", "#e5484d", "Orange ↔ röd"] };
+let ganttPulseCfg = { preset: "gul", a: "", b: "#fff7c2", period: 1.5, style: "mjuk", amp: 85 };
+try { Object.assign(ganttPulseCfg, JSON.parse(localStorage.getItem("4ddash-pulse-cfg") || "{}")); } catch (e) { /* standard */ }
+const ganttPulseSave = () => { try { localStorage.setItem("4ddash-pulse-cfg", JSON.stringify(ganttPulseCfg)); } catch (e) {} };
+/* Hur långt mellan färg A (0) och B (1) vid fasen ph (0..1): mjuk andning, blink eller hjärtslag (två snabba slag och paus). */
+function ganttPulseK(ph) {
+  const st = ganttPulseCfg.style;
+  if (st === "blink") return ph < 0.5 ? 1 : 0;
+  if (st === "slag") { const g = (c, w) => Math.exp(-Math.pow((ph - c) / w, 2)); return Math.min(1, g(0.12, 0.06) + 0.75 * g(0.32, 0.06)); }
+  return (1 - Math.cos(ph * 2 * Math.PI)) / 2;
+}
+let ganttPulse = false, ganttPulseTimer = null, ganttPulseGroups = [], ganttPulseBusy = false;
+function ganttPulseStop(restore) {
+  clearInterval(ganttPulseTimer); ganttPulseTimer = null;
+  const V = API && API.viewer;
+  if (restore && V && typeof V.setObjectState === "function") ganttPulseGroups.forEach(g => V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: hexToRgbaObj(STATUS_COLORS.pagaende, 1) }).catch(() => {}));
+}
+function openPulseCfg(anchor) {
+  const old = document.getElementById("ganttPulsePop"); if (old) { old.remove(); return; }
+  const c = ganttPulseCfg, pop = document.createElement("div"); pop.id = "ganttPulsePop"; pop.className = "board-pop gantt-pulse-pop";
+  pop.innerHTML = `<div class="board-pop-title">Pulsera pågående</div>
+    <label>Färger <select class="pp-preset">${Object.entries(GANTT_PULSE_PRESETS).map(([k, v]) => `<option value="${k}"${c.preset === k ? " selected" : ""}>${v[2]}</option>`).join("")}<option value="egen"${c.preset === "egen" ? " selected" : ""}>Egna färger</option></select></label>
+    <div class="pp-cols"><label>Från <input type="color" class="pp-a" value="${c.a || STATUS_COLORS.pagaende}" /></label><label>Till <input type="color" class="pp-b" value="${c.b}" /></label></div>
+    <label>Hastighet <span><input type="range" class="pp-per" min="0.4" max="4" step="0.1" value="${c.period}" /> <b class="pp-perv">${c.period}</b> s</span></label>
+    <label>Stil <select class="pp-style"><option value="mjuk"${c.style === "mjuk" ? " selected" : ""}>Mjuk andning</option><option value="blink"${c.style === "blink" ? " selected" : ""}>Blink</option><option value="slag"${c.style === "slag" ? " selected" : ""}>Hjärtslag</option></select></label>
+    <label>Styrka <span><input type="range" class="pp-amp" min="10" max="100" step="5" value="${c.amp}" /> <b class="pp-ampv">${c.amp}</b> %</span></label>
+    <div class="board-pop-actions"><button type="button" class="pp-reset">Återställ</button><button type="button" class="pp-close primary">Klar</button></div>`;
+  overlayHost().appendChild(pop);
+  const r = anchor.getBoundingClientRect(); pop.style.left = `${Math.max(8, Math.min(window.innerWidth - 270, r.left))}px`; pop.style.top = `${Math.min(window.innerHeight - 340, r.bottom + 6)}px`; pop.style.width = "260px";
+  const q = s => pop.querySelector(s);
+  const restart = () => { ganttPulseSave(); if (ganttPulseTimer) { ganttPulseStop(false); ganttPulseSync(); } };
+  q(".pp-preset").onchange = e => { const v = e.target.value; ganttPulseCfg.preset = v; if (GANTT_PULSE_PRESETS[v]) { ganttPulseCfg.a = GANTT_PULSE_PRESETS[v][0]; ganttPulseCfg.b = GANTT_PULSE_PRESETS[v][1]; q(".pp-a").value = ganttPulseCfg.a || STATUS_COLORS.pagaende; q(".pp-b").value = ganttPulseCfg.b; } restart(); };
+  q(".pp-a").oninput = e => { ganttPulseCfg.a = e.target.value; ganttPulseCfg.preset = "egen"; q(".pp-preset").value = "egen"; ganttPulseSave(); };
+  q(".pp-b").oninput = e => { ganttPulseCfg.b = e.target.value; ganttPulseCfg.preset = "egen"; q(".pp-preset").value = "egen"; ganttPulseSave(); };
+  q(".pp-per").oninput = e => { ganttPulseCfg.period = Number(e.target.value); q(".pp-perv").textContent = e.target.value; restart(); };
+  q(".pp-style").onchange = e => { ganttPulseCfg.style = e.target.value; ganttPulseSave(); };
+  q(".pp-amp").oninput = e => { ganttPulseCfg.amp = Number(e.target.value); q(".pp-ampv").textContent = e.target.value; ganttPulseSave(); };
+  q(".pp-reset").onclick = () => { ganttPulseCfg = { preset: "gul", a: "", b: "#fff7c2", period: 1.5, style: "mjuk", amp: 85 }; ganttPulseSave(); pop.remove(); restart(); openPulseCfg(anchor); };
+  q(".pp-close").onclick = () => pop.remove();
+}
+function ganttPulseSync() {
+  const want = ganttPulse && ganttMode === "time" && ganttAsOf && ganttPulseGroups.length;
+  if (!want) { if (ganttPulseTimer) ganttPulseStop(false); return; }
+  if (ganttPulseTimer) return;
+  const t0 = performance.now();
+  ganttPulseTimer = setInterval(async () => {
+    const V = API && API.viewer;
+    if (!ganttPulse || ganttMode !== "time" || ganttTimeBusy || ganttPulseBusy || !ganttPulseGroups.length || !V) return;
+    ganttPulseBusy = true;
+    try {
+      const cf = ganttPulseCfg, per = Math.max(0.3, Number(cf.period) || 1.5) * 1000;
+      const ph = (((performance.now() - t0) % per) / per), k = ganttPulseK(ph) * (Math.max(0, Math.min(100, Number(cf.amp))) / 100);
+      const b = hexToRgbaObj(cf.a || STATUS_COLORS.pagaende, 1), B = hexToRgbaObj(cf.b || "#fff7c2", 1);
+      const c = { r: Math.round(b.r + (B.r - b.r) * k), g: Math.round(b.g + (B.g - b.g) * k), b: Math.round(b.b + (B.b - b.b) * k), a: 255 };
+      for (const g of ganttPulseGroups) await V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: c });
+    } catch (e) { /* nästa steg */ } finally { ganttPulseBusy = false; }
+  }, Math.max(90, Math.min(200, (Math.max(0.3, Number(ganttPulseCfg.period) || 1.5) * 1000) / 10)));
+}
+function ganttTimeReset() { ganttPhaseNow = new Map(); ganttTimeBase = false; ganttVisSig = ""; isolateSig = ""; ganttRidCache.clear(); }
+async function ganttTimeApply3d() {
+  if (!ganttIsolate || !ganttAsOf || !ganttTime3d) return;
+  if (ganttTimeBusy) { ganttTimePending = true; return; }
+  ganttTimeBusy = true;
+  try {
+    const V = API && API.viewer;
+    if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttMode("off", true); return; }
+    const targets = ganttCoupledTargets();
+    // Runtime-id för det som saknas i cachen (en omvandling per modell).
+    const miss = {};
+    targets.forEach(t => { const k = `${t.modelId}|${t.objectId}`; if (!ganttRidCache.has(k)) (miss[t.modelId] = miss[t.modelId] || new Set()).add(t.objectId); });
+    let skipped = 0;
+    for (const modelId of Object.keys(miss)) {
+      const ids = [...miss[modelId]];
+      const r = await dashRuntimeIds(V, modelId, ids);
+      if (r.modelFailed) { console.warn("Hoppar över modell som inte är inläst", modelId); skipped++; continue; } // ej cachad – provas igen nästa gång
+      r.map.forEach((rid, id) => ganttRidCache.set(`${modelId}|${id}`, rid));
+    }
+    // Vilka objekt som ska synas vid datumet. Själva synligheten sätts med Trimble Connects egen isolering (tillförlitlig),
+    // bara när mängden ändrats; färgerna ändras bara för de som byter läge.
+    const next = new Map(), vis = new Map(), groups = new Map();
+    targets.forEach(t => {
+      const k = `${t.modelId}|${t.objectId}`, rid = ganttRidCache.get(k);
+      if (rid === null || rid === undefined) return;
+      const sig = `${t.phase}|${JSON.stringify(ganttTimeColorOf(t))}`;
+      next.set(k, sig);
+      if (t.phase !== "dold") (vis.get(t.modelId) || vis.set(t.modelId, []).get(t.modelId)).push(rid);
+      if (t.phase === "dold" || (ganttTimeBase && ganttPhaseNow.get(k) === sig)) return;
+      const gk = `${t.modelId}\u0001${sig}`;
+      if (!groups.has(gk)) groups.set(gk, { modelId: t.modelId, color: ganttTimeColorOf(t), rids: [] });
+      groups.get(gk).rids.push(rid);
+    });
+    const visSig = [...vis].map(([m, r]) => m + ":" + r.slice().sort().join(".")).sort().join("|");
+    if (!ganttTimeBase || visSig !== ganttVisSig) {
+      const entities = [...vis].map(([modelId, entityIds]) => ({ modelId, entityIds }));
+      try {
+        if (!entities.length) await V.setObjectState(undefined, { visible: false });
+        else await V.isolateEntities(entities);
+      } catch (e1) {
+        console.warn("isolateEntities misslyckades, släcker allt och tänder de synliga i stället", e1);
+        await V.setObjectState(undefined, { visible: false });
+        if (entities.length) await V.setObjectState({ modelObjectIds: entities.map(m => ({ modelId: m.modelId, objectRuntimeIds: m.entityIds })) }, { visible: true });
+      }
+      if (!ganttTimeBase) { try { await V.setObjectState(undefined, { color: "reset" }); } catch (e) { console.warn(e); } for (const g of groups.values()) { /* färger sätts nedan */ } }
+      ganttVisSig = visSig; ganttTimeBase = true;
+    }
+    for (const g of groups.values()) await V.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: g.color });
+    ganttPhaseNow = next; ganttColored = true;
+    { const am = new Map(); targets.forEach(t => { if (t.phase !== "pagaende" && t.phase !== "forsenad") return; const rid = ganttRidCache.get(`${t.modelId}|${t.objectId}`); if (rid !== null && rid !== undefined) (am.get(t.modelId) || am.set(t.modelId, []).get(t.modelId)).push(rid); });
+      ganttActiveGroups = [...am].map(([modelId, rids]) => ({ modelId, rids })); }
+    { const pm = new Map(); targets.forEach(t => { if (t.phase !== "pagaende") return; const rid = ganttRidCache.get(`${t.modelId}|${t.objectId}`); if (rid !== null && rid !== undefined) (pm.get(t.modelId) || pm.set(t.modelId, []).get(t.modelId)).push(rid); });
+      ganttPulseGroups = [...pm].map(([modelId, rids]) => ({ modelId, rids })); ganttPulseSync(); ganttSelActSync(); }
+    if (typeof bubblesSchedule === "function") bubblesSchedule();
+    const shown = [...next.values()].filter(v => !v.startsWith("dold")).length;
+    ganttTimeInfo(`${shown} i 3D${skipped ? ` · ${skipped} mod. ej inlästa` : ""}`);
+  } catch (e) { console.warn("Tidslinjen i 3D", e); modelToast("Kunde inte uppdatera 3D: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
+  finally { ganttTimeBusy = false; if (ganttTimePending) { ganttTimePending = false; ganttTimeApply3d(); } }
+}
+function ganttTimeInfo(t) { const el = document.getElementById("ganttTime3dInfo"); if (el) el.textContent = t; }
+async function applyGanttIsolate(force) {
+  if (!ganttIsolate) return;
+  if (ganttAsOf && ganttTime3d) return ganttTimeApply3d();
+  ganttPhaseNow = new Map(); ganttTimeBase = false; // lämnade tidslinjen: nästa gång börjar den om
+  const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}|${t.phase}`).sort().join(",") + (ganttAsOf && ganttTime3d ? `#${STATUS_COLORS.klar}${STATUS_COLORS.pagaende}${STATUS_COLORS.forsenad}${STATUS_COLORS.planerad}` : "");
+  if (!force && sig === isolateSig) return; // oförändrat urval
+  if (!API || !API.viewer || typeof API.viewer.isolateEntities !== "function" || typeof API.viewer.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttMode("off", true); return; }
+  if (!targets.length) { modelToast("Inget av det som visas i schemat är kopplat till modellen"); isolateSig = sig; return; }
+  try {
+    const byModel = {}; // modell -> fas -> objekt-id
+    targets.forEach(t => { const m = byModel[t.modelId] = byModel[t.modelId] || {}; (m[t.phase] = m[t.phase] || []).push(t.objectId); });
+    const entities = [], phaseGroups = []; let skippedModels = 0;
+    for (const modelId of Object.keys(byModel)) {
+      // En modell som inte är inläst i vyn (äldre version, avtänd) ger "Invalid model id" – hoppa över den, inte hela urvalet.
+      const all = []; let failed = false;
+      for (const phase of Object.keys(byModel[modelId])) {
+        const r = await dashRuntimeIds(API.viewer, modelId, byModel[modelId][phase]);
+        if (r.modelFailed) { failed = true; break; }
+        const rids = [...r.map.values()].filter(id => id !== undefined && id !== null);
+        if (rids.length) { all.push(...rids); phaseGroups.push({ modelId, phase, rids }); }
+      }
+      if (failed) { console.warn("Hoppar över modell som inte är inläst", modelId); skippedModels++; continue; }
+      if (all.length) entities.push({ modelId, entityIds: all });
+    }
+    if (!ganttIsolate) return; // avstängd medan vi väntade
+    if (!entities.length) { modelToast(skippedModels ? "Modellerna som schemat är kopplat till är inte inlästa i vyn – tänd rätt modell (och version) i Trimble Connect" : "Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); isolateSig = sig; return; }
+    try { await API.viewer.isolateEntities(entities); }
+    catch (e1) {
+      // Trimble Connect avvisar isolateEntities i vissa versioner (fel utan text) – samma resultat med synlighet:
+      // släck allt, tänd sedan de kopplade objekten.
+      console.warn("isolateEntities misslyckades, släcker allt och tänder de kopplade i stället", e1);
+      if (typeof API.viewer.setObjectState !== "function") throw e1;
+      await API.viewer.setObjectState(undefined, { visible: false });
+      await API.viewer.setObjectState({ modelObjectIds: entities.map(m => ({ modelId: m.modelId, objectRuntimeIds: m.entityIds })) }, { visible: true });
+    }
+    // Färger efter läget vid valt datum (Pågående/Klar/Kommande = statusfärgerna), annars tillbaka till modellens egna.
+    if (typeof API.viewer.setObjectState === "function") {
+      if (ganttAsOf && ganttTime3d) {
+        await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {});
+        for (const g of phaseGroups) if (g.phase && STATUS_COLORS[g.phase]) await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: STATUS_COLORS[g.phase] });
+        ganttColored = true;
+      } else if (ganttColored) { await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {}); ganttColored = false; }
+    }
+    isolateSig = sig;
+    const n = entities.reduce((a, m) => a + m.entityIds.length, 0);
+    modelToast(`Visar endast ${n} kopplade objekt${skippedModels ? ` (${skippedModels} ${skippedModels === 1 ? "modell" : "modeller"} är inte inlästa och hoppades över)` : ""}${document.fullscreenElement ? " – stäng helskärmen för att se modellen" : ""}`);
+  } catch (e) { console.warn("Kunde inte isolera kopplade objekt", e); modelToast("Kunde inte visa endast kopplade: " + ((e && (e.message || e.error || e.reason)) || (typeof e === "string" ? e : "") || "Trimble Connect svarade inte (försök igen)")); }
+}
+/* "Dölj kopplade objekt" (Victor 2026-10-13): släcker alla objekt som är kopplade till någon aktivitet, så att det som
+   återstår i 3D är det som inte är kopplat – och kanske borde vara det. Gäller hela planeringen, inte bara det som visas. */
+let ganttHideCoupled = false;
+async function setGanttHideCoupled(on) {
+  const V = API && API.viewer;
+  if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttMode("off", true); return; }
+  ganttHideCoupled = !!on;
+  try {
+    if (!ganttHideCoupled) { await V.setObjectState(undefined, { visible: "reset" }); return; }
+    const byModel = {};
+    items.flatMap(it => it.members || [it]).forEach(m => { if (m.modelId && m.objectId) (byModel[m.modelId] = byModel[m.modelId] || new Set()).add(String(m.objectId)); });
+    let n = 0, skipped = 0; const sel = [];
+    for (const modelId of Object.keys(byModel)) {
+      const r = await dashRuntimeIds(V, modelId, [...byModel[modelId]]);
+      if (r.modelFailed) { console.warn("Hoppar över modell som inte är inläst", modelId); skipped++; continue; }
+      const rids = [...r.map.values()].filter(id => id !== undefined && id !== null);
+      if (rids.length) { sel.push({ modelId, objectRuntimeIds: rids }); n += rids.length; }
+    }
+    if (!ganttHideCoupled) return; // läget byttes medan vi väntade
+    if (!sel.length) { modelToast(skipped ? "Modellerna som aktiviteterna är kopplade till är inte inlästa i vyn" : "Inga kopplade objekt hittades i modellen"); setGanttMode("off", true); return; }
+    await V.setObjectState(undefined, { visible: "reset" });
+    await V.setObjectState({ modelObjectIds: sel }, { visible: false });
+    modelToast(`${n} kopplade objekt dolda – det som syns är okopplat${skipped ? ` (${skipped} ${skipped === 1 ? "modell" : "modeller"} ej inlästa)` : ""}`);
+  } catch (e) { console.warn("Kunde inte dölja kopplade", e); modelToast("Kunde inte dölja kopplade: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
+}
+/* ---- 3D-läge för schemat: ETT val som utesluter de andra (Victor 2026-10-13: knapparna påverkade varandra).
+   off = rör inte 3D · isolate = bara kopplade · hide = dölj kopplade · time = tidslinjen. */
+/* Läs in alla modeller som aktiviteterna är kopplade till (som i 4D-planering). */
+async function loadCoupledModelsDash() {
+  const btn = document.getElementById("ganttLoadModelsBtn"), V = API && API.viewer;
+  if (!V || typeof V.toggleModel !== "function") { modelToast("Modellen är inte ansluten"); return; }
+  const ids = [...new Set(items.flatMap(it => it.members || [it]).map(m => m.modelId).filter(Boolean))];
+  if (!ids.length) { modelToast("Inget är kopplat till en modell"); return; }
+  const old = btn ? btn.textContent : ""; if (btn) { btn.disabled = true; btn.textContent = "Läser in…"; }
+  try {
+    let specs = []; try { specs = await V.getModels(); } catch (e) { /* okänd lista – försök ändå */ }
+    const byId = new Map(); (specs || []).forEach(m => { byId.set(m.id, m); if (m.versionId) byId.set(m.versionId, m); });
+    let loaded = 0, already = 0, failed = 0;
+    for (const id of ids) {
+      const spec = byId.get(id);
+      if (spec && spec.state === "loaded") { already++; continue; }
+      try { await V.toggleModel(spec ? spec.id : id, true, false); loaded++; } catch (e) { failed++; }
+    }
+    modelToast(`${loaded} inlästa${already ? `, ${already} fanns` : ""}${failed ? `, ${failed} hittades inte` : ""}`);
+    if (loaded && ganttMode !== "off") { ganttTimeReset(); isolateSig = ""; if (ganttMode === "hide") setGanttHideCoupled(true); else scheduleGanttIsolate(); } // nya modeller → räkna om läget
+  } finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
+}
+let ganttMode = "off", ganttModeSeq = 0;
+function syncGanttModeUi() {
+  document.querySelectorAll("#ganttModeSeg [data-gmode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.gmode === ganttMode)));
+  const row = document.getElementById("ganttTimeRow"); if (row) row.classList.toggle("gantt-time-off", ganttMode !== "time");
+  const tb = document.getElementById("ganttFsTime"); if (tb) tb.setAttribute("aria-pressed", String(ganttMode === "time"));
+}
+async function setGanttMode(mode, quiet) {
+  if (mode === ganttMode && mode !== "off") return;
+  const prev = ganttMode, seq = ++ganttModeSeq;
+  clearTimeout(isolateTimer); clearTimeout(ganttTimeTimer); ganttTimeTimer = null;
+  const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
+  // Lämna det förra läget helt (flaggor först, så inget hinner köra om det).
+  if (mode !== "isolate") ganttIsoOverride = null;
+  ganttPulseStop(false); ganttPulseGroups = []; ganttSelActSync();
+  if (typeof bubblesSchedule === "function") bubblesSchedule();
+  ganttMode = mode; ganttIsolate = false; ganttHideCoupled = false; ganttTime3d = false; isolateSig = ""; ganttTimeReset();
+  const hadAsOf = ganttAsOf; ganttAsOf = null; ganttScrubInfo = null;
+  syncGanttModeUi();
+  if (hadAsOf) renderGantt(getFilteredItems());
+  const V = API && API.viewer;
+  if (prev !== "off" && V && typeof V.setObjectState === "function") {
+    try { await V.setObjectState(undefined, { color: "reset" }); ganttColored = false; await V.setObjectState(undefined, { visible: "reset" }); } catch (e) { console.warn("Kunde inte återställa modellen", e); }
+  }
+  if (seq !== ganttModeSeq) return; // ett nyare val gjordes under tiden
+  if (mode === "off") { if (prev !== "off" && !quiet) modelToast("Hela modellen visas igen"); return; }
+  if (mode === "isolate") { ganttIsolate = true; await applyGanttIsolate(true); }
+  else if (mode === "hide") await setGanttHideCoupled(true);
+  else if (mode === "time") { ganttIsolate = true; ganttTime3d = true; setGanttTimeOn(true); }
+}
+function scheduleGanttIsolate() { clearTimeout(isolateTimer); isolateTimer = setTimeout(() => applyGanttIsolate(false), 500); }
+async function setGanttIsolate(on, quiet) {
+  ganttIsolate = !!on; isolateSig = ""; ganttTimeReset();
+  clearTimeout(isolateTimer);
+  if (ganttIsolate) { await applyGanttIsolate(true); return; }
+  try { if (ganttColored && API && API.viewer && typeof API.viewer.setObjectState === "function") { await API.viewer.setObjectState(undefined, { color: "reset" }); ganttColored = false; } } catch (e) { /* ignorera */ }
+  if (quiet) return;
+  try { if (API && API.viewer && typeof API.viewer.setObjectState === "function") await API.viewer.setObjectState(undefined, { visible: "reset" }); modelToast("Hela modellen visas igen"); }
+  catch (e) { console.warn("Kunde inte visa hela modellen", e); }
+}
+/* Dragstrecket ovanpå schemat (Victor 2026-10-13): ett tydligt streck med ett grepp och datum som man drar fram och tillbaka.
+   Ritas om tillsammans med schemat (renderGanttScrub) och flyttas direkt under dragning (placeGanttScrub). */
+let ganttScrubInfo = null, ganttScrubDrag = false;
+function renderGanttScrub(el, info) {
+  ganttScrubInfo = info ? { ...info, el } : null;
+  if (!info || ganttMode !== "time" || !ganttAsOf) return;
+  const host = el.querySelector(".gantt-inner, .board"); if (!host) return;
+  host.insertAdjacentHTML("beforeend", `<div class="gantt-scrub" role="slider" aria-label="Valt datum – dra i strecket"><span class="gantt-scrub-handle" title="Dra för att se läget ett visst datum"><span class="gs-grip" aria-hidden="true"></span><b class="gantt-scrub-date"></b><span class="gs-grip" aria-hidden="true"></span></span><span class="gantt-scrub-line"></span></div>`);
+  const sc = host.querySelector(".gantt-scrub");
+  ganttScrubInfo.host = host; ganttScrubInfo.node = sc;
+  placeGanttScrub();
+  const dateAt = clientX => {
+    const I = ganttScrubInfo, r = host.getBoundingClientRect(), g = ganttScrubGeometry();
+    const day = Math.round((clientX - r.left - g.left) / g.dayPx - 0.5);
+    let d = addDaysIso(I.startIso, Math.max(0, Math.min(I.days - 1, day)));
+    const rg = ganttTimeRange(); if (rg) d = d < rg[0] ? rg[0] : d > rg[1] ? rg[1] : d;
+    return d;
+  };
+  sc.onpointerdown = e => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    ganttScrubDrag = true; sc.classList.add("drag"); try { sc.setPointerCapture(e.pointerId); } catch (x) {}
+    clearTimeout(ganttTimeTimer); ganttTimeTimer = null; const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
+  };
+  sc.onpointermove = e => {
+    if (!ganttScrubDrag) return;
+    // Rulla med när strecket närmar sig kanten.
+    const cr = el.getBoundingClientRect();
+    if (e.clientX > cr.right - 40) el.scrollLeft += 14; else if (e.clientX < cr.left + (ganttScrubInfo.kind === "board" ? 190 : 260)) el.scrollLeft -= 14;
+    const d = dateAt(e.clientX);
+    if (d !== ganttAsOf) setGanttAsOf(d, { noRender: true });
+  };
+  const end = e => {
+    if (!ganttScrubDrag) return;
+    ganttScrubDrag = false; sc.classList.remove("drag"); try { sc.releasePointerCapture(e.pointerId); } catch (x) {}
+    renderGantt(getFilteredItems()); updateGanttTimeUi(); // statusen i schemat uppdateras när man släppt
+  };
+  sc.onpointerup = end; sc.onpointercancel = end;
+}
+function ganttScrubGeometry() {
+  const I = ganttScrubInfo; if (!I) return { left: 0, dayPx: 1 };
+  if (I.kind === "board") return { left: I.left, dayPx: I.dayPx };
+  const tr = I.host.querySelector(".gantt-ruler-track");
+  return tr ? { left: tr.offsetLeft, dayPx: Math.max(0.5, tr.offsetWidth / Math.max(1, I.days)) } : { left: 0, dayPx: 1 };
+}
+function placeGanttScrub() {
+  const I = ganttScrubInfo; if (!I || !I.node || !ganttAsOf) return;
+  const g = ganttScrubGeometry(), day = daysBetweenIso(I.startIso, ganttAsOf);
+  I.node.style.left = `${g.left + (day + 0.5) * g.dayPx}px`;
+  const d = I.node.querySelector(".gantt-scrub-date");
+  if (d) { let wd = ""; try { wd = parseDate(ganttAsOf).toLocaleDateString("sv-SE", { weekday: "short", timeZone: "UTC" }).replace(".", ""); } catch (e) {} d.textContent = `${wd ? wd + " " : ""}${shortDateSv(parseDate(ganttAsOf))}`; }
+}
+/* Datumspannet för dragaren: tidigast start till senast slut bland aktiviteterna som visas. */
+function ganttTimeRange() {
+  const its = ganttShownItems.length ? ganttShownItems : [];
+  let a = null, b = null;
+  its.forEach(it => { if (it.startDate && (!a || it.startDate < a)) a = it.startDate; const e = it.actualEndDate && it.actualEndDate > (it.endDate || "") ? it.actualEndDate : it.endDate; if (e && (!b || e > b)) b = e; });
+  if (ganttTimeFrom && (!b || ganttTimeFrom <= b)) a = ganttTimeFrom; // egna gränser (Från/Till)
+  if (ganttTimeTo && (!a || ganttTimeTo >= a)) b = ganttTimeTo;
+  return a && b ? [a, b] : null;
+}
+function ganttTimeCounts() {
+  const c = { done: 0, going: 0, late: 0, soon: 0 };
+  ganttShownItems.forEach(it => { if (!it.startDate) return; const ph = ganttPhaseAt(it, ganttAsOf); if (ph === "klar") c.done++; else if (ph === "pagaende") c.going++; else if (ph === "forsenad") c.late++; else c.soon++; });
+  return c;
+}
+function updateGanttTimeUi() {
+  const row = document.getElementById("ganttTimeRow"); if (!row) return;
+  const r = ganttTimeRange(), sl = document.getElementById("ganttTimeSlider"), di = document.getElementById("ganttTimeDate"), sum = document.getElementById("ganttTimeSum");
+  if (!r || !ganttAsOf) { if (sum) sum.textContent = ""; return; }
+  const n = daysBetweenIso(r[0], r[1]);
+  const fi = document.getElementById("ganttTimeFrom"), ti = document.getElementById("ganttTimeTo");
+  if (fi && document.activeElement !== fi) fi.value = ganttTimeFrom || r[0];
+  if (ti && document.activeElement !== ti) ti.value = ganttTimeTo || r[1];
+  sl.min = 0; sl.max = Math.max(1, n); sl.value = Math.min(Math.max(0, daysBetweenIso(r[0], ganttAsOf)), n);
+  di.value = ganttAsOf;
+  const c = ganttTimeCounts();
+  sum.textContent = `${c.done} klara · ${c.going} pågår · ${c.late} försenade · ${c.soon} kvar`;
+}
+function setGanttAsOf(iso, opts = {}) {
+  ganttAsOf = iso || null;
+  updateGanttTimeUi();
+  if (ganttAsOf && ganttIsolate && ganttTime3d) ganttTimeApply3d(); // 3D följer direkt medan man drar
+  placeGanttScrub(); // dragstrecket följer direkt
+  if (opts.noRender) return;
+  clearTimeout(ganttTimeRender);
+  ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); updateGanttTimeUi(); }, opts.now ? 0 : 120);
+}
+function setGanttTimeOn(on) {
+  clearTimeout(ganttTimeTimer); ganttTimeTimer = null;
+  const pb = document.getElementById("ganttTimePlay"); if (pb) pb.textContent = "▶";
+  if (!on) return;
+  const r = ganttTimeRange();
+  setGanttAsOf(r ? r[0] : todayISO(), { now: true });
+}
+function initGanttTime() {
+  const seg = document.getElementById("ganttModeSeg"); if (!seg || seg.dataset.wired) return;
+  seg.dataset.wired = "1";
+  seg.querySelectorAll("[data-gmode]").forEach(b => { b.onclick = () => setGanttMode(b.dataset.gmode); });
+  // Färger & visning i en rullgardin (stängs vid klick utanför) och stegknappar ◀ ▶ vid tidslidern.
+  const tmb = document.getElementById("ganttTimeMenuBtn"), tmm = document.getElementById("ganttTimeMenu");
+  if (tmb && tmm) {
+    // Menyn ligger fast (fixed) vid knappen så att den inte klipps av Gantt-rubrikens överkant/överflöde.
+    const place = () => { const r = tmb.getBoundingClientRect(), w = Math.min(tmm.offsetWidth || 320, innerWidth - 16); tmm.style.position = "fixed"; tmm.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + "px"; tmm.style.top = Math.min(r.bottom + 4, innerHeight - 120) + "px"; tmm.style.maxHeight = Math.max(160, innerHeight - r.bottom - 16) + "px"; tmm.style.overflowY = "auto"; };
+    const setMenu = on => { tmm.classList.toggle("hidden", !on); tmb.setAttribute("aria-expanded", String(on)); if (on) place(); };
+    addEventListener("resize", () => { if (!tmm.classList.contains("hidden")) place(); });
+    tmb.onclick = e => { e.stopPropagation(); setMenu(tmm.classList.contains("hidden")); };
+    document.addEventListener("pointerdown", e => { if (tmm.classList.contains("hidden")) return; if (tmm.contains(e.target) || tmb.contains(e.target) || e.target.closest("#ganttPulsePop")) return; setMenu(false); }, true);
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && !tmm.classList.contains("hidden") && !document.getElementById("ganttPulsePop")) setMenu(false); });
+  }
+  const stepDay = d => { const r = ganttTimeRange(); if (!r || !ganttAsOf) return; clearTimeout(ganttTimeTimer); ganttTimeTimer = null; const pb0 = document.getElementById("ganttTimePlay"); if (pb0) pb0.textContent = "▶"; const n = addDaysIso(ganttAsOf, d); setGanttAsOf(n < r[0] ? r[0] : n > r[1] ? r[1] : n, { now: true }); };
+  { const pv = document.getElementById("ganttTimePrev"), nx = document.getElementById("ganttTimeNext"); if (pv) pv.onclick = () => stepDay(-1); if (nx) nx.onclick = () => stepDay(1); }
+  const fsTime = document.getElementById("ganttFsTime"); if (fsTime) fsTime.onclick = () => setGanttMode(ganttMode === "time" ? "off" : "time");
+  const sl = document.getElementById("ganttTimeSlider"), di = document.getElementById("ganttTimeDate"), pb = document.getElementById("ganttTimePlay"), td = document.getElementById("ganttTimeToday");
+  sl.oninput = () => { const r = ganttTimeRange(); if (r) setGanttAsOf(addDaysIso(r[0], Number(sl.value))); };
+  di.onchange = () => { if (di.value) setGanttAsOf(di.value, { now: true }); };
+  td.onclick = () => setGanttAsOf(todayISO(), { now: true });
+  pb.onclick = () => {
+    if (ganttTimeTimer) { clearTimeout(ganttTimeTimer); ganttTimeTimer = null; pb.textContent = "▶"; return; }
+    const r = ganttTimeRange(); if (!r) return;
+    if (!ganttAsOf || ganttAsOf >= r[1]) ganttAsOf = r[0];
+    pb.textContent = "⏸";
+    // Ett steg i taget: nästa dag först när 3D hunnit uppdateras (annars hinner Trimble Connect aldrig rita om medan det spelas).
+    const tick = async () => {
+      if (!ganttTimeTimer) return;
+      const rr = ganttTimeRange(); if (!rr || ganttAsOf >= rr[1]) { ganttTimeTimer = null; pb.textContent = "▶"; return; }
+      setGanttAsOf(addDaysIso(ganttAsOf, 1));
+      await new Promise(r => setTimeout(r, 30));
+      for (let i = 0; ganttTimeBusy && i < 200; i++) await new Promise(r => setTimeout(r, 30));
+      if (ganttTimeTimer) ganttTimeTimer = setTimeout(tick, 180);
+    };
+    ganttTimeTimer = setTimeout(tick, 0);
+  };
+  const fi = document.getElementById("ganttTimeFrom"), ti = document.getElementById("ganttTimeTo"), auto = document.getElementById("ganttTimeAuto"), fut = document.getElementById("ganttTimeFuture");
+  const saveRange = () => { try { localStorage.setItem("4ddash-gantt-time-range", JSON.stringify([ganttTimeFrom, ganttTimeTo])); } catch (e) {} };
+  const rangeChanged = () => { saveRange(); const r = ganttTimeRange(); if (r && ganttAsOf && (ganttAsOf < r[0] || ganttAsOf > r[1])) setGanttAsOf(ganttAsOf < r[0] ? r[0] : r[1], { now: true }); else updateGanttTimeUi(); };
+  fi.onchange = () => { ganttTimeFrom = fi.value || ""; rangeChanged(); };
+  ti.onchange = () => { ganttTimeTo = ti.value || ""; rangeChanged(); };
+  auto.onclick = () => { ganttTimeFrom = ""; ganttTimeTo = ""; fi.value = ""; ti.value = ""; rangeChanged(); updateGanttTimeUi(); };
+  try { const sv = JSON.parse(localStorage.getItem("4ddash-gantt-time-range") || "null"); if (Array.isArray(sv)) { ganttTimeFrom = sv[0] || ""; ganttTimeTo = sv[1] || ""; } } catch (e) {}
+  fut.onchange = () => { ganttTimeFuture = fut.checked; try { localStorage.setItem("4ddash-gantt-time-future", ganttTimeFuture ? "1" : "0"); } catch (e) {} if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); };
+  try { ganttTimeFuture = localStorage.getItem("4ddash-gantt-time-future") === "1"; } catch (e) {}
+  { const bc = document.getElementById("ganttTimeByCon"); try { ganttByContractor = localStorage.getItem("4ddash-gantt-time-bycontractor") === "1"; } catch (e) {}
+    if (bc) { bc.checked = ganttByContractor; bc.onchange = () => { ganttByContractor = bc.checked; try { localStorage.setItem("4ddash-gantt-time-bycontractor", ganttByContractor ? "1" : "0"); } catch (e) {} ganttTimeReset(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); }; } }
+  { const dc = document.getElementById("ganttTimeDoneOrig"); try { ganttDoneOrig = localStorage.getItem("4ddash-gantt-done-orig") === "1"; } catch (e) {}
+    const paintDo = () => { const op = document.getElementById("ganttTimeDoneOp"); if (op) { op.disabled = ganttDoneOrig; op.title = ganttDoneOrig ? "Av – klart visas i originalfärg" : ""; } };
+    if (dc) { dc.checked = ganttDoneOrig; paintDo(); dc.onchange = () => { ganttDoneOrig = dc.checked; paintDo(); try { localStorage.setItem("4ddash-gantt-done-orig", ganttDoneOrig ? "1" : "0"); } catch (e) {} ganttTimeReset(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); }; } }
+  { const gb = document.getElementById("ganttScaleBtn"); if (gb) {
+    try { Object.assign(ganttScale, JSON.parse(localStorage.getItem("4ddash-gantt-scale") || "{}")); } catch (e) {}
+    const paint = () => gb.classList.toggle("on", !!ganttScale.on), save = () => { try { localStorage.setItem("4ddash-gantt-scale", JSON.stringify(ganttScale)); } catch (e) {} paint(); ganttScaleR = null; if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); };
+    paint();
+    gb.onclick = e => {
+      e.stopPropagation(); const old = document.getElementById("ganttScalePop"); if (old) { old.remove(); return; }
+      const pop = document.createElement("div"); pop.id = "ganttScalePop"; pop.className = "gantt-time-menu"; pop.style.cssText = "position:fixed;min-width:260px;z-index:70";
+      pop.innerHTML = `<div class="gtm-title">Färgskala efter datum</div><label><input type="checkbox" id="gsOn" ${ganttScale.on ? "checked" : ""} /> Färga objekten efter datum</label>
+        <div class="gtm-grid"><span>Efter</span><select id="gsBy"><option value="start" ${ganttScale.by !== "end" ? "selected" : ""}>Startdatum</option><option value="end" ${ganttScale.by === "end" ? "selected" : ""}>Slutdatum</option></select><span>Tidigast</span><input type="color" id="gsA" value="${ganttScale.a}" /><span>Senast</span><input type="color" id="gsB" value="${ganttScale.b}" /></div>
+        <div id="gsBar" style="height:10px;border-radius:5px;margin:6px 0 2px"></div><div class="hint">Egen färg efter slut (aktivitetens redigering) går före. Gäller läget Tid.</div>`;
+      document.body.appendChild(pop); const r = gb.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 280)) + "px"; pop.style.top = (r.bottom + 4) + "px";
+      const q = x => pop.querySelector(x), bar = () => { q("#gsBar").style.background = `linear-gradient(90deg,${ganttScale.a},${ganttScale.b})`; }; bar();
+      const apply = () => { ganttScale.on = q("#gsOn").checked; ganttScale.by = q("#gsBy").value; ganttScale.a = q("#gsA").value; ganttScale.b = q("#gsB").value; bar(); save(); };
+      ["#gsOn", "#gsBy"].forEach(i => { q(i).onchange = apply; }); ["#gsA", "#gsB"].forEach(i => { q(i).oninput = apply; });
+      const off = ev => { if (pop.contains(ev.target) || gb.contains(ev.target)) return; pop.remove(); document.removeEventListener("pointerdown", off, true); }; setTimeout(() => document.addEventListener("pointerdown", off, true), 0);
+    };
+  } }
+  { const sb = document.getElementById("ganttStrictBtn"); if (sb) {
+    try { ganttStrict = localStorage.getItem("4ddash-gantt-strict") === "1"; } catch (e) {}
+    const paint = () => { sb.classList.toggle("on", ganttStrict); sb.setAttribute("aria-pressed", String(ganttStrict)); };
+    paint();
+    sb.onclick = () => { ganttStrict = !ganttStrict; try { localStorage.setItem("4ddash-gantt-strict", ganttStrict ? "1" : "0"); } catch (e) {} paint(); ganttTimeReset(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); if (typeof renderGanttTimeSum === "function") renderGanttTimeSum(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); modelToast(ganttStrict ? "Följer datumen strikt – framdriften i procent ignoreras" : "Följer framdriften igen"); };
+  } }
+  fut.checked = ganttTimeFuture;
+  // Färger på Pågående / Klar / Kommande – samma färger som i Inställningar och schemat.
+  document.querySelectorAll("#ganttTimeMenu [data-tcol]").forEach(inp => {
+    inp.value = STATUS_COLORS[inp.dataset.tcol] || "#888888";
+    inp.oninput = () => {
+      STATUS_COLORS[inp.dataset.tcol] = inp.value; saveStatusColorOverrides();
+      clearTimeout(ganttTimeRender); ganttTimeRender = setTimeout(() => { renderGantt(getFilteredItems()); if (typeof initStatusColorControls === "function") initStatusColorControls(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); }, 200);
+    };
+  });
+  document.querySelectorAll("#ganttTimeMenu [data-topc]").forEach(inp => {
+    const k = inp.dataset.topc; inp.value = ganttOp[k] === undefined ? 100 : ganttOp[k];
+    inp.oninput = () => { ganttOp[k] = Number(inp.value); inp.title = `Opacitet ${LBL_OP[k]}: ${inp.value} %${Number(inp.value) <= 0 ? " (osynligt)" : ""}`; try { localStorage.setItem("4ddash-gantt-time-ops", JSON.stringify(ganttOp)); } catch (e) {} if (ganttIsolate && ganttTime3d && ganttAsOf) { ganttTimeReset(); ganttTimeApply3d(); } };
+    inp.title = `Opacitet ${LBL_OP[k]}: ${inp.value} %`;
+  });
+  const pul = document.getElementById("ganttTimePulse");
+  try { ganttPulse = localStorage.getItem("4ddash-gantt-pulse") === "1"; } catch (e) {}
+  if (pul) { pul.checked = ganttPulse; pul.onchange = () => { ganttPulse = pul.checked; try { localStorage.setItem("4ddash-gantt-pulse", ganttPulse ? "1" : "0"); } catch (e) {} if (ganttPulse) ganttPulseSync(); else ganttPulseStop(true); }; }
+  const pcb = document.getElementById("ganttPulseCfgBtn"); if (pcb) pcb.onclick = () => openPulseCfg(pcb);
+  const sa = document.getElementById("ganttTimeSelAct");
+  if (sa) sa.onchange = () => { ganttSelAct = sa.checked; ganttSelActSig = ""; ganttSelActSync(); };
+  const dop = document.getElementById("ganttTimeDoneOp"), dopv = document.getElementById("ganttTimeDoneOpVal");
+  try { const v = localStorage.getItem("4ddash-gantt-time-doneop"); if (v !== null && v !== "") ganttDoneOp = Math.max(0, Math.min(100, Number(v))); } catch (e) {}
+  dop.value = ganttDoneOp; dopv.textContent = ganttDoneOp;
+  dop.oninput = () => { ganttDoneOp = Number(dop.value); dopv.textContent = dop.value; try { localStorage.setItem("4ddash-gantt-time-doneop", dop.value); } catch (e) {} if (ganttIsolate && ganttTime3d && ganttAsOf) { ganttTimeReset(); ganttTimeApply3d(); } };
+}
+/* Filter i Gantt-schemat (Victor 2026-10-15): bara aktiviteter som ännu inte är kopplade till något objekt i modellen. Gäller schemat, utskriften och 3D-läget. */
+let ganttOnlyUncoupled = false; try { ganttOnlyUncoupled = localStorage.getItem("4ddash-gantt-uncoupled") === "1"; } catch (e) { /* */ }
+const ganttIsCoupled = it => !!(it.modelId && it.objectId);
+const ganttActKey = it => it.activityKey || `i:${it.id}`;
+function ganttUncoupledOnly(list) { const coupled = new Set(list.filter(ganttIsCoupled).map(ganttActKey)); return list.filter(it => !ganttIsCoupled(it) && !coupled.has(ganttActKey(it))); }
+function ganttUncoupledCount() { return new Set(ganttUncoupledOnly(getFilteredItems()).map(ganttActKey)).size; }
+/* Filter: bara egna aktiviteter (Victor 2026-10-16) – de som skapats här (origin "manuell"), inte de från Powerproject/Excel. Kan kombineras med Ej kopplade. */
+let ganttOnlyOwn = false; try { ganttOnlyOwn = localStorage.getItem("4ddash-gantt-own") === "1"; } catch (e) { /* */ }
+function ganttOwnOnly(list) { const own = new Set(list.filter(x => x.origin === "manuell").map(ganttActKey)); return list.filter(x => own.has(ganttActKey(x))); }
+function ganttOwnCount() { return new Set(ganttOwnOnly(getFilteredItems()).map(ganttActKey)).size; }
+function renderGantt(list, target) {
+  if (ganttOnlyUncoupled) list = ganttUncoupledOnly(list);
+  if (ganttOnlyOwn) list = ganttOwnOnly(list);
+  // Resurskurvan följer Gantt-schemats urval (filter, sök, dolda områden, period) – ritas om efteråt.
+  if (!target && typeof renderResourceCurve === "function") setTimeout(renderResourceCurve, 0);
+  // target: ritar i ett annat element (utskriften, se printGantt) - utan anteckningar och interaktion.
+  const el = target || document.getElementById("ganttChart");
+  const notesEl = target ? null : document.getElementById("ganttNotes");
+  // Ritas om varje gång (billigt, beror bara på STATUS_COLORS/STATUS_ORDER)
+  // istället för bara en gång vid start - annars hamnar den på fel färger
+  // efter att en statusfärg ändrats i Inställningar (se initStatusColorControls).
+  renderGanttLegend();
+  applyGanttViewClass();
+  // Sökning: område, aktivitet, namn eller entreprenör; flera ord = alla ska finnas.
+  if (ganttSearch) {
+    const before = list.length;
+    list = list.filter(ganttSearchMatch);
+    if (!target) { const c = document.getElementById("ganttSearchCount"); if (c) c.textContent = `${list.length} av ${before}`; }
+  } else if (!target) { const c = document.getElementById("ganttSearchCount"); if (c) c.textContent = ""; }
+  // Dolda grupper (områden/entreprenörer/aktiviteter) – gäller också utskriften.
+  const hiddenNow = ganttHiddenNow();
+  list = ganttWithoutHidden(list);
+  if (!target) { ganttShownItems = list; if (ganttIsolate) scheduleGanttIsolate(); if (ganttAsOf) setTimeout(updateGanttTimeUi, 0); setTimeout(applyGanttMultiSel, 0); if (typeof vidRefresh === "function") setTimeout(vidRefresh, 0); if (typeof bubblesSchedule === "function") bubblesSchedule(); } // "Visa endast kopplade" följer schemat
+  if (!target) renderGanttHiddenBar(el, hiddenNow);
+  applyBaselineColor(el);
+  if (!target) syncBaselinePicker();
+  if (ganttView === "board") { renderGanttBoard(list, target); if (!target) applyGanttModelSel(false); return; }
+  const withDates = list.filter(it => it.startDate && it.endDate);
+
+  if (withDates.length === 0) {
+    el.className = "gantt-chart";
+    el.innerHTML = `<div class="hint">${isBackendConfigured() ? "Inga objekt med både start- och slutdatum att visa ännu." : emptyMessage()}</div>`;
+    if (notesEl) notesEl.innerHTML = "";
+    return;
+  }
+
+  // Domän: eget valt intervall ("Visa från/till") om satt, annars tidigaste
+  // till senaste datum bland de synliga objekten (och deras verkliga datum
+  // också, om "Visa verkligt" är ikryssad - annars kan en verklig stapel
+  // klippas av utanför den auto-beräknade bredden).
+  let domainStart, domainEnd;
+  if (ganttRangeStart && ganttRangeEnd) {
+    domainStart = ganttRangeStart;
+    domainEnd = ganttRangeEnd;
+  } else {
+    let allDates = withDates.flatMap(it => [it.startDate, it.endDate]);
+    if (ganttShowActual) {
+      allDates = allDates.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
+    }
+    if (ganttShowBaseline) allDates = allDates.concat(withDates.flatMap(it => [...(blOf(it) || []), ...(blOf(it, ganttBaseline2Id) || [])]));
+    allDates.sort();
+    domainStart = allDates[0];
+    domainEnd = allDates[allDates.length - 1];
+  }
+  const domainDays = Math.max(1, daysBetweenIso(domainStart, domainEnd));
+
+  // Objekt som (helt eller delvis) överlappar det visade intervallet -
+  // objekt helt utanför visas inte (annars skulle en fast angiven "Visa
+  // från/till"-ruta kunna svämma över av staplar som klipps bort ändå).
+  let visible = withDates.filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
+  // Många tusen objekt gör tidslinjen obrukbart tung (en rad per objekt, ett DOM-träd på hundratusentals element): över gränsen
+  // slås objekten i samma aktivitet ihop till en stapel, som på tavlan. Filtrera ner urvalet för att se enskilda objekt igen.
+  const ganttMergedN = visible.length > GANTT_MAX_ROWS ? visible.length : 0;
+  const skippedRange = withDates.length - visible.length;
+  if (ganttMergedN) visible = mergeActivityGroups(visible);
+  const skippedNoDate = list.length - withDates.length;
+
+  if (visible.length === 0) {
+    el.className = "gantt-chart";
+    el.innerHTML = `<div class="hint">Inga objekt med både start- och slutdatum inom det valda intervallet ${domainStart} – ${domainEnd}.</div>`;
+    if (notesEl) notesEl.innerHTML = "";
+    return;
+  }
+
+  const isFit = ganttZoomPxPerDay === null;
+  const pxPerDay = ganttZoomPxPerDay || 0;
+  const suffix = isFit ? "%" : "px";
+  const toUnit = days => isFit ? (days / domainDays * 100) : (days * pxPerDay);
+  const posOf = dateStr => {
+    const days = Math.max(0, Math.min(domainDays, daysBetweenIso(domainStart, dateStr)));
+    return toUnit(days);
+  };
+  const minWidth = isFit ? 0.5 : 2;
+  const barPos = (startStr, endStr) => {
+    const left = posOf(startStr);
+    const width = Math.max(minWidth, posOf(endStr) - left);
+    return { left: `${left}${suffix}`, width: `${width}${suffix}` };
+  };
+
+  const activitiesByItem = new Map();
+  activities.forEach(a => {
+    const forItem = activitiesByItem.get(a.plan_item_id) || [];
+    forItem.push(a);
+    activitiesByItem.set(a.plan_item_id, forItem);
+  });
+
+  // Beroenden (Victors förfrågan 2026-09-21) - beräknas mot ALLA inlästa
+  // objekt (items), inte bara det filtrerade urvalet (list/visible), så en
+  // beroendekedja eller risk-flagga syns korrekt även om ett uppströms-
+  // eller nedströms-objekt råkar vara filtrerat bort just nu.
+  const depById = itemsByIdAll();
+  const hasSuccessorId = new Set();
+  items.forEach(it => (it.dependsOn || []).forEach(depId => hasSuccessorId.add(depId)));
+
+  // Om en beroendekedja just nu är highlightad (klick på 🔗-märket, se
+  // toggleGanttDependencyChain) - vilka id:n som ingår i den (fokusobjektet
+  // + alla dess uppströms- och nedströms-objekt, transitivt). Övriga rader
+  // tonas ned i CSS (gantt-row-dim) så kedjan sticker ut.
+  let chainIds = null;
+  if (ganttHighlightChainId && depById.has(ganttHighlightChainId)) {
+    chainIds = new Set([ganttHighlightChainId]);
+    let frontier = [ganttHighlightChainId];
+    while (frontier.length) {
+      const next = [];
+      frontier.forEach(id => {
+        const node = depById.get(id);
+        (node && node.dependsOn ? node.dependsOn : []).forEach(depId => {
+          if (!chainIds.has(depId)) { chainIds.add(depId); next.push(depId); }
+        });
+      });
+      frontier = next;
+    }
+    downstreamOf(ganttHighlightChainId, depById).forEach(it => chainIds.add(it.id));
+  }
+
+  // Tooltip-innehåll byggs en gång per stapel och läggs i en Map (nyckel ->
+  // HTML), refererad via data-gantt-tip på respektive stapel - se
+  // bindGanttInteractions. Undviker HTML-i-attribut-eskapering helt.
+  const tooltips = new LazyTipMap();
+  let tipCounter = 0;
+  const registerTip = html => {
+    const key = `t${tipCounter++}`;
+    tooltips.set(key, html);
+    return key;
+  };
+
+  const comparator = ganttComparator(ganttSortBy);
+  const sorted = visible.slice().sort(comparator);
+
+  function rowsHtmlFor(it, groupColor) {
+    const itemActivities = (activitiesByItem.get(it.id) || []).filter(a => a.start_date && a.end_date);
+    const hasActivities = itemActivities.length > 0;
+    const expanded = ganttExpandedIds.has(it.id);
+    const { left, width } = barPos(it.startDate, it.endDate);
+    const color = STATUS_COLORS[it.status] || STATUS_COLORS.planerad;
+    const progressPct = Math.max(0, Math.min(100, Number(it.progress) || 0));
+    const hasActual = ganttShowActual && it.actualStartDate && it.actualEndDate;
+    const canSelectIn3d = Boolean(it.modelId && it.objectId);
+    const tipKey = registerTip(() => ganttTooltipHtmlForItem(it, depById));
+
+    // Beroenderisk: minst ett ofärdigt beroende vars (verkliga, annars
+    // planerade) slutdatum ligger på eller efter det här objektets planerade
+    // start - dvs en konkret, synlig konsekvens av en försening uppströms,
+    // inte bara "har beroenden". Se Victors förfrågan om att kunna räkna ut
+    // vad en försening faktiskt får för konsekvenser nedströms.
+    const predecessors = (it.dependsOn || []).map(id => depById.get(id)).filter(Boolean);
+    const unfinishedPredecessors = predecessors.filter(p => p.status !== "klar");
+    const overlappingPredecessors = unfinishedPredecessors.filter(p => {
+      const predEnd = p.actualEndDate || p.endDate;
+      return predEnd && it.startDate && predEnd >= it.startDate;
+    });
+    const isBlockedRisk = overlappingPredecessors.length > 0;
+    const hasDeps = (it.dependsOn && it.dependsOn.length > 0) || hasSuccessorId.has(it.id);
+    // Bara en visuell markör i etiketten (inte klickbar själv - texten
+    // klipps annars av .gantt-label:s text-overflow:ellipsis för långa
+    // namn). Klick för att visa/dölja beroendekedjan görs istället på
+    // SJÄLVA stapeln, se attachGanttBarClick i bindGanttInteractions - det
+    // ger en stor, tillförlitlig klickyta oavsett namnlängd.
+    const depBadgeHtml = hasDeps
+      ? `<span class="gantt-dep-badge${isBlockedRisk ? " risk" : ""}" title="${isBlockedRisk ? "Risk: väntar på ett ofärdigt beroende - klicka stapeln för att visa kedjan" : "Har beroenden - klicka stapeln för att visa kedjan"}">${isBlockedRisk ? "⚠" : "🔗"}</span>`
+      : "";
+
+    const isChainFocus = chainIds && it.id === ganttHighlightChainId;
+    const isChainRelated = chainIds && chainIds.has(it.id) && !isChainFocus;
+    const isChainDim = chainIds && !chainIds.has(it.id);
+    const rowClass = `gantt-row${isChainFocus ? " gantt-row-chain-focus" : ""}${isChainRelated ? " gantt-row-chain-related" : ""}${isChainDim ? " gantt-row-dim" : ""}`;
+
+    // Huvudstapelns data-item-id används både för klick-för-att-visa-kedjan
+    // (alltid) och för dra-för-att-schemalägga-om (bara i redigerbart läge) -
+    // se attachGanttBarClick/onGanttBarPointerDown i bindGanttInteractions.
+    // "Redigerbar Gantt" är Victors förfrågan 2026-09-21 om att kunna
+    // schemalägga om direkt på staplarna istället för bara via formulär i
+    // 4D-planering.
+    const draggableAttrs = ganttEditable ? ` data-action="drag-gantt-bar"` : "";
+    const barClass = `gantt-bar${isBlockedRisk ? " gantt-bar-risk" : ""}${ganttEditable ? " gantt-bar-draggable" : ""}${it.temporary ? " gantt-bar-temp" : ""}`;
+    // Temporär: streckad stapel och en markering där objektet tas bort (slutet).
+    const tempEndHtml = it.temporary && it.endDate ? `<span class="gantt-temp-end" style="left:calc(${left} + ${width});" title="Temporär – tas bort ${escapeHtml(tipDate(it.actualEndDate || it.endDate))}">⏏</span>` : "";
+
+    let actualHtml = "";
+    if (ganttShowBaseline && ganttBaselineDaysOnly) {
+      const d = baselineShiftDays(it);
+      if (d) actualHtml += `<span class="gantt-bl-d${d > 0 ? " later" : ""}" style="left:calc(${left} + ${width} + 4px);" data-gantt-tip="${tipKey}">${shiftText(d)}</span>`;
+    } else if (ganttShowBaseline) [[ganttBaselineId, ""], [ganttBaseline2Id, " gantt-bar-baseline2"]].forEach(([id, cls]) => {
+      const b = id && blOf(it, id);
+      if (!b) return;
+      const bPos = barPos(b[0], b[1]);
+      actualHtml += `<span class="gantt-bar-baseline${cls}" style="left:${bPos.left}; width:${bPos.width};" data-gantt-tip="${tipKey}"></span>`;
+    });
+    if (hasActual) {
+      const actualPos = barPos(it.actualStartDate, it.actualEndDate);
+      const actualTipKey = registerTip(ganttTooltipHtmlForActual(it));
+      actualHtml += `<span class="gantt-bar gantt-bar-actual" style="left:${actualPos.left}; width:${actualPos.width}; border-color:${color};" data-gantt-tip="${actualTipKey}" tabindex="0"></span>`;
+    }
+
+    // Stapelns botten är en fast neutral färg (satt i CSS) som alltid syns,
+    // oavsett hur ljus statusfärgen (nu ev. användarvald) råkar vara -
+    // identiteten bärs istället av den heldragna kanten (border-color) och
+    // framdriften av den solida, fullfärgade fyllningen (.gantt-bar-fill).
+    // Se Victors synpunkt 2026-09-17 om att de blekaste statusarna
+    // (Ej planerad/Planerad) nästan försvann helt i den gamla urblekta
+    // "meter"-designen.
+    const rowHtml = `
+      <div class="${rowClass}"${groupColor ? ` style="--grp:${groupColor.bd}; --grp-bg:${groupColor.bg};"` : ""}>
+        <span class="gantt-toggle${hasActivities ? "" : " gantt-toggle-empty"}"${hasActivities ? ` data-action="toggle-gantt" data-item-id="${escapeHtml(String(it.id))}"` : ""}>${hasActivities ? (expanded ? "▾" : "▸") : ""}</span>
+        ${ganttEditable ? `<button type="button" class="gantt-row-trash" data-trash-id="${escapeHtml(String(it.id))}" title="Ta bort" aria-label="Ta bort">🗑</button>` : ""}<span class="gantt-label${canSelectIn3d ? " gantt-label-clickable" : ""}"${canSelectIn3d ? ` data-action="select-gantt-3d" data-item-id="${escapeHtml(String(it.id))}" tabindex="0" title="${escapeHtml(itemLabel(it))} (klicka för att markera i 3D-modellen)"` : ` title="${escapeHtml(itemLabel(it))}"`}>${escapeHtml(itemLabel(it))}${it.temporary ? `<span class="gantt-temp-badge" title="Temporär – syns i 3D bara mellan start och slut">⏱</span>` : ""}${depBadgeHtml}</span>
+        <div class="gantt-track">
+          <span class="${barClass}" style="left:${left}; width:${width}; border-color:${color};" data-gantt-tip="${tipKey}" data-item-id="${escapeHtml(String(it.id))}"${hasDeps ? ` data-has-deps="1"` : ""} tabindex="0"${draggableAttrs}>
+            <span class="gantt-bar-fill" style="width:${progressPct}%; background:${color};"></span>
+          </span>
+          ${actualHtml}${tempEndHtml}
+        </div>
+      </div>`;
+
+    const subRowsHtml = expanded ? itemActivities.map(a => {
+      const aPos = barPos(a.start_date, a.end_date);
+      const aName = a.name || "(namnlös delaktivitet)";
+      const aTipKey = registerTip(ganttTooltipHtmlForActivity(a, it));
+      return `
+        <div class="gantt-row gantt-subrow">
+          <span class="gantt-toggle"></span>
+          <span class="gantt-label gantt-sublabel" title="${escapeHtml(aName)}">${escapeHtml(aName)}</span>
+          <div class="gantt-track">
+            <span class="gantt-bar gantt-bar-sub" style="left:${aPos.left}; width:${aPos.width};" data-gantt-tip="${aTipKey}" tabindex="0"></span>
+          </div>
+        </div>`;
+    }).join("") : "";
+
+    return rowHtml + subRowsHtml;
+  }
+
+  let rowsHtml;
+  if (ganttGroupBy) {
+    const groups = new Map();
+    sorted.forEach(it => {
+      const key = ganttGroupKeyFor(it);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    });
+    const groupKeys = [...groups.keys()].sort((a, b) => a.localeCompare(b, "sv"));
+    rowsHtml = groupKeys.map(key => {
+      const groupItems = groups.get(key);
+      const collapseKey = `${ganttGroupBy}:${key}`;
+      const collapsed = ganttCollapsedGroups.has(collapseKey);
+      const gc = softColor(ganttGroupBy, key);
+      const header = `
+        <div class="gantt-group gantt-group-colored" style="--grp:${gc.bd}; --grp-bg:${gc.bg}; --grp-ink:${gc.ink};" data-action="toggle-gantt-group" data-group-key="${escapeHtml(collapseKey)}">
+          <span class="gantt-group-sticky">
+            ${target ? "" : `<span class="gantt-group-arrow">${collapsed ? "▸" : "▾"}</span>`}
+            <span>${escapeHtml(key)}</span>
+            <span class="gantt-group-count">(${groupItems.length})</span>
+          </span>
+        </div>`;
+      const body = collapsed ? "" : groupItems.map(it => rowsHtmlFor(it, gc)).join("");
+      return header + body;
+    }).join("");
+  } else {
+    rowsHtml = sorted.map(rowsHtmlFor).join("");
+  }
+
+  const { gridStyle, rulerHtml } = buildGanttTimeline(domainStart, domainEnd, domainDays, isFit, pxPerDay);
+  const innerWidth = isFit ? "100%" : `${domainDays * pxPerDay + GANTT_ROW_PREFIX_PX}px`;
+  const innerStyle = `width:${innerWidth}; --gg-image:${gridStyle.image}; --gg-pos:${gridStyle.pos}; --gg-size:${gridStyle.size}; --gg-repeat:${gridStyle.repeat};`;
+
+  el.className = `gantt-chart${ganttDensity === "comfortable" ? " gantt-density-comfortable" : ""}${ganttShowBaseline && !ganttBaselineDaysOnly ? " gantt-show-bl" : ""}${ganttShowBaseline && ganttBaseline2Id && !ganttBaselineDaysOnly ? " gantt-show-bl2" : ""}`;
+  el.innerHTML = `
+    <div class="gantt-inner" style="${innerStyle}">
+      ${rulerHtml}
+      <div class="gantt-rows-wrap">${rowsHtml}</div>
+    </div>
+  `;
+
+  if (notesEl) {
+    const notes = [];
+    if (skippedNoDate > 0) notes.push(`${skippedNoDate} objekt utan både start- och slutdatum visas inte.`);
+    if (skippedRange > 0) notes.push(`${skippedRange} objekt utanför det valda datumintervallet visas inte.`);
+    if (ganttMergedN) notes.push(`${ganttMergedN} objekt är sammanslagna till ${visible.length} aktiviteter (över ${GANTT_MAX_ROWS} objekt blir tidslinjen för tung) – filtrera ner urvalet för att se enskilda objekt.`);
+    notesEl.innerText = notes.join(" ");
+  }
+
+  if (!target) {
+    bindGanttInteractions(el, list, tooltips, { isFit, pxPerDay, domainStart, domainDays });
+    renderGanttScrub(el, { kind: "bars", startIso: domainStart, days: domainDays });
+    applyGanttModelSel(false);
+    el._arrowMap = new Map([...el.querySelectorAll(".gantt-bar[data-item-id]")].map(b => [String(b.dataset.itemId), b]));
+    requestAnimationFrame(() => drawGanttArrows(el));
+  }
+}
+
+
+/* Objekten (plan_item-id:n) som en lapp står för - alla objekt i en
+   sammanslagen aktivitet, annars bara lappens eget. */
+function noteTargetIds(it) {
+  return new Set((it.members || [it]).map(m => m.id));
+}
+
+/** Dra en lapp: mitten flyttar, kanterna ändrar start/slut. Shift = utan beroenden. */
+function onBoardNotePointerDown(evt, noteEl, it, colPx) {
+  if (!ganttEditable || !it || (evt.button !== undefined && evt.button !== 0)) return;
+  if (evt.target && evt.target.closest && evt.target.closest(".pnote-bl")) return; // baseline-linjen: bara tipsrutan
+  const rect = noteEl.getBoundingClientRect();
+  const EDGE = 8;
+  const realRight = noteRealRight(noteEl, rect);
+  const mode = evt.clientX <= rect.left + EDGE ? "left" : (evt.clientX >= realRight - EDGE && evt.clientX <= realRight + 2) ? "right" : "move";
+  const startX = evt.clientX;
+  const pxPerDay = colPx / 7;
+  const targets = noteTargetIds(it);
+  // Utgångsläget för storleksändring: lappens bredd och (för en förlängd lapp) den färgade delen.
+  const w0 = rect.width, ext0 = !!parseFloat(noteEl.style.getPropertyValue("--real"));
+  const real0 = ext0 ? parseFloat(noteEl.style.getPropertyValue("--real")) : w0;
+  let delta = 0, moved = false;
+  const preview = e => {
+    const withDeps = !e.shiftKey;
+    const plan = mode === "move" ? planMove(targets, delta, withDeps) : planResize(targets, mode, delta, withDeps);
+    const own = [...targets].map(id => plan.items.get(id)).filter(Boolean);
+    const s0 = own.map(d => d.startDate).sort()[0] || it.startDate;
+    const e0 = own.map(d => d.endDate).sort().pop() || it.endDate;
+    const depCount = [...plan.items.keys()].filter(id => !targets.has(id)).length;
+    const conflicts = planConflicts(targets, plan);
+    animatePush(noteEl.closest(".gantt-chart"), plan, targets, pxPerDay);
+    showGanttTooltip(e, `<div class="gantt-tooltip-title">${escapeHtml(itemLabel(it))}</div>
+      ${ganttTooltipRow(mode === "move" ? "Flyttas till" : mode === "left" ? "Ny start" : "Nytt slut", `${weekdayDateSv(s0)} – ${weekdayDateSv(e0)} (${delta > 0 ? "+" : ""}${delta} d)`)}
+      ${depCount ? ganttTooltipRow("Beroende", `${depCount} objekt skjuts fram (Shift = inte)`) : ""}
+      ${conflicts.length ? `<div class="gantt-tooltip-warn">⚠ Startar innan ${escapeHtml(conflicts.map(c => itemLabel(c.p)).join(", "))} är klar</div>` : ""}`);
+  };
+  const onMove = e => {
+    const dx = e.clientX - startX;
+    if (!moved && Math.abs(dx) < 4) return;
+    moved = true;
+    delta = Math.round(dx / pxPerDay);
+    noteEl.classList.add("pnote-dragging");
+    if (mode === "move") noteEl.style.transform = `translateX(${dx}px) rotate(0deg)`;
+    else {
+      // Kanten: lappen växer/krymper direkt, dag för dag, med en mjuk animering (Victor 2026-10-06).
+      noteEl.classList.add("pnote-resizing");
+      noteEl.style.boxShadow = `0 0 0 2px var(--accent)`;
+      const d = delta * pxPerDay;
+      if (mode === "right") {
+        const real = Math.max(pxPerDay, real0 + d);
+        noteEl.style.justifySelf = "start";
+        noteEl.style.width = `${Math.max(real, ext0 ? w0 : 0)}px`;
+        if (ext0) noteEl.style.setProperty("--real", `${real}px`);
+      } else {
+        const dd = Math.min(d, real0 - pxPerDay);
+        noteEl.style.justifySelf = "start";
+        noteEl.style.transform = `translateX(${dd}px) rotate(0deg)`;
+        noteEl.style.width = `${Math.max(pxPerDay, w0 - dd)}px`;
+        if (ext0) noteEl.style.setProperty("--real", `${Math.max(pxPerDay, real0 - dd)}px`);
+      }
+    }
+    if (ganttShowArrows) arrowsFollow(noteEl.closest(".gantt-chart"));
+    preview(e);
+  };
+  const onUp = async e => {
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    noteEl.style.transform = "";
+    noteEl.style.boxShadow = "";
+    noteEl.style.width = "";
+    noteEl.style.justifySelf = "";
+    if (ext0) noteEl.style.setProperty("--real", `${real0}px`);
+    noteEl.classList.remove("pnote-dragging", "pnote-resizing");
+    { const ch = noteEl.closest(".gantt-chart"); if (ch) { ch.querySelectorAll(".ga-pushed").forEach(n => { n.style.transform = ""; n.classList.remove("ga-pushed"); }); drawGanttArrows(ch); } }
+    hideGanttTooltip();
+    if (!moved) return;
+    noteEl._justDragged = true;
+    if (!delta) return;
+    const withDeps = !e.shiftKey;
+    const plan = mode === "move" ? planMove(targets, delta, withDeps) : planResize(targets, mode, delta, withDeps);
+    const conflicts = planConflicts(targets, plan);
+    if (conflicts.length && !(await dashConfirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`, { ok: "Flytta ändå" }))) { renderGantt(getFilteredItems()); return; }
+    const verb = mode === "move" ? `Flyttade ${itemLabel(it)} ${delta > 0 ? "+" : ""}${delta} d` : `${mode === "left" ? "Ny start" : "Nytt slut"} för ${itemLabel(it)}`;
+    const deps = [...plan.items.keys()].filter(id => !targets.has(id)).length;
+    applySchedulePlan(plan, deps ? `${verb} (${deps} beroende framskjutna)` : verb);
+  };
+  document.addEventListener("pointermove", onMove);
+  document.addEventListener("pointerup", onUp);
+}
+
+/* ---------------------------------------------------------------------
+   Gantt som post-it-tavla (Victors förfrågan 2026-09-28) - ett alternativ
+   till staplarna. En kolumn per vecka, en "sim-bana" per grupp (Gruppera),
+   och varje aktivitet som en lapp som sträcker sig över de veckor den
+   pågår. Lappens färg = entreprenör/område/aktivitet (Färga efter), dess
+   vänsterkant = status, och en tunn stapel längst ned = framdrift.
+   ------------------------------------------------------------------- */
+const BOARD_COL_PX = 210; // 30 px per dag
+const BOARD_LANE_PX = 150;
+
+function applyGanttViewClass() {
+  const panel = document.querySelector('section.panel[data-panel-id="gantt"]');
+  if (panel) panel.classList.toggle("gantt-view-board", ganttView === "board");
+  document.querySelectorAll("[data-gantt-view]").forEach(btn => {
+    const on = btn.dataset.ganttView === ganttView;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Beroenden på tavlan (Victors önskemål 2026-10-06): högerklicka en lapp
+   för att se vad den väntar på och vad som följer den, ta bort ett beroende
+   (✕) eller lägga till ett genom att klicka på en annan lapp. Sparas som
+   depends_on i plan_items (samma fält som 4D-planering), går att ångra.
+   En lapp med flera objekt (sammanslagen aktivitet) räknas som en helhet.
+   ------------------------------------------------------------------- */
+let boardLinkPick = null; // { from: lapp, dir: "pred" | "succ" } medan man väljer den andra lappen
+const noteMembersOf = it => (it && it.members) || (it ? [it] : []);
+/* Lappen (sammanslagen aktivitet eller ensamt objekt) för ett objekt-id. */
+function noteGroupForId(id) {
+  const it = items.find(x => x.id === id);
+  if (!it) return null;
+  const members = it.activityKey ? items.filter(x => x.activityKey === it.activityKey) : [it];
+  return { key: it.activityKey && members.length > 1 ? "a:" + it.activityKey : "i:" + it.id, label: itemLabel(it) + (members.length > 1 ? ` (${members.length} objekt)` : ""), ids: members.map(m => m.id) };
+}
+function groupsOfIds(ids) {
+  const out = new Map();
+  ids.forEach(id => { const g = noteGroupForId(id); if (g && !out.has(g.key)) out.set(g.key, g); });
+  return [...out.values()];
+}
+function notePredGroups(it) {
+  const own = new Set(noteMembersOf(it).map(m => m.id));
+  return groupsOfIds(noteMembersOf(it).flatMap(m => m.dependsOn || []).filter(id => !own.has(id)));
+}
+function noteSuccGroups(it) {
+  const own = new Set(noteMembersOf(it).map(m => m.id));
+  return groupsOfIds(items.filter(x => !own.has(x.id) && (x.dependsOn || []).some(id => own.has(id))).map(x => x.id));
+}
+/* Alla objekt som ids väntar på, direkt eller indirekt. */
+function predecessorsDeep(ids) {
+  const byId = itemsByIdAll(), seen = new Set(), stack = [...ids];
+  while (stack.length) {
+    const it = byId.get(stack.pop());
+    (it && it.dependsOn || []).forEach(id => { if (!seen.has(id)) { seen.add(id); stack.push(id); } });
+  }
+  return seen;
+}
+/* succIds ska vänta på predIds (add) eller inte längre (ta bort). */
+async function setNoteDependency(succIds, predIds, add) {
+  if (!ganttEditable) { alert("Slå på Redigerbar för att ändra beroenden."); return false; }
+  const byId = itemsByIdAll(), succ = succIds.map(id => byId.get(id)).filter(Boolean), pred = predIds.map(id => byId.get(id)).filter(Boolean);
+  if (!succ.length || !pred.length) return false;
+  const sName = itemLabel(succ[0]), pName = itemLabel(pred[0]);
+  if (add) {
+    if (succIds.some(id => predIds.includes(id))) { alert("En aktivitet kan inte vänta på sig själv."); return false; }
+    const up = predecessorsDeep(predIds);
+    if (succIds.some(id => up.has(id))) { alert(`Det går inte: "${pName}" väntar redan (direkt eller via andra) på "${sName}".`); return false; }
+  }
+  const plan = emptyPlan();
+  succ.forEach(m => {
+    const cur = new Set(m.dependsOn || []);
+    predIds.forEach(id => (add ? cur.add(id) : cur.delete(id)));
+    if (cur.size !== (m.dependsOn || []).length || [...cur].some(id => !(m.dependsOn || []).includes(id))) plan.deps.set(m.id, [...cur]);
+  });
+  if (!plan.deps.size) { setScheduleStatus(add ? `"${sName}" väntar redan på "${pName}".` : "Inget att ta bort."); return false; }
+  if (add) {
+    // Startar den innan föregångaren är klar? Erbjud att flytta den (och det som följer den).
+    const predEnd = pred.filter(p => p.status !== "klar").map(p => p.endDate).filter(Boolean).sort().pop();
+    const succStart = succ.map(m => m.startDate).filter(Boolean).sort()[0];
+    if (predEnd && succStart && predEnd >= succStart && await dashConfirm(`"${sName}" startar ${succStart}, innan "${pName}" är klar (${predEnd}).\n\nFlytta "${sName}" så att den startar dagen efter? (Det som väntar på den flyttas med.)`)) {
+      const ids = new Set(succIds);
+      planShift(ids, daysBetweenIso(succStart, addDaysIso(predEnd, 1)), plan);
+      pushDependents(ids, plan);
+    }
+  }
+  return applySchedulePlan(plan, add ? `Beroende: ${sName} väntar på ${pName}` : `Tog bort beroende: ${sName} väntar på ${pName}`);
+}
+/* Fast glapp (dagar) på kopplingen predIds -> succIds; undefined tar bort glappet. Med glapp flyttas
+   efterföljaren direkt så att den startar föregångarens slut + 1 + glapp (och det som följer den med). */
+async function setNoteLag(succIds, predIds, lag) {
+  if (!ganttEditable) { modelToast("Slå på Redigerbar för att ändra glapp"); return false; }
+  const byId = itemsByIdAll(), preds = predIds.map(id => byId.get(String(id))).filter(Boolean);
+  const succ = succIds.map(id => byId.get(String(id))).filter(Boolean);
+  if (!succ.length || !preds.length) return false;
+  const plan = emptyPlan();
+  succ.forEach(m => {
+    const next = { ...(m.depLags || {}) };
+    preds.forEach(p => { if (!(m.dependsOn || []).map(String).includes(String(p.id))) return; if (lag === undefined) delete next[String(p.id)]; else next[String(p.id)] = lag; });
+    plan.lags.set(m.id, next);
+  });
+  const predEnd = preds.map(p => p.endDate).filter(Boolean).sort().pop();
+  const succStart = succ.map(m => m.startDate).filter(Boolean).sort()[0];
+  if (lag !== undefined && predEnd && succStart) {
+    const shift = daysBetweenIso(succStart, addDaysIso(predEnd, 1 + lag));
+    if (shift) { const ids = new Set(succ.map(m => m.id)); planShift(ids, shift, plan); pushDependents(ids, plan); }
+  }
+  const sName = itemLabel(succ[0]), pName = itemLabel(preds[0]);
+  return applySchedulePlan(plan, lag === undefined ? `Tog bort glappet: ${sName} efter ${pName}` : `Glapp ${lagLabel(lag)}: ${sName} efter ${pName}`);
+}
+function boardLinkStop() {
+  boardLinkPick = null;
+  document.getElementById("ganttChart")?.classList.remove("board-linking");
+  document.removeEventListener("keydown", boardLinkKey, true);
+  updateGanttRangeStatus(document.getElementById("ganttRangeStatus"));
+}
+function boardLinkKey(e) { if (e.key === "Escape") { e.preventDefault(); boardLinkStop(); } }
+function boardLinkStart(from, dir) {
+  boardLinkPick = { from, dir };
+  document.getElementById("ganttChart")?.classList.add("board-linking");
+  document.addEventListener("keydown", boardLinkKey, true);
+  const el = document.getElementById("ganttRangeStatus");
+  if (el) { clearTimeout(scheduleStatusTimer); el.innerText = dir === "pred" ? `🔗 Klicka på lappen som "${itemLabel(from)}" väntar på (Esc avbryter)` : `🔗 Klicka på lappen som ska vänta på "${itemLabel(from)}" (Esc avbryter)`; }
+}
+async function boardLinkPicked(target) {
+  const p = boardLinkPick;
+  boardLinkStop();
+  if (!p || !target) return;
+  const a = noteMembersOf(p.from).map(m => m.id), b = noteMembersOf(target).map(m => m.id);
+  await setNoteDependency(p.dir === "pred" ? a : b, p.dir === "pred" ? b : a, true);
+}
+/* Högerklicksmenyn på en lapp. */
+function openBoardDepMenu(evt, it, byNoteId) {
+  if (!it) return;
+  closeBoardDepMenu();
+  const preds = notePredGroups(it), succs = noteSuccGroups(it), ed = ganttEditable;
+  const ownIds = noteMembersOf(it).map(m => String(m.id)), byIdM = itemsByIdAll();
+  const lagFor = (g, kind) => {
+    const [succIds, predIds] = kind === "pred" ? [ownIds, g.ids] : [g.ids, ownIds];
+    return succIds.map(id => predIds.map(pid => lagOf(byIdM.get(String(id)), pid)).find(v => v !== undefined)).find(v => v !== undefined);
+  };
+  const row = (g, kind) => { const l = lagFor(g, kind); return `<div class="bdm-row"><span class="bdm-name" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>`
+    + (ed ? `<input type="number" step="1" class="bdm-lag" data-kind="${kind}" data-key="${escapeHtml(g.key)}" value="${l === undefined ? "" : l}" placeholder="glapp" title="Fast glapp i dagar (+ väntar, − överlappar). Tomt = inget fast glapp. Enter sparar." />`
+      : (l !== undefined ? `<span class="bdm-lag-ro">${escapeHtml(lagLabel(l))}</span>` : ""))
+    + (ed ? `<button type="button" class="bdm-x" data-kind="${kind}" data-key="${escapeHtml(g.key)}" title="Ta bort beroendet">✕</button>` : "") + `</div>`; };
+  const pop = document.createElement("div");
+  pop.className = "board-pop board-dep-menu";
+  pop.setAttribute("role", "menu");
+  pop.innerHTML = `
+    <div class="board-pop-title">🔗 ${escapeHtml(itemLabel(it))}</div>
+    <div class="bdm-sec">Väntar på</div>${preds.map(g => row(g, "pred")).join("") || `<div class="bdm-none">Inget</div>`}
+    <div class="bdm-sec">Följs av</div>${succs.map(g => row(g, "succ")).join("") || `<div class="bdm-none">Inget</div>`}
+    <div class="bdm-acts">
+      <button type="button" data-edit="1"${ed ? "" : " disabled"}>✎ Redigera… <small>eller dubbelklicka</small></button>
+      <button type="button" data-add="pred"${ed ? "" : " disabled"}>＋ Väntar på… <small>klicka på en lapp</small></button>
+      <button type="button" data-add="succ"${ed ? "" : " disabled"}>＋ Följs av… <small>klicka på en lapp</small></button>
+      <button type="button" data-couple="1"${ed ? "" : " disabled"}>🧊 Koppla i 3D-modellen… <small>${(() => { const c = noteMembersOf(it).filter(m => m.modelId).length; return c ? `${c} kopplade` : "inte kopplad än"; })()}</small></button>
+      <button type="button" data-new-after="1"${ed ? "" : " disabled"}>＋ Ny aktivitet efter den här</button>
+      <button type="button" data-copy="1"${ed ? "" : " disabled"} title="Ny aktivitet med samma namn, område, entreprenör, datum och egenskaper – utan 3D-koppling och beroenden">⧉ Kopiera aktiviteten… <small>granskas först</small></button>
+      <button type="button" data-delete="1" class="bdm-danger"${ed ? "" : " disabled"}>🗑 Ta bort lappen</button>
+    </div>
+    ${ed ? "" : `<div class="hint bdm-hint">Slå på <b>Redigerbar</b> för att ändra beroenden.</div>`}`;
+  overlayHost().appendChild(pop);
+  const r = pop.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(window.innerWidth - r.width - 8, evt.clientX))}px`;
+  pop.style.top = `${Math.max(8, Math.min(window.innerHeight - r.height - 8, evt.clientY))}px`;
+  // Markera de lappar som hör ihop med den här.
+  const mark = (groups, cls) => groups.forEach(g => document.querySelectorAll("#ganttChart .pnote").forEach(n => { const o = byNoteId.get(n.dataset.itemId); if (o && noteMembersOf(o).some(m => g.ids.includes(m.id))) n.classList.add(cls); }));
+  mark(preds, "pnote-dep-pred"); mark(succs, "pnote-dep-succ");
+  const self = [...document.querySelectorAll("#ganttChart .pnote")].find(n => n.dataset.itemId === String(it.id));
+  if (self) self.classList.add("pnote-dep-self");
+  pop.querySelectorAll(".bdm-x").forEach(b => b.onclick = async () => {
+    const g = (b.dataset.kind === "pred" ? preds : succs).find(x => x.key === b.dataset.key);
+    closeBoardDepMenu();
+    if (!g) return;
+    const own = noteMembersOf(it).map(m => m.id);
+    await (b.dataset.kind === "pred" ? setNoteDependency(own, g.ids, false) : setNoteDependency(g.ids, own, false));
+  });
+  pop.querySelectorAll(".bdm-lag").forEach(inp => inp.addEventListener("change", async () => {
+    const g = (inp.dataset.kind === "pred" ? preds : succs).find(x => x.key === inp.dataset.key);
+    if (!g) return;
+    const raw = inp.value.trim(), lag = raw === "" ? undefined : Math.round(Number(raw));
+    if (raw !== "" && !Number.isFinite(lag)) return;
+    if (lag === lagFor(g, inp.dataset.kind)) return;
+    closeBoardDepMenu();
+    await (inp.dataset.kind === "pred" ? setNoteLag(ownIds, g.ids, lag) : setNoteLag(g.ids, ownIds, lag));
+  }));
+  pop.querySelectorAll("[data-add]").forEach(b => b.onclick = () => { closeBoardDepMenu(); boardLinkStart(it, b.dataset.add); });
+  const eb = pop.querySelector("[data-edit]");
+  if (eb) eb.onclick = () => { closeBoardDepMenu(); openEditActivityDialog(it); };
+  const cb3 = pop.querySelector("[data-couple]");
+  if (cb3) cb3.onclick = () => { closeBoardDepMenu(); startCoupleMode(it); };
+  const nb = pop.querySelector("[data-new-after]");
+  if (nb) nb.onclick = () => { closeBoardDepMenu(); openNewActivityDialog(it); };
+  const cpb = pop.querySelector("[data-copy]");
+  if (cpb) cpb.onclick = () => { closeBoardDepMenu(); openActivityDialog({ copy: it }); };
+  const db = pop.querySelector("[data-delete]");
+  if (db) db.onclick = () => { closeBoardDepMenu(); deleteActivity(it); };
+  setTimeout(() => {
+    document.addEventListener("pointerdown", boardDepOutside, true);
+    document.addEventListener("keydown", boardDepKey, true);
+  });
+}
+function boardDepOutside(e) { const m = document.querySelector(".board-dep-menu"); if (m && !m.contains(e.target)) closeBoardDepMenu(); }
+function boardDepKey(e) { if (e.key === "Escape") closeBoardDepMenu(); }
+function closeBoardDepMenu() {
+  document.querySelector(".board-dep-menu")?.remove();
+  document.querySelectorAll(".pnote-dep-pred, .pnote-dep-succ, .pnote-dep-self").forEach(n => n.classList.remove("pnote-dep-pred", "pnote-dep-succ", "pnote-dep-self"));
+  document.removeEventListener("pointerdown", boardDepOutside, true);
+  document.removeEventListener("keydown", boardDepKey, true);
+}
+
+/* Textbredd (px) för en lapps namn – samma typsnitt som .pnote-title. */
+let boardTextCtx = null;
+function boardTextWidth(t, font = "700 11px") {
+  if (!boardTextCtx) boardTextCtx = document.createElement("canvas").getContext("2d");
+  boardTextCtx.font = `${font} ${getComputedStyle(document.body).fontFamily || "sans-serif"}`;
+  return boardTextCtx.measureText(String(t)).width;
+}
+/* Lappens egentliga högerkant (en förlängd lapp är bredare än aktiviteten). */
+const noteRealRight = (el, rect) => { const w = parseFloat(el.style.getPropertyValue("--real")); return w ? rect.left + w : rect.right; };
+
+function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
+  const el = target || document.getElementById("ganttChart");
+  const notesEl = target ? null : document.getElementById("ganttNotes");
+  const withDates = list.filter(it => it.startDate && it.endDate);
+  if (withDates.length === 0) {
+    el.className = "gantt-chart gantt-board-chart";
+    el.innerHTML = `<div class="hint">${isBackendConfigured() ? "Inga objekt med både start- och slutdatum att visa ännu." : emptyMessage()}</div>`;
+    if (notesEl) notesEl.innerHTML = "";
+    return;
+  }
+  let domainStart, domainEnd;
+  if (ganttRangeStart && ganttRangeEnd) {
+    domainStart = ganttRangeStart; domainEnd = ganttRangeEnd;
+  } else {
+    const all = withDates.flatMap(it => [it.startDate, it.endDate]).sort();
+    domainStart = all[0]; domainEnd = all[all.length - 1];
+  }
+  const w0 = startOfWeekUTC(parseDate(domainStart));
+  const wEnd = startOfWeekUTC(parseDate(domainEnd));
+  const nWeeks = Math.max(1, Math.round((wEnd - w0) / (7 * 86400000)) + 1);
+  const colOf = iso => Math.round((startOfWeekUTC(parseDate(iso)) - w0) / (7 * 86400000));
+  const dayOf = iso => Math.round((parseDate(iso) - w0) / 86400000);
+  const nDays = nWeeks * 7;
+  const todayCol = Math.round((startOfWeekUTC(todayUTC()) - w0) / (7 * 86400000));
+
+  const visible = mergeActivityGroups(withDates).filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
+  const skippedNoDate = list.length - withDates.length;
+  const skippedRange = withDates.filter(it => !(it.startDate <= domainEnd && it.endDate >= domainStart)).length;
+  const depById = itemsByIdAll();
+  const tooltips = new LazyTipMap();
+  const byNoteId = new Map(visible.map(it => [String(it.id), it]));
+  const predSet = new Set(items.flatMap(x => x.dependsOn || []));
+
+  const weeksHtml = Array.from({ length: nWeeks }, (_, i) => {
+    const ws = new Date(w0); ws.setUTCDate(ws.getUTCDate() + i * 7);
+    const we = new Date(ws); we.setUTCDate(we.getUTCDate() + 6);
+    return `<div class="board-week${i === todayCol ? " board-week-today" : ""}"><b>v.${isoWeekNumber(ws)} - ${isoWeekYear(ws)}</b><span>${escapeHtml(shortDateSv(ws))} – ${escapeHtml(shortDateSv(we))}</span></div>`;
+  }).join("");
+
+  const colorKind = ganttColorBy;
+  const noneFor = { area: NO_AREA_LABEL, contractor: NO_CONTRACTOR_LABEL, activity: NO_ACTIVITY_LABEL };
+  const noteHtml = it => {
+    // Lappen är exakt så lång som aktiviteten pågår (en kolumn per dag).
+    const c0 = Math.max(0, dayOf(it.startDate));
+    const c1 = Math.min(nDays - 1, dayOf(it.endDate));
+    const shortNote = (c1 - c0 + 1) <= 2;
+    const c = softColor(colorKind, it[colorKind] || noneFor[colorKind]);
+    const st = STATUS_COLORS[it.status] || STATUS_COLORS.planerad;
+    const name = itemLabel(it);
+    const subParts = [];
+    if (it.activity && ganttGroupBy !== "activity" && !name.includes(it.activity)) subParts.push(it.activity);
+    if (it.area && ganttGroupBy !== "area" && !name.includes(it.area)) subParts.push(it.area);
+    if (it.contractor && ganttGroupBy !== "contractor") subParts.push(it.contractor);
+    if (it.members) subParts.push(`⛓ ${it.members.length} objekt`);
+    const prog = Math.max(0, Math.min(100, Number(it.progress) || 0));
+    // Bemanningen på lappen (Victor 2026-10-08: "jättelätt att förstå hur många arbetare och timmar").
+    const resTxt = resSummaryText(it), resTag = resTxt ? `<span class="pnote-res" title="${escapeHtml(resDetailText(it))}">${escapeHtml(resTxt)}</span>` : "";
+    const key = `b${tooltips.size}`;
+    tooltips.set(key, () => ganttTooltipHtmlForItem(it, depById));
+    // Liten, stabil lutning per lapp - som riktiga post-it-lappar på en vägg.
+    let h = 0; for (const ch of String(it.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const tilt = ((h % 7) - 3) * 0.25;
+    const late = it.status === "forsenad", blocked = itemHasOpenBlocker(it);
+    // Utskriften delar tavlan i perioder: en lapp som fortsätter före/efter perioden märks.
+    const cont = target ? `${dayOf(it.startDate) < 0 ? " pnote-cont-l" : ""}${dayOf(it.endDate) > nDays - 1 ? " pnote-cont-r" : ""}` : "";
+    const depMark = (it.members || [it]).some(m => (m.dependsOn || []).length) || (it.members || [it]).some(m => predSet.has(m.id)) ? `<span class="pnote-dep" title="Har beroenden – högerklicka för att se dem">🔗</span>` : "";
+    // För kort lapp (Victors önskemål 2026-10-06: "ingen aning om vad akt. handlar om"): namnet
+    // skrivs ut till höger om lappen på en ljus förlängning, och tavlan reserverar platsen så att
+    // inget annat hamnar där. Den färgade delen är fortfarande exakt så lång som aktiviteten.
+    // Baseline: en grå linje under lappen där aktiviteten låg i baseline, och hur mycket den flyttats.
+    const dayPx = colPx / 7;
+    const bShift = ganttShowBaseline ? baselineShiftDays(it) : null;
+    let blHtml = "";
+    if (bShift !== null) {
+      // Linjen där aktiviteten låg i baseline, och en streckad länk från den till lappen så att det
+      // syns vilken lapp den hör till (Victor 2026-10-06: "lättare att se vart den är kopplad").
+      const r0 = dayOf(blOf(it)[0]), r1 = dayOf(blOf(it)[1]);
+      const b0 = Math.max(0, r0), b1 = Math.min(nDays - 1, r1);
+      const px = d => (d - c0) * dayPx;
+      if (b1 >= b0 && !ganttBaselineDaysOnly) blHtml = `<span class="pnote-bl${r0 < 0 ? " cut-l" : ""}${r1 > nDays - 1 ? " cut-r" : ""}" style="left:${px(b0)}px; width:${(b1 - b0 + 1) * dayPx}px;" data-gantt-tip="${key}"></span>`;
+      const noteEnd = c1 + 1;
+      if (ganttBaselineDaysOnly) { /* bara etiketten nedan */ }
+      else if (r1 < c0) { const from = Math.max(0, r1 + 1); blHtml += `<span class="pnote-bl-link${r1 < 0 ? " off-l" : ""}" style="left:${px(from)}px; width:${(c0 - from) * dayPx}px;"></span>`; }
+      else if (r0 > c1) { const to = Math.min(nDays, r0); blHtml += `<span class="pnote-bl-link${r0 > nDays - 1 ? " off-r" : ""}" style="left:${px(noteEnd)}px; width:${(to - noteEnd) * dayPx}px;"></span>`; }
+      if (bShift) blHtml += `<span class="pnote-bl-d${bShift > 0 ? " later" : ""}" title="Mot baseline${baselineLabel() ? ` (${escapeHtml(baselineLabel())})` : ""}">${shiftText(bShift)}</span>`;
+    }
+    // Jämförelsebaselinen: en tunnare linje under den första (utan länk).
+    const b2 = ganttShowBaseline && ganttBaseline2Id && !ganttBaselineDaysOnly ? blOf(it, ganttBaseline2Id) : null;
+    if (b2) {
+      const r0 = dayOf(b2[0]), r1 = dayOf(b2[1]), b0 = Math.max(0, r0), b1 = Math.min(nDays - 1, r1);
+      if (b1 >= b0) blHtml += `<span class="pnote-bl pnote-bl2" style="left:${(b0 - c0) * dayPx}px; width:${(b1 - b0 + 1) * dayPx}px;" data-gantt-tip="${key}"></span>`;
+    }
+    let gEnd = c1, ext = false, realPx = (c1 - c0 + 1) * colPx / 7;
+    if (ganttBoardOneLine && !cont.includes("cont-r")) {
+      // Namnet och aktiviteten (det som talar om vad lappen handlar om); entreprenör och datum står i tipsrutan.
+      const need = 9 + 8 + 7 + boardTextWidth((blocked ? "⛔ " : "") + name) + 22 + (subParts.length ? 7 + boardTextWidth(subParts.join(" · "), "400 10px") : 0) + (bShift ? 40 : 0) + (resTxt ? 20 + boardTextWidth(resTxt, "700 9.5px") : 0);
+      if (realPx < need) { ext = true; gEnd = Math.min(nDays - 1, c0 + Math.ceil(need / (colPx / 7)) - 1); }
+    } else if (!ganttBoardOneLine && !cont.includes("cont-r") && realPx < 130) {
+      // Större lappar (Victor 2026-10-08): samma ljusa förlängning när lappen är för smal för att läsas –
+      // namnet på högst två rader, status och datum.
+      const need = Math.min(300, Math.max(170, 40 + boardTextWidth((blocked ? "⛔ " : "") + name, "700 11px") / 2));
+      ext = true; gEnd = Math.min(nDays - 1, c0 + Math.ceil(need / dayPx) - 1);
+    }
+    const cls = `pnote${ganttBoardOneLine ? " pnote-one" : ""}${ext ? " pnote-ext" : ""}${cont}${shortNote && !ext ? " pnote-short" : ""}${late ? " pnote-late" : ""}${it.status === "klar" ? " pnote-done" : ""}${ganttEditable ? " pnote-editable" : ""}${blHtml ? " pnote-hasbl" : ""}`;
+    const attrs = `style="grid-column:${c0 + 1} / ${gEnd + 2};${ext ? ` --real:${realPx}px;` : ""} --bg:${c.bg}; --bd:${c.bd}; --ink:${c.ink}; --st:${st}; --tilt:${ganttBoardOneLine ? 0 : tilt}deg;"
+        data-gantt-tip="${key}" data-item-id="${escapeHtml(String(it.id))}" tabindex="0"`;
+    // En dag (start = slut) är en heldag: datumet en gång och "1 dag" (Victor 2026-10-08).
+    const dates = it.startDate === it.endDate ? `${escapeHtml(weekdayDateSv(it.startDate))} · <b>1 dag</b>` : `${escapeHtml(weekdayDateSv(it.startDate))} – ${escapeHtml(weekdayDateSv(it.endDate))}`;
+    // En rad: statusprick · namn · aktivitet/entreprenör · datum i grått, framdriften i underkanten.
+    const ownTag = (it.origin === "manuell" ? `<span class="pnote-own" title="Egen aktivitet – finns bara i 4D, inte i Powerproject">Egen</span>` : "")
+      + (ganttEditable && !target ? `<button type="button" class="pnote-trash" title="Ta bort lappen" aria-label="Ta bort lappen">🗑</button>` : "");
+    if (ganttBoardOneLine) return `<div class="${cls}" ${attrs}>
+        <i class="pnote-dot" style="background:${st}"></i><span class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</span>${ownTag}${depMark}
+        ${subParts.length ? `<span class="pnote-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
+        ${resTag}<span class="pnote-dates">${dates}</span>${blHtml}
+        <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span>${prog > 0 ? `<b class="pnote-pct" style="left:clamp(14px, ${prog}%, calc(100% - 18px))">${prog} %</b>` : ""}</div>
+      </div>`;
+    return `<div class="${cls}" ${attrs}>
+        <div class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}${ownTag}${depMark}</div>
+        ${subParts.length ? `<div class="pnote-sub">${escapeHtml(subParts.join(" · "))}</div>` : ""}
+        <div class="pnote-meta"><span class="pnote-status"><i style="background:${st}"></i>${escapeHtml(STATUS_LABELS[it.status] || it.status || "")}</span>${resTag}<span>${dates}</span></div>${blHtml}
+        <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span>${prog > 0 ? `<b class="pnote-pct" style="left:clamp(14px, ${prog}%, calc(100% - 18px))">${prog} %</b>` : ""}</div>
+      </div>`;
+  };
+
+  const sorted = visible.slice().sort((a, b) => (a.startDate || "").localeCompare(b.startDate || "") || itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
+  const lanes = new Map();
+  sorted.forEach(it => {
+    const k = ganttGroupBy ? ganttGroupKeyFor(it) : "Alla aktiviteter";
+    if (!lanes.has(k)) lanes.set(k, []);
+    lanes.get(k).push(it);
+  });
+  const laneKeys = [...lanes.keys()].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+  // Kolumnbredd: minst BOARD_COL_PX, men fyll panelens bredd vid korta perioder.
+  const avail = (el.clientWidth || 0) - BOARD_LANE_PX - 2;
+  const colPx = Math.max(minColPx, Math.floor(avail / nWeeks) || 0);
+  const todayOn = todayCol >= 0 && todayCol < nWeeks;
+  const todayDay = dayOf(ganttMarkerIso());
+  const gridBg = `--cols:${nWeeks}; --col:${colPx}px; --days:${nDays}; --day:${colPx / 7}px; --today-left:${todayOn ? todayDay * colPx / 7 : -9999}px;`;
+  const lanesHtml = laneKeys.map(k => {
+    const collapseKey = `${ganttGroupBy}:${k}`;
+    const collapsed = ganttGroupBy && ganttCollapsedGroups.has(collapseKey);
+    const lc = ganttGroupBy ? softColor(ganttGroupBy, k) : SOFT_PALETTE[11];
+    const laneItems = lanes.get(k);
+    return `<div class="board-lane${collapsed ? " collapsed" : ""}">
+        <div class="board-lane-head" style="--bg:${lc.bg}; --bd:${lc.bd}; --ink:${lc.ink};"${ganttGroupBy ? ` data-action="toggle-board-lane" data-group-key="${escapeHtml(collapseKey)}" title="Klicka för att fälla ihop/ut – högerklicka för att dölja"` : ""}>
+          <span class="board-lane-name">${ganttGroupBy && !target ? (collapsed ? "▸ " : "▾ ") : ""}${escapeHtml(k)}</span>
+          <span class="board-lane-count">${laneItems.length} st</span>
+        </div>
+        <div class="board-grid" style="${gridBg}">${collapsed ? "" : laneItems.map(noteHtml).join("")}</div>
+      </div>`;
+  }).join("");
+
+  el.className = `gantt-chart gantt-board-chart${boardLinkPick && !target ? " board-linking" : ""}${ganttBoardFullText ? " board-fulltext" : ""}`;
+  el.innerHTML = `
+    <div class="board" style="width:${BOARD_LANE_PX + nWeeks * colPx}px">
+      <div class="board-head">
+        <div class="board-corner">${ganttGroupBy ? { area: "Område", contractor: "Entreprenör", activity: "Aktivitet" }[ganttGroupBy] : ""}</div>
+        <div class="board-weeks" style="${gridBg}">${weeksHtml}</div>
+      </div>
+      ${lanesHtml}
+    </div>`;
+
+  if (notesEl) {
+    const notes = [];
+    if (skippedNoDate > 0) notes.push(`${skippedNoDate} objekt utan både start- och slutdatum visas inte.`);
+    if (skippedRange > 0) notes.push(`${skippedRange} objekt utanför det valda datumintervallet visas inte.`);
+    notesEl.innerText = notes.join(" ");
+  }
+
+  if (target) return;
+  renderGanttScrub(el, { kind: "board", startIso: new Date(w0).toISOString().slice(0, 10), days: nDays, left: BOARD_LANE_PX, dayPx: colPx / 7 });
+  el.querySelectorAll('[data-action="toggle-board-lane"]').forEach(h => {
+    h.oncontextmenu = e => { e.preventDefault(); openGanttGroupMenu(e, h.dataset.groupKey); };
+    h.onclick = () => {
+      const k = h.dataset.groupKey;
+      if (ganttCollapsedGroups.has(k)) ganttCollapsedGroups.delete(k); else ganttCollapsedGroups.add(k);
+      saveGanttPrefs();
+      renderGanttBoard(list);
+    };
+  });
+  bindNearHighlight(el, ".pnote", n => byNoteId.get(n.dataset.itemId), [...byNoteId.values()], "pnote");
+  bindNotePeek(el);
+  el._arrowMap = new Map();
+  el.querySelectorAll(".pnote[data-item-id]").forEach(n => { const e2 = byNoteId.get(n.dataset.itemId); (e2 && e2.members ? e2.members : [e2 || { id: n.dataset.itemId }]).forEach(m => el._arrowMap.set(String(m.id), n)); });
+  requestAnimationFrame(() => drawGanttArrows(el));
+  el.querySelectorAll(".pnote").forEach(n => {
+    n.addEventListener("focus", () => { if (!boardLinkPick) pinGanttTooltip(n, tooltips.get(n.dataset.ganttTip)); });
+    n.addEventListener("click", () => {
+      if (n._justDragged) { n._justDragged = false; return; }
+      if (boardLinkPick) { boardLinkPicked(byNoteId.get(n.dataset.itemId)); return; }
+      pinGanttTooltip(n, tooltips.get(n.dataset.ganttTip));
+      selectActivityInModel(byNoteId.get(n.dataset.itemId));
+    });
+    n.addEventListener("contextmenu", e => { e.preventDefault(); hideGanttTooltip(); openBoardDepMenu(e, byNoteId.get(n.dataset.itemId), byNoteId); });
+    n.addEventListener("keydown", e => { if ((e.key === "Delete" || e.key === "Backspace") && ganttEditable && e.target === n) { e.preventDefault(); deleteActivity(byNoteId.get(n.dataset.itemId)); } });
+    const trash = n.querySelector(".pnote-trash");
+    if (trash) {
+      trash.addEventListener("pointerdown", e => e.stopPropagation());
+      trash.addEventListener("click", e => { e.stopPropagation(); deleteActivity(byNoteId.get(n.dataset.itemId)); });
+    }
+    n.addEventListener("dblclick", e => { e.preventDefault(); openEditActivityDialog(byNoteId.get(n.dataset.itemId)); });
+    n.addEventListener("pointerdown", e => onBoardNotePointerDown(e, n, byNoteId.get(n.dataset.itemId), colPx));
+    n.addEventListener("pointerdown", () => { el.querySelectorAll(".near-tag").forEach(x => x.remove()); });
+    if (ganttEditable) n.addEventListener("mousemove", e => {
+      const r = n.getBoundingClientRect();
+      const rr = noteRealRight(n, r);
+      n.style.cursor = (e.clientX <= r.left + 8 || (e.clientX >= rr - 8 && e.clientX <= rr + 2)) ? "ew-resize" : "grab";
+    });
+  });
+
+  // Första gången (och när perioden är "Allt"): börja vid förra veckan.
+  if (!ganttBoardScrolled && todayCol > 0) {
+    el.scrollLeft = Math.max(0, (todayCol - 1) * colPx);
+    ganttBoardScrolled = true;
+  }
+}
+
+const searchNorm = t => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function ganttSearchMatch(it) {
+  const hay = searchNorm([it.area, it.activity, it.objectName, it.contractor].join(" "));
+  return searchNorm(ganttSearch).split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+}
+
+/* ----- Förslagslista (Victor 2026-10-07: "snyggare dropdown … som hämtar info från övriga akt.")
+   Kopplas på ett textfält: listan filtreras medan man skriver (alla ord ska finnas, utan hänsyn till
+   å/ä/ö-accenter), pilar + Enter väljer, Esc stänger listan. Det man skriver får ändå vara ett nytt
+   värde. source() -> [{ value, label, sub?, count? }]. onPick(o) tar över valet (t.ex. Väntar på). */
+const naResOpen = () => { try { return localStorage.getItem("4ddash-res-open") !== "0"; } catch (e) { return true; } };
+function attachCombo(input, source, { onPick, empty = "Inga träffar – det du skriver blir ett nytt värde", max = 80 } = {}) {
+  const host = input.closest(".board-pop") || document.body;
+  const list = document.createElement("div");
+  list.className = "cb-list";
+  list.hidden = true;
+  list.setAttribute("role", "listbox");
+  host.appendChild(list);
+  input.setAttribute("autocomplete", "off");
+  input.classList.add("cb-input");
+  let shown = [], idx = -1;
+  const mark = (txt, words) => {
+    let h = escapeHtml(txt);
+    words.forEach(w => { if (w.length < 2) return; const i = h.toLowerCase().indexOf(escapeHtml(w).toLowerCase()); if (i >= 0) h = `${h.slice(0, i)}<mark>${h.slice(i, i + escapeHtml(w).length)}</mark>${h.slice(i + escapeHtml(w).length)}`; });
+    return h;
+  };
+  const place = () => {
+    const hr = host.getBoundingClientRect(), r = input.getBoundingClientRect();
+    list.style.left = `${r.left - hr.left - host.clientLeft}px`;
+    list.style.top = `${r.bottom - hr.top - host.clientTop + 3}px`;
+    list.style.width = `${Math.max(r.width, 220)}px`;
+  };
+  const setIdx = i => {
+    idx = i;
+    list.querySelectorAll(".cb-opt").forEach((o, k) => o.classList.toggle("on", k === idx));
+    const on = list.querySelector(".cb-opt.on");
+    if (on) on.scrollIntoView({ block: "nearest" });
+  };
+  const render = () => {
+    const raw = input.value.trim(), words = raw.split(/\s+/).filter(Boolean), q = words.map(searchNorm);
+    const all = source();
+    const exact = all.length === 1 || all.some(o => o.value === raw);
+    shown = all.filter(o => { const hay = searchNorm(`${o.label} ${o.sub || ""}`); return q.every(w => hay.includes(w)); });
+    // Står exakt ett befintligt värde i fältet: visa alla förslag, så man ser vad man kan byta till.
+    if (!onPick && raw && shown.length === 1 && shown[0].value === raw && exact) shown = all;
+    if (!shown.length && !onPick && all.length) { hide(); return; } // fritt nytt värde – ingen lista i vägen
+    const more = shown.length - max;
+    shown = shown.slice(0, max);
+    idx = -1;
+    list.innerHTML = shown.length
+      ? shown.map((o, i) => `<div class="cb-opt" role="option" data-i="${i}"><span class="cb-l">${mark(o.label, words)}</span>${o.sub ? `<span class="cb-s">${mark(o.sub, words)}</span>` : ""}${o.count ? `<span class="cb-n">${escapeHtml(String(o.count))}</span>` : ""}</div>`).join("") + (more > 0 ? `<div class="cb-more">+ ${more} till – skriv för att söka</div>` : "")
+      : `<div class="cb-empty">${escapeHtml(all.length ? empty : "Inga förslag än")}</div>`;
+    place();
+    host.querySelectorAll(".cb-list").forEach(l => { if (l !== list) l.hidden = true; });
+    list.hidden = false;
+  };
+  const hide = () => { list.hidden = true; idx = -1; };
+  const pick = i => {
+    const o = shown[i];
+    if (!o) return;
+    hide();
+    if (onPick) onPick(o);
+    else { input.value = o.value; input.dispatchEvent(new Event("change", { bubbles: true })); }
+  };
+  input.addEventListener("focus", render);
+  input.addEventListener("click", () => { if (list.hidden) render(); });
+  input.addEventListener("input", render);
+  input.addEventListener("blur", () => setTimeout(hide, 120));
+  input.addEventListener("keydown", e => {
+    if (e.key === "ArrowDown") { e.preventDefault(); if (list.hidden) render(); setIdx(Math.min(shown.length - 1, idx + 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setIdx(Math.max(0, idx - 1)); }
+    else if (e.key === "Enter" && !list.hidden && (idx >= 0 || (onPick && shown.length))) { e.preventDefault(); pick(idx >= 0 ? idx : 0); }
+    else if (e.key === "Tab") hide();
+  });
+  list.addEventListener("mousedown", e => {
+    e.preventDefault(); // behåll fokus i fältet
+    const o = e.target.closest(".cb-opt");
+    if (o) pick(Number(o.dataset.i));
+  });
+  return { hide, render, list };
+}
+
+/* ----- Ny aktivitet / redigera aktivitet (Victor 2026-10-06/07)
+   Samma fält som de importerade raderna: område, aktivitet, namn, entreprenör, start/slut, framdrift
+   och vad den väntar på – med ett valfritt glapp per koppling (+ = väntetid, − = överlapp) som sedan
+   hålls konstant när föregångaren flyttas. Ny aktivitet märks origin "manuell" – den finns bara i 4D,
+   nästa Powerproject-import rör den inte. after = aktiviteten den nya ska komma efter.
+   Dubbelklick på en lapp/stapel öppnar samma dialog i redigeringsläge (edit = aktiviteten); allt
+   sparas i en omplanering som går att ångra (Ctrl+Z). */
+function openNewActivityDialog(after) { openActivityDialog({ after }); }
+function openEditActivityDialog(it) { if (it) openActivityDialog({ edit: it }); }
+function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
+  if (!ganttEditable) {
+    modelToast(edit ? "Slå på Redigerbar för att ändra aktiviteter" : copy ? "Slå på Redigerbar för att kopiera aktiviteter" : "Slå på Redigerbar för att lägga till aktiviteter", { label: "Slå på", fn: () => { const cb = document.getElementById("ganttEditable"); if (cb) { cb.checked = true; cb.dispatchEvent(new Event("change")); } openActivityDialog({ after, edit }); } });
+    return;
+  }
+  document.querySelectorAll(".new-act-pop, .board-pop:not(.board-dep-menu)").forEach(p => p.remove());
+  hideGanttTooltip();
+  const pp = planSource === "pp";
+  const members = edit ? (edit.members || [edit]) : [];
+  const own = new Set(members.map(m => String(m.id)));
+  const imported = members.some(m => m.origin !== "manuell");
+  // Alla aktiviteter (sammanslagna) – underlag för förslagen och för Väntar på.
+  const acts = mergeActivityGroups(items.slice()).sort((a, b) => itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
+  const entryOf = a => ({ key: String(a.id), label: itemLabel(a), area: a.area || "", ids: (a.members || [a]).map(m => String(m.id)), end: a.endDate || null, start: a.startDate || null, status: a.status, src: /^s:/.test(a.activityKey || "") ? a.activityKey.slice(2) : null });
+  const entries = acts.map(entryOf);
+  const entryForId = id => entries.find(en => en.ids.includes(String(id)));
+  const counted = f => {
+    const m = new Map();
+    acts.forEach(a => { const v = (f(a) || "").trim(); if (v) m.set(v, (m.get(v) || 0) + 1); });
+    return [...m].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([v, n]) => ({ value: v, label: v, count: `${n} akt.` }));
+  };
+  // Startvärden.
+  let start0, end0, name0 = "", area0 = "", act0 = "", contr0 = "", prog0 = 0, temp0 = false, bubOff0 = false, demo0 = false, doneCol0 = "", doneOp0 = 30;
+  // Resurser: samma för alla objekt i aktiviteten – den första som har några gäller.
+  const cmem = copy ? (copy.members || [copy]) : [];
+  const res0 = edit || copy ? (((edit ? members : cmem).find(m => m.resources && m.resources.length) || {}).resources || []).map(r => ({ ...r })) : [];
+  const preds = []; // { entry, lag: "" | tal }
+  if (edit) {
+    name0 = itemLabel(edit) === "Okänt objekt" ? "" : (edit.objectName || "");
+    area0 = edit.area || ""; act0 = edit.activity || ""; contr0 = edit.contractor || "";
+    prog0 = Math.round(members.reduce((s, m) => s + (Number(m.progress) || 0), 0) / Math.max(1, members.length));
+    temp0 = members.some(m => m.temporary); bubOff0 = members.some(m => m.bubbleOff); demo0 = members.some(m => m.demolition); { const dm = members.find(m => m.doneColor || m.doneOpacity !== null); if (dm) { doneCol0 = dm.doneColor || ""; doneOp0 = dm.doneOpacity !== null ? dm.doneOpacity : 30; } }
+    start0 = edit.startDate || todayISO(); end0 = edit.endDate || start0;
+    const seen = new Set();
+    members.flatMap(m => m.dependsOn || []).map(String).filter(id => !own.has(id)).forEach(id => {
+      const en = entryForId(id);
+      if (!en || seen.has(en.key)) return;
+      seen.add(en.key);
+      const lag = members.map(m => en.ids.map(pid => lagOf(m, pid)).find(v => v !== undefined)).find(v => v !== undefined);
+      preds.push({ entry: en, lag: lag === undefined ? "" : lag });
+    });
+  } else if (copy) {
+    // Kopia: samma namn (med "(kopia)"), område, entreprenör, datum och egenskaper – men ingen koppling till 3D-objekt, inga beroenden och 0 % framdrift.
+    const nm = itemLabel(copy) === "Okänt objekt" ? "" : (copy.objectName || "");
+    name0 = nm ? `${nm} (kopia)` : ""; area0 = copy.area || ""; act0 = copy.activity || ""; contr0 = copy.contractor || "";
+    prog0 = 0; start0 = copy.startDate || todayISO(); end0 = copy.endDate || start0;
+    temp0 = cmem.some(m => m.temporary); bubOff0 = cmem.some(m => m.bubbleOff); demo0 = cmem.some(m => m.demolition);
+    { const dm = cmem.find(m => m.doneColor || m.doneOpacity !== null); if (dm) { doneCol0 = dm.doneColor || ""; doneOp0 = dm.doneOpacity !== null && dm.doneOpacity !== undefined ? dm.doneOpacity : 30; } }
+  } else {
+    area0 = after ? after.area || "" : ""; act0 = after ? after.activity || "" : ""; contr0 = after ? after.contractor || "" : "";
+    start0 = after && after.endDate ? addDaysIso(after.endDate, 1) : todayISO();
+    end0 = addDaysIso(start0, after && after.startDate && after.endDate ? Math.max(0, daysBetweenIso(after.startDate, after.endDate)) : 4);
+    if (after) { const en = entryForId(after.id); if (en) preds.push({ entry: en, lag: "" }); }
+  }
+  const initKeys = new Set(preds.map(p => p.entry.key));
+  const title = edit
+    ? `✎ Redigera aktivitet${members.length > 1 ? ` <span class="hint">(${members.length} objekt)</span>` : ""}`
+    : copy ? `⧉ Kopiera aktivitet <span class="hint">från ${escapeHtml(tipShort(itemLabel(copy), 40))}</span>`
+    : `＋ Ny aktivitet${after ? ` <span class="hint">efter ${escapeHtml(tipShort(itemLabel(after), 40))}</span>` : ""}`;
+  const pop = document.createElement("div");
+  pop.className = `board-pop new-act-pop${edit ? " edit-act-pop" : ""}`;
+  pop.innerHTML = `
+    <div class="board-pop-title">${title}</div>
+    <label>${pp ? "Namn/Aktivitet" : "Namn"} <textarea class="na-name" rows="4" placeholder="t.ex. Grovbetong för fundament linje E31-40">${escapeHtml(name0)}</textarea></label>
+    <label>Område <input type="text" class="na-area" value="${escapeHtml(area0)}" placeholder="t.ex. PRODUKTION / 744 Fläkthuset" /></label>
+    ${pp
+      ? `<div class="hint na-act-auto">Sammanfattningsrad (grupp och färg): <b class="na-act-show"></b> – sista delen av området, som i Powerproject</div>`
+      : `<label>Aktivitet <input type="text" class="na-act" value="${escapeHtml(act0)}" /></label>`}
+    <label>Entreprenör <input type="text" class="na-contr" value="${escapeHtml(contr0)}" /></label>
+    <div class="na-row"><label>Start <input type="date" class="na-start" value="${start0}" /></label><label>Slut <input type="date" class="na-end" value="${end0}" /></label><label>Framdrift <input type="number" class="na-prog" min="0" max="100" step="5" value="${prog0}" /></label></div>
+    <div class="na-dep">
+      <div class="na-dep-h">Väntar på <span class="hint">· glapp i dagar: + väntar, − överlappar · tomt = inget fast glapp</span></div>
+      <div class="na-preds"></div>
+      <input type="text" class="na-pred-search" placeholder="＋ Sök aktivitet att vänta på…" />
+      <input type="hidden" class="na-pred" />
+    </div>
+    <div class="na-dep na-follow">
+      <div class="na-dep-h">Följer aktivitet <span class="hint">· flyttar sig själv när den aktiviteten ändras – även efter ny Powerproject-import</span></div>
+      <div class="na-follow-sel"></div>
+      <input type="text" class="na-follow-search" placeholder="＋ Sök aktivitet att följa (t.ex. för en mobilkran)…" />
+    </div>
+    ${edit && members.length >= 1 ? `<details class="na-objs" open><summary>Objekt i aktiviteten <span class="hint na-objs-n">(${members.length})</span></summary><div class="na-objs-list"></div><div class="hint">✕ tar bort bara det objektet ur aktiviteten – aktiviteten och de andra objekten finns kvar. På det sista objektet tas bara 3D-kopplingen bort (aktiviteten finns kvar).</div></details><details class="na-dups hidden" open><summary>Andra rader kopplade till samma 3D-objekt <span class="hint na-dups-n"></span></summary><div class="na-dups-list"></div><div class="hint">Dessa kommer från en annan aktivitet (t.ex. en äldre import) men pekar på samma objekt – därför kan objektet verka kopplat trots att det inte syns i listan ovan. ✕ tar bort raden.</div></details>` : ""}
+    <details class="na-res"${(res0.length && naResOpen()) || temp0 || demo0 || doneCol0 ? " open" : ""}><summary>Avancerat (temporär, rivning, resurser) <span class="hint na-res-sum"></span></summary>
+      <label class="na-temp" title="T.ex. en mobilkran, stämp eller tillfällig vägg: syns i 3D bara från start till slut och försvinner sedan"><input type="checkbox" class="na-temp-chk" ${temp0 ? "checked" : ""} /> <span><b>Temporär</b> – syns i 3D bara mellan start och slut (t.ex. mobilkran)</span></label>
+      <label class="na-temp na-temp-sub" title="Av = ingen bubbla med info för det här temporära objektet (t.ex. långvariga mobilkranar). Markerar du det visas bubblan ändå."><input type="checkbox" class="na-bub-chk" ${bubOff0 ? "" : "checked"} /> <span>Visa bubbla med info för det temporära objektet</span></label>
+      <label class="na-temp" title="Rivning: objektet syns hela tiden före start, färgas som vanligt under aktiviteten och försvinner efter slut"><input type="checkbox" class="na-demo-chk" ${demo0 ? "checked" : ""} /> <span><b>Rivning</b> – syns även före start, försvinner efter slut</span></label>
+      <label class="na-temp na-done" title="Efter slutdatum visas objektet i den här färgen och genomskinligheten i 3D-tidslinjen – så att man ser arbeten innanför färdiga delar"><input type="checkbox" class="na-done-chk" ${doneCol0 || doneOp0 !== 30 ? "checked" : ""} /> <span><b>Egen färg efter slut</b> – <input type="color" class="na-done-col" value="${doneCol0 || "#3fb950"}" /> opacitet <input type="range" class="na-done-op" min="0" max="100" step="5" value="${doneOp0}" /> <b class="na-done-val">${doneOp0}</b> %</span></label>
+      <div class="na-res-rows"></div>
+      <button type="button" class="na-res-add">＋ Resurs</button>
+      <div class="hint">Antal = personer/maskiner samtidigt, timmar = totalt för aktiviteten. ${pp ? "Från Powerproject – har aktiviteten resurser där skrivs de över vid nästa import." : ""}</div>
+    </details>
+    ${edit ? `<label class="na-withdeps-l"><input type="checkbox" class="na-withdeps" checked /> Flytta med det som väntar på den här</label>` : ""}
+    <p class="hint na-foot">${edit
+      ? (imported ? `⚠ Kommer från ${pp ? "Powerproject" : "Excel"} – namn, område, datum och kopplingar kan skrivas över vid nästa import. Glappen behålls så länge kopplingen finns kvar.` : "Egen aktivitet – finns bara i 4D. Ändringen går att ångra (Ctrl+Z).")
+      : `Finns bara i 4D (märks <b>Egen</b>) – nästa ${pp ? "Powerproject-" : ""}import rör den inte.`}</p>
+    <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">${edit ? "Spara" : copy ? "Skapa kopian" : "Lägg till"}</button></div>`;
+  overlayHost().appendChild(pop);
+  const q = c => pop.querySelector(c);
+  /* Markerade objekt i listan (Victor 2026-10-16): det man markerar i 3D-modellen bockas här, så flera kan tas bort på en gång. */
+  const chk = new Set();
+  const objBar = () => {
+    const list = q(".na-objs-list"); if (!list) return;
+    let bar = q(".na-objs-bar"); if (!bar) { bar = document.createElement("div"); bar.className = "na-objs-bar"; list.parentNode.insertBefore(bar, list); }
+    const n = chk.size;
+    bar.innerHTML = `<span class="hint">${n ? `<b>${n}</b> markerade` : "Markera objekt i modellen – de bockas här"}</span><span class="na-objs-btns"><button type="button" class="na-ob-all">Alla</button><button type="button" class="na-ob-none"${n ? "" : " disabled"}>Inga</button><button type="button" class="na-ob-del danger"${n ? "" : " disabled"}>Ta bort markerade${n ? ` (${n})` : ""}</button></span>`;
+    bar.querySelector(".na-ob-all").onclick = () => { members.forEach(m => chk.add(String(m.id))); renderObjs(); };
+    bar.querySelector(".na-ob-none").onclick = () => { chk.clear(); renderObjs(); };
+    bar.querySelector(".na-ob-del").onclick = async () => {
+      const sel = members.filter(m => chk.has(String(m.id))); if (!sel.length) return;
+      if (sel.length >= members.length) { modelToast("Minst ett objekt måste vara kvar – ta bort hela aktiviteten i stället"); return; }
+      const act = itemLabel(edit), coupled = sel.filter(m => m.modelId).length;
+      const ok = await deleteActivity({ ...sel[0], members: sel }, { ok: `Ta bort ${sel.length} objekt`, msg: `Ta bort ${sel.length} objekt ur aktiviteten "${act}"?\n\nAktiviteten finns kvar med de ${members.length - sel.length} andra objekten.${coupled ? `\n⚠ ${coupled} 3D-koppling${coupled === 1 ? "" : "ar"} försvinner.` : ""}${sel.some(m => m.origin !== "manuell") ? `\n⚠ Objekt från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen kommer tillbaka vid nästa import.` : ""}` });
+      if (ok) { const ids = new Set(sel.map(m => String(m.id))); for (let i = members.length - 1; i >= 0; i--) if (ids.has(String(members[i].id))) members.splice(i, 1); ids.forEach(i => { own.delete(i); chk.delete(i); }); renderObjs(); }
+    };
+  };
+  const renderObjs = () => {
+    const list = q(".na-objs-list"); if (!list) return;
+    const sec = q(".na-objs");
+    if (members.length < 1) { if (sec) sec.remove(); return; }
+    list.innerHTML = members.map(m => `<div class="na-obj${chk.has(String(m.id)) ? " chk" : ""}" data-mid="${escapeHtml(String(m.id))}" title="${m.modelId ? "Klicka för att markera och zooma till objektet i 3D" : ""}"><input type="checkbox" class="na-obj-c" aria-label="Markera objektet"${chk.has(String(m.id)) ? " checked" : ""}><span class="na-obj-name" title="${escapeHtml(String(m.objectId || ""))}">${escapeHtml(m.objectName || m.objectId || "Objekt")}${m.modelId ? ` <span class="hint">· ${escapeHtml(String(m.objectId || "").slice(-6))} · 3D-kopplad</span>` : ""}${typeof qmfMemberPosts === "function" ? qmfMemberPosts(m).map(x => ` <span class="na-post" title="${escapeHtml(x.post.label)} [${escapeHtml(x.post.unit)}] – ${escapeHtml(QTY_KINDS[x.kind][0])}">${escapeHtml(x.post.ref)}</span>`).join("") : ""}</span><button type="button" class="na-obj-x" data-mid="${escapeHtml(String(m.id))}" title="Ta bort objektet ur aktiviteten" aria-label="Ta bort objektet">✕</button></div>`).join("");
+    q(".na-objs-n").textContent = `(${members.length})`;
+    { const agg = new Map(); if (typeof qmfMemberPosts === "function") members.forEach(m => qmfMemberPosts(m).forEach(x => { const e = agg.get(x.post.key) || { x, n: 0 }; e.n++; agg.set(x.post.key, e); }));
+      let box = q(".na-posts-sum"); if (!box) { box = document.createElement("div"); box.className = "hint na-posts-sum"; list.parentNode.insertBefore(box, list); }
+      box.innerHTML = agg.size ? `Poster i mängdförteckningen: ${[...agg.values()].map(e => `<b>${escapeHtml(e.x.post.ref)}</b> ${escapeHtml(e.x.post.label.slice(0, 60))} [${escapeHtml(e.x.post.unit)}] × ${e.n}`).join(" · ")}` : ""; }
+    // Klick på ett objekt: markeras och zoomas in i 3D, så du vet vilket det är.
+    const pick = m => { list.querySelectorAll(".na-obj").forEach(r => r.classList.toggle("on", r.dataset.mid === String(m.id))); if (m.modelId) selectActivityInModel({ members: [m] }); };
+    list.querySelectorAll(".na-obj-c").forEach(c => { c.onchange = () => { const id = c.closest(".na-obj").dataset.mid; if (c.checked) chk.add(id); else chk.delete(id); c.closest(".na-obj").classList.toggle("chk", c.checked); objBar(); }; });
+    objBar();
+    list.querySelectorAll(".na-obj").forEach(row => { row.onclick = e => { if (e.target.closest(".na-obj-x, .na-obj-c")) return; const m = members.find(x => String(x.id) === row.dataset.mid); if (m) pick(m); }; });
+    list.querySelectorAll(".na-obj-x").forEach(b => { b.onclick = async () => {
+      const m = members.find(x => String(x.id) === b.dataset.mid); if (!m) return;
+      pick(m); // visa vilket objekt det gäller innan frågan
+      const nm = m.objectName || m.objectId || "objektet", act = itemLabel(edit);
+      if (members.length === 1) { // sista objektet: bara 3D-kopplingen tas bort, aktiviteten finns kvar
+        if (!m.modelId) { modelToast("Objektet är inte 3D-kopplat."); return; }
+        if (!(await dashConfirm(`Ta bort 3D-kopplingen för "${nm}"?\n\nAktiviteten "${act}" finns kvar men har inget objekt i modellen längre.`, { danger: true, ok: "Ta bort kopplingen" }))) return;
+        if (await uncoupleItem(m)) renderObjs();
+        return;
+      }
+      const ok = await deleteActivity(m, { ok: "Ta bort objektet", msg: `Ta bort "${nm}" ur aktiviteten "${act}"?\n\nAktiviteten finns kvar med de ${members.length - 1} andra objekten.${m.modelId ? "\n⚠ Objektets 3D-koppling försvinner." : ""}${m.origin !== "manuell" ? `\n⚠ Objektet kommer från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen och kommer tillbaka vid nästa import.` : ""}` });
+      if (ok) { const i = members.indexOf(m); if (i >= 0) members.splice(i, 1); own.delete(String(m.id)); renderObjs(); }
+    }; });
+  };
+  renderObjs();
+  if (edit) {
+    // Modellens markering → bockar i listan (och rullar till första träffen).
+    naPopSync = async () => {
+      if (!document.body.contains(pop) || !members.length) { naPopSync = null; return; }
+      if (!API || !API.viewer || typeof API.viewer.getSelection !== "function") return;
+      let sel; try { sel = await API.viewer.getSelection(); } catch (e) { return; }
+      const keys = new Set();
+      for (const m of sel || []) { const rids = m.objectRuntimeIds || []; if (!rids.length) continue; try { (await API.viewer.convertToObjectIds(m.modelId, rids) || []).forEach(x => keys.add(`${m.modelId}|${x}`)); } catch (e) { /* hoppa över */ } }
+      chk.clear(); members.forEach(m => { if (m.modelId && keys.has(`${m.modelId}|${m.objectId}`)) chk.add(String(m.id)); });
+      renderObjs();
+      const first = q(".na-obj.chk"); if (first) first.scrollIntoView({ block: "nearest" });
+      if (chk.size) { const o = q(".na-objs"); if (o && !o.open) o.open = true; }
+    };
+  }
+  // Andra rader som pekar på samma 3D-objekt (t.ex. kvar från en äldre import): syns annars inte här och gör att objektet verkar kopplat.
+  const renderDups = () => {
+    const sec = q(".na-dups"); if (!sec) return;
+    const ownIds = new Set(members.map(m => String(m.id))), keys = new Set(members.filter(m => m.modelId).map(m => `${m.modelId}|${m.objectId}`));
+    const dups = items.filter(x => x.modelId && !ownIds.has(String(x.id)) && keys.has(`${x.modelId}|${x.objectId}`));
+    sec.classList.toggle("hidden", !dups.length); if (!dups.length) return;
+    q(".na-dups-n").textContent = `(${dups.length})`;
+    const list = q(".na-dups-list");
+    list.innerHTML = dups.map(d => `<div class="na-obj" data-did="${escapeHtml(String(d.id))}"><span class="na-obj-name">${escapeHtml(itemLabel(d))}<span class="hint"> · ${escapeHtml([d.area, d.activity].filter(Boolean).join(" · "))} · ${escapeHtml(d.startDate || "")} – ${escapeHtml(d.endDate || "")}</span></span><button type="button" class="na-obj-x" title="Ta bort den här raden" aria-label="Ta bort raden">✕</button></div>`).join("");
+    list.querySelectorAll(".na-obj").forEach(row => {
+      const d = items.find(x => String(x.id) === row.dataset.did);
+      row.onclick = e => { if (e.target.closest(".na-obj-x")) return; if (d && d.modelId) selectActivityInModel({ members: [d] }); };
+      row.querySelector(".na-obj-x").onclick = async () => { if (!d) return; if (await deleteActivity(d, { ok: "Ta bort raden", msg: `Ta bort raden "${itemLabel(d)}" (${[d.area, d.activity].filter(Boolean).join(" · ")})?\n\nDen pekar på samma 3D-objekt men tillhör en annan aktivitet.${d.origin !== "manuell" ? `\n⚠ Kommer den från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen kan den komma tillbaka vid nästa import om aktiviteten finns kvar där.` : ""}` })) renderDups(); };
+    });
+  };
+  renderDups();
+  q(".na-done-op").oninput = e => { q(".na-done-val").textContent = e.target.value; q(".na-done-chk").checked = true; };
+  q(".na-done-col").oninput = () => { q(".na-done-chk").checked = true; };
+  q(".na-temp-chk").onchange = e => { if (e.target.checked) q(".na-demo-chk").checked = false; };
+  q(".na-demo-chk").onchange = e => { if (e.target.checked) q(".na-temp-chk").checked = false; };
+  // Fönstret får aldrig hamna utanför bilden: höjden begränsas till det som finns under toppen och resten rullar.
+  const place = () => {
+    pop.style.maxHeight = "none";
+    const h = pop.offsetHeight, top = Math.max(8, Math.min(100, (window.innerHeight - h) / 2));
+    pop.style.left = `${Math.max(8, (window.innerWidth - pop.offsetWidth) / 2)}px`;
+    pop.style.top = `${top}px`;
+    pop.style.maxHeight = `${Math.max(200, window.innerHeight - top - 8)}px`;
+  };
+  place();
+  window.addEventListener("resize", place);
+  pop.addEventListener("toggle", place, true); // när en hopfälld del öppnas eller stängs
+  const close = () => { naPopSync = null; pop.remove(); window.removeEventListener("resize", place); document.removeEventListener("keydown", onKey, true); };
+  const onKey = e => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    const open = [...pop.querySelectorAll(".cb-list")].find(l => !l.hidden);
+    if (open) { open.hidden = true; return; } // först stängs förslagslistan, sedan dialogen
+    close();
+  };
+  document.addEventListener("keydown", onKey, true);
+  q(".na-cancel").onclick = close;
+
+  // Avancerat (resurser) (Victor 2026-10-08): resurs, antal och timmar per aktivitet – fälls ut.
+  const resRows = res0.slice();
+  const resNames = () => [...new Set(items.flatMap(it => (it.resources || []).map(r => r.name)))].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+  const renderRes = () => {
+    const box = q(".na-res-rows");
+    box.innerHTML = resRows.length ? `<div class="na-res-h"><span>Resurs</span><span>Antal</span><span>Timmar</span><span></span></div>` + resRows.map((r, i) => `<div class="na-res-row" data-i="${i}">
+        <input type="text" class="nr-name" value="${escapeHtml(r.name || "")}" placeholder="t.ex. R01 Byggnadsarbetare" />
+        <input type="number" class="nr-qty" min="0" step="0.5" value="${r.qty ?? ""}" />
+        <input type="number" class="nr-hours" min="0" step="1" value="${r.hours ?? ""}" />
+        <button type="button" class="nr-del" title="Ta bort">✕</button></div><div class="nr-viz" data-i="${i}"></div>`).join("") : `<div class="hint">Inga resurser.</div>`;
+    box.querySelectorAll(".na-res-row").forEach(row => {
+      const r = resRows[Number(row.dataset.i)];
+      row.querySelector(".nr-name").oninput = e => { r.name = e.target.value; sumRes(); };
+      row.querySelector(".nr-qty").oninput = e => { r.qty = e.target.value === "" ? null : Number(e.target.value); r._edited = true; sumRes(); vizRes(); };
+      row.querySelector(".nr-hours").oninput = e => { r.hours = e.target.value === "" ? null : Number(e.target.value); r._edited = true; sumRes(); vizRes(); };
+      row.querySelector(".nr-del").onclick = () => { resRows.splice(Number(row.dataset.i), 1); renderRes(); };
+      attachCombo(row.querySelector(".nr-name"), () => resNames().map(n => ({ value: n, label: n })), {});
+    });
+    sumRes();
+    vizRes();
+  };
+  // Levande grafik per resurs (Victor 2026-10-08: "hur ska jag tyda detta … mer visuellt"): en ruta per
+  // arbetsdag i aktiviteten med antalet personer, uträkningen antal × dagar × 8 h, och förslag när
+  // timmar och antal inte går ihop.
+  const workdays = () => {
+    const a = q(".na-start").value, b = q(".na-end").value;
+    if (!a || !b || a > b) return 0;
+    let n = 0; for (let d = new Date(a + "T00:00:00Z"); d <= new Date(b + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1)) if (d.getUTCDay() % 6) n++;
+    return n;
+  };
+  const nf = v => (Math.round(v * 10) / 10).toLocaleString("sv-SE");
+  const vizRes = () => {
+    const days = workdays();
+    pop.querySelectorAll(".nr-viz").forEach(box => {
+      const r = resRows[Number(box.dataset.i)];
+      if (!r) return;
+      const qty = Number(r.qty) || 0, hours = Number(r.hours) || 0;
+      if (!days) { box.innerHTML = `<span class="hint">Ange start och slut för att se fördelningen.</span>`; return; }
+      // Från Powerproject (egen period, inte ändrad här): Powerprojects egna kalender gäller – ingen varning.
+      if (r.start && r.end && !r._edited) {
+        const f = iso => { const d = new Date(iso + "T00:00:00Z"); return `${d.getUTCDate()}/${d.getUTCMonth() + 1}`; };
+        box.innerHTML = `<div class="nr-calc">Enligt Powerproject: <b>${nf(qty)} pers.</b> på plats ${f(r.start)}–${f(r.end)}, <b>${nf(hours)} h</b> totalt.</div><div class="hint">Ändrar du antal eller timmar räknas det om här.</div>`;
+        return;
+      }
+      const calc = qty * days * 8, shown = Math.min(days, 40);
+      const cells = Array.from({ length: shown }, () => `<i title="${nf(qty)} pers.">${qty ? nf(qty) : ""}</i>`).join("") + (days > shown ? `<span class="nr-more">+${days - shown}</span>` : "");
+      const off = hours > 0 && qty > 0 && Math.abs(hours - calc) > Math.max(4, calc * 0.15);
+      const perPers = hours > 0 && days ? hours / (days * 8) : 0;
+      let note = "";
+      if (!hours && qty) note = `<button type="button" class="nr-fix" data-fix="hours" data-v="${Math.round(calc)}">Fyll i ${nf(calc)} h</button>`;
+      else if (off) note = `<span class="nr-warn">${nf(hours)} h på ${days} dagar motsvarar <b>${nf(perPers)} personer</b> på heltid.</span> <button type="button" class="nr-fix" data-fix="qty" data-v="${Math.round(perPers * 10) / 10}">Sätt antal ${nf(perPers)}</button> <button type="button" class="nr-fix" data-fix="hours" data-v="${Math.round(calc)}">Sätt timmar ${nf(calc)}</button>`;
+      box.innerHTML = `<div class="nr-days" title="En ruta per arbetsdag (mån–fre) i aktiviteten">${cells}</div>
+        <div class="nr-calc">${nf(qty)} pers. × ${days} arbetsdag${days === 1 ? "" : "ar"} × 8 h = <b>${nf(calc)} h</b>${hours && !off ? ` <span class="nr-ok">✓ stämmer med ${nf(hours)} h</span>` : ""}</div>${note ? `<div class="nr-note">${note}</div>` : ""}`;
+      box.querySelectorAll(".nr-fix").forEach(b => { b.onclick = () => { const v = Number(b.dataset.v); if (b.dataset.fix === "qty") r.qty = v; else r.hours = v; renderRes(); }; });
+    });
+  };
+  q(".na-start").addEventListener("change", () => vizRes());
+  q(".na-end").addEventListener("change", () => vizRes());
+  const sumRes = () => {
+    const live = resRows.filter(r => (r.name || "").trim());
+    const h = live.reduce((a, r) => a + (Number(r.hours) || 0), 0);
+    q(".na-res-sum").textContent = live.length ? `· ${live.length} resurs${live.length === 1 ? "" : "er"}, ${Math.round(h).toLocaleString("sv-SE")} h` : "";
+  };
+  q(".na-res-add").onclick = () => { resRows.push({ name: "", qty: 1, hours: null }); renderRes(); const ins = pop.querySelectorAll(".nr-name"); if (ins.length) ins[ins.length - 1].focus(); };
+  q(".na-res").addEventListener("toggle", () => { try { localStorage.setItem("4ddash-res-open", q(".na-res").open ? "1" : "0"); } catch (e) {} });
+  renderRes();
+  const resOut = () => {
+    const out = resRows.filter(r => (r.name || "").trim()).map(r => ({ name: r.name.trim(), qty: Number(r.qty) || 0, hours: Number(r.hours) || 0, ...(r.start ? { start: r.start } : {}), ...(r.end ? { end: r.end } : {}) }));
+    return out.length ? out : null;
+  };
+  const resChanged = () => JSON.stringify(resOut()) !== JSON.stringify(res0.length ? res0.map(r => ({ name: r.name, qty: Number(r.qty) || 0, hours: Number(r.hours) || 0, ...(r.start ? { start: r.start } : {}), ...(r.end ? { end: r.end } : {}) })) : null);
+
+  // Powerproject: aktiviteten är sammanfattningsraden ovanför = sista delen av området (Victor 2026-10-07).
+  const actFromArea = a => { const parts = String(a || "").split(" / ").map(x => x.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : ""; };
+  const actShow = q(".na-act-show");
+  if (actShow) {
+    const upd = () => { actShow.textContent = actFromArea(q(".na-area").value) || "–"; };
+    q(".na-area").addEventListener("input", upd);
+    q(".na-area").addEventListener("change", upd);
+    upd();
+  }
+  // Förslag från övriga aktiviteter.
+  attachCombo(q(".na-name"), () => acts.filter(a => !own.has(String(a.id)) && a.objectName).map(a => ({ value: a.objectName, label: a.objectName, sub: a.area || "" }))
+    .filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i));
+  attachCombo(q(".na-area"), () => counted(a => a.area));
+  if (q(".na-act")) attachCombo(q(".na-act"), () => counted(a => a.activity));
+  attachCombo(q(".na-contr"), () => counted(a => a.contractor));
+
+  // Datum: kom ihåg längden, så att en ny start (t.ex. från glappet) flyttar hela aktiviteten.
+  const flash = el => { el.classList.remove("na-flash"); void el.offsetWidth; el.classList.add("na-flash"); };
+  let dur = Math.max(0, daysBetweenIso(start0, end0));
+  q(".na-start").addEventListener("change", () => { const s = q(".na-start").value; if (s) { q(".na-end").value = addDaysIso(s, dur); } });
+  q(".na-end").addEventListener("change", () => { const s = q(".na-start").value, e = q(".na-end").value; if (s && e && e >= s) dur = daysBetweenIso(s, e); });
+  const setStart = s => {
+    if (!s || s === q(".na-start").value) return;
+    q(".na-start").value = s; q(".na-end").value = addDaysIso(s, dur);
+    flash(q(".na-start")); flash(q(".na-end"));
+  };
+  // Start enligt glappen: senaste av (föregångarens slut + 1 + glapp) för kopplingar med glapp.
+  const snapToLags = () => {
+    const c = preds.filter(p => p.lag !== "" && p.entry.end).map(p => addDaysIso(p.entry.end, 1 + Number(p.lag))).sort();
+    if (c.length) setStart(c[c.length - 1]);
+  };
+  let progDirty = false;
+  q(".na-prog").addEventListener("input", () => { progDirty = true; });
+
+  const lagTxt = v => v === "" ? "" : `${Number(v) > 0 ? "+" : Number(v) < 0 ? "−" : "±"}${Math.abs(Number(v))} d`;
+  const renderPreds = () => {
+    q(".na-preds").innerHTML = preds.length ? preds.map((p, i) => `
+      <div class="na-pred-row" data-i="${i}">
+        <span class="na-pred-name" title="${escapeHtml(p.entry.label)}${p.entry.area ? ` · ${escapeHtml(p.entry.area)}` : ""}">${escapeHtml(tipShort(p.entry.label, 46))}${p.entry.end ? `<small>slutar ${escapeHtml(tipDate(p.entry.end))}</small>` : ""}</span>
+        <span class="na-lag-w" title="Glapp i dagar efter att den är klar (+ väntar, − överlappar). Tomt = inget fast glapp.">
+          <button type="button" class="na-lag-step" data-step="-1" tabindex="-1" aria-label="Ett glapp-dag mindre">−</button><input type="number" class="na-lag" step="1" value="${p.lag === "" ? "" : p.lag}" placeholder="glapp" aria-label="Glapp i dagar" /><button type="button" class="na-lag-step" data-step="1" tabindex="-1" aria-label="En glapp-dag mer">+</button><i>d</i>
+        </span>
+        <button type="button" class="na-pred-x" title="Ta bort kopplingen" aria-label="Ta bort kopplingen">✕</button>
+      </div>`).join("") : `<div class="na-pred-none">Ingen – startar fritt</div>`;
+    q(".na-pred").value = preds.map(p => p.entry.key).join(",");
+    q(".na-preds").querySelectorAll(".na-pred-row").forEach(r => {
+      const p = preds[Number(r.dataset.i)], inp = r.querySelector(".na-lag");
+      const setLag = v => { p.lag = v === "" || !Number.isFinite(Number(v)) ? "" : Math.round(Number(v)); inp.title = lagTxt(p.lag); snapToLags(); };
+      inp.addEventListener("input", () => setLag(inp.value.trim()));
+      r.querySelectorAll(".na-lag-step").forEach(b => b.onclick = () => { const v = (p.lag === "" ? 0 : Number(p.lag)) + Number(b.dataset.step); inp.value = v; setLag(String(v)); });
+      r.querySelector(".na-pred-x").onclick = () => { preds.splice(Number(r.dataset.i), 1); renderPreds(); };
+    });
+  };
+  renderPreds();
+  attachCombo(q(".na-pred-search"), () => {
+    const chosen = new Set(preds.map(p => p.entry.key));
+    return entries.filter(en => !chosen.has(en.key) && !en.ids.some(id => own.has(id)))
+      .map(en => ({ value: en.key, label: en.label, sub: [en.area, en.start && en.end ? tipRange(en.start, en.end) : ""].filter(Boolean).join(" · "), entry: en }));
+  }, { empty: "Ingen aktivitet matchar", onPick: o => {
+    preds.push({ entry: o.entry, lag: "" });
+    q(".na-pred-search").value = "";
+    renderPreds();
+    // Utan glapp: börjar den innan föregångaren är klar flyttas starten till dagen efter.
+    if (o.entry.end && o.entry.status !== "klar" && q(".na-start").value <= o.entry.end) setStart(addDaysIso(o.entry.end, 1));
+    q(".na-pred-search").focus();
+  } });
+  /* Följer en aktivitet: vald aktivitet, läge och förskjutning; datumen fylls i direkt och hålls efter varje ny hämtning. */
+  let follow = edit ? (members.map(m => m.follows).find(Boolean) ? { ...members.map(m => m.follows).find(Boolean) } : null) : null;
+  const followEntry = () => follow ? (entries.find(en => follow.id && en.ids.includes(String(follow.id))) || entries.find(en => follow.key && en.src === follow.key) || null) : null;
+  const followPreview = () => {
+    const en = followEntry(); if (!follow || !en || !en.start || !en.end) return;
+    const d = followDates(follow, { start: en.start, end: en.end }, Math.max(0, daysBetweenIso(q(".na-start").value || en.start, q(".na-end").value || en.end)));
+    q(".na-start").value = d.startDate; q(".na-end").value = d.endDate; dur = daysBetweenIso(d.startDate, d.endDate);
+    flash(q(".na-start")); flash(q(".na-end"));
+  };
+  const renderFollow = () => {
+    const box = q(".na-follow-sel"), en = followEntry();
+    if (!follow) { box.innerHTML = `<div class="na-pred-none">Ingen – datumen styrs här</div>`; return; }
+    const m = follow.mode, offs = `${m !== "end" ? `<label>Start <input type="number" class="nf-d0" step="1" value="${follow.d0}" title="Dagar efter (+) eller före (−) aktivitetens start" /> d</label>` : ""}${m !== "start" ? `<label>Slut <input type="number" class="nf-d1" step="1" value="${follow.d1}" title="Dagar efter (+) eller före (−) aktivitetens slut" /> d</label>` : ""}`;
+    box.innerHTML = `<div class="na-pred-row nf-row"><span class="na-pred-name" title="${escapeHtml(en ? en.label : "")}">${en ? escapeHtml(tipShort(en.label, 46)) + (en.start && en.end ? `<small>${escapeHtml(tipRange(en.start, en.end))}</small>` : "") : `<i>Aktiviteten hittas inte (borttagen?)</i>`}</span><button type="button" class="na-pred-x nf-x" title="Sluta följa" aria-label="Sluta följa">✕</button></div>
+      <div class="nf-opts"><select class="nf-mode" aria-label="Hur den följer"><option value="span"${m === "span" ? " selected" : ""}>Samma period (start och slut)</option><option value="start"${m === "start" ? " selected" : ""}>Samma start – behåll längd</option><option value="end"${m === "end" ? " selected" : ""}>Samma slut – behåll längd</option></select>${offs}</div>`;
+    box.querySelector(".nf-x").onclick = () => { follow = null; renderFollow(); };
+    box.querySelector(".nf-mode").onchange = e => { follow.mode = e.target.value; renderFollow(); followPreview(); };
+    const n0 = box.querySelector(".nf-d0"), n1 = box.querySelector(".nf-d1");
+    if (n0) n0.oninput = () => { follow.d0 = Math.round(Number(n0.value) || 0); followPreview(); };
+    if (n1) n1.oninput = () => { follow.d1 = Math.round(Number(n1.value) || 0); followPreview(); };
+  };
+  renderFollow();
+  attachCombo(q(".na-follow-search"), () => entries.filter(en => !en.ids.some(id => own.has(id)))
+    .map(en => ({ value: en.key, label: en.label, sub: [en.area, en.start && en.end ? tipRange(en.start, en.end) : ""].filter(Boolean).join(" · "), entry: en })), { empty: "Ingen aktivitet matchar", onPick: o => {
+    follow = { id: o.entry.ids[0], key: o.entry.src, mode: "span", d0: 0, d1: 0 };
+    q(".na-follow-search").value = ""; renderFollow(); followPreview();
+  } });
+  // Namnet i en ruta på fyra rader (Victor 2026-10-08) – men det är en rad text: Enter gör ingen radbrytning.
+  q(".na-name").addEventListener("keydown", e => { if (e.key === "Enter" && !e.defaultPrevented) e.preventDefault(); });
+  q(".na-name").addEventListener("input", e => { const t = e.target; if (/[\r\n]/.test(t.value)) t.value = t.value.replace(/\s*[\r\n]+\s*/g, " "); });
+  q(".na-name").focus();
+
+  const v = c => (q(c) ? q(c).value.trim() : "");
+  q(".na-save").onclick = async () => {
+    const name = v(".na-name"), s0 = v(".na-start"), e0 = v(".na-end");
+    if (!name && !edit) { alert("Ge aktiviteten ett namn."); return; }
+    if (!s0 || !e0 || s0 > e0) { alert("Ange start och slut (start före eller samma dag som slut)."); return; }
+    if (follow) { const fe = followEntry(); if (fe && fe.start && fe.end) { if (follow.mode !== "end") follow.d0 = daysBetweenIso(fe.start, s0); if (follow.mode !== "start") follow.d1 = daysBetweenIso(fe.end, e0); } } // förskjutningen följer de datum som står i rutorna
+    const area = v(".na-area"), contractor = v(".na-contr");
+    const activity = pp ? actFromArea(area) : v(".na-act");
+    const progress = Math.max(0, Math.min(100, Number(v(".na-prog")) || 0));
+    const predIds = [...new Set(preds.flatMap(p => p.entry.ids))];
+    const lagMap = {};
+    preds.forEach(p => { if (p.lag !== "") p.entry.ids.forEach(id => { lagMap[id] = Number(p.lag); }); });
+    // Startar den innan något utan glapp är klart? (med glapp hålls avståndet automatiskt)
+    const early = preds.filter(p => p.lag === "" && p.entry.end && p.entry.status !== "klar" && p.entry.end >= s0);
+    if (early.length && !(await dashConfirm(`"${tipShort(name || itemLabel(edit), 50)}" startar ${s0}, innan ${early.map(p => `"${tipShort(p.entry.label, 40)}" (slutar ${p.entry.end})`).join(", ")} är klar.\n\nSpara ändå?`))) return;
+
+    if (edit) {
+      const ids = [...own];
+      // Kedjekontroll: en ny koppling får inte gå runt i en ring.
+      const added = predIds.filter(id => !members.some(m => (m.dependsOn || []).map(String).includes(id)));
+      if (added.length) {
+        const up = predecessorsDeep(added);
+        if (ids.some(id => up.has(id) || added.includes(id))) { alert("Det går inte: någon av aktiviteterna du väntar på väntar redan (direkt eller via andra) på den här."); return; }
+      }
+      const plan = emptyPlan();
+      const initIds = new Set(entries.filter(en => initKeys.has(en.key)).flatMap(en => en.ids));
+      members.forEach(m => {
+        const f = {};
+        if (name !== name0 && name) f.objectName = name;
+        if (area !== area0) { f.area = area || null; if (pp) f.activity = activity || null; }
+        if (!pp && activity !== act0) f.activity = activity || null;
+        if (contractor !== contr0) f.contractor = contractor || null;
+        if (progDirty && progress !== (Number(m.progress) || 0)) f.progress = progress;
+        if (resChanged()) f.resources = resOut();
+        const tmp = q(".na-temp-chk").checked;
+        if (tmp !== !!m.temporary) f.temporary = tmp;
+        const bub = q(".na-bub-chk").checked;
+        if (bub === !!m.bubbleOff) f.bubbleOff = !bub; // sparas bara när det ändras
+        const dem = q(".na-demo-chk").checked;
+        if (dem !== !!m.demolition) f.demolition = dem;
+        { const fo = JSON.stringify(m.follows || null), fn = JSON.stringify(follow || null); if (fo !== fn) f.follows = follow ? { ...follow } : null; }
+        const dOn = q(".na-done-chk").checked, dCol = dOn ? q(".na-done-col").value : null, dOp = dOn ? Number(q(".na-done-op").value) : null;
+        if ((dCol || null) !== (m.doneColor || null)) f.doneColor = dCol;
+        if (dOp !== (m.doneOpacity === undefined ? null : m.doneOpacity)) f.doneOpacity = dOp;
+        if (Object.keys(f).length) plan.fields.set(m.id, f);
+        const curDeps = (m.dependsOn || []).map(String);
+        const nextDeps = [...new Set([...curDeps.filter(id => !initIds.has(id)), ...predIds])];
+        if (nextDeps.length !== curDeps.length || nextDeps.some(id => !curDeps.includes(id))) plan.deps.set(m.id, nextDeps);
+        const curLags = { ...(m.depLags || {}) };
+        const nextLags = Object.fromEntries(Object.entries(curLags).filter(([k]) => nextDeps.includes(k) && !predIds.includes(k)));
+        Object.assign(nextLags, lagMap);
+        const same = Object.keys(nextLags).length === Object.keys(curLags).length && Object.entries(nextLags).every(([k, x]) => Number(curLags[k]) === x && curLags[k] !== "" && curLags[k] !== null);
+        if (!same) plan.lags.set(m.id, nextLags);
+      });
+      const targets = new Set(members.filter(m => m.startDate && m.endDate).map(m => m.id));
+      const dl = daysBetweenIso(edit.startDate || s0, s0), dr = daysBetweenIso(edit.endDate || e0, e0);
+      if (dl || dr) {
+        planMove(targets, dl, false, plan);
+        planResize(targets, "right", dr - dl, false, plan);
+        if (q(".na-withdeps") && q(".na-withdeps").checked) pushDependents(targets, plan);
+      }
+      if (!planSize(plan)) { close(); setScheduleStatus("Inga ändringar"); return; }
+      close();
+      const shown = name || itemLabel(edit);
+      await applySchedulePlan(plan, `Ändrade ${tipShort(shown, 40)}`);
+      return;
+    }
+
+    const id = ghNewId(), now = new Date().toISOString();
+    // Är huvudbaselinen satt får en ny aktivitet sitt första datum som baseline (som vid importen).
+    const mainSet = planBaselines.some(b => b && b.id === "main" && b.set_at && b.mode !== "none");
+    const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
+      area: area || null, activity: activity || null, contractor: contractor || null, status: "planerad",
+      start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress,
+      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), ...(follow ? { follows: { ...follow } } : {}), ...(q(".na-temp-chk").checked && !q(".na-bub-chk").checked ? { bubble_off: true } : {}), ...(q(".na-demo-chk").checked ? { demolition: true } : {}), ...(q(".na-done-chk").checked ? { done_color: q(".na-done-col").value, done_opacity: Number(q(".na-done-op").value) } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
+      baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };
+    const btn = q(".na-save");
+    btn.disabled = true;
+    try {
+      await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => [...arr, row], `Ny aktivitet: ${name}`);
+    } catch (e) { btn.disabled = false; alert("Kunde inte spara: " + e.message); return; }
+    close();
+    items.push(fromRow(row));
+    renderAll();
+    modelToast(`"${tipShort(name, 40)}" är tillagd`, { label: "Ångra", fn: async () => {
+      try {
+        await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => arr.filter(r => r.id !== id).map(r => Array.isArray(r.depends_on) && r.depends_on.includes(id) ? { ...r, depends_on: r.depends_on.filter(x => x !== id) } : r), `Ångra ny aktivitet: ${name}`);
+        items = items.filter(x => x.id !== id);
+        renderAll();
+      } catch (e) { alert("Kunde inte ångra: " + e.message); }
+    } });
+  };
+}
+
+/* ----- Ta bort en lapp (Victor 2026-10-06) ---------------------------------------------------------
+   Hela aktiviteten (alla dess objekt), dess delaktiviteter och kopplingarna till den tas bort. En egen
+   aktivitet efter en vanlig fråga; en importerad med en tydlig varning – den finns kvar i Powerproject-/
+   Excel-filen och kommer tillbaka vid nästa import, och 3D-kopplingen försvinner. Ångra direkt efteråt. */
+/* Tar bara bort 3D-kopplingen på en rad (modell och objekt) – raden/aktiviteten finns kvar. */
+async function uncoupleItem(m) {
+  if (!ganttEditable) { modelToast("Slå på Redigerbar för att ändra kopplingen"); return false; }
+  const id = String(m.id), prev = { modelId: m.modelId, objectId: m.objectId }, nowIso = new Date().toISOString(), newObj = `${planSource === "pp" ? "pp" : "excel"}-${id}`;
+  m.modelId = null; m.objectId = newObj; renderAll();
+  try {
+    await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => arr.map(r => (String(r.id) === id ? { ...r, model_id: null, object_id: newObj, updated_at: nowIso } : r)), `Ta bort 3D-koppling: ${itemLabel(m)}`);
+  } catch (e) { m.modelId = prev.modelId; m.objectId = prev.objectId; renderAll(); alert("Kunde inte ta bort kopplingen: " + e.message); return false; }
+  modelToast("3D-kopplingen är borttagen", { label: "Ångra", fn: async () => { m.modelId = prev.modelId; m.objectId = prev.objectId; renderAll(); try { await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => arr.map(r => (String(r.id) === id ? { ...r, model_id: prev.modelId, object_id: prev.objectId, updated_at: new Date().toISOString() } : r)), `Ångra borttagen 3D-koppling: ${itemLabel(m)}`); } catch (e2) { alert("Kunde inte ångra: " + e2.message); } if (typeof ganttTimeReset === "function") ganttTimeReset(); if (typeof applyGanttIsolate === "function") applyGanttIsolate(true); } });
+  if (typeof ganttTimeReset === "function") ganttTimeReset(); if (typeof applyGanttIsolate === "function") applyGanttIsolate(true);
+  return true;
+}
+async function deleteActivity(it, opts = {}) {
+  if (!it) return;
+  if (!ganttEditable) { modelToast("Slå på Redigerbar för att ta bort lappar"); return; }
+  const members = it.members || [it];
+  const ids = new Set(members.map(m => String(m.id)));
+  const own = members.every(m => m.origin === "manuell");
+  const coupled = members.filter(m => m.modelId).length;
+  const name = itemLabel(it);
+  const msg = own
+    ? `Ta bort "${name}"?`
+    : `Ta bort "${name}"${members.length > 1 ? ` (${members.length} objekt)` : ""}?\n\n` +
+      `⚠ Den kommer från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen och kommer tillbaka vid nästa import – ta bort den där för att bli av med den för gott.` +
+      (coupled ? `\n⚠ ${coupled} 3D-koppling${coupled === 1 ? "" : "ar"} försvinner.` : "");
+  if (!(await dashConfirm(opts.msg || msg, { danger: true, ...(opts.ok ? { ok: opts.ok } : {}) }))) return false;
+  hideGanttTooltip();
+  const nowIso = new Date().toISOString();
+  let removed = [], depBefore = new Map(), actsRemoved = [];
+  // Lappen försvinner direkt (2026-10-08) – sparandet sker sedan. Misslyckas det kommer allt tillbaka.
+  const itemsBefore = items.slice(), actsBefore = activities.slice();
+  const depsLocal = new Map(items.filter(x => (x.dependsOn || []).some(d => ids.has(String(d)))).map(x => [x, x.dependsOn]));
+  items = items.filter(x => !ids.has(String(x.id)));
+  depsLocal.forEach((_, x) => { x.dependsOn = (x.dependsOn || []).filter(d => !ids.has(String(d))); });
+  const hasActs = activities.some(a => ids.has(String(a.plan_item_id)));
+  activities = activities.filter(a => !ids.has(String(a.plan_item_id)));
+  renderAll();
+  modelToast(`Tar bort "${tipShort(name, 40)}"…`);
+  const restore = () => { items = itemsBefore; depsLocal.forEach((d, x) => { x.dependsOn = d; }); activities = actsBefore; renderAll(); };
+  try {
+    await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => {
+      removed = arr.filter(r => ids.has(String(r.id)));
+      depBefore = new Map();
+      return arr.filter(r => !ids.has(String(r.id))).map(r => {
+        if (!Array.isArray(r.depends_on) || !r.depends_on.some(d => ids.has(String(d)))) return r;
+        depBefore.set(r.id, r.depends_on.slice());
+        return { ...r, depends_on: r.depends_on.filter(d => !ids.has(String(d))), updated_at: nowIso };
+      });
+    }, `Ta bort aktivitet: ${name}`);
+    // Delaktiviteterna skrivs bara om aktiviteten har några (sparar två anrop annars).
+    if (hasActs) try {
+      await ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"), arr => {
+        actsRemoved = arr.filter(a => ids.has(String(a.plan_item_id)));
+        return actsRemoved.length ? arr.filter(a => !ids.has(String(a.plan_item_id))) : arr;
+      }, `Ta bort delaktiviteter: ${name}`);
+    } catch (e) { console.warn("Kunde inte ta bort delaktiviteterna", e); }
+  } catch (e) { restore(); alert("Kunde inte ta bort: " + e.message); return false; }
+  modelToast(`"${tipShort(name, 40)}" är borttagen`, { label: "Ångra", fn: async () => {
+    try {
+      await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => [
+        ...arr.map(r => depBefore.has(r.id) ? { ...r, depends_on: depBefore.get(r.id) } : r),
+        ...removed.filter(r => !arr.some(x => x.id === r.id))
+      ], `Ångra borttagning: ${name}`);
+      if (actsRemoved.length) await ghWriteJSON(settings.githubToken, tablePath("plan_item_activities"), arr => [...arr, ...actsRemoved.filter(a => !arr.some(x => x.id === a.id))], `Ångra borttagning: ${name}`);
+      removed.forEach(r => items.push(fromRow(r)));
+      items.forEach(x => { if (depBefore.has(x.id)) x.dependsOn = depBefore.get(x.id).map(String); });
+      activities = activities.concat(actsRemoved);
+      renderAll();
+    } catch (e) { alert("Kunde inte ångra: " + e.message); }
+  } });
+  return true;
+}
+
+/* ----- Pilar för kopplingarna (Victor 2026-10-06) ----------------------------------------------
+   Mjuka kurvor från en aktivitets slut till nästa start, ritade i ett SVG-lager ovanpå schemat
+   (klick går igenom). Diskreta i vila; pekar man på en aktivitet blir dess
+   pilar tydliga och de andra tonas ned. En koppling där efterföljaren startar innan föregångaren är
+   klar blir röd. el._arrowMap: plan_item-id -> elementet (lapp/stapel) som visar det. */
+function drawGanttArrows(el) {
+  if (!el) return;
+  let svg = el.querySelector(":scope > svg.gantt-arrows");
+  if (!ganttShowArrows || !el._arrowMap) { if (svg) svg.remove(); return; }
+  if (!svg) {
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "gantt-arrows");
+    svg.innerHTML = `<defs><marker id="gaHead" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0.6 L7.4,4 L0,7.4 z" fill="context-stroke"/></marker></defs><g></g>`;
+    el.appendChild(svg);
+  }
+  const map = el._arrowMap, er = el.getBoundingClientRect();
+  // Mät innehållet utan pil-lagret: svg:n ligger i samma ruta, så annars räknas den egna (gamla) höjden med och rutan får en onödig rullningslist.
+  svg.style.display = "none";
+  const sw = el.scrollWidth, sh = el.scrollHeight;
+  svg.style.display = "";
+  svg.setAttribute("width", sw); svg.setAttribute("height", sh);
+  const byId = itemsByIdAll(), seen = new Set(), paths = [];
+  const box = n => {
+    const r = n.getBoundingClientRect();
+    const right = n.classList.contains("pnote") ? noteRealRight(n, r) : r.right;
+    return { l: r.left - er.left + el.scrollLeft, r: right - er.left + el.scrollLeft, y: r.top - er.top + el.scrollTop + r.height / 2, h: r.height };
+  };
+  map.forEach((succEl, sid) => {
+    const s = byId.get(sid);
+    if (!s || !s.dependsOn || !s.dependsOn.length || !succEl.isConnected) return;
+    s.dependsOn.forEach(pid => {
+      const predEl = map.get(String(pid));
+      if (!predEl || predEl === succEl || !predEl.isConnected) return;
+      const key = `${predEl.dataset.itemId}>${succEl.dataset.itemId}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const p = byId.get(String(pid));
+      const a = box(predEl), b = box(succEl);
+      const d = ganttArrowPath(a.r, a.y, b.l - 1, b.y, Math.max(a.h, b.h));
+      const lag = lagOf(s, pid);
+      // Med glapp: sen om den startar innan föregångarens slut + glapp; utan: innan föregångaren är klar.
+      const late = p && s && p.status !== "klar" && p.endDate && s.startDate && (lag !== undefined ? addDaysIso(p.endDate, 1 + lag) > s.startDate : p.endDate >= s.startDate);
+      const ab = `data-a="${escapeHtml(predEl.dataset.itemId)}" data-b="${escapeHtml(succEl.dataset.itemId)}"`;
+      paths.push(`<path d="${d}" class="ga${late ? " ga-late" : ""}${lag !== undefined ? " ga-lag" : ""}" ${ab} marker-end="url(#gaHead)"/>`);
+      if (lag !== undefined) paths.push(`<text class="ga-lag-t${late ? " ga-late" : ""}" ${ab} x="${(b.l - 16).toFixed(1)}" y="${(b.y - 6).toFixed(1)}" text-anchor="end">${lagLabel(lag)}</text>`);
+    });
+  });
+  svg.querySelector("g").innerHTML = paths.join("");
+  applyArrowHot(el, null);
+  if (!el._arrowHoverBound) {
+    el._arrowHoverBound = true;
+    el.addEventListener("mouseover", e => {
+      const t = e.target.closest && e.target.closest("[data-item-id]");
+      const k = t && (t.classList.contains("pnote") || t.classList.contains("gantt-bar")) ? t.dataset.itemId : null;
+      applyArrowHot(el, k);
+    });
+    el.addEventListener("mouseleave", () => applyArrowHot(el, null));
+  }
+}
+/* Tända pilar för aktiviteten man pekar på – annars för den man klickat på (låst, som toningen). */
+function applyArrowHot(el, key) {
+  const sv = el && el.querySelector(":scope > svg.gantt-arrows");
+  if (!sv) return;
+  const pinned = ganttTooltipPinnedEl && el.contains(ganttTooltipPinnedEl) && (ganttTooltipPinnedEl.classList.contains("pnote") || ganttTooltipPinnedEl.classList.contains("gantt-bar")) ? ganttTooltipPinnedEl.dataset.itemId : null;
+  const k = key || pinned;
+  sv.classList.toggle("has-hot", !!k);
+  sv.querySelectorAll("path.ga, text.ga-lag-t").forEach(pa => pa.classList.toggle("hot", !!k && (pa.dataset.a === k || pa.dataset.b === k)));
+}
+/* Pilens väg (Victor 2026-10-06: "ta ut svängen mer så att det syns vart de pekar"): alltid en rak bit
+   ut från föregångarens slut och en rak bit in mot efterföljarens start, så pilspetsen pekar rakt in
+   från vänster. Finns det plats framåt: en mjuk S-kurva. Annars (efterföljaren börjar före/tätt inpå
+   slutet): ut åt höger, ner/upp mellan raderna, tillbaka åt vänster och in – en tydlig sväng. */
+function ganttArrowPath(x1, y1, x2, y2, h) {
+  const f = n => n.toFixed(1);
+  const OUT = 10, IN = 14, R = 14;
+  const dy = y2 - y1, dir = dy >= 0 ? 1 : -1;
+  // Samma rad och efterföljaren börjar direkt efter: en kort rak pil.
+  if (Math.abs(dy) < 4 && x2 - x1 >= -2) return `M${f(x1)},${f(y1)} H${f(x2)}`;
+  if (x2 - x1 >= OUT + IN + 6) {
+    const xa = x1 + OUT, xb = x2 - IN, k = Math.max(R, (xb - xa) / 2);
+    return `M${f(x1)},${f(y1)} H${f(xa)} C${f(xa + k)},${f(y1)} ${f(xb - k)},${f(y2)} ${f(xb)},${f(y2)} H${f(x2)}`;
+  }
+  // Mellan raderna: halvvägs mellan dem, eller strax under lappen om de ligger på samma rad.
+  const ym = Math.abs(dy) > h ? y1 + dy / 2 : y1 + dir * (h / 2 + 7);
+  const xa = x1 + OUT, xb = x2 - IN;
+  const r1 = Math.min(R, Math.abs(ym - y1) / 2), r2 = Math.min(R, Math.abs(y2 - ym) / 2);
+  const s1 = ym >= y1 ? 1 : -1, s2 = y2 >= ym ? 1 : -1;
+  return `M${f(x1)},${f(y1)} H${f(xa)} Q${f(xa + r1)},${f(y1)} ${f(xa + r1)},${f(y1 + s1 * r1)} V${f(ym - s1 * r1)} Q${f(xa + r1)},${f(ym)} ${f(xa)},${f(ym)}`
+    + ` H${f(xb - r2)} Q${f(xb - 2 * r2)},${f(ym)} ${f(xb - 2 * r2)},${f(ym + s2 * r2)} V${f(y2 - s2 * r2)} Q${f(xb - 2 * r2)},${f(y2)} ${f(xb - r2)},${f(y2)} H${f(x2)}`;
+}
+
+/* Under en dragning: aktiviteter som knuffas glider med (och pilarna följer) – plan = planMove/planResize. */
+function animatePush(el, plan, targets, pxPerDay) {
+  if (!el || !el._arrowMap) return;
+  const moved = new Map();
+  if (ganttShowArrows) plan.items.forEach((d, id) => {
+    if (targets.has(id)) return;
+    const it = items.find(x => x.id === id), n = el._arrowMap.get(String(id));
+    if (!it || !n || !it.startDate) return;
+    const sh = daysBetweenIso(it.startDate, d.startDate);
+    if (sh) moved.set(n, Math.max(moved.get(n) || 0, sh));
+  });
+  el.querySelectorAll(".ga-pushed").forEach(n => { if (!moved.has(n)) { n.style.transform = ""; n.classList.remove("ga-pushed"); } });
+  moved.forEach((sh, n) => { n.classList.add("ga-pushed"); n.style.transform = `translateX(${sh * pxPerDay}px)${n.classList.contains("pnote") ? " rotate(0deg)" : ""}`; });
+  if (ganttShowArrows) arrowsFollow(el);
+}
+/* Pilarna följer med medan något glider (en kort stund efter varje ändring). */
+function arrowsFollow(el) {
+  el._arrowsUntil = Date.now() + 260;
+  if (el._arrowsRaf) return;
+  const tick = () => { drawGanttArrows(el); el._arrowsRaf = Date.now() < el._arrowsUntil ? requestAnimationFrame(tick) : null; };
+  el._arrowsRaf = requestAnimationFrame(tick);
+}
+let ganttArrowResizeTimer = null;
+window.addEventListener("resize", () => { clearTimeout(ganttArrowResizeTimer); ganttArrowResizeTimer = setTimeout(() => drawGanttArrows(document.getElementById("ganttChart")), 150); });
+
+/* Närmaste kopplade aktivitet bakåt och framåt (Victor 2026-10-06): högst EN åt varje håll, även om
+   fler är kopplade – den föregångare som slutar senast och den efterföljare som startar först. */
+function nearestLinked(it, list) {
+  const mem = x => x.members || [x];
+  const ids = new Set(mem(it).map(m => String(m.id)));
+  const predIds = new Set(mem(it).flatMap(m => m.dependsOn || []).map(String));
+  const others = list.filter(x => x !== it && !mem(x).some(m => ids.has(String(m.id))));
+  const preds = others.filter(x => mem(x).some(m => predIds.has(String(m.id))));
+  const succs = others.filter(x => mem(x).some(m => (m.dependsOn || []).some(d => ids.has(String(d)))));
+  const pred = preds.sort((a, b) => String(b.endDate || "").localeCompare(String(a.endDate || "")))[0] || null;
+  const succ = succs.sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")))[0] || null;
+  return { pred, succ, nPred: preds.length, nSucc: succs.length };
+}
+/* Fokus (Victor 2026-10-06): när man pekar på (eller klickar på) en aktivitet tonas allt som inte är
+   direkt kopplat till den ut, så att man ser just dess kedja. Pekar: efter en kort fördröjning (så att
+   tavlan inte blinkar när man drar musen över den). Klick: låst tills tipsrutan stängs. */
+function directlyLinked(it, list) {
+  const mem = x => x.members || [x];
+  const ids = new Set(mem(it).map(m => String(m.id)));
+  const predIds = new Set(mem(it).flatMap(m => m.dependsOn || []).map(String));
+  return list.filter(x => x !== it && mem(x).some(m => predIds.has(String(m.id)) || (m.dependsOn || []).some(d => ids.has(String(d)))));
+}
+function setGanttFocus(root, el, it, list, selector) {
+  clearGanttFocus(root);
+  if (!el || !it) return;
+  const linked = directlyLinked(it, list);
+  if (!linked.length) return; // inget kopplat – inget att tona ut
+  root.classList.add("focus-mode");
+  el.classList.add("focus-linked");
+  linked.forEach(x => { const t = root.querySelector(`${selector}[data-item-id="${CSS.escape(String(x.id))}"]`); if (t) t.classList.add("focus-linked"); });
+}
+function clearGanttFocus(root) {
+  if (!root) return;
+  root.classList.remove("focus-mode");
+  root.querySelectorAll(".focus-linked").forEach(x => x.classList.remove("focus-linked"));
+}
+
+/* Hovring: aktiviteten lyfts, närmaste föregångare/efterföljare får en diskret puls och en liten etikett. */
+function bindNearHighlight(root, selector, entryOf, list, cls, tagHost = t => t) {
+  const clear = () => {
+    root.querySelectorAll(`.${cls}-hot, .${cls}-near-pred, .${cls}-near-succ`).forEach(x => x.classList.remove(`${cls}-hot`, `${cls}-near-pred`, `${cls}-near-succ`));
+    root.querySelectorAll(".near-tag").forEach(x => x.remove());
+  };
+  const elOf = x => x && root.querySelector(`${selector}[data-item-id="${CSS.escape(String(x.id))}"]`);
+  root.querySelectorAll(selector).forEach(n => {
+    n.addEventListener("mouseenter", () => {
+      if (boardLinkPick || document.querySelector(".gantt-dragging, .pnote-dragging")) return;
+      clear();
+      clearTimeout(root._focusTimer);
+      root._focusTimer = setTimeout(() => setGanttFocus(root, n, entryOf(n), list, selector), 220);
+      const it = entryOf(n);
+      if (!it) return;
+      n.classList.add(`${cls}-hot`);
+      const { pred, succ, nPred, nSucc } = nearestLinked(it, list);
+      [[pred, "pred", nPred, "◀ Före"], [succ, "succ", nSucc, "Efter ▶"]].forEach(([x, kind, n2, txt]) => {
+        const t = elOf(x);
+        if (!t) return;
+        t.classList.add(`${cls}-near-${kind}`);
+        const host = tagHost(t);
+        if (host !== t) host.classList.add(`${cls}-near-${kind}`);
+        const tag = document.createElement("span");
+        tag.className = `near-tag near-${kind}`;
+        tag.textContent = n2 > 1 ? `${txt} (närmast av ${n2})` : txt;
+        host.appendChild(tag);
+      });
+    });
+    n.addEventListener("mouseleave", () => {
+      clear();
+      clearTimeout(root._focusTimer);
+      // Låst fokus (klickad aktivitet med tipsrutan öppen) står kvar, annars tonas allt tillbaka.
+      const locked = ganttTooltipPinnedEl && root.contains(ganttTooltipPinnedEl) && ganttTooltipPinnedEl.matches(selector) ? ganttTooltipPinnedEl : null;
+      if (locked) setGanttFocus(root, locked, entryOf(locked), list, selector); else clearGanttFocus(root);
+    });
+    n.addEventListener("click", () => { clearTimeout(root._focusTimer); setGanttFocus(root, n, entryOf(n), list, selector); });
+  });
+}
+
+const lastBarClick = { id: null, t: 0 };
+function bindGanttInteractions(el, list, tooltips, geometry) {
+  el.querySelectorAll('[data-action="toggle-gantt"]').forEach(toggleEl => {
+    toggleEl.onclick = () => {
+      const id = toggleEl.dataset.itemId;
+      if (ganttExpandedIds.has(id)) ganttExpandedIds.delete(id); else ganttExpandedIds.add(id);
+      renderGantt(list);
+    };
+  });
+
+  el.querySelectorAll(".gantt-row-trash[data-trash-id]").forEach(b => {
+    b.onclick = e => { e.stopPropagation(); deleteActivity(items.find(x => String(x.id) === b.dataset.trashId)); };
+  });
+  el.querySelectorAll('[data-action="toggle-gantt-group"]').forEach(headerEl => {
+    headerEl.oncontextmenu = e => { e.preventDefault(); openGanttGroupMenu(e, headerEl.dataset.groupKey); };
+    headerEl.onclick = () => {
+      const key = headerEl.dataset.groupKey;
+      if (ganttCollapsedGroups.has(key)) ganttCollapsedGroups.delete(key); else ganttCollapsedGroups.add(key);
+      saveGanttPrefs();
+      renderGantt(list);
+    };
+  });
+
+  el.querySelectorAll('[data-action="select-gantt-3d"]').forEach(labelEl => {
+    const activate = () => {
+      const id = labelEl.dataset.itemId;
+      const it = list.find(x => String(x.id) === id);
+      if (it) selectGanttItemInModel(it);
+    };
+    labelEl.onclick = activate;
+    labelEl.onkeydown = evt => {
+      if (evt.key === "Enter" || evt.key === " ") { evt.preventDefault(); activate(); }
+    };
+  });
+
+  const listById = new Map(); list.forEach(x => { const k = String(x.id); if (!listById.has(k)) listById.set(k, x); });
+  el.querySelectorAll("[data-gantt-tip]").forEach(markEl => {
+    // Tipset byggs först när det visas (LazyTipMap) – att hämta det här för varje stapel gjorde omritningen till minuter med tiotusentals objekt.
+    const key = markEl.dataset.ganttTip;
+    markEl.addEventListener("click", () => { const html = tooltips.get(key); if (html && markEl.isConnected) pinGanttTooltip(markEl, html); });
+    markEl.onfocusin = () => { const html = tooltips.get(key); if (html) pinGanttTooltip(markEl, html); };
+  });
+
+  // Klick på en huvudstapel (med beroenden) växlar highlight av dess
+  // beroendekedja, oavsett redigerbart läge. Drag flyttar/ändrar staplen
+  // (bara i redigerbart läge, se ganttEditable) - de två skiljs åt genom
+  // hur långt musen faktiskt flyttat sig mellan ned- och uppklick (ett
+  // "klick" har i praktiken alltid några enstaka pixlars rörelse). Se
+  // Victors förfrågan 2026-09-21 om att Gantt-schemat är read-only samt om
+  // att kunna se en försenings konsekvenser nedströms.
+  const CLICK_MOVE_THRESHOLD_PX = 4;
+  {
+    const shown = new Set([...el.querySelectorAll(".gantt-bar[data-item-id]")].map(b => b.dataset.itemId));
+    bindNearHighlight(el, ".gantt-bar[data-item-id]", b => listById.get(b.dataset.itemId), list.filter(x => shown.has(String(x.id))), "bar",
+      b => (b.closest(".gantt-row") && b.closest(".gantt-row").querySelector(".gantt-label")) || b);
+  }
+  const allById = new Map(); items.forEach(x => allById.set(String(x.id), x));
+  el.querySelectorAll(".gantt-bar[data-item-id]").forEach(barEl => {
+    const itemId = barEl.dataset.itemId;
+    const it = listById.get(itemId) || allById.get(itemId);
+    if (!it) return;
+
+    barEl.addEventListener("keydown", e => { if ((e.key === "Delete" || e.key === "Backspace") && ganttEditable) { e.preventDefault(); deleteActivity(it); } });
+    barEl.addEventListener("contextmenu", e => { if (!ganttEditable) return; e.preventDefault(); deleteActivity(it); });
+    barEl.addEventListener("pointerdown", (evt) => {
+      if (evt.button !== undefined && evt.button !== 0) return; // bara vänsterklick/primär pekare
+      const startX = evt.clientX;
+      const barRect = barEl.getBoundingClientRect();
+      const trackEl = barEl.parentElement; // .gantt-track
+      const trackWidthPx = trackEl ? trackEl.getBoundingClientRect().width : 0;
+      // Effektiv px/dag just nu - i "Anpassa"-läge (isFit) är stapelns
+      // position/bredd satt i %, så vi räknar om spårets FAKTISKA
+      // pixelbredd till px/dag för att kunna räkna om musens rörelse i px
+      // till en dagsförskjutning. I inzoomat läge används samma pxPerDay
+      // som redan styr barPos().
+      const effectivePxPerDay = geometry.isFit
+        ? (trackWidthPx / Math.max(1, geometry.domainDays))
+        : geometry.pxPerDay;
+
+      // I inzoomat läge är #ganttChart (elementet "el" här) en skrollbar
+      // ruta (overflow:auto) som ofta är SMALARE än själva stapeln - en
+      // lång stapel kan alltså ha sin vänster- och/eller högerkant utanför
+      // den synliga/klickbara ytan just nu, utan att användaren skrollat
+      // dit. Utan hänsyn till det landar EDGE_PX-zonen på ett antal pixlar
+      // som helt enkelt aldrig går att klicka (de klipps bort av
+      // overflow:hidden/auto), vilket gjorde att hörnen "inte gick att dra
+      // i" i praktiken (Victors förfrågan 2026-09-21) - bara mitten av
+      // stapeln (byt-läge) var nåbar. Lösning: räkna kant-zonen mot den
+      // FAKTISKT synliga kanten (barRect beskuren mot #ganttChart:s egen
+      // klientyta) istället för stapelns fulla, ev. delvis dolda, bredd.
+      const chartRect = el.getBoundingClientRect();
+      const visibleLeft = Math.max(barRect.left, chartRect.left);
+      const visibleRight = Math.min(barRect.left + barRect.width, chartRect.right);
+      const EDGE_PX = 8;
+      let mode = "move";
+      if (ganttEditable && visibleRight > visibleLeft) {
+        if (evt.clientX <= visibleLeft + EDGE_PX) mode = "resize-left";
+        else if (evt.clientX >= visibleRight - EDGE_PX) mode = "resize-right";
+      }
+
+      let moved = false;
+      let previewStart = it.startDate;
+      let previewEnd = it.endDate;
+      let lastDelta = 0, lastShift = false;
+      const origBarWidth = barEl.style.width;
+      const targets = new Set([it.id]);
+      const barPlan = (dd, withDeps) => mode === "move" ? planMove(targets, dd, withDeps) : planResize(targets, mode === "resize-left" ? "left" : "right", dd, withDeps);
+
+      const onMove = (moveEvt) => {
+        const deltaPx = moveEvt.clientX - startX;
+        if (Math.abs(deltaPx) >= CLICK_MOVE_THRESHOLD_PX) moved = true;
+        if (!ganttEditable || !moved || !effectivePxPerDay) return;
+        const deltaDays = Math.round(deltaPx / effectivePxPerDay);
+        lastDelta = deltaDays; lastShift = moveEvt.shiftKey;
+        // Beroende aktiviteter glider med medan man drar (Shift = utan), pilarna följer.
+        animatePush(el, barPlan(deltaDays, !moveEvt.shiftKey), targets, effectivePxPerDay);
+        if (mode === "move") {
+          previewStart = addDaysIso(it.startDate, deltaDays);
+          previewEnd = addDaysIso(it.endDate, deltaDays);
+        } else if (mode === "resize-left") {
+          previewStart = addDaysIso(it.startDate, deltaDays);
+          if (previewStart > it.endDate) previewStart = it.endDate;
+          previewEnd = it.endDate;
+        } else {
+          previewEnd = addDaysIso(it.endDate, deltaDays);
+          if (previewEnd < it.startDate) previewEnd = it.startDate;
+          previewStart = it.startDate;
+        }
+        barEl.classList.add("gantt-bar-dragging");
+        if (mode === "move") barEl.style.transform = `translateX(${deltaPx}px)`;
+        else {
+          // Kanten: stapeln växer/krymper direkt, dag för dag (Victor 2026-10-06).
+          barEl.classList.add("gantt-bar-resizing");
+          const d = deltaDays * effectivePxPerDay, minW = Math.max(3, effectivePxPerDay);
+          if (mode === "resize-right") barEl.style.width = `${Math.max(minW, barRect.width + d)}px`;
+          else {
+            const dd = Math.min(d, barRect.width - minW);
+            barEl.style.transform = `translateX(${dd}px)`;
+            barEl.style.width = `${Math.max(minW, barRect.width - dd)}px`;
+          }
+        }
+        if (ganttShowArrows) arrowsFollow(el);
+      };
+
+      const onUp = async () => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        barEl.style.transform = "";
+        barEl.style.width = origBarWidth;
+        barEl.classList.remove("gantt-bar-dragging", "gantt-bar-resizing");
+        el.querySelectorAll(".ga-pushed").forEach(n => { n.style.transform = ""; n.classList.remove("ga-pushed"); });
+        drawGanttArrows(el);
+
+        if (!moved) {
+          // Två klick i rad på samma aktivitet = dubbelklick (staplarna ritas om vid klick, så
+          // webbläsarens dblclick hinner inte komma fram) -> redigera.
+          const nowT = Date.now();
+          if (lastBarClick.id === itemId && nowT - lastBarClick.t < 450) { lastBarClick.id = null; openEditActivityDialog(it); return; }
+          lastBarClick.id = itemId; lastBarClick.t = nowT;
+          // Ett riktigt klick (ingen nämnvärd rörelse) - visa/dölj
+          // beroendekedjan om objektet har några beroenden eller är någon
+          // annans beroende.
+          if (barEl.dataset.hasDeps) {
+            ganttHighlightChainId = (ganttHighlightChainId === itemId) ? null : itemId;
+            renderGantt(list);
+            const nb = el.querySelector(`.gantt-bar[data-item-id="${CSS.escape(itemId)}"]`);
+            if (nb) {
+              pinGanttTooltip(nb, tooltips.get(nb.dataset.ganttTip) || "");
+              const shown = new Set([...el.querySelectorAll(".gantt-bar[data-item-id]")].map(b => b.dataset.itemId));
+              setGanttFocus(el, nb, it, list.filter(x => shown.has(String(x.id))), ".gantt-bar[data-item-id]");
+            }
+          }
+          return;
+        }
+        if (!ganttEditable || (previewStart === it.startDate && previewEnd === it.endDate)) {
+          renderGantt(list); // avbruten/ineffektiv drag (t.ex. ej redigerbart läge) - rita bara om
+          return;
+        }
+        // Som på tavlan: beroende aktiviteter skjuts fram (Shift = inte).
+        const plan = barPlan(lastDelta, !lastShift);
+        const conflicts = planConflicts(targets, plan);
+        if (conflicts.length && !(await dashConfirm(`Varning – beroende:\n${conflictText(conflicts)}\n\nFlytta ändå?`, { ok: "Flytta ändå" }))) { renderGantt(getFilteredItems()); return; }
+        const deps = [...plan.items.keys()].filter(id => !targets.has(id)).length;
+        const verb = mode === "move" ? `Flyttade ${itemLabel(it)} ${lastDelta > 0 ? "+" : ""}${lastDelta} d` : `${mode === "resize-left" ? "Ny start" : "Nytt slut"} för ${itemLabel(it)}`;
+        applySchedulePlan(plan, deps ? `${verb} (${deps} beroende framskjutna)` : verb);
+      };
+
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp, { once: true });
+    });
+  });
+}
+
+function updateGanttDensityButton() {
+  const btn = document.getElementById("ganttDensityToggle");
+  if (!btn) return;
+  btn.innerText = ganttDensity === "compact" ? "Kompakt" : "Bekväm";
+  btn.setAttribute("aria-pressed", ganttDensity === "comfortable" ? "true" : "false");
+}
+
+// Stegar zoomnivån (px/dag) upp/ned i GANTT_ZOOM_LEVELS. direction > 0 =
+// zooma in, < 0 = zooma ut. Från "Anpassa" (null) zoomar man in till minsta
+// nivån; zoomar man ut förbi minsta nivån hamnar man tillbaka i "Anpassa".
+function ganttZoomStep(direction) {
+  if (ganttZoomPxPerDay === null) {
+    if (direction > 0) ganttZoomPxPerDay = GANTT_ZOOM_LEVELS[0];
+  } else {
+    const idx = GANTT_ZOOM_LEVELS.indexOf(ganttZoomPxPerDay);
+    const nextIdx = (idx === -1 ? 0 : idx) + direction;
+    if (nextIdx < 0) {
+      ganttZoomPxPerDay = null;
+    } else {
+      ganttZoomPxPerDay = GANTT_ZOOM_LEVELS[Math.min(GANTT_ZOOM_LEVELS.length - 1, nextIdx)];
+    }
+  }
+  saveGanttPrefs();
+  renderGantt(getFilteredItems());
+}
+
+/* Snabbval "2 v/4 v/3 mån": från måndag denna vecka, N veckor framåt. */
+function ganttWeeksRange(weeks) {
+  const s0 = startOfWeekUTC(todayUTC());
+  const e0 = new Date(s0); e0.setUTCDate(e0.getUTCDate() + weeks * 7 - 1);
+  return [s0.toISOString().slice(0, 10), e0.toISOString().slice(0, 10)];
+}
+
+function updateGanttRangeStatus(rangeStatusEl) {
+  if (!rangeStatusEl) return;
+  rangeStatusEl.classList.remove("error");
+  rangeStatusEl.innerText = (ganttRangeStart && ganttRangeEnd) ? `Visar ${ganttRangeStart} – ${ganttRangeEnd}` : "";
+}
+
+// Kopplar alla toolbar-kontroller i Gantt-panelen (gruppering, sortering,
+// densitet, zoom, "Visa verkligt" samt det egna datumintervallet) - anropas
+// en gång från bindUI(). Läser sparade inställningar först (loadGanttPrefs)
+// så kontrollerna visar rätt värden direkt vid sidladdning.
+/* ---------------------------------------------------------------------
+   Utskrift av Gantt-schemat (Victors önskemål 2026-10-06: "en knapp för
+   att skriva ut ganttschemat, snyggt och bra"). Ritar schemat på nytt i
+   en egen utskriftsvy (#ganttPrint) i exakt sidbredd för valt papper,
+   med rubrik (projekt, vy, period, filter), statusförklaring och
+   tidshuvudet upprepat överst på varje sida (tabell-thead). Staplarna
+   anpassas till sidbredden; tavlan delas upp i perioder om några veckor
+   så att lapparna går att läsa (en lapp som fortsätter i nästa period
+   märks med ◂/▸). Allt i samma flik via window.print(), så det fungerar
+   inuti Trimble Connect och kan sparas som PDF.
+   ------------------------------------------------------------------- */
+const GANTT_PRINT_PREFS_KEY = "4ddash-gantt-print";
+const GANTT_PRINT_PAPER = { A4: [297, 210], A3: [420, 297] }; // mm, liggande
+const GANTT_PRINT_MARGIN_MM = 10;
+const BOARD_PRINT_MIN_COL_PX = 150; // minsta veckobredd på tavlan i utskrift
+const BOARD_PRINT_LANE_PX = BOARD_LANE_PX;
+
+function loadGanttPrintPrefs() {
+  const d = { paper: "A4", orient: "landscape", expandAll: true };
+  try {
+    const p = JSON.parse(window.localStorage.getItem(GANTT_PRINT_PREFS_KEY) || "{}") || {};
+    if (p.paper in GANTT_PRINT_PAPER) d.paper = p.paper;
+    if (p.orient === "landscape" || p.orient === "portrait") d.orient = p.orient;
+    if (typeof p.expandAll === "boolean") d.expandAll = p.expandAll;
+  } catch (e) { /* standardval */ }
+  return d;
+}
+function saveGanttPrintPrefs(p) {
+  try { window.localStorage.setItem(GANTT_PRINT_PREFS_KEY, JSON.stringify(p)); } catch (e) { /* bara bekvämlighet */ }
+}
+
+/* Sidans skrivbara bredd/höjd i CSS-pixlar (96 px/tum). */
+function ganttPrintPageSize(paper, orient) {
+  const [w, h] = GANTT_PRINT_PAPER[paper] || GANTT_PRINT_PAPER.A4;
+  const [pw, ph] = orient === "portrait" ? [h, w] : [w, h];
+  const px = mm => Math.floor((mm - 2 * GANTT_PRINT_MARGIN_MM) / 25.4 * 96);
+  return { width: px(pw), height: px(ph), cssSize: `${paper} ${orient}` };
+}
+
+/* Helskärm (Victor 2026-10-06): Gantt-panelen fyller skärmen. Webbläsarens riktiga helskärm om
+   Trimble Connect tillåter det, annars fyller panelen hela tilläggets yta. Esc/knappen stänger. */
+function ganttIsTouchTablet() {
+  try { return (navigator.maxTouchPoints || 0) > 1 && window.matchMedia("(pointer: coarse)").matches; } catch (e) { return false; }
+}
+function ganttFullscreenPanel() { return document.querySelector('section.panel[data-panel-id="gantt"]'); }
+/* I helskärm kan alla knappar döljas – bara färgförklaringen och schemat syns (Victor 2026-10-06).
+   Valet sparas till nästa gång. */
+let ganttFsClean = (() => { try { return localStorage.getItem("4ddash-gantt-fs-clean") === "1"; } catch (e) { return false; } })();
+/* Ikon i stället för text: öga = visa knapparna, överstruket öga = dölj dem. */
+function ganttFsToolsPaint(b, on) {
+  const ico = on ? '<path d="M2 10s3.2-5.5 8-5.5S18 10 18 10s-3.2 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.4"/>' : '<path d="M2 10s3.2-5.5 8-5.5S18 10 18 10s-3.2 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.4"/><path d="M3.5 16.5l13-13"/>';
+  b.innerHTML = `<svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ico}</svg>`;
+  b.title = on ? "Visa knapparna igen" : "Dölj knapparna – färgförklaringen ligger kvar"; b.setAttribute("aria-label", on ? "Visa knappar" : "Dölj knappar");
+}
+function setGanttFsClean(on) {
+  ganttFsClean = on;
+  try { localStorage.setItem("4ddash-gantt-fs-clean", on ? "1" : "0"); } catch (e) {}
+  const panel = ganttFullscreenPanel(), b = document.getElementById("ganttFsTools");
+  // Gäller både i och utanför helskärm (Victor 2026-10-06).
+  if (panel) panel.classList.toggle("gantt-fs-clean", on);
+  if (b) ganttFsToolsPaint(b, on);
+  if (panel) renderGantt(getFilteredItems());
+}
+function setGanttFullscreen(on) {
+  const panel = ganttFullscreenPanel(), btn = document.getElementById("ganttFullBtn");
+  if (!panel) return;
+  if (!on) ganttFsLost(false);
+  panel.classList.toggle("gantt-fullscreen", on);
+  const fsTools = document.getElementById("ganttFsTools");
+  if (fsTools) ganttFsToolsPaint(fsTools, ganttFsClean);
+  document.body.classList.toggle("gantt-fullscreen-on", on);
+  if (btn) {
+    const ico = on ? '<path d="M5 5l10 10M15 5 5 15"/>' : '<path d="M3.5 7.5v-4h4M16.5 7.5v-4h-4M3.5 12.5v4h4M16.5 12.5v4h-4"/>';
+    btn.innerHTML = `<svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ico}</svg>`;
+    btn.setAttribute("aria-label", on ? "Stäng helskärm" : "Helskärm"); btn.title = on ? "Stäng helskärm (Esc)" : "Helskärm – visa Gantt-schemat i helskärm (Esc stänger)"; btn.classList.toggle("active", on);
+  }
+  renderGantt(getFilteredItems()); // kolumnbredden följer den nya ytan
+}
+async function toggleGanttFullscreen() {
+  const panel = ganttFullscreenPanel();
+  if (!panel) return;
+  const on = !panel.classList.contains("gantt-fullscreen");
+  if (!on) {
+    if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch (e) {} }
+    setGanttFullscreen(false);
+    return;
+  }
+  setGanttFullscreen(true);
+  ganttFsEnterNative(panel);
+}
+/* Öppnad från hemskärmen (Victor 2026-10-08): ingen webbläsarram och redan helskärm – systemets
+   helskärm behövs inte (och kan då inte heller stängas av ett svep). Panelen fyller skärmen. */
+function ganttIsStandalone() {
+  try { return window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches || window.matchMedia("(display-mode: fullscreen)").matches; } catch (e) { return false; }
+}
+async function ganttFsEnterNative(panel) {
+  ganttFsLost(false);
+  if (ganttIsStandalone()) return;
+  if (document.fullscreenEnabled && panel.requestFullscreen) {
+    try { await panel.requestFullscreen(); } catch (e) { /* inte tillåtet i ramen – panelen fyller ytan ändå */ }
+  }
+}
+/* iPad (Victor 2026-10-08: "det hoppade ur när man swipeade nedåt"): iPadOS stänger webbläsarens
+   helskärm när ett svep nedåt inte tas om hand av sidan. Svep nedåt där schemat redan är högst upp
+   (inget att rulla) fångas därför här och når aldrig systemet; övriga svep rullar som vanligt.
+   Skulle helskärmen ändå stängas av systemet ligger schemat kvar och fyller sidan, med en knapp
+   för att gå tillbaka till helskärm (ett tryck – helskärm kräver ett tryck). */
+function ganttScrollParent(node, stop) {
+  for (let n = node; n && n !== stop.parentNode; n = n.parentNode) {
+    if (n.nodeType !== 1) continue;
+    const cs = getComputedStyle(n);
+    if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight + 1) return n;
+  }
+  return null;
+}
+(function bindGanttFsTouchGuard() {
+  let y0 = 0, x0 = 0, sc = null;
+  document.addEventListener("touchstart", e => {
+    const panel = ganttFullscreenPanel();
+    if (!panel || !panel.classList.contains("gantt-fullscreen") || e.touches.length !== 1) return;
+    y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; sc = ganttScrollParent(e.target, panel);
+  }, { passive: true });
+  document.addEventListener("touchmove", e => {
+    const panel = ganttFullscreenPanel();
+    if (!panel || !panel.classList.contains("gantt-fullscreen") || e.touches.length !== 1 || !panel.contains(e.target)) return;
+    const dy = e.touches[0].clientY - y0, dx = e.touches[0].clientX - x0;
+    if (dy > 0 && dy > Math.abs(dx) && (!sc || sc.scrollTop <= 0)) e.preventDefault(); // nedåt utan något att rulla
+  }, { passive: false });
+})();
+/* Efter att systemet stängt helskärmen: första tryck var som helst på schemat tar tillbaka den
+   (helskärm får bara startas av ett tryck – det här trycket räcker). */
+function ganttFsRetouch(e) {
+  const panel = ganttFullscreenPanel();
+  if (!panel || !document.getElementById("ganttFsBack") || document.fullscreenElement || !panel.contains(e.target)) return;
+  ganttFsEnterNative(panel);
+}
+document.addEventListener("touchend", ganttFsRetouch, true);
+function ganttFsLost(on) {
+  const panel = ganttFullscreenPanel();
+  let b = document.getElementById("ganttFsBack");
+  if (!on) { if (b) b.remove(); return; }
+  if (!panel) return;
+  if (!b) {
+    b = document.createElement("button");
+    b.type = "button"; b.id = "ganttFsBack"; b.className = "gantt-fs-back"; b.textContent = "⛶ Tryck var som helst för helskärm igen";
+    b.onclick = () => ganttFsEnterNative(panel);
+    panel.appendChild(b);
+  }
+}
+document.addEventListener("fullscreenchange", () => {
+  const panel = ganttFullscreenPanel();
+  if (!document.fullscreenElement && panel && panel.classList.contains("gantt-fullscreen")) {
+    // Pekskärm: systemet stängde (t.ex. ett svep) – schemat ligger kvar och fyller sidan, knappen tar tillbaka helskärmen.
+    if (ganttIsTouchTablet()) ganttFsLost(true); else setGanttFullscreen(false);
+  }
+});
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || (e.target && e.target.id === "ganttSearch" && e.target.value)) return;
+  const panel = ganttFullscreenPanel();
+  if (panel && panel.classList.contains("gantt-fullscreen") && !document.querySelector(".dialog:not(.hidden), .board-dep-menu")) setGanttFullscreen(false);
+});
+
+/* Det visade intervallet: valt i "Period", annars hela spannet för objekten med datum. */
+function ganttPrintDomain(list) {
+  if (ganttRangeStart && ganttRangeEnd) return { start: ganttRangeStart, end: ganttRangeEnd };
+  const withDates = list.filter(it => it.startDate && it.endDate);
+  if (!withDates.length) return null;
+  let all = withDates.flatMap(it => [it.startDate, it.endDate]);
+  if (ganttView === "bars" && ganttShowActual) all = all.concat(withDates.flatMap(it => [it.actualStartDate, it.actualEndDate]).filter(Boolean));
+  if (ganttView === "bars" && ganttShowBaseline) all = all.concat(withDates.flatMap(it => [...(blOf(it) || []), ...(blOf(it, ganttBaseline2Id) || [])]));
+  all.sort();
+  return { start: all[0], end: all[all.length - 1] };
+}
+
+/* Perioderna som skrivs ut: staplarna i ett svep (anpassat till bredden), tavlan
+   i bitar om så många veckor som får plats med minst BOARD_PRINT_MIN_COL_PX per vecka. */
+function ganttPrintSections(domain, pageWidth) {
+  if (ganttView !== "board") return [{ start: domain.start, end: domain.end }];
+  const perPage = Math.max(1, Math.floor((pageWidth - BOARD_PRINT_LANE_PX - 2) / BOARD_PRINT_MIN_COL_PX));
+  const w0 = startOfWeekUTC(parseDate(domain.start)), wEnd = startOfWeekUTC(parseDate(domain.end));
+  const nWeeks = Math.max(1, Math.round((wEnd - w0) / (7 * 86400000)) + 1);
+  const iso = d => d.toISOString().slice(0, 10);
+  const out = [];
+  for (let i = 0; i < nWeeks; i += perPage) {
+    const s = new Date(w0); s.setUTCDate(s.getUTCDate() + i * 7);
+    const e = new Date(s); e.setUTCDate(e.getUTCDate() + Math.min(perPage, nWeeks - i) * 7 - 1);
+    out.push({ start: iso(s) < domain.start ? domain.start : iso(s), end: iso(e) > domain.end ? domain.end : iso(e) });
+  }
+  return out;
+}
+
+function ganttPrintPeriodText(start, end) {
+  const s = parseDate(start), e = parseDate(end);
+  const ws = isoWeekNumber(startOfWeekUTC(s)), we = isoWeekNumber(startOfWeekUTC(e));
+  const year = d => d.getUTCFullYear();
+  const dates = `${shortDateSv(s)}${year(s) !== year(e) ? " " + year(s) : ""} – ${shortDateSv(e)} ${year(e)}`;
+  return `${ws === we ? `v.${ws}` : `v.${ws}–${we}`} · ${dates}`;
+}
+
+/* Gör om en renderad vy till en tabell så att tidshuvudet upprepas på varje sida
+   och rader/sim-banor inte delas i onödan. */
+function ganttPrintTableize(chartEl) {
+  const mkTable = (headEl, rowEls) => {
+    const table = document.createElement("table");
+    table.className = "gp-table";
+    const thead = table.createTHead().insertRow().insertCell();
+    thead.appendChild(headEl);
+    const tbody = table.createTBody();
+    rowEls.forEach(r => {
+      const tr = tbody.insertRow();
+      if (r.classList.contains("gantt-group")) tr.className = "gp-keep-next";
+      tr.insertCell().appendChild(r);
+    });
+    return table;
+  };
+  const board = chartEl.querySelector(".board");
+  if (board) {
+    const head = board.querySelector(".board-head");
+    const lanes = [...board.querySelectorAll(":scope > .board-lane")];
+    board.appendChild(mkTable(head, lanes));
+    return;
+  }
+  const inner = chartEl.querySelector(".gantt-inner");
+  if (!inner) return;
+  const ruler = inner.querySelector(".gantt-ruler-row");
+  const wrap = inner.querySelector(".gantt-rows-wrap");
+  if (!ruler || !wrap) return;
+  const rows = [...wrap.children];
+  wrap.remove();
+  // Varje rad i en egen tabellrad; underrader följer sitt objekt.
+  inner.appendChild(mkTable(ruler, rows));
+}
+
+/* Skarpt rutnät för papper (CSS-gradienterna på skärmen blir randiga i PDF): en SVG som
+   sträcks över spåret, en enhet per dag från startDate. Veckolinjer på måndagar, helger
+   skuggade och dagens datum markerat när det finns plats; månadsskiften för staplarna. */
+function ganttPrintGridSvg(startIso, nDays, pxPerDay, kind) {
+  const start = parseDate(startIso);
+  const parts = [];
+  const weekend = pxPerDay >= 5, dayLines = kind === "board" && pxPerDay >= 14;
+  for (let d = 0; d < nDays; d++) {
+    const dt = new Date(start.getTime() + d * 86400000), dow = dt.getUTCDay();
+    if (weekend && dow === 6) parts.push(`<rect x="${d}" y="0" width="2" height="1" fill="${kind === "board" ? "#000" : "#e3e6ec"}" fill-opacity="${kind === "board" ? 0.045 : 1}"/>`);
+    if (dayLines && dow !== 1) parts.push(`<line x1="${d}" x2="${d}" y1="0" y2="1" stroke="#000" stroke-opacity=".06"/>`);
+    if (dow === 1 && d > 0 && pxPerDay * 7 >= 10) parts.push(`<line x1="${d}" x2="${d}" y1="0" y2="1" stroke="${kind === "board" ? "#d9d1c1" : "#d5d9df"}"/>`);
+    if (kind === "bars" && dt.getUTCDate() === 1 && d > 0) parts.push(`<line x1="${d}" x2="${d}" y1="0" y2="1" stroke="#aeb4bd"/>`);
+  }
+  const t = daysBetweenIso(startIso, todayISO());
+  if (t !== null && t >= 0 && t <= nDays) {
+    parts.push(kind === "board"
+      ? `<rect x="${t}" y="0" width="1" height="1" fill="#3b82f6" fill-opacity=".16"/>`
+      : `<line x1="${t}" x2="${t}" y1="0" y2="1" stroke="${getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0b5fff"}" stroke-width="2"/>`);
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.max(1, nDays)} 1" preserveAspectRatio="none">${parts.join("").replace(/<line /g, '<line vector-effect="non-scaling-stroke" ')}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+function ganttPrintApplyGrid(chartEl, sec) {
+  const board = chartEl.querySelector(".board");
+  if (board) {
+    const grid = board.querySelector(".board-grid");
+    if (!grid) return;
+    const nDays = Number(getComputedStyle(grid).getPropertyValue("--days")) || 7;
+    const dayPx = parseFloat(getComputedStyle(grid).getPropertyValue("--day")) || 30;
+    const w0 = startOfWeekUTC(parseDate(sec.start)).toISOString().slice(0, 10);
+    const img = ganttPrintGridSvg(w0, nDays, dayPx, "board");
+    board.querySelectorAll(".board-grid").forEach(g => { g.style.backgroundImage = img; g.style.backgroundSize = "100% 100%"; g.style.backgroundRepeat = "no-repeat"; g.style.backgroundPosition = "0 0"; });
+    return;
+  }
+  const inner = chartEl.querySelector(".gantt-inner"), track = chartEl.querySelector(".gantt-rows-wrap .gantt-track");
+  if (!inner || !track) return;
+  const nDays = Math.max(1, daysBetweenIso(sec.start, sec.end));
+  inner.style.setProperty("--gg-image", ganttPrintGridSvg(sec.start, nDays, track.getBoundingClientRect().width / nDays, "bars"));
+  inner.style.setProperty("--gg-size", "100% 100%");
+  inner.style.setProperty("--gg-repeat", "no-repeat");
+  inner.style.setProperty("--gg-pos", "0 0");
+}
+
+function printGantt(opts) {
+  const list = ganttWithoutHidden(getFilteredItems()); // dolda områden skrivs inte ut
+  const domain = ganttPrintDomain(list);
+  if (!domain) { alert("Det finns inga aktiviteter med start- och slutdatum att skriva ut."); return; }
+  const page = ganttPrintPageSize(opts.paper, opts.orient);
+  const sections = ganttPrintSections(domain, page.width);
+
+  // Utskriften ritas med samma inställningar som på skärmen, men utan redigering,
+  // markerad beroendekedja och zoom (staplarna fyller sidbredden).
+  const saved = { ganttRangeStart, ganttRangeEnd, ganttZoomPxPerDay, ganttEditable, ganttHighlightChainId, ganttCollapsedGroups };
+  document.getElementById("ganttPrint")?.remove();
+  const root = document.createElement("div");
+  root.id = "ganttPrint";
+  root.className = `gantt-print gantt-print-${ganttView}`;
+  root.style.width = `${page.width}px`;
+  document.body.appendChild(root);
+
+  const viewText = ganttView === "board" ? "Tavla" : "Staplar";
+  const groupText = { area: "område", contractor: "entreprenör", activity: "aktivitet" }[ganttGroupBy];
+  const colorText = { area: "område", contractor: "entreprenör", activity: "aktivitet" }[ganttColorBy];
+  const sub = [(planSource === "pp" ? "Powerproject · " : "") + viewText + (groupText ? `, grupperat på ${groupText}` : "") + (ganttView === "board" ? `, färg efter ${colorText}` : ""),
+    ganttPrintPeriodText(domain.start, domain.end)];
+  const filterParts = []
+    .concat((filters.activity || []).length ? [`Aktivitet: ${filters.activity.map(v => v === FILTER_NONE ? NO_ACTIVITY_LABEL : v).join(", ")}`] : [])
+    .concat((filters.area || []).length ? [`Område: ${filters.area.map(v => v === FILTER_NONE ? NO_AREA_LABEL : v).join(", ")}`] : [])
+    .concat((filters.contractor || []).length ? [`Entreprenör: ${filters.contractor.map(v => v === FILTER_NONE ? NO_CONTRACTOR_LABEL : v).join(", ")}`] : []);
+  const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")
+    + (ganttView === "bars" && ganttShowActual ? `<span class="gp-leg"><i class="gp-leg-actual"></i>Verkligt</span>` : "")
+    + (ganttShowBaseline ? `<span class="gp-leg"><i class="gp-leg-baseline" style="background:${ganttBaselineColor} !important"></i>Baseline${baselineLabel() ? `: ${escapeHtml(baselineLabel())}` : ""}</span>` : "")
+    + (ganttShowBaseline && ganttBaseline2Id ? `<span class="gp-leg"><i class="gp-leg-baseline" style="background:${ganttBaselineColor2} !important"></i>Jämför: ${escapeHtml(baselineLabel(ganttBaseline2Id))}</span>` : "")
+    + `<span class="gp-leg"><i class="gp-leg-today"></i>Idag</span>`
+    + (ganttView === "board" ? `<span class="gp-leg"><i class="gp-leg-late"></i>Försenad (röd ram)</span>` : `<span class="gp-leg"><i class="gp-leg-weekend"></i>Helg</span>`);
+  const today = todayUTC();
+  root.innerHTML = `
+    <header class="gp-header">
+      <div class="gp-brand">
+        <span class="ncc-mark">NCC</span>
+        <div>
+          <h1>Gantt-schema${projectName ? ` – ${escapeHtml(projectName)}` : ""}</h1>
+          <div class="gp-sub">${sub.map(escapeHtml).join(" · ")}</div>
+          ${filterParts.length ? `<div class="gp-filter">Filter: ${escapeHtml(filterParts.join(" · "))}</div>` : ""}
+        </div>
+      </div>
+      <div class="gp-meta">
+        <div>Utskrivet ${escapeHtml(`${today.getUTCDate()} ${GANTT_MONTH_NAMES_SV[today.getUTCMonth()]} ${today.getUTCFullYear()}`)}</div>
+        <div>Status per idag (v.${isoWeekNumber(today)})</div>
+      </div>
+    </header>
+    <div class="gp-legend">${legend}</div>`;
+
+  try {
+    ganttEditable = false;
+    ganttHighlightChainId = null;
+    ganttZoomPxPerDay = null;
+    if (opts.expandAll) ganttCollapsedGroups = new Set();
+    let total = 0;
+    sections.forEach((sec, i) => {
+      const box = document.createElement("section");
+      box.className = "gp-section";
+      if (sections.length > 1) box.innerHTML = `<h2 class="gp-section-title">${escapeHtml(ganttPrintPeriodText(sec.start, sec.end))}<span>Del ${i + 1} av ${sections.length}</span></h2>`;
+      const chart = document.createElement("div");
+      chart.style.width = `${page.width}px`;
+      box.appendChild(chart);
+      root.appendChild(box);
+      ganttRangeStart = sec.start;
+      ganttRangeEnd = sec.end;
+      if (ganttView === "board") renderGanttBoard(list, chart, BOARD_PRINT_MIN_COL_PX);
+      else renderGantt(list, chart);
+      chart.classList.add("gp-chart");
+      ganttPrintApplyGrid(chart, sec);
+      total += chart.querySelectorAll(".pnote, .gantt-row:not(.gantt-ruler-row):not(.gantt-subrow)").length;
+      ganttPrintTableize(chart);
+      if (!chart.querySelector(".pnote, .gantt-bar")) box.classList.add("gp-empty");
+    });
+    if (!total) { root.remove(); alert("Inga aktiviteter inom perioden att skriva ut."); return; }
+  } finally {
+    ({ ganttRangeStart, ganttRangeEnd, ganttZoomPxPerDay, ganttEditable, ganttHighlightChainId, ganttCollapsedGroups } = saved);
+  }
+
+  // Pappersformat och sidfot (sidnummer där webbläsaren stöder det).
+  let pageStyle = document.getElementById("ganttPrintPageStyle");
+  if (!pageStyle) { pageStyle = document.createElement("style"); pageStyle.id = "ganttPrintPageStyle"; document.head.appendChild(pageStyle); }
+  const footer = `4D-dashboard · Gantt-schema${projectName ? " · " + projectName : ""}`.replace(/["\\]/g, "");
+  pageStyle.textContent = `@media print { @page { size: ${page.cssSize}; margin: ${GANTT_PRINT_MARGIN_MM}mm;
+    @bottom-left { content: "${footer}"; font: 8px system-ui, sans-serif; color: #6b7280; }
+    @bottom-right { content: "Sida " counter(page) " av " counter(pages); font: 8px system-ui, sans-serif; color: #6b7280; } } }`;
+
+  document.body.classList.add("printing-gantt");
+  const cleanup = () => {
+    document.body.classList.remove("printing-gantt");
+    document.getElementById("ganttPrint")?.remove();
+    document.getElementById("ganttPrintPageStyle")?.remove();
+  };
+  window.addEventListener("afterprint", cleanup, { once: true });
+  // Låt webbläsaren lägga ut sidan först.
+  requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+}
+
+/* Liten dialog vid knappen: papper, orientering, hopfällda grupper. */
+function openGanttPrintDialog(btn) {
+  document.querySelector(".gantt-print-pop")?.remove();
+  const prefs = loadGanttPrintPrefs();
+  const pop = document.createElement("div");
+  pop.className = "board-pop gantt-print-pop";
+  pop.setAttribute("role", "dialog");
+  pop.innerHTML = `
+    <div class="board-pop-title">🖨 Skriv ut Gantt-schemat</div>
+    <div class="gpp-row"><span>Papper</span><div class="gantt-seg">
+      ${Object.keys(GANTT_PRINT_PAPER).map(k => `<button type="button" class="gantt-seg-btn" data-paper="${k}">${k}</button>`).join("")}</div></div>
+    <div class="gpp-row"><span>Riktning</span><div class="gantt-seg">
+      <button type="button" class="gantt-seg-btn" data-orient="landscape">Liggande</button><button type="button" class="gantt-seg-btn" data-orient="portrait">Stående</button></div></div>
+    <label class="gpp-check"><input type="checkbox" id="gppExpand" /> Ta med hopfällda grupper</label>
+    <div class="gpp-info hint"></div>
+    <div class="board-pop-actions"><button type="button" data-act="cancel">Avbryt</button><button type="button" class="primary" data-act="print">Skriv ut</button></div>`;
+  overlayHost().appendChild(pop);
+  const r = btn.getBoundingClientRect();
+  pop.style.top = `${Math.min(window.innerHeight - 10, r.bottom + 6)}px`;
+  pop.style.left = `${Math.max(8, Math.min(window.innerWidth - 270, r.right - 260))}px`;
+  const expand = pop.querySelector("#gppExpand");
+  expand.checked = prefs.expandAll;
+  const refresh = () => {
+    pop.querySelectorAll("[data-paper]").forEach(b => b.classList.toggle("active", b.dataset.paper === prefs.paper));
+    pop.querySelectorAll("[data-orient]").forEach(b => b.classList.toggle("active", b.dataset.orient === prefs.orient));
+    const domain = ganttPrintDomain(getFilteredItems());
+    const info = pop.querySelector(".gpp-info");
+    if (!domain) { info.textContent = "Inga aktiviteter med datum."; return; }
+    const n = ganttPrintSections(domain, ganttPrintPageSize(prefs.paper, prefs.orient).width).length;
+    info.textContent = ganttView === "board"
+      ? `Tavlan ${ganttPrintPeriodText(domain.start, domain.end)}${n > 1 ? ` delas i ${n} perioder så att lapparna går att läsa.` : " – får plats i sidbredden."} Tips: välj Spara som PDF i utskriftsrutan.`
+      : `Staplarna ${ganttPrintPeriodText(domain.start, domain.end)} anpassas till sidbredden. Tips: välj Spara som PDF i utskriftsrutan.`;
+  };
+  refresh();
+  pop.querySelectorAll("[data-paper]").forEach(b => b.onclick = () => { prefs.paper = b.dataset.paper; refresh(); });
+  pop.querySelectorAll("[data-orient]").forEach(b => b.onclick = () => { prefs.orient = b.dataset.orient; refresh(); });
+  const close = () => { pop.remove(); document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", onKey, true); };
+  const outside = e => { if (!pop.contains(e.target) && e.target !== btn) close(); };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  document.addEventListener("pointerdown", outside, true);
+  document.addEventListener("keydown", onKey, true);
+  pop.querySelector('[data-act="cancel"]').onclick = close;
+  pop.querySelector('[data-act="print"]').onclick = () => {
+    prefs.expandAll = expand.checked;
+    saveGanttPrintPrefs(prefs);
+    close();
+    printGantt(prefs);
+  };
+  pop.querySelector('[data-act="print"]').focus();
+}
+
+function initGanttControls() {
+  loadGanttPrefs();
+  renderGanttLegend();
+
+  const groupSel = document.getElementById("ganttGroupBy");
+  const sortSel = document.getElementById("ganttSortBy");
+  const densityBtn = document.getElementById("ganttDensityToggle");
+  const zoomOutBtn = document.getElementById("ganttZoomOut");
+  const zoomFitBtn = document.getElementById("ganttZoomFit");
+  const zoomInBtn = document.getElementById("ganttZoomIn");
+  const actualCheckbox = document.getElementById("ganttShowActual");
+  const rangeStartInput = document.getElementById("ganttRangeStart");
+  const rangeEndInput = document.getElementById("ganttRangeEnd");
+  const rangeApplyBtn = document.getElementById("ganttRangeApply");
+  const rangeResetBtn = document.getElementById("ganttRangeReset");
+  const rangeStatusEl = document.getElementById("ganttRangeStatus");
+  const editableCheckbox = document.getElementById("ganttEditable");
+  const editableHintEl = document.getElementById("ganttEditableHint");
+  const printBtn = document.getElementById("ganttPrintBtn");
+  if (printBtn) printBtn.onclick = () => openGanttPrintDialog(printBtn);
+  const searchEl = document.getElementById("ganttSearch");
+  if (searchEl) {
+    let tmr = null;
+    searchEl.value = ganttSearch;
+    searchEl.oninput = () => { clearTimeout(tmr); tmr = setTimeout(() => { ganttSearch = searchEl.value.trim(); renderGantt(getFilteredItems()); }, 150); };
+    searchEl.onkeydown = e => { if (e.key === "Escape" && searchEl.value) { e.stopPropagation(); searchEl.value = ""; ganttSearch = ""; renderGantt(getFilteredItems()); } };
+  }
+  const refBtn = document.getElementById("ganttRefreshBtn");
+  if (refBtn) refBtn.onclick = async () => {
+    if (refBtn.classList.contains("spin")) return;
+    const lbl = refBtn.querySelector("span");
+    refBtn.classList.add("spin"); refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdaterar…";
+    try { await refreshAll(); if (lbl) lbl.textContent = "Uppdaterad"; refBtn.classList.add("done"); }
+    catch (e) { console.warn("Gantt: uppdatera", e); if (lbl) lbl.textContent = "Misslyckades"; }
+    refBtn.classList.remove("spin");
+    setTimeout(() => { refBtn.classList.remove("done"); if (lbl) lbl.textContent = "Uppdatera"; }, 1800);
+  };
+  { // Tidsraden är alltid synlig; är Tid-läget av är tidsstyrningen nedtonad – ett klick på den slår på Tid-läget.
+    const tr = document.getElementById("ganttTimeRow");
+    if (tr) tr.addEventListener("pointerdown", e => {
+      if (!tr.classList.contains("gantt-time-off") || e.target.closest(".gantt-mode-seg, .gtr-tools, .gtr-sep")) return;
+      if (!e.target.closest(".gantt-toolbar-btn, input, label, .gantt-time-slider")) return;
+      e.preventDefault(); e.stopPropagation(); setGanttMode("time");
+    }, true);
+  }
+  initGanttTime(); initGanttMulti(); initGanttResize(); if (typeof initBubbles === "function") initBubbles();
+  syncGanttModeUi();
+  const lmBtn = document.getElementById("ganttLoadModelsBtn"); if (lmBtn) lmBtn.onclick = loadCoupledModelsDash;
+  const ppxBtn = document.getElementById("ganttPpExportBtn"); if (ppxBtn) ppxBtn.onclick = () => openPpExportDialog();
+  const fullBtn = document.getElementById("ganttFullBtn");
+  if (fullBtn) fullBtn.onclick = toggleGanttFullscreen;
+  const fsTools = document.getElementById("ganttFsTools"), fsClose = document.getElementById("ganttFsClose");
+  if (fsTools) fsTools.onclick = () => setGanttFsClean(!ganttFsClean);
+  if (fsClose) fsClose.onclick = toggleGanttFullscreen;
+  const fsEnter = document.getElementById("ganttFsEnter");
+  if (fsEnter) fsEnter.onclick = toggleGanttFullscreen;
+  { const panel = ganttFullscreenPanel(); if (panel) panel.classList.toggle("gantt-fs-clean", ganttFsClean); if (fsTools) ganttFsToolsPaint(fsTools, ganttFsClean); }
+
+  groupSel.value = ganttGroupBy;
+  sortSel.value = ganttSortBy;
+  updateGanttDensityButton();
+  actualCheckbox.checked = ganttShowActual;
+  if (ganttRangeStart) rangeStartInput.value = ganttRangeStart;
+  if (ganttRangeEnd) rangeEndInput.value = ganttRangeEnd;
+  updateGanttRangeStatus(rangeStatusEl);
+  if (editableCheckbox) {
+    editableCheckbox.checked = ganttEditable;
+    editableCheckbox.onchange = () => {
+      ganttEditable = editableCheckbox.checked;
+      saveGanttPrefs();
+      renderGantt(getFilteredItems());
+    };
+  }
+
+  // Visningsläge (Staplar/Tavla), färg på lapparna, snabbval av period och hjälp.
+  document.querySelectorAll("[data-gantt-view]").forEach(btn => {
+    btn.onclick = () => {
+      ganttView = btn.dataset.ganttView;
+      ganttBoardScrolled = false;
+      saveGanttPrefs();
+      renderGantt(getFilteredItems());
+    };
+  });
+  const colorSel = document.getElementById("ganttColorBy");
+  if (colorSel) {
+    colorSel.value = ganttColorBy;
+    colorSel.onchange = () => { ganttColorBy = colorSel.value; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  const markPeriodChips = () => {
+    document.querySelectorAll("[data-gantt-weeks]").forEach(chip => {
+      const [s0, e0] = ganttWeeksRange(Number(chip.dataset.ganttWeeks));
+      chip.classList.toggle("active", ganttRangeStart === s0 && ganttRangeEnd === e0);
+    });
+    rangeResetBtn.classList.toggle("active", !ganttRangeStart && !ganttRangeEnd);
+  };
+  document.querySelectorAll("[data-gantt-weeks]").forEach(chip => {
+    chip.onclick = () => {
+      const [s0, e0] = ganttWeeksRange(Number(chip.dataset.ganttWeeks));
+      ganttRangeStart = s0; ganttRangeEnd = e0;
+      rangeStartInput.value = s0; rangeEndInput.value = e0;
+      ganttBoardScrolled = false;
+      saveGanttPrefs();
+      updateGanttRangeStatus(rangeStatusEl);
+      markPeriodChips();
+      renderGantt(getFilteredItems());
+    };
+  });
+  const blCb = document.getElementById("ganttShowBaseline");
+  if (blCb) {
+    blCb.checked = ganttShowBaseline;
+    blCb.onchange = () => { ganttShowBaseline = blCb.checked; saveGanttPrefs(); syncBlDaysPill(); renderGantt(getFilteredItems()); };
+  }
+  const arrCb = document.getElementById("ganttShowArrows");
+  if (arrCb) {
+    arrCb.checked = ganttShowArrows;
+    arrCb.onchange = () => { ganttShowArrows = arrCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  { const ob = document.getElementById("ganttOwnBtn"); if (ob) ob.onclick = () => { ganttOnlyOwn = !ganttOnlyOwn; try { localStorage.setItem("4ddash-gantt-own", ganttOnlyOwn ? "1" : "0"); } catch (e) { /* */ } ob.setAttribute("aria-pressed", String(ganttOnlyOwn)); renderGantt(getFilteredItems()); }; }
+  { const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.onclick = () => { ganttOnlyUncoupled = !ganttOnlyUncoupled; try { localStorage.setItem("4ddash-gantt-uncoupled", ganttOnlyUncoupled ? "1" : "0"); } catch (e) { /* */ } ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); renderGantt(getFilteredItems()); }; }
+  const addBtn = document.getElementById("ganttAddBtn");
+  if (addBtn) addBtn.onclick = () => openNewActivityDialog();
+  const blDays = document.getElementById("ganttBaselineDays");
+  if (blDays) {
+    blDays.checked = ganttBaselineDaysOnly;
+    blDays.onchange = () => { ganttBaselineDaysOnly = blDays.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  syncBlDaysPill();
+  const blColor = document.getElementById("ganttBaselineColor");
+  if (blColor) {
+    blColor.value = ganttBaselineColor;
+    blColor.oninput = () => { ganttBaselineColor = blColor.value; applyBaselineColor(); };
+    blColor.onchange = () => { ganttBaselineColor = blColor.value; saveGanttPrefs(); };
+  }
+  const bl1Sel = document.getElementById("ganttBaselineSel"), bl2Sel = document.getElementById("ganttBaseline2Sel"), bl2Color = document.getElementById("ganttBaselineColor2");
+  if (bl1Sel) bl1Sel.onchange = () => { ganttBaselineId = bl1Sel.value; if (ganttBaseline2Id === ganttBaselineId) ganttBaseline2Id = ""; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  if (bl2Sel) bl2Sel.onchange = () => { ganttBaseline2Id = bl2Sel.value; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  if (bl2Color) {
+    bl2Color.value = ganttBaselineColor2;
+    bl2Color.oninput = () => { ganttBaselineColor2 = bl2Color.value; applyBaselineColor(); };
+    bl2Color.onchange = () => { ganttBaselineColor2 = bl2Color.value; saveGanttPrefs(); renderGanttLegend(); };
+  }
+  const fullCb = document.getElementById("ganttBoardFull");
+  if (fullCb) {
+    fullCb.checked = ganttBoardFullText;
+    fullCb.onchange = () => { ganttBoardFullText = fullCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  const oneCb = document.getElementById("ganttBoardOneLine");
+  if (oneCb) {
+    oneCb.checked = ganttBoardOneLine;
+    oneCb.onchange = () => { ganttBoardOneLine = oneCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
+  }
+  document.getElementById("ganttUndo").onclick = undoSchedule;
+  document.getElementById("ganttRedo").onclick = redoSchedule;
+  updateUndoButtons();
+  document.addEventListener("keydown", e => {
+    if (!(e.ctrlKey || e.metaKey) || /INPUT|SELECT|TEXTAREA/.test((e.target && e.target.tagName) || "")) return;
+    const k = e.key.toLowerCase();
+    if (k === "z" && !e.shiftKey && scheduleUndo.length) { e.preventDefault(); undoSchedule(); }
+    else if ((k === "y" || (k === "z" && e.shiftKey)) && scheduleRedo.length) { e.preventDefault(); redoSchedule(); }
+  });
+  const helpBtn = document.getElementById("ganttHelpBtn");
+  if (helpBtn) helpBtn.onclick = () => {
+    const help = document.getElementById("ganttHelp");
+    const open = help.classList.toggle("hidden") === false;
+    helpBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  markPeriodChips();
+  applyGanttViewClass();
+
+  groupSel.onchange = () => {
+    ganttGroupBy = groupSel.value;
+    ganttCollapsedGroups = new Set(); // ny gruppering -> börja utfällt
+    saveGanttPrefs();
+    renderGantt(getFilteredItems());
+  };
+  sortSel.onchange = () => {
+    ganttSortBy = sortSel.value;
+    saveGanttPrefs();
+    renderGantt(getFilteredItems());
+  };
+  densityBtn.onclick = () => {
+    ganttDensity = ganttDensity === "compact" ? "comfortable" : "compact";
+    saveGanttPrefs();
+    updateGanttDensityButton();
+    renderGantt(getFilteredItems());
+  };
+  zoomOutBtn.onclick = () => ganttZoomStep(-1);
+  zoomInBtn.onclick = () => ganttZoomStep(1);
+  zoomFitBtn.onclick = () => {
+    ganttZoomPxPerDay = null;
+    saveGanttPrefs();
+    renderGantt(getFilteredItems());
+  };
+  actualCheckbox.onchange = () => {
+    ganttShowActual = actualCheckbox.checked; // sparas medvetet INTE, se deklarationen ovan
+    renderGantt(getFilteredItems());
+  };
+
+  rangeApplyBtn.onclick = () => {
+    const start = rangeStartInput.value || "";
+    const end = rangeEndInput.value || "";
+    if (!start || !end) {
+      rangeStatusEl.innerText = "Ange både från- och till-datum.";
+      rangeStatusEl.classList.add("error");
+      return;
+    }
+    if (start > end) {
+      rangeStatusEl.innerText = "Från-datumet måste vara innan (eller samma som) till-datumet.";
+      rangeStatusEl.classList.add("error");
+      return;
+    }
+    ganttRangeStart = start;
+    ganttRangeEnd = end;
+    saveGanttPrefs();
+    updateGanttRangeStatus(rangeStatusEl);
+    markPeriodChips();
+    renderGantt(getFilteredItems());
+  };
+  rangeResetBtn.onclick = () => {
+    ganttRangeStart = null;
+    ganttRangeEnd = null;
+    rangeStartInput.value = "";
+    rangeEndInput.value = "";
+    ganttBoardScrolled = false;
+    saveGanttPrefs();
+    updateGanttRangeStatus(rangeStatusEl);
+    markPeriodChips();
+    renderGantt(getFilteredItems());
+  };
+}
+
+/* ---------------------------------------------------------------------
+   Milstolpar – lista sorterad på måldatum, med en kryssruta som PATCHar
+   is_done (och sätter/nollställer completed_date) samt ett litet
+   formulär för att lägga till nya milstolpar.
+   ------------------------------------------------------------------- */
+function renderMilestones() {
+  const el = document.getElementById("milestonesList");
+
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const today = todayUTC();
+  const sorted = [...milestones].sort((a, b) => (a.target_date || "").localeCompare(b.target_date || ""));
+
+  const rows = sorted.length === 0
+    ? `<div class="hint">Inga milstolpar ännu.</div>`
+    : sorted.map(m => {
+        if (editingState.milestone !== null && String(editingState.milestone) === String(m.id)) return milestoneEditRowHtml(m);
+        const td = parseDate(m.target_date);
+        const overdue = !m.is_done && td && td < today;
+        return `
+          <div class="milestone-row${overdue ? " overdue" : ""}${m.is_done ? " done" : ""}">
+            <div class="milestone-head">
+              <input type="checkbox" class="milestone-check" data-milestone-id="${m.id}" ${m.is_done ? "checked" : ""} />
+              <span class="milestone-name" title="${escapeHtml(m.name || "")}">${escapeHtml(m.name || "")}</span>
+              ${rowActionsHtml("milestone", m.id)}
+            </div>
+            <span class="milestone-date">${formatDateSv(m.target_date)}</span>
+          </div>`;
+      }).join("");
+
+  el.innerHTML = rows + milestoneFormHtml();
+
+  el.querySelectorAll(".milestone-check").forEach(cb => {
+    cb.onchange = () => onToggleMilestone(cb.dataset.milestoneId, cb.checked);
+  });
+  document.getElementById("btnAddMilestone").onclick = onAddMilestone;
+  bindRowActions(el, "milestone", {
+    getItem: id => milestones.find(m => String(m.id) === String(id)),
+    render: renderMilestones,
+    remove: id => supaDelete("plan_milestones", id, "Ta bort milstolpen?").then(ok => {
+      if (ok) { fetchMilestones().then(renderMilestones); }
+    })
+  });
+  if (editingState.milestone !== null) bindMilestoneEditForm(el);
+}
+
+function milestoneEditRowHtml(m) {
+  return `
+    <div class="milestone-row editing add-form" data-editing-id="${m.id}">
+      <input type="text" class="edit-name" value="${escapeHtml(m.name || "")}" placeholder="Namn" />
+      <input type="date" class="edit-date" value="${escapeHtml(m.target_date || "")}" />
+      <span class="row-actions">
+        <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
+        <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
+      </span>
+    </div>`;
+}
+
+function bindMilestoneEditForm(el) {
+  const row = el.querySelector(`[data-editing-id="${editingState.milestone}"]`);
+  if (!row) return;
+  row.querySelector(".row-save-btn").onclick = async () => {
+    const name = row.querySelector(".edit-name").value.trim();
+    const target_date = row.querySelector(".edit-date").value;
+    if (!name || !target_date) { alert("Namn och måldatum måste vara ifyllda."); return; }
+    const ok = await supaUpdate("plan_milestones", editingState.milestone, { name, target_date });
+    if (ok) {
+      editingState.milestone = null;
+      await fetchMilestones();
+      renderMilestones();
+    }
+  };
+  row.querySelector(".row-cancel-btn").onclick = () => {
+    editingState.milestone = null;
+    renderMilestones();
+  };
+}
+
+function milestoneFormHtml() {
+  return `
+    <div class="add-form">
+      <input type="text" id="newMilestoneName" placeholder="Namn (t.ex. Stomresning klar)" />
+      <input type="date" id="newMilestoneDate" />
+      <button id="btnAddMilestone">+ Lägg till milstolpe</button>
+    </div>`;
+}
+
+async function onAddMilestone() {
+  const name = document.getElementById("newMilestoneName").value.trim();
+  const target_date = document.getElementById("newMilestoneDate").value;
+  if (!name || !target_date) {
+    alert("Ange både namn och måldatum för milstolpen.");
+    return;
+  }
+  const ok = await supaInsert("plan_milestones", { project_id: projectId, name, target_date });
+  if (ok) {
+    await fetchMilestones();
+    renderMilestones();
+  }
+}
+
+async function onToggleMilestone(id, checked) {
+  const ok = await supaUpdate("plan_milestones", id, { is_done: checked, completed_date: checked ? todayISO() : null });
+  if (ok) {
+    await fetchMilestones();
+    renderMilestones();
+  }
+}
+
+// Kopplar klick på redigera-/ta bort-knapparna för en panel. `opts.getItem`
+// hämtar dataobjektet för en rad-id (används inte här men lämnas öppet
+// för framtida bruk), `opts.render` ritar om panelen (t.ex. efter att
+// redigeringsläge slagits på), `opts.remove` utför själva borttagningen.
+function bindRowActions(el, type, opts) {
+  el.querySelectorAll(`.row-edit-btn[data-type="${type}"]`).forEach(btn => {
+    btn.onclick = () => {
+      editingState[type] = btn.dataset.id;
+      opts.render();
+    };
+  });
+  el.querySelectorAll(`.row-delete-btn[data-type="${type}"]`).forEach(btn => {
+    btn.onclick = () => opts.remove(btn.dataset.id);
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Försenade objekt – sorterad lista på antal dagar över planerat
+   slutdatum (baserat på slutdatum, inte bara status, så listan även
+   fångar objekt vars status inte hunnit uppdateras manuellt).
+   ------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------
+   Beroenden mellan objekt (plan_items.depends_on, satt i 4D-planering) -
+   Victors förfrågan 2026-09-21: "det går inte att säga 'gjutning av Pelare
+   B kan inte börja förrän formning av Pelare A är klar'. Utan det blir
+   schemat en samling isolerade staplar snarare än en riktig tidplan, och
+   det är svårt att räkna ut vad en försening faktiskt får för konsekvenser
+   nedströms." Byggs mot HELA `items` (inte det filtrerade urvalet) så att
+   en kedja alltid är komplett även om ett steg i den råkar vara bortfiltrerat.
+   ------------------------------------------------------------------- */
+function itemsByIdAll() {
+  return new Map(items.map(it => [it.id, it]));
+}
+
+// Alla objekt (direkt eller indirekt, transitivt) vars depends_on-kedja
+// till slut leder till `itemId` - dvs den nedströms-konsekvens en försening
+// av `itemId` skulle få. BFS "baklänges" över depends_on-kanterna.
+// Ett omvänt register (föregångare -> efterföljare) byggs en gång per anrop, så att kedjan
+// tar O(objekt + kopplingar) i stället för ett varv genom alla objekt per steg (2026-10-08:
+// gjorde tavlan sekunder långsam med många objekt). Ordningen är densamma som förut:
+// steg för steg, och inom ett steg i samma ordning som i `items`.
+function downstreamIndex() {
+  const succ = new Map(), idx = new Map();
+  items.forEach((it, i) => {
+    idx.set(it, i);
+    if (Array.isArray(it.dependsOn)) it.dependsOn.forEach(d => { const k = String(d); if (!succ.has(k)) succ.set(k, []); succ.get(k).push(it); });
+  });
+  return { succ, idx };
+}
+// index: färdigbyggt register (downstreamIndex) när många anrop görs i rad – annars byggs ett nytt per anrop (O(objekt) vardera;
+// computeDependencyRisks gjorde det för varje riskobjekt och tog 3 s vid 3 700 objekt – Victors logg 2026-10-16).
+function downstreamOf(itemId, byId, index) {
+  const { succ, idx } = index || downstreamIndex();
+  const result = [];
+  const seen = new Set([itemId]);
+  let frontier = [itemId];
+  while (frontier.length) {
+    const layer = [];
+    frontier.forEach(id => (succ.get(String(id)) || []).forEach(it => { if (!seen.has(it.id)) { seen.add(it.id); layer.push(it); } }));
+    layer.sort((a, b) => idx.get(a) - idx.get(b));
+    result.push(...layer);
+    frontier = layer.map(it => it.id);
+  }
+  return result;
+}
+
+// Objekt vars planerade start riskerar att krocka med ett ofärdigt
+// beroendes (verkliga, annars planerade) slutdatum - samma beräkning som
+// gantt-bar-risk-flaggan i renderGantt, men över HELA projektet (inte bara
+// det som råkar synas i Gantt-schemat just nu) så bevakningsbannern och
+// "Planstabilitet" kan räkna på den oavsett filter/zoom.
+function computeDependencyRisks() {
+  const byId = itemsByIdAll();
+  const risks = [], dIndex = downstreamIndex();
+  items.forEach(it => {
+    if (!Array.isArray(it.dependsOn) || it.dependsOn.length === 0) return;
+    const overlapping = it.dependsOn
+      .map(id => byId.get(id))
+      .filter(p => p && p.status !== "klar")
+      .filter(p => {
+        const predEnd = p.actualEndDate || p.endDate;
+        return predEnd && it.startDate && predEnd >= it.startDate;
+      });
+    if (overlapping.length > 0) risks.push({ it, blockers: overlapping, downstreamCount: downstreamOf(it.id, byId, dIndex).length });
+  });
+  return risks;
+}
+
+function computeDelayedList(list) {
+  const today = todayUTC();
+
+  return list
+    .map(it => {
+      const ed = parseDate(it.endDate);
+      if (it.status === "klar" || !ed || ed >= today) return null;
+      const overdueDays = Math.round((today - ed) / (24 * 60 * 60 * 1000));
+      return { it, overdueDays };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.overdueDays - a.overdueDays);
+}
+
+function renderDelayedList(list) {
+  const el = document.getElementById("delayedList");
+
+  if (list.length === 0) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const delayed = computeDelayedList(list);
+  if (delayed.length === 0) {
+    el.innerHTML = `<div class="hint">Inga försenade objekt just nu.</div>`;
+    return;
+  }
+
+  const shown = delayed.slice(0, DELAYED_LIST_MAX);
+  const rows = shown.map(({ it, overdueDays }) => {
+    const meta = [it.area || NO_AREA_LABEL, it.contractor].filter(Boolean).join(" · ");
+    return `
+      <div class="delayed-row">
+        <span class="delayed-label" title="${escapeHtml(itemLabel(it))}">${escapeHtml(itemLabel(it))}</span>
+        <span class="delayed-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>
+        <span class="delayed-days">${overdueDays} dagar</span>
+      </div>`;
+  }).join("");
+
+  const more = delayed.length > DELAYED_LIST_MAX
+    ? `<div class="hint">+ ${delayed.length - DELAYED_LIST_MAX} till</div>`
+    : "";
+
+  el.innerHTML = rows + more;
+}
+
+/* ---------------------------------------------------------------------
+   Bevakningsbanner ("Ingen bevakning/notiser" - Victors förfrågan
+   2026-09-21) - en alltid synlig sammanfattning direkt under headern, så
+   man ser om något kräver uppmärksamhet UTAN att behöva bläddra ner till
+   respektive panel. Räknar på HELA projektet (items/milestones), inte det
+   filtrerade urvalet, så bannern inte råkar dölja något bara för att ett
+   filter råkar stå inställt. Det här täcker "titta på dashboarden och se
+   direkt"-delen; den riktiga "ping utan att behöva öppna appen"-delen
+   sköts av det schemalagda GitHub Actions-jobbet i 4D-data-repot (se
+   BEVAKNING_SETUP.md) som skickar ett automatiskt e-postmeddelande
+   (via ett misslyckat jobb, vilket GitHub redan mejlar ägaren om) när
+   samma villkor slår till.
+   ------------------------------------------------------------------- */
+function renderWatchBanner() {
+  const el = document.getElementById("watchBanner");
+  if (!el) return;
+  if (!isBackendConfigured()) {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+
+  const today = todayUTC();
+  const delayed = computeDelayedList(items);
+  const watchDays = Number.isFinite(settings.watchMilestoneDays) ? settings.watchMilestoneDays : 7;
+  const upcomingMilestones = milestones.filter(m => {
+    if (m.is_done) return false;
+    const td = parseDate(m.target_date);
+    if (!td) return false;
+    const daysUntil = Math.round((td - today) / (24 * 60 * 60 * 1000));
+    return daysUntil >= 0 && daysUntil <= watchDays;
+  }).sort((a, b) => (a.target_date || "").localeCompare(b.target_date || ""));
+  const overdueMilestones = milestones.filter(m => {
+    if (m.is_done) return false;
+    const td = parseDate(m.target_date);
+    return td && td < today;
+  });
+  const depRisks = computeDependencyRisks();
+  const downstreamTotal = depRisks.reduce((sum, r) => sum + r.downstreamCount, 0);
+
+  const chips = [];
+  if (overdueMilestones.length > 0) {
+    chips.push({ level: "danger", action: "milestones", text: `⚠ ${overdueMilestones.length} passerad${overdueMilestones.length === 1 ? "" : "e"} milstolpe${overdueMilestones.length === 1 ? "" : "r"}` });
+  }
+  if (delayed.length > 0) {
+    chips.push({ level: "danger", action: "delayed", text: `⚠ ${delayed.length} ${delayed.length === 1 ? "försenat objekt" : "försenade objekt"}` });
+  }
+  if (depRisks.length > 0) {
+    const downstreamNote = downstreamTotal > 0 ? ` (påverkar ${downstreamTotal} objekt nedströms)` : "";
+    chips.push({ level: "danger", action: "gantt", text: `⚠ ${depRisks.length} objekt riskerar försening pga beroenden${downstreamNote}` });
+  }
+  if (upcomingMilestones.length > 0) {
+    const names = upcomingMilestones.slice(0, 3).map(m => m.name).join(", ");
+    chips.push({ level: "warn", action: "milestones", text: `⏰ ${upcomingMilestones.length} milstolpe${upcomingMilestones.length === 1 ? "" : "r"} inom ${watchDays} dagar: ${names}` });
+  }
+
+  if (chips.length === 0) {
+    el.className = "watch-banner watch-ok";
+    el.innerHTML = `<span class="watch-item ok">✓ Inga försenade objekt, passerade milstolpar eller beroenderisker just nu.</span>`;
+    return;
+  }
+
+  el.className = "watch-banner watch-alert";
+  el.innerHTML = chips.map(c => `<button type="button" class="watch-item ${c.level}" data-scroll-to="${c.action}">${escapeHtml(c.text)}</button>`).join("");
+  el.querySelectorAll("[data-scroll-to]").forEach(btn => {
+    btn.onclick = () => {
+      const targetId = { milestones: "milestonesList", delayed: "delayedList", gantt: "ganttChart" }[btn.dataset.scrollTo];
+      const target = targetId && document.getElementById(targetId);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Planstabilitet ("Ingen baseline" - Victors förfrågan 2026-09-21) - visar
+   hur mycket varje objekts start-/slutdatum har flyttats sedan de först
+   sattes, baserat på plan_item_baseline_history (fylls på av 4D-planering
+   vid varje datumändring, se logBaselineHistory där, samt av dashboardens
+   egen dra-och-släpp-omschemaläggning, se saveItemSchedule). Ett objekt
+   utan några ändringar (bara EN historikrad) har aldrig flyttats och visas
+   inte här - panelen är till för att hitta de KRONISKT instabila delarna
+   av projektet, inte för att lista allt.
+   ------------------------------------------------------------------- */
+function computeBaselineDrift() {
+  const byItem = new Map();
+  baselineHistory.forEach(row => {
+    const list = byItem.get(row.plan_item_id) || [];
+    list.push(row);
+    byItem.set(row.plan_item_id, list);
+  });
+  const byId = itemsByIdAll();
+  const drift = [];
+  byItem.forEach((rows, itemId) => {
+    if (rows.length < 2) return; // aldrig ändrat sedan det först sattes
+    const sorted = rows.slice().sort((a, b) => (a.recorded_at || "").localeCompare(b.recorded_at || ""));
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const it = byId.get(itemId);
+    const startDriftDays = (first.start_date && last.start_date) ? daysBetweenIso(first.start_date, last.start_date) : null;
+    const endDriftDays = (first.end_date && last.end_date) ? daysBetweenIso(first.end_date, last.end_date) : null;
+    const maxDrift = Math.max(Math.abs(startDriftDays || 0), Math.abs(endDriftDays || 0));
+    if (maxDrift === 0) return; // datum ändrades tekniskt (ny historikrad) men landade på samma värden
+    drift.push({
+      it,
+      itemId,
+      itemLabelText: it ? itemLabel(it) : "(borttaget objekt)",
+      changeCount: sorted.length - 1,
+      first,
+      last,
+      startDriftDays,
+      endDriftDays,
+      maxDrift
+    });
+  });
+  return drift.sort((a, b) => (b.changeCount - a.changeCount) || (b.maxDrift - a.maxDrift));
+}
+
+function renderStability() {
+  const el = document.getElementById("stabilityList");
+  if (!el) return;
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+  const drift = computeBaselineDrift();
+  if (drift.length === 0) {
+    el.innerHTML = `<div class="hint">Inga objekt har flyttat sina datum ännu (eller så finns ingen historik än sedan den här funktionen infördes 2026-09-21).</div>`;
+    return;
+  }
+  const STABILITY_MAX = 20;
+  const shown = drift.slice(0, STABILITY_MAX);
+  const rows = shown.map(d => {
+    const arrowLabel = (label, from, to) => from === to
+      ? `${escapeHtml(label)}: ${escapeHtml(from || "?")} (oförändrat)`
+      : `${escapeHtml(label)}: ${escapeHtml(from || "?")} → ${escapeHtml(to || "?")}`;
+    return `
+      <div class="stability-row">
+        <div class="stability-head">
+          <span class="stability-label" title="${escapeHtml(d.itemLabelText)}">${escapeHtml(d.itemLabelText)}</span>
+          <span class="stability-count">${d.changeCount} ändring${d.changeCount === 1 ? "" : "ar"}</span>
+        </div>
+        <div class="stability-dates">
+          ${arrowLabel("Start", d.first.start_date, d.last.start_date)} · ${arrowLabel("Slut", d.first.end_date, d.last.end_date)}
+        </div>
+        <div class="hint">Ursprungligen satt ${formatDateSv(d.first.recorded_at)}, senast ändrad ${formatDateSv(d.last.recorded_at)}.</div>
+      </div>`;
+  }).join("");
+  const more = drift.length > STABILITY_MAX ? `<div class="hint">+ ${drift.length - STABILITY_MAX} till</div>` : "";
+  el.innerHTML = rows + more;
+}
+
+/* ---------------------------------------------------------------------
+   Bemanning – antal personer per entreprenör och vecka (denna vecka +
+   STAFFING_WEEKS - 1 framåt). Formuläret upsertar (unikt på
+   project_id+contractor+week_start) så att man kan uppdatera samma
+   vecka igen utan att skapa dubbletter.
+   ------------------------------------------------------------------- */
+function renderStaffing() {
+  const el = document.getElementById("staffingChart");
+
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const weeks = currentWeekWindows(STAFFING_WEEKS);
+  const contractors = uniqueValues(it => it.contractor);
+  const byKey = new Map();
+  staffing.forEach(s => byKey.set(`${s.contractor}|${s.week_start}`, s));
+
+  let listHtml;
+  if (contractors.length === 0) {
+    listHtml = `<div class="hint">Inga entreprenörer hittades i planeringsdatan ännu.</div>`;
+  } else {
+    const header = `
+      <div class="staffing-row header">
+        <span></span>
+        ${weeks.map(w => `<span class="staffing-cell">${escapeHtml(w.label)}</span>`).join("")}
+      </div>`;
+    const rows = contractors.map(c => `
+      <div class="staffing-row">
+        <span class="staffing-label" title="${escapeHtml(c)}">${escapeHtml(c)}</span>
+        ${weeks.map(w => {
+          const iso = w.start.toISOString().slice(0, 10);
+          const rec = byKey.get(`${c}|${iso}`);
+          if (!rec) return `<span class="staffing-cell staffing-empty">–</span>`;
+          if (editingState.staffing !== null && String(editingState.staffing) === String(rec.id)) {
+            return `
+              <span class="staffing-cell staffing-cell-editing" data-editing-id="${rec.id}">
+                <label class="staffing-edit-field">Planerad
+                  <input type="number" min="0" class="edit-planned-headcount" value="${rec.planned_headcount ?? ""}" />
+                </label>
+                <label class="staffing-edit-field">Faktisk
+                  <input type="number" min="0" class="edit-headcount" value="${rec.headcount}" />
+                </label>
+                <span class="row-actions">
+                  <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
+                  <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
+                </span>
+              </span>`;
+          }
+          const hasPlanned = rec.planned_headcount !== null && rec.planned_headcount !== undefined;
+          const deviation = hasPlanned ? rec.headcount - rec.planned_headcount : null;
+          const devClass = deviation === null ? "" : deviation < 0 ? "negative" : deviation > 0 ? "positive" : "neutral";
+          const devText = deviation === null ? "–" : (deviation > 0 ? `+${deviation}` : String(deviation));
+          return `
+            <span class="staffing-cell staffing-cell-filled">
+              <span class="staffing-cell-head">${rowActionsHtml("staffing", rec.id)}</span>
+              <span class="staffing-stat"><span class="staffing-stat-label">Planerad</span><span class="staffing-stat-value">${hasPlanned ? rec.planned_headcount : "–"}</span></span>
+              <span class="staffing-stat"><span class="staffing-stat-label">Faktisk</span><span class="staffing-stat-value">${rec.headcount}</span></span>
+              <span class="staffing-stat staffing-deviation ${devClass}"><span class="staffing-stat-label">Avvikelse</span><span class="staffing-stat-value">${devText}</span></span>
+            </span>`;
+        }).join("")}
+      </div>`).join("");
+    listHtml = header + rows;
+  }
+
+  el.innerHTML = listHtml + staffingFormHtml(contractors, weeks);
+  document.getElementById("btnAddStaffing").onclick = onAddStaffing;
+  bindRowActions(el, "staffing", {
+    render: renderStaffing,
+    remove: id => supaDelete("plan_staffing", id, "Ta bort bemanningsposten?").then(ok => {
+      if (ok) { fetchStaffing().then(renderStaffing); }
+    })
+  });
+  if (editingState.staffing !== null) bindStaffingEditForm(el);
+}
+
+function bindStaffingEditForm(el) {
+  const cell = el.querySelector(`[data-editing-id="${editingState.staffing}"]`);
+  if (!cell) return;
+  cell.querySelector(".row-save-btn").onclick = async () => {
+    const headcount = Number(cell.querySelector(".edit-headcount").value);
+    const plannedRaw = cell.querySelector(".edit-planned-headcount").value;
+    const planned_headcount = plannedRaw === "" ? null : Number(plannedRaw);
+    if (!Number.isFinite(headcount) || headcount < 0) { alert("Ange ett giltigt antal personer (0 eller mer)."); return; }
+    if (planned_headcount !== null && (!Number.isFinite(planned_headcount) || planned_headcount < 0)) {
+      alert("Ange en giltig planerad bemanning (0 eller mer), eller lämna fältet tomt.");
+      return;
+    }
+    const ok = await supaUpdate("plan_staffing", editingState.staffing, { headcount, planned_headcount });
+    if (ok) {
+      editingState.staffing = null;
+      await fetchStaffing();
+      renderStaffing();
+    }
+  };
+  cell.querySelector(".row-cancel-btn").onclick = () => {
+    editingState.staffing = null;
+    renderStaffing();
+  };
+}
+
+function staffingFormHtml(contractors, weeks) {
+  const contractorField = contractors.length > 0
+    ? `<select id="newStaffingContractor">${contractors.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>`
+    : `<input type="text" id="newStaffingContractor" placeholder="Entreprenör" />`;
+  return `
+    <div class="add-form">
+      ${contractorField}
+      <select id="newStaffingWeek">
+        ${weeks.map(w => `<option value="${w.start.toISOString().slice(0, 10)}">${escapeHtml(w.label)}</option>`).join("")}
+      </select>
+      <input type="number" id="newStaffingPlanned" min="0" placeholder="Planerad bemanning" />
+      <input type="number" id="newStaffingHeadcount" min="0" placeholder="Faktisk bemanning (antal personer)" />
+      <button id="btnAddStaffing">Spara bemanning</button>
+    </div>`;
+}
+
+async function onAddStaffing() {
+  const contractor = (document.getElementById("newStaffingContractor").value || "").trim();
+  const week_start = document.getElementById("newStaffingWeek").value;
+  const headcount = Number(document.getElementById("newStaffingHeadcount").value);
+  const plannedRaw = document.getElementById("newStaffingPlanned").value;
+  const planned_headcount = plannedRaw === "" ? null : Number(plannedRaw);
+  if (!contractor || !week_start || !Number.isFinite(headcount) || headcount < 0) {
+    alert("Ange entreprenör, vecka och ett giltigt antal personer (0 eller mer).");
+    return;
+  }
+  if (planned_headcount !== null && (!Number.isFinite(planned_headcount) || planned_headcount < 0)) {
+    alert("Ange en giltig planerad bemanning (0 eller mer), eller lämna fältet tomt.");
+    return;
+  }
+  try {
+    await ghUpsertOne(
+      settings.githubToken,
+      tablePath("plan_staffing"),
+      { id: ghNewId(), project_id: projectId, contractor, week_start, headcount, planned_headcount },
+      (r) => `${r.project_id}::${r.contractor}::${r.week_start}`,
+      "Spara bemanning"
+    );
+    await fetchStaffing();
+    renderStaffing();
+  } catch (e) {
+    console.error("Kunde inte spara bemanning", e);
+    alert("Kunde inte spara bemanningen – nätverksfel. Försök igen.");
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Resurstimmar (planerat) – ett enkelt planeringsunderlag: varje objekts
+   (eller, om objektet har delaktiviteter, varje delaktivitets) uppskattade
+   timmar fördelas jämnt över dess datumintervall och summeras per vecka
+   och entreprenör - liknande strukturen som Bemanning-panelen, men byggt
+   från "Uppskattade timmar" i 4D-planering istället för manuellt
+   inrapporterad bemanning. Victor har bett om enbart planerad tidsåtgång
+   i denna omgång, ingen jämförelse mot verkligt utfall (se hans svar
+   2026-09-17 på klargörande fråga om resursuppföljning).
+   ------------------------------------------------------------------- */
+function renderResourceHours(list) {
+  const el = document.getElementById("resourceHoursChart");
+  if (!el) return;
+
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const activitiesByItem = new Map();
+  activities.forEach(a => {
+    const forItem = activitiesByItem.get(a.plan_item_id) || [];
+    forItem.push(a);
+    activitiesByItem.set(a.plan_item_id, forItem);
+  });
+
+  // Bygg en "hink" per objekt eller delaktivitet som har både datum och
+  // uppskattade timmar ifyllda - det är det enda vi kan fördela ut.
+  const buckets = [];
+  let skipped = 0;
+  list.forEach(it => {
+    const itemActivities = (activitiesByItem.get(it.id) || []).filter(
+      a => a.start_date && a.end_date && Number.isFinite(a.estimated_hours) && a.estimated_hours > 0
+    );
+    if (itemActivities.length > 0) {
+      itemActivities.forEach(a => {
+        buckets.push({ contractor: it.contractor || NO_CONTRACTOR_LABEL, start: a.start_date, end: a.end_date, hours: a.estimated_hours });
+      });
+    } else if (it.startDate && it.endDate && Number.isFinite(it.estimatedHours) && it.estimatedHours > 0) {
+      buckets.push({ contractor: it.contractor || NO_CONTRACTOR_LABEL, start: it.startDate, end: it.endDate, hours: it.estimatedHours });
+    } else {
+      skipped++;
+    }
+  });
+
+  const skipHint = skipped > 0
+    ? `<div class="hint">${skipped} objekt saknar uppskattade timmar och/eller datum och visas inte här.</div>`
+    : "";
+
+  if (buckets.length === 0) {
+    el.innerHTML = `<div class="hint">Inga objekt med ifyllda uppskattade timmar ännu. Fyll i "Uppskattade timmar" på objekt eller delaktiviteter i 4D-planering.</div>${skipHint}`;
+    return;
+  }
+
+  // Veckofönster (måndag-söndag) som täcker hela spannet av hinkarna, inte
+  // bara kommande veckor som i Bemanning - ett resursunderlag behöver
+  // kunna visa hela objektets/projektets planerade period.
+  const domainStart = buckets.reduce((min, b) => (b.start < min ? b.start : min), buckets[0].start);
+  const domainEnd = buckets.reduce((max, b) => (b.end > max ? b.end : max), buckets[0].end);
+  const firstWeek = startOfWeekUTC(parseDate(domainStart));
+  const lastWeek = startOfWeekUTC(parseDate(domainEnd));
+  const weeks = [];
+  for (let d = new Date(firstWeek); d <= lastWeek; d.setUTCDate(d.getUTCDate() + 7)) {
+    const start = new Date(d);
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 6);
+    weeks.push({ start, end, iso: start.toISOString().slice(0, 10), label: `v.${isoWeekNumber(start)}` });
+  }
+
+  // Fördela varje hinks timmar jämnt per dag över dess datumintervall, och
+  // lägg respektive veckas andel i rutnätet [entreprenör][veckoindex].
+  const contractors = Array.from(new Set(buckets.map(b => b.contractor))).sort((a, b) => a.localeCompare(b, "sv"));
+  const grid = new Map(contractors.map(c => [c, new Array(weeks.length).fill(0)]));
+
+  buckets.forEach(b => {
+    const totalDays = Math.max(1, daysBetweenIso(b.start, b.end) + 1);
+    const hoursPerDay = b.hours / totalDays;
+    weeks.forEach((w, wi) => {
+      const overlapStartIso = b.start > w.iso ? b.start : w.iso;
+      const weekEndIso = w.end.toISOString().slice(0, 10);
+      const overlapEndIso = b.end < weekEndIso ? b.end : weekEndIso;
+      if (overlapStartIso > overlapEndIso) return;
+      const overlapDays = daysBetweenIso(overlapStartIso, overlapEndIso) + 1;
+      grid.get(b.contractor)[wi] += hoursPerDay * overlapDays;
+    });
+  });
+
+  const fmt1 = (n) => (Math.round(n * 10) / 10).toString().replace(".", ",");
+  const weekTotals = weeks.map((w, wi) => contractors.reduce((sum, c) => sum + grid.get(c)[wi], 0));
+  const grandTotal = weekTotals.reduce((a, b) => a + b, 0);
+
+  const headerCells = weeks.map((w, wi) =>
+    `<th title="${w.iso} – ${w.end.toISOString().slice(0, 10)}">${w.label}</th>`
+  ).join("");
+
+  const bodyRows = contractors.map(c => {
+    const rowTotal = grid.get(c).reduce((a, b) => a + b, 0);
+    const cells = grid.get(c).map(v => `<td>${v > 0 ? fmt1(v) : "–"}</td>`).join("");
+    return `<tr><th class="reshours-rowlabel" title="${escapeHtml(c)}">${escapeHtml(c)}</th>${cells}<td class="reshours-rowtotal">${fmt1(rowTotal)}</td></tr>`;
+  }).join("");
+
+  const totalRow = `<tr class="reshours-total-row"><th>Totalt</th>${weekTotals.map(v => `<td>${v > 0 ? fmt1(v) : "–"}</td>`).join("")}<td class="reshours-rowtotal">${fmt1(grandTotal)}</td></tr>`;
+
+  el.innerHTML = `
+    <div class="reshours-scroll">
+      <table class="reshours-table">
+        <thead><tr><th></th>${headerCells}<th>Totalt</th></tr></thead>
+        <tbody>${bodyRows}</tbody>
+        <tfoot>${totalRow}</tfoot>
+      </table>
+    </div>
+    ${skipHint}
+  `;
+}
+
+/* ---------------------------------------------------------------------
+   Leveransplan + Leveransplan handlingar – båda listorna fungerar
+   identiskt (lista sorterad på planerat datum, med statusmärke, samt
+   planerat OCH faktiskt leveransdatum), så logiken byggs en gång som en
+   fabrik och instansieras för respektive tabell/panel nedan.
+   ------------------------------------------------------------------- */
+/* Leveranser och upplag (Victor 2026-10-09): en leverans kan läggas på ett upplag i lägesplanen
+   (site_layers, type "storage") eller på ett upplag i Placera i 3D ("place:<id>"), med yta (space_m2)
+   och sista dag den ligger kvar (until_date). Samma regler som lägesplanen (lagesplan-storage.js):
+   leveransen ligger där från levererat (annars planerat) datum till och med until_date. */
+let deliveryStorages = [];
+async function fetchDeliveryStorages() {
+  const rd = t => ghReadJSON(settings.githubToken, tablePath(t)).catch(() => []);
+  const [site, pl] = await Promise.all([rd("site_layers"), rd("plan_placements")]);
+  const area = x => Number.isFinite(x.w) ? x.w * x.h : (Array.isArray(x.pts) && x.pts.length >= 2 ? Math.abs((x.pts[1][0] - x.pts[0][0]) * (x.pts[1][1] - x.pts[0][1])) : 0);
+  deliveryStorages = [
+    ...(Array.isArray(site) ? site : []).filter(x => x && x.type === "storage").map(x => ({ id: x.id, name: x.name || "Upplag", cap: Math.round(area(x) * 10) / 10, where: "lägesplanen" })),
+    ...(Array.isArray(pl) ? pl : []).filter(p => p && p.type === "upplag").map(p => ({ id: "place:" + p.id, name: p.name || "Upplag", cap: Math.round((Number(p.L) || 0) * (Number(p.B) || 0) * 10) / 10, where: "3D" })),
+  ];
+}
+function deliveryRangeOf(d) { const s = d.actual_date || d.planned_date || ""; return [s, d.until_date && d.until_date >= s ? d.until_date : s]; }
+/* Dagar då upplaget har mer på sig än det rymmer. */
+function storageOverDays(sid, list) {
+  const st = deliveryStorages.find(x => x.id === sid), out = new Set();
+  if (!st || !(st.cap > 0)) return out;
+  const mine = list.filter(d => d.storage_id === sid).map(d => ({ d, r: deliveryRangeOf(d) })).filter(x => x.r[0]);
+  if (!mine.length) return out;
+  let day = mine.map(x => x.r[0]).sort()[0];
+  const last = mine.map(x => x.r[1]).sort().pop();
+  for (let i = 0; i < 400 && day <= last; i++, day = addDaysIso(day, 1)) {
+    const used = mine.filter(x => x.r[0] <= day && day <= x.r[1]).reduce((a, x) => a + (Number(x.d.space_m2) || 0), 0);
+    if (used > st.cap + 1e-9) out.add(day);
+  }
+  return out;
+}
+function deliveryWarnings(list) {
+  const today = todayISO(), by = new Map(), over = new Map();
+  deliveryStorages.forEach(st => over.set(st.id, storageOverDays(st.id, list)));
+  list.forEach(d => {
+    const [s, e] = deliveryRangeOf(d);
+    if (!s || e < today) return;
+    if (!d.storage_id) { by.set(d.id, { text: "Saknar upplag", sev: "warn" }); return; }
+    if (!deliveryStorages.some(x => x.id === d.storage_id)) { by.set(d.id, { text: "Upplaget finns inte längre", sev: "warn" }); return; }
+    const days = [...(over.get(d.storage_id) || [])].filter(x => x >= s && x <= e && x >= today).sort();
+    if (days.length) by.set(d.id, { text: `Upplaget fullt ${formatDateSv(days[0])}${days.length > 1 ? ` (+${days.length - 1} d)` : ""}`, sev: "bad" });
+  });
+  return by;
+}
+function storageOptionsHtml(cur) {
+  return `<option value="">– inget upplag –</option>` + deliveryStorages.map(st => `<option value="${escapeHtml(st.id)}" ${st.id === cur ? "selected" : ""}>${escapeHtml(st.name)} (${String(st.cap).replace(".", ",")} m², ${st.where})</option>`).join("")
+    + (cur && !deliveryStorages.some(x => x.id === cur) ? `<option value="${escapeHtml(cur)}" selected>(borttaget upplag)</option>` : "");
+}
+const m2In = v => { const t = String(v || "").trim().replace(",", "."); return t === "" ? null : Math.max(0, Number(t) || 0); };
+
+function createDeliveryModule({ table, elId, editKey, getArr, setArr, formPrefix, addBtnId, emptyText, storage = false }) {
+  async function fetchFn() {
+    if (!isBackendConfigured()) { setArr([]); return; }
+    try {
+      if (storage) await fetchDeliveryStorages();
+      setArr(await ghReadJSON(settings.githubToken, tablePath(table)));
+    } catch (e) {
+      console.error(`Kunde inte hämta ${table}`, e);
+      setArr([]);
+    }
+  }
+
+  function render() {
+    const el = document.getElementById(elId);
+
+    if (!isBackendConfigured()) {
+      el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+      return;
+    }
+
+    const sorted = [...getArr()].sort((a, b) => (a.planned_date || "").localeCompare(b.planned_date || ""));
+    const warns = storage ? deliveryWarnings(getArr()) : new Map();
+    const stName = id => { const st = deliveryStorages.find(x => x.id === id); return st ? st.name : "Upplag"; };
+
+    const rows = sorted.length === 0
+      ? `<div class="hint">${emptyText}</div>`
+      : sorted.map(d => {
+          if (editingState[editKey] !== null && String(editingState[editKey]) === String(d.id)) return editRowHtml(d);
+          const meta = [d.supplier, d.contractor, d.area].filter(Boolean).join(" · ");
+          const status = d.status || "planerad";
+          const color = DELIVERY_STATUS_COLORS[status] || "#6b7280";
+          return `
+            <div class="delivery-row">
+              <span class="delivery-desc" title="${escapeHtml(d.description || "")}">${escapeHtml(d.description || "")}${storage ? (() => {
+                const w = warns.get(d.id), bits = [d.storage_id ? `📦 ${stName(d.storage_id)}` : "", d.space_m2 != null ? `${String(d.space_m2).replace(".", ",")} m²` : "", d.until_date ? `t.o.m. ${formatDateSv(d.until_date)}` : ""].filter(Boolean);
+                return bits.length || w ? `<small class="delivery-stor">${escapeHtml(bits.join(" · "))}${w ? `<b class="delivery-warn-tag ${w.sev}">⚠ ${escapeHtml(w.text)}</b>` : ""}</small>` : "";
+              })() : ""}</span>
+              <span class="delivery-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>
+              <span class="delivery-dates">
+                <span class="delivery-date-row"><span class="delivery-date-label">Planerad</span> ${formatDateSv(d.planned_date)}</span>
+                <span class="delivery-date-row"><span class="delivery-date-label">Levererad</span> ${d.actual_date ? formatDateSv(d.actual_date) : "–"}</span>
+              </span>
+              <span class="badge" style="background:${color}">${escapeHtml(status)}</span>
+              ${rowActionsHtml(editKey, d.id)}
+            </div>`;
+        }).join("");
+
+    const summary = (() => {
+      if (!storage || !warns.size) return "";
+      const n = k => [...warns.values()].filter(w => w.text.startsWith(k)).length;
+      const parts = [[n("Upplaget fullt"), "på fullt upplag"], [n("Saknar upplag"), "saknar upplag"], [n("Upplaget finns inte"), "på borttaget upplag"]].filter(([c]) => c).map(([c, t]) => `${c} ${c === 1 ? "leverans" : "leveranser"} ${t}`);
+      return `<div class="delivery-warn-sum">⚠ ${escapeHtml(parts.join(" · "))}</div>`;
+    })();
+    el.innerHTML = summary + rows + formHtml();
+    document.getElementById(addBtnId).onclick = onAdd;
+    bindRowActions(el, editKey, {
+      render,
+      remove: id => supaDelete(table, id, "Ta bort leveransen?").then(ok => {
+        if (ok) { fetchFn().then(render); }
+      })
+    });
+    if (editingState[editKey] !== null) bindEditForm(el);
+  }
+
+  function editRowHtml(d) {
+    const contractors = uniqueValues(it => it.contractor);
+    return `
+      <div class="delivery-row editing add-form" data-editing-id="${d.id}">
+        <input type="text" class="edit-desc" value="${escapeHtml(d.description || "")}" placeholder="Beskrivning" />
+        <input type="text" class="edit-supplier" value="${escapeHtml(d.supplier || "")}" placeholder="Leverantör" />
+        <input type="text" class="edit-contractor" value="${escapeHtml(d.contractor || "")}" placeholder="Entreprenör" list="${formPrefix}ContractorListEdit" />
+        <datalist id="${formPrefix}ContractorListEdit">${contractors.map(c => `<option value="${escapeHtml(c)}"></option>`).join("")}</datalist>
+        <input type="text" class="edit-area" value="${escapeHtml(d.area || "")}" placeholder="Område" />
+        ${storage ? `<select class="edit-storage" title="Upplag (lägesplanen eller Placera i 3D)">${storageOptionsHtml(d.storage_id || "")}</select>
+        <input type="text" inputmode="decimal" class="edit-m2" value="${d.space_m2 != null ? String(d.space_m2).replace(".", ",") : ""}" placeholder="Yta m²" title="Ytan leveransen tar på upplaget" />
+        <label class="inline-field">Ligger kvar t.o.m. <input type="date" class="edit-until" value="${escapeHtml(d.until_date || "")}" /></label>` : ""}
+        <label class="inline-field">Planerad <input type="date" class="edit-date" value="${escapeHtml(d.planned_date || "")}" /></label>
+        <label class="inline-field">Levererad <input type="date" class="edit-actual-date" value="${escapeHtml(d.actual_date || "")}" /></label>
+        <select class="edit-status">
+          ${DELIVERY_STATUS_OPTIONS.map(s => `<option value="${escapeHtml(s)}" ${s === (d.status || "planerad") ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+        </select>
+        <span class="row-actions">
+          <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
+          <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
+        </span>
+      </div>`;
+  }
+
+  function bindEditForm(el) {
+    const row = el.querySelector(`[data-editing-id="${editingState[editKey]}"]`);
+    if (!row) return;
+    row.querySelector(".row-save-btn").onclick = async () => {
+      const description = row.querySelector(".edit-desc").value.trim();
+      const planned_date = row.querySelector(".edit-date").value;
+      if (!description || !planned_date) { alert("Beskrivning och planerat datum måste vara ifyllda."); return; }
+      const ok = await supaUpdate(table, editingState[editKey], {
+        description,
+        supplier: row.querySelector(".edit-supplier").value.trim() || null,
+        contractor: row.querySelector(".edit-contractor").value.trim() || null,
+        area: row.querySelector(".edit-area").value.trim() || null,
+        planned_date,
+        actual_date: row.querySelector(".edit-actual-date").value || null,
+        status: row.querySelector(".edit-status").value,
+        ...(storage ? { storage_id: row.querySelector(".edit-storage").value || null, space_m2: m2In(row.querySelector(".edit-m2").value), until_date: row.querySelector(".edit-until").value || null } : {})
+      });
+      if (ok) {
+        editingState[editKey] = null;
+        await fetchFn();
+        render();
+      }
+    };
+    row.querySelector(".row-cancel-btn").onclick = () => {
+      editingState[editKey] = null;
+      render();
+    };
+  }
+
+  function formHtml() {
+    const contractors = uniqueValues(it => it.contractor);
+    return `
+      <div class="add-form">
+        <input type="text" id="${formPrefix}Desc" placeholder="Beskrivning *" />
+        <input type="text" id="${formPrefix}Supplier" placeholder="Leverantör" />
+        <input type="text" id="${formPrefix}Contractor" placeholder="Entreprenör" list="${formPrefix}ContractorList" />
+        <datalist id="${formPrefix}ContractorList">${contractors.map(c => `<option value="${escapeHtml(c)}"></option>`).join("")}</datalist>
+        <input type="text" id="${formPrefix}Area" placeholder="Område" />
+        ${storage ? `<select id="${formPrefix}Storage" title="Upplag (lägesplanen eller Placera i 3D)">${storageOptionsHtml("")}</select>
+        <input type="text" inputmode="decimal" id="${formPrefix}M2" placeholder="Yta m²" title="Ytan leveransen tar på upplaget" />
+        <label class="inline-field">Ligger kvar t.o.m. <input type="date" id="${formPrefix}Until" /></label>` : ""}
+        <label class="inline-field">Planerad * <input type="date" id="${formPrefix}Date" title="Planerat datum *" /></label>
+        <label class="inline-field">Levererad <input type="date" id="${formPrefix}ActualDate" title="Faktiskt levererad" /></label>
+        <select id="${formPrefix}Status">
+          ${DELIVERY_STATUS_OPTIONS.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}
+        </select>
+        <button id="${addBtnId}">+ Lägg till leverans</button>
+      </div>`;
+  }
+
+  async function onAdd() {
+    const description = document.getElementById(`${formPrefix}Desc`).value.trim();
+    const supplier = document.getElementById(`${formPrefix}Supplier`).value.trim();
+    const contractor = document.getElementById(`${formPrefix}Contractor`).value.trim();
+    const area = document.getElementById(`${formPrefix}Area`).value.trim();
+    const planned_date = document.getElementById(`${formPrefix}Date`).value;
+    const actual_date = document.getElementById(`${formPrefix}ActualDate`).value;
+    const status = document.getElementById(`${formPrefix}Status`).value;
+    if (!description || !planned_date) {
+      alert("Ange både beskrivning och planerat datum för leveransen – annars sparas den inte.");
+      return;
+    }
+    const ok = await supaInsert(table, {
+      project_id: projectId,
+      description,
+      supplier: supplier || null,
+      contractor: contractor || null,
+      area: area || null,
+      planned_date,
+      actual_date: actual_date || null,
+      status,
+      ...(storage ? (() => { const o = {}, sid = document.getElementById(`${formPrefix}Storage`).value, m2 = m2In(document.getElementById(`${formPrefix}M2`).value), u = document.getElementById(`${formPrefix}Until`).value;
+        if (sid) o.storage_id = sid; if (m2 != null) o.space_m2 = m2; if (u) o.until_date = u; return o; })() : {})
+    });
+    if (ok) {
+      await fetchFn();
+      render();
+    }
+  }
+
+  return { fetch: fetchFn, render };
+}
+
+const deliveriesModule = createDeliveryModule({
+  table: "plan_deliveries",
+  elId: "deliveriesList",
+  editKey: "delivery",
+  getArr: () => deliveries,
+  setArr: v => { deliveries = v; },
+  formPrefix: "newDelivery",
+  addBtnId: "btnAddDelivery",
+  emptyText: "Inga leveranser inplanerade ännu.",
+  storage: true
+});
+function fetchDeliveries() { return deliveriesModule.fetch(); }
+function renderDeliveries() { return deliveriesModule.render(); }
+
+const documentDeliveriesModule = createDeliveryModule({
+  table: "plan_document_deliveries",
+  elId: "documentDeliveriesList",
+  editKey: "documentDelivery",
+  getArr: () => documentDeliveries,
+  setArr: v => { documentDeliveries = v; },
+  formPrefix: "newDocDelivery",
+  addBtnId: "btnAddDocDelivery",
+  emptyText: "Inga handlingar (ritningar, bygglov, tekn. beskrivningar) inplanerade ännu."
+});
+function fetchDocumentDeliveries() { return documentDeliveriesModule.fetch(); }
+function renderDocumentDeliveries() { return documentDeliveriesModule.render(); }
+
+/* ---------------------------------------------------------------------
+   Hinder (blockers) – varje hinder kan valfritt kopplas till ett
+   planerat objekt (var hindret finns) samt till flera påverkade
+   aktiviteter (flera val), har en ansvarig, en deadline, en fritext för
+   påverkan på produktion, ett löst/olöst-läge och en egen
+   kommentarstråd (separat från 4D-planerings vanliga objektskommentarer).
+   ------------------------------------------------------------------- */
+async function fetchBlockers() {
+  if (!isBackendConfigured()) { blockers = []; return; }
+  try {
+    blockers = await ghReadJSON(settings.githubToken, tablePath("plan_blockers"));
+  } catch (e) {
+    console.error("Kunde inte hämta hinder", e);
+    blockers = [];
+  }
+}
+
+// plan_blocker_comments ligger i samma projektmapp som allt annat, så till
+// skillnad från den gamla Supabase-lösningen behövs ingen global hämtning +
+// client-filtrering.
+async function fetchBlockerComments() {
+  if (!isBackendConfigured()) { blockerComments = []; return; }
+  try {
+    blockerComments = await ghReadJSON(settings.githubToken, tablePath("plan_blocker_comments"));
+  } catch (e) {
+    console.error("Kunde inte hämta hinderkommentarer", e);
+    blockerComments = [];
+  }
+}
+
+function renderBlockers() {
+  const el = document.getElementById("blockersList");
+
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const itemById = new Map(items.map(it => [it.id, it]));
+  const today = todayUTC();
+
+  const sorted = [...blockers].sort((a, b) => {
+    if (Boolean(a.is_resolved) !== Boolean(b.is_resolved)) return a.is_resolved ? 1 : -1;
+    return (a.deadline || "9999-99-99").localeCompare(b.deadline || "9999-99-99");
+  });
+
+  const rows = sorted.length === 0
+    ? `<div class="hint">Inga hinder registrerade ännu.</div>`
+    : sorted.map(b => {
+        if (editingState.blocker !== null && String(editingState.blocker) === String(b.id)) return blockerEditRowHtml(b, itemById);
+
+        const dl = parseDate(b.deadline);
+        const overdue = !b.is_resolved && dl && dl < today;
+        const affectedLabels = (Array.isArray(b.affected_item_ids) ? b.affected_item_ids : [])
+          .map(id => itemById.get(id))
+          .filter(Boolean)
+          .map(itemLabel);
+        const comments = blockerComments.filter(c => String(c.blocker_id) === String(b.id));
+        const expanded = expandedBlockerId !== null && String(expandedBlockerId) === String(b.id);
+
+        return `
+          <div class="blocker-row${b.is_resolved ? " resolved" : ""}${overdue ? " overdue" : ""}">
+            <div class="blocker-head">
+              <span class="badge" style="background:${b.is_resolved ? "#3fb950" : "#e5484d"}">${b.is_resolved ? "Löst" : "Öppet"}</span>
+              ${b.deadline ? `<span class="blocker-deadline">Deadline: ${formatDateSv(b.deadline)}</span>` : ""}
+              ${rowActionsHtml("blocker", b.id)}
+            </div>
+            <div class="blocker-desc">${escapeHtml(b.description || "")}</div>
+            ${modelObjectBadgeHtml(b)}
+            ${affectedLabels.length ? `<div class="blocker-affected" title="${escapeHtml(affectedLabels.join(", "))}">Påverkar: ${escapeHtml(affectedLabels.join(", "))}</div>` : ""}
+            ${b.responsible ? `<div class="blocker-meta">Ansvarig: ${escapeHtml(b.responsible)}</div>` : ""}
+            ${b.production_impact ? `<div class="blocker-meta">Påverkan på produktion: ${escapeHtml(b.production_impact)}</div>` : ""}
+            <div class="blocker-actions-row">
+              <label class="blocker-resolve-label">
+                <input type="checkbox" class="blocker-resolve-check" data-blocker-id="${b.id}" ${b.is_resolved ? "checked" : ""} /> Löst
+              </label>
+              <button type="button" class="blocker-comments-toggle" data-blocker-id="${b.id}">Kommentarer (${comments.length})</button>
+            </div>
+            ${expanded ? blockerCommentsHtml(b, comments) : ""}
+          </div>`;
+      }).join("");
+
+  el.innerHTML = rows + blockerFormHtml();
+
+  document.getElementById("btnAddBlocker").onclick = onAddBlocker;
+  bindModelObjectPicker(newBlockerModelObject, "newBlockerModelPicker", "newBlockerModelPickBtn", "newBlockerModelClearBtn");
+  bindModelObjectBadges(el);
+  bindRowActions(el, "blocker", {
+    render: renderBlockers,
+    remove: id => supaDelete("plan_blockers", id, "Ta bort hindret? (kommentarerna tas också bort)").then(ok => {
+      if (ok) { fetchBlockers().then(renderBlockers); }
+    })
+  });
+  el.querySelectorAll(".blocker-resolve-check").forEach(cb => {
+    cb.onchange = () => onToggleBlockerResolved(cb.dataset.blockerId, cb.checked);
+  });
+  el.querySelectorAll(".blocker-comments-toggle").forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.blockerId;
+      expandedBlockerId = (expandedBlockerId !== null && String(expandedBlockerId) === String(id)) ? null : id;
+      renderBlockers();
+    };
+  });
+  el.querySelectorAll(".blocker-comment-add-btn").forEach(btn => {
+    btn.onclick = () => onAddBlockerComment(btn.dataset.blockerId);
+  });
+  if (editingState.blocker !== null) bindBlockerEditForm(el);
+}
+
+function blockerCommentsHtml(b, comments) {
+  const sorted = [...comments].sort((a, c) => (a.created_at || "").localeCompare(c.created_at || ""));
+  return `
+    <div class="blocker-comments">
+      ${sorted.length === 0
+        ? `<div class="hint">Inga kommentarer ännu.</div>`
+        : sorted.map(c => `
+          <div class="blocker-comment-row">
+            <div class="comment-head">
+              <span class="comment-author">${escapeHtml(c.author || "Anonym")}</span>
+              <span class="comment-time">${relativeTime(c.created_at)}</span>
+            </div>
+            <div class="comment-body">${escapeHtml(c.body || "")}</div>
+          </div>`).join("")}
+      <div class="add-form blocker-comment-form">
+        <input type="text" class="blocker-comment-author" data-blocker-id="${b.id}" placeholder="Ditt namn" />
+        <input type="text" class="blocker-comment-body" data-blocker-id="${b.id}" placeholder="Skriv en kommentar" />
+        <button type="button" class="blocker-comment-add-btn" data-blocker-id="${b.id}">Kommentera</button>
+      </div>
+    </div>`;
+}
+
+async function onAddBlockerComment(blockerId) {
+  const authorInput = document.querySelector(`.blocker-comment-author[data-blocker-id="${blockerId}"]`);
+  const bodyInput = document.querySelector(`.blocker-comment-body[data-blocker-id="${blockerId}"]`);
+  const body = bodyInput.value.trim();
+  if (!body) { alert("Skriv en kommentar innan du sparar."); return; }
+  const author = authorInput.value.trim();
+  // blockerId är numera ett UUID-string (inte bigint) - skickas oförändrat.
+  const ok = await supaInsert("plan_blocker_comments", { blocker_id: blockerId, body, author: author || null });
+  if (ok) {
+    await fetchBlockerComments();
+    renderBlockers();
+  }
+}
+
+async function onToggleBlockerResolved(id, checked) {
+  const ok = await supaUpdate("plan_blockers", id, { is_resolved: checked, resolved_date: checked ? todayISO() : null });
+  if (ok) {
+    await fetchBlockers();
+    renderBlockers();
+  }
+}
+
+function blockerEditRowHtml(b, itemById) {
+  const filtered = getFilteredItems();
+  const affectedIds = Array.isArray(b.affected_item_ids) ? b.affected_item_ids.map(String) : [];
+  const affectedOptionsSource = [...filtered];
+  affectedIds.forEach(id => {
+    if (!affectedOptionsSource.some(it => it.id === id) && itemById.has(id)) affectedOptionsSource.push(itemById.get(id));
+  });
+  const impactOptions = categoryOptions(BLOCKER_IMPACT_SUGGESTIONS, blockers, x => x.production_impact);
+  editBlockerModelObject = modelObjectRefFromRow(b);
+
+  return `
+    <div class="blocker-row editing add-form" data-editing-id="${b.id}">
+      <input type="text" class="edit-desc" value="${escapeHtml(b.description || "")}" placeholder="Beskrivning av hindret *" />
+      ${modelObjectPickerHtml(editBlockerModelObject, "editBlockerModelPicker", "editBlockerModelPickBtn", "editBlockerModelClearBtn")}
+      <label class="field-label">Påverkad aktivitet (flera val möjliga)
+        <select class="edit-affected" multiple size="4">
+          ${affectedOptionsSource.map(it => `<option value="${it.id}" ${affectedIds.includes(it.id) ? "selected" : ""}>${escapeHtml(itemLabel(it))}</option>`).join("")}
+        </select>
+      </label>
+      <input type="text" class="edit-responsible" value="${escapeHtml(b.responsible || "")}" placeholder="Ansvarig" />
+      <input type="date" class="edit-deadline" value="${escapeHtml(b.deadline || "")}" />
+      <input type="text" class="edit-impact" list="blockerImpactListEdit" value="${escapeHtml(b.production_impact || "")}" placeholder="Påverkan på produktion" />
+      <datalist id="blockerImpactListEdit">${impactOptions.map(o => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>
+      <span class="row-actions">
+        <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
+        <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
+      </span>
+    </div>`;
+}
+
+function bindBlockerEditForm(el) {
+  const row = el.querySelector(`[data-editing-id="${editingState.blocker}"]`);
+  if (!row) return;
+  bindModelObjectPicker(editBlockerModelObject, "editBlockerModelPicker", "editBlockerModelPickBtn", "editBlockerModelClearBtn");
+  row.querySelector(".row-save-btn").onclick = async () => {
+    const description = row.querySelector(".edit-desc").value.trim();
+    if (!description) { alert("Ange en beskrivning av hindret."); return; }
+    const affected_item_ids = [...row.querySelector(".edit-affected").selectedOptions].map(o => o.value); // item-id är numera ett UUID-string, inte ett tal
+    const ok = await supaUpdate("plan_blockers", editingState.blocker, {
+      description,
+      model_id: editBlockerModelObject.model_id,
+      model_object_id: editBlockerModelObject.model_object_id,
+      model_object_name: editBlockerModelObject.model_object_name,
+      affected_item_ids,
+      responsible: row.querySelector(".edit-responsible").value.trim() || null,
+      deadline: row.querySelector(".edit-deadline").value || null,
+      production_impact: row.querySelector(".edit-impact").value.trim() || null
+    });
+    if (ok) {
+      editingState.blocker = null;
+      await fetchBlockers();
+      renderBlockers();
+    }
+  };
+  row.querySelector(".row-cancel-btn").onclick = () => {
+    editingState.blocker = null;
+    renderBlockers();
+  };
+}
+
+function blockerFormHtml() {
+  const filtered = getFilteredItems();
+  const impactOptions = categoryOptions(BLOCKER_IMPACT_SUGGESTIONS, blockers, b => b.production_impact);
+  return `
+    <div class="add-form">
+      <input type="text" id="newBlockerDesc" placeholder="Beskrivning av hindret *" />
+      ${modelObjectPickerHtml(newBlockerModelObject, "newBlockerModelPicker", "newBlockerModelPickBtn", "newBlockerModelClearBtn")}
+      <label class="field-label">Påverkad aktivitet (flera val möjliga)
+        <select id="newBlockerAffected" multiple size="4">
+          ${filtered.map(it => `<option value="${it.id}">${escapeHtml(itemLabel(it))}</option>`).join("")}
+        </select>
+      </label>
+      <input type="text" id="newBlockerResponsible" placeholder="Ansvarig" />
+      <input type="date" id="newBlockerDeadline" title="Deadline" />
+      <input type="text" id="newBlockerImpact" list="blockerImpactList" placeholder="Påverkan på produktion" />
+      <datalist id="blockerImpactList">${impactOptions.map(o => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>
+      <button id="btnAddBlocker">+ Registrera hinder</button>
+    </div>`;
+}
+
+async function onAddBlocker() {
+  const description = document.getElementById("newBlockerDesc").value.trim();
+  if (!description) {
+    alert("Ange en beskrivning av hindret.");
+    return;
+  }
+  const affected_item_ids = [...document.getElementById("newBlockerAffected").selectedOptions].map(o => o.value); // item-id är numera ett UUID-string, inte ett tal
+  const responsible = document.getElementById("newBlockerResponsible").value.trim();
+  const deadline = document.getElementById("newBlockerDeadline").value;
+  const production_impact = document.getElementById("newBlockerImpact").value.trim();
+
+  const ok = await supaInsert("plan_blockers", {
+    project_id: projectId,
+    description,
+    model_id: newBlockerModelObject.model_id,
+    model_object_id: newBlockerModelObject.model_object_id,
+    model_object_name: newBlockerModelObject.model_object_name,
+    affected_item_ids,
+    responsible: responsible || null,
+    deadline: deadline || null,
+    production_impact: production_impact || null,
+    is_resolved: false
+  });
+  if (ok) {
+    newBlockerModelObject = emptyModelObjectRef();
+    await fetchBlockers();
+    renderBlockers();
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Säkerhet – logg över tillbud/olyckor/skyddsronder/riskobservationer,
+   nyast först.
+   ------------------------------------------------------------------- */
+function renderSafety() {
+  const el = document.getElementById("safetyFeed");
+
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const sorted = [...safetyEvents].sort((a, b) => {
+    const byDate = (b.event_date || "").localeCompare(a.event_date || "");
+    if (byDate !== 0) return byDate;
+    return (b.created_at || "").localeCompare(a.created_at || "");
+  });
+
+  const rows = sorted.length === 0
+    ? `<div class="hint">Inga säkerhetshändelser loggade ännu.</div>`
+    : sorted.map(s => {
+        if (editingState.safety !== null && String(editingState.safety) === String(s.id)) return safetyEditRowHtml(s);
+        const meta = [s.area, s.contractor].filter(Boolean).join(" · ");
+        const sevBadge = s.severity
+          ? `<span class="badge" style="background:${SEVERITY_COLORS[s.severity] || "#6b7280"}">${escapeHtml(s.severity)}</span>`
+          : "";
+        return `
+          <div class="safety-row">
+            <div class="safety-head">
+              <span class="badge">${escapeHtml(s.event_type || "")}</span>
+              ${sevBadge}
+              <span class="safety-date">${formatDateSv(s.event_date)}</span>
+              ${rowActionsHtml("safety", s.id)}
+            </div>
+            ${s.description ? `<div class="safety-desc">${escapeHtml(s.description)}</div>` : ""}
+            ${modelObjectBadgeHtml(s)}
+            ${meta ? `<div class="safety-meta">${escapeHtml(meta)}${s.reported_by ? ` · ${escapeHtml(s.reported_by)}` : ""}</div>` : (s.reported_by ? `<div class="safety-meta">${escapeHtml(s.reported_by)}</div>` : "")}
+            ${renderAttachment(s.attachment_url, s.attachment_name)}
+          </div>`;
+      }).join("");
+
+  el.innerHTML = rows + safetyFormHtml();
+  document.getElementById("btnAddSafety").onclick = onAddSafety;
+  bindModelObjectPicker(newSafetyModelObject, "newSafetyModelPicker", "newSafetyModelPickBtn", "newSafetyModelClearBtn");
+  bindModelObjectBadges(el);
+  bindRowActions(el, "safety", {
+    render: renderSafety,
+    remove: id => {
+      const item = safetyEvents.find(s => String(s.id) === String(id));
+      return supaDelete("plan_safety_events", id, "Ta bort säkerhetshändelsen?").then(ok => {
+        if (ok) {
+          if (item && item.attachment_url) deleteAttachmentBestEffort(item.attachment_url);
+          fetchSafetyEvents().then(renderSafety);
+        }
+      });
+    }
+  });
+  if (editingState.safety !== null) bindSafetyEditForm(el);
+  resolveAttachmentLinks(el);
+}
+
+function safetyEditRowHtml(s) {
+  editSafetyModelObject = modelObjectRefFromRow(s);
+  return `
+    <div class="safety-row editing add-form" data-editing-id="${s.id}">
+      <input type="text" class="edit-type" list="safetyTypeList" value="${escapeHtml(s.event_type || "")}" placeholder="Typ av händelse" />
+      <select class="edit-severity">
+        <option value="">Allvarlighetsgrad (valfritt)</option>
+        ${SAFETY_SEVERITIES.map(sv => `<option value="${escapeHtml(sv)}" ${sv === s.severity ? "selected" : ""}>${escapeHtml(sv)}</option>`).join("")}
+      </select>
+      <input type="text" class="edit-desc" value="${escapeHtml(s.description || "")}" placeholder="Beskrivning" />
+      ${modelObjectPickerHtml(editSafetyModelObject, "editSafetyModelPicker", "editSafetyModelPickBtn", "editSafetyModelClearBtn")}
+      <input type="text" class="edit-area" value="${escapeHtml(s.area || "")}" placeholder="Område" />
+      <input type="text" class="edit-contractor" value="${escapeHtml(s.contractor || "")}" placeholder="Entreprenör" />
+      <input type="date" class="edit-date" value="${escapeHtml(s.event_date || "")}" />
+      <input type="text" class="edit-reported-by" value="${escapeHtml(s.reported_by || "")}" placeholder="Rapporterad av" />
+      ${s.attachment_url ? `<span class="current-attachment">${renderAttachment(s.attachment_url, s.attachment_name)}</span>
+      <label class="edit-remove-attachment-label"><input type="checkbox" class="edit-remove-attachment" /> Ta bort bilaga</label>` : ""}
+      <input type="file" class="edit-file" accept=".pdf,image/*" />
+      <span class="row-actions">
+        <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
+        <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
+      </span>
+    </div>`;
+}
+
+function bindSafetyEditForm(el) {
+  const row = el.querySelector(`[data-editing-id="${editingState.safety}"]`);
+  if (!row) return;
+  bindModelObjectPicker(editSafetyModelObject, "editSafetyModelPicker", "editSafetyModelPickBtn", "editSafetyModelClearBtn");
+  const original = safetyEvents.find(s => String(s.id) === String(editingState.safety));
+  row.querySelector(".row-save-btn").onclick = async () => {
+    const event_type = row.querySelector(".edit-type").value.trim();
+    const event_date = row.querySelector(".edit-date").value;
+    if (!event_type || !event_date) { alert("Typ och datum måste vara ifyllda."); return; }
+
+    let attachment_url = original ? original.attachment_url || null : null;
+    let attachment_name = original ? original.attachment_name || null : null;
+    const fileInput = row.querySelector(".edit-file");
+    const removeAttachment = row.querySelector(".edit-remove-attachment");
+    if (fileInput && fileInput.files[0]) {
+      const uploaded = await uploadAttachment(fileInput.files[0], "safety");
+      if (uploaded) {
+        if (attachment_url) deleteAttachmentBestEffort(attachment_url);
+        attachment_url = uploaded.url;
+        attachment_name = uploaded.name;
+      }
+    } else if (removeAttachment && removeAttachment.checked && attachment_url) {
+      deleteAttachmentBestEffort(attachment_url);
+      attachment_url = null;
+      attachment_name = null;
+    }
+
+    const ok = await supaUpdate("plan_safety_events", editingState.safety, {
+      event_type,
+      severity: row.querySelector(".edit-severity").value || null,
+      description: row.querySelector(".edit-desc").value.trim() || null,
+      area: row.querySelector(".edit-area").value.trim() || null,
+      contractor: row.querySelector(".edit-contractor").value.trim() || null,
+      event_date,
+      reported_by: row.querySelector(".edit-reported-by").value.trim() || null,
+      model_id: editSafetyModelObject.model_id,
+      model_object_id: editSafetyModelObject.model_object_id,
+      model_object_name: editSafetyModelObject.model_object_name,
+      attachment_url,
+      attachment_name
+    });
+    if (ok) {
+      editingState.safety = null;
+      await fetchSafetyEvents();
+      renderSafety();
+    }
+  };
+  row.querySelector(".row-cancel-btn").onclick = () => {
+    editingState.safety = null;
+    renderSafety();
+  };
+}
+
+function safetyFormHtml() {
+  const typeOptions = categoryOptions(SAFETY_EVENT_TYPES, safetyEvents, s => s.event_type);
+  return `
+    <div class="add-form">
+      <input type="text" id="newSafetyType" list="safetyTypeList" placeholder="Typ av händelse" />
+      <datalist id="safetyTypeList">${typeOptions.map(t => `<option value="${escapeHtml(t)}"></option>`).join("")}</datalist>
+      <select id="newSafetySeverity">
+        <option value="">Allvarlighetsgrad (valfritt)</option>
+        ${SAFETY_SEVERITIES.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}
+      </select>
+      <input type="text" id="newSafetyDesc" placeholder="Beskrivning" />
+      ${modelObjectPickerHtml(newSafetyModelObject, "newSafetyModelPicker", "newSafetyModelPickBtn", "newSafetyModelClearBtn")}
+      <input type="text" id="newSafetyArea" placeholder="Område" />
+      <input type="text" id="newSafetyContractor" placeholder="Entreprenör" />
+      <input type="date" id="newSafetyDate" value="${todayISO()}" />
+      <input type="text" id="newSafetyReportedBy" placeholder="Rapporterad av" />
+      <input type="file" id="newSafetyFile" accept=".pdf,image/*" title="Bifoga PDF eller bild (valfritt)" />
+      <button id="btnAddSafety">+ Logga händelse</button>
+    </div>`;
+}
+
+async function onAddSafety() {
+  const event_type = document.getElementById("newSafetyType").value.trim();
+  const severity = document.getElementById("newSafetySeverity").value;
+  const description = document.getElementById("newSafetyDesc").value.trim();
+  const area = document.getElementById("newSafetyArea").value.trim();
+  const contractor = document.getElementById("newSafetyContractor").value.trim();
+  const event_date = document.getElementById("newSafetyDate").value || todayISO();
+  const reported_by = document.getElementById("newSafetyReportedBy").value.trim();
+  const file = document.getElementById("newSafetyFile").files[0];
+  if (!event_type) {
+    alert("Ange en typ av händelse.");
+    return;
+  }
+  let attachment_url = null;
+  let attachment_name = null;
+  if (file) {
+    const uploaded = await uploadAttachment(file, "safety");
+    if (uploaded) {
+      attachment_url = uploaded.url;
+      attachment_name = uploaded.name;
+    }
+  }
+  const ok = await supaInsert("plan_safety_events", {
+    project_id: projectId,
+    event_type,
+    severity: severity || null,
+    description: description || null,
+    area: area || null,
+    contractor: contractor || null,
+    event_date,
+    reported_by: reported_by || null,
+    model_id: newSafetyModelObject.model_id,
+    model_object_id: newSafetyModelObject.model_object_id,
+    model_object_name: newSafetyModelObject.model_object_name,
+    attachment_url,
+    attachment_name
+  });
+  if (ok) {
+    newSafetyModelObject = emptyModelObjectRef();
+    await fetchSafetyEvents();
+    renderSafety();
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Kvalitet / besiktningar – logg, nyast först, kan valfritt kopplas till
+   ett specifikt objekt.
+   ------------------------------------------------------------------- */
+function renderInspections() {
+  const el = document.getElementById("inspectionsList");
+
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const sorted = [...inspections].sort((a, b) => (b.inspected_at || "").localeCompare(a.inspected_at || ""));
+
+  const rows = sorted.length === 0
+    ? `<div class="hint">Inga besiktningar loggade ännu.</div>`
+    : sorted.map(i => {
+        if (editingState.inspection !== null && String(editingState.inspection) === String(i.id)) return inspectionEditRowHtml(i);
+        const resultBadge = i.result
+          ? `<span class="badge" style="background:${INSPECTION_RESULT_COLORS[i.result] || "#6b7280"}">${escapeHtml(i.result)}</span>`
+          : "";
+        return `
+          <div class="inspection-row">
+            <div class="inspection-head">
+              <span class="badge">${escapeHtml(i.inspection_type || "")}</span>
+              ${resultBadge}
+              <span class="inspection-date">${formatDateSv(i.inspected_at)}</span>
+              ${rowActionsHtml("inspection", i.id)}
+            </div>
+            ${modelObjectBadgeHtml(i)}
+            ${i.comment ? `<div class="inspection-comment">${escapeHtml(i.comment)}</div>` : ""}
+            ${i.inspected_by ? `<div class="inspection-meta">${escapeHtml(i.inspected_by)}</div>` : ""}
+            ${renderAttachment(i.attachment_url, i.attachment_name)}
+          </div>`;
+      }).join("");
+
+  el.innerHTML = rows + inspectionsFormHtml();
+  document.getElementById("btnAddInspection").onclick = onAddInspection;
+  bindModelObjectPicker(newInspectionModelObject, "newInspectionModelPicker", "newInspectionModelPickBtn", "newInspectionModelClearBtn");
+  bindModelObjectBadges(el);
+  bindRowActions(el, "inspection", {
+    render: renderInspections,
+    remove: id => {
+      const item = inspections.find(i => String(i.id) === String(id));
+      return supaDelete("plan_inspections", id, "Ta bort besiktningen?").then(ok => {
+        if (ok) {
+          if (item && item.attachment_url) deleteAttachmentBestEffort(item.attachment_url);
+          fetchInspections().then(renderInspections);
+        }
+      });
+    }
+  });
+  if (editingState.inspection !== null) bindInspectionEditForm(el);
+  resolveAttachmentLinks(el);
+}
+
+function inspectionEditRowHtml(i) {
+  editInspectionModelObject = modelObjectRefFromRow(i);
+  return `
+    <div class="inspection-row editing add-form" data-editing-id="${i.id}">
+      <input type="text" class="edit-type" list="inspectionTypeList" value="${escapeHtml(i.inspection_type || "")}" placeholder="Typ av besiktning" />
+      <select class="edit-result">
+        <option value="">Resultat (valfritt)</option>
+        ${INSPECTION_RESULTS.map(r => `<option value="${escapeHtml(r)}" ${r === i.result ? "selected" : ""}>${escapeHtml(r)}</option>`).join("")}
+      </select>
+      <input type="text" class="edit-comment" value="${escapeHtml(i.comment || "")}" placeholder="Kommentar" />
+      <input type="text" class="edit-by" value="${escapeHtml(i.inspected_by || "")}" placeholder="Besiktigad av" />
+      <input type="date" class="edit-date" value="${escapeHtml(i.inspected_at || "")}" />
+      ${modelObjectPickerHtml(editInspectionModelObject, "editInspectionModelPicker", "editInspectionModelPickBtn", "editInspectionModelClearBtn")}
+      ${i.attachment_url ? `<span class="current-attachment">${renderAttachment(i.attachment_url, i.attachment_name)}</span>
+      <label class="edit-remove-attachment-label"><input type="checkbox" class="edit-remove-attachment" /> Ta bort bilaga</label>` : ""}
+      <input type="file" class="edit-file" accept=".pdf,image/*" />
+      <span class="row-actions">
+        <button type="button" class="icon-btn row-save-btn" title="Spara">${ICON_SAVE}</button>
+        <button type="button" class="icon-btn row-cancel-btn" title="Avbryt">${ICON_CANCEL}</button>
+      </span>
+    </div>`;
+}
+
+function bindInspectionEditForm(el) {
+  const row = el.querySelector(`[data-editing-id="${editingState.inspection}"]`);
+  if (!row) return;
+  bindModelObjectPicker(editInspectionModelObject, "editInspectionModelPicker", "editInspectionModelPickBtn", "editInspectionModelClearBtn");
+  const original = inspections.find(i => String(i.id) === String(editingState.inspection));
+  row.querySelector(".row-save-btn").onclick = async () => {
+    const inspection_type = row.querySelector(".edit-type").value.trim();
+    if (!inspection_type) { alert("Ange en typ av besiktning."); return; }
+
+    let attachment_url = original ? original.attachment_url || null : null;
+    let attachment_name = original ? original.attachment_name || null : null;
+    const fileInput = row.querySelector(".edit-file");
+    const removeAttachment = row.querySelector(".edit-remove-attachment");
+    if (fileInput && fileInput.files[0]) {
+      const uploaded = await uploadAttachment(fileInput.files[0], "inspections");
+      if (uploaded) {
+        if (attachment_url) deleteAttachmentBestEffort(attachment_url);
+        attachment_url = uploaded.url;
+        attachment_name = uploaded.name;
+      }
+    } else if (removeAttachment && removeAttachment.checked && attachment_url) {
+      deleteAttachmentBestEffort(attachment_url);
+      attachment_url = null;
+      attachment_name = null;
+    }
+
+    const ok = await supaUpdate("plan_inspections", editingState.inspection, {
+      inspection_type,
+      result: row.querySelector(".edit-result").value || null,
+      comment: row.querySelector(".edit-comment").value.trim() || null,
+      inspected_by: row.querySelector(".edit-by").value.trim() || null,
+      inspected_at: row.querySelector(".edit-date").value || todayISO(),
+      model_id: editInspectionModelObject.model_id,
+      model_object_id: editInspectionModelObject.model_object_id,
+      model_object_name: editInspectionModelObject.model_object_name,
+      attachment_url,
+      attachment_name
+    });
+    if (ok) {
+      editingState.inspection = null;
+      await fetchInspections();
+      renderInspections();
+    }
+  };
+  row.querySelector(".row-cancel-btn").onclick = () => {
+    editingState.inspection = null;
+    renderInspections();
+  };
+}
+
+function inspectionsFormHtml() {
+  const typeOptions = categoryOptions(INSPECTION_TYPES, inspections, i => i.inspection_type);
+  return `
+    <div class="add-form">
+      <input type="text" id="newInspectionType" list="inspectionTypeList" placeholder="Typ av besiktning" />
+      <datalist id="inspectionTypeList">${typeOptions.map(t => `<option value="${escapeHtml(t)}"></option>`).join("")}</datalist>
+      <select id="newInspectionResult">
+        <option value="">Resultat (valfritt)</option>
+        ${INSPECTION_RESULTS.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join("")}
+      </select>
+      <input type="text" id="newInspectionComment" placeholder="Kommentar" />
+      <input type="text" id="newInspectionBy" placeholder="Besiktigad av" />
+      <input type="date" id="newInspectionDate" value="${todayISO()}" />
+      ${modelObjectPickerHtml(newInspectionModelObject, "newInspectionModelPicker", "newInspectionModelPickBtn", "newInspectionModelClearBtn")}
+      <input type="file" id="newInspectionFile" accept=".pdf,image/*" title="Bifoga PDF eller bild (valfritt)" />
+      <button id="btnAddInspection">+ Logga besiktning</button>
+    </div>`;
+}
+
+async function onAddInspection() {
+  const inspection_type = document.getElementById("newInspectionType").value.trim();
+  const result = document.getElementById("newInspectionResult").value;
+  const comment = document.getElementById("newInspectionComment").value.trim();
+  const inspected_by = document.getElementById("newInspectionBy").value.trim();
+  const inspected_at = document.getElementById("newInspectionDate").value || todayISO();
+  const file = document.getElementById("newInspectionFile").files[0];
+  if (!inspection_type) {
+    alert("Ange en typ av besiktning.");
+    return;
+  }
+  let attachment_url = null;
+  let attachment_name = null;
+  if (file) {
+    const uploaded = await uploadAttachment(file, "inspections");
+    if (uploaded) {
+      attachment_url = uploaded.url;
+      attachment_name = uploaded.name;
+    }
+  }
+  const ok = await supaInsert("plan_inspections", {
+    project_id: projectId,
+    model_id: newInspectionModelObject.model_id,
+    model_object_id: newInspectionModelObject.model_object_id,
+    model_object_name: newInspectionModelObject.model_object_name,
+    inspection_type,
+    result: result || null,
+    comment: comment || null,
+    inspected_by: inspected_by || null,
+    inspected_at,
+    attachment_url,
+    attachment_name
+  });
+  if (ok) {
+    newInspectionModelObject = emptyModelObjectRef();
+    await fetchInspections();
+    renderInspections();
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Väder – aktuellt väder + kort prognos från Open-Meteo, baserat på
+   koordinater från inställningarna. Ingen databaskoppling.
+   ------------------------------------------------------------------- */
+function renderWeather() {
+  const el = document.getElementById("weatherPanel");
+
+  if (!isWeatherConfigured()) {
+    const hasSome = (settings.latitude || settings.longitude);
+    el.innerHTML = hasSome
+      ? `<div class="hint">Koordinaterna ser ogiltiga ut (latitud −90 till 90, longitud −180 till 180, använd punkt eller komma som decimaltecken). Öppna inställningarna (kugghjulet) och kontrollera värdena.</div>`
+      : `<div class="hint">Ange koordinater i inställningarna (kugghjulet) för att visa väder.</div>`;
+    return;
+  }
+  if (!weather || !weather.current) {
+    el.innerHTML = `<div class="hint">Kunde inte hämta väderdata just nu.${weatherError ? ` (${escapeHtml(weatherError)})` : ""}</div>`;
+    return;
+  }
+
+  const c = weather.current;
+  const daily = weather.daily;
+
+  const locationHtml = settings.locationName
+    ? `<div class="weather-location">${escapeHtml(settings.locationName)}</div>`
+    : "";
+
+  const currentHtml = `
+    <div class="weather-current">
+      ${locationHtml}
+      <div class="weather-current-main">
+        <div class="weather-emoji">${weatherEmoji(c.weather_code, c.is_day)}</div>
+        <div class="weather-temp">${Math.round(c.temperature_2m)}°C</div>
+      </div>
+      <div class="weather-desc">${escapeHtml(weatherDescription(c.weather_code))}</div>
+      <div class="weather-meta">Vind ${Math.round(c.wind_speed_10m)} m/s · Nederbörd ${c.precipitation ?? 0} mm</div>
+    </div>`;
+
+  let forecastHtml = "";
+  if (daily && Array.isArray(daily.time)) {
+    forecastHtml = `<div class="weather-forecast">` + daily.time.map((t, i) => {
+      const d = parseDate(t);
+      const dayName = d ? d.toLocaleDateString("sv-SE", { weekday: "short", timeZone: "UTC" }) : "";
+      return `
+        <div class="weather-day">
+          <div class="weather-day-name">${escapeHtml(dayName)}</div>
+          <div class="weather-day-emoji">${weatherEmoji(daily.weather_code[i], 1)}</div>
+          <div class="weather-day-desc">${escapeHtml(weatherDescription(daily.weather_code[i]))}</div>
+          <div class="weather-day-temp">${Math.round(daily.temperature_2m_max[i])}° / ${Math.round(daily.temperature_2m_min[i])}°</div>
+          <div class="weather-day-precip">${daily.precipitation_sum[i] ?? 0} mm</div>
+        </div>`;
+    }).join("") + `</div>`;
+  }
+
+  el.innerHTML = currentHtml + forecastHtml;
+}
+
+/* ---------------------------------------------------------------------
+   Senaste kommentarer – de senaste kommentarerna (från 4D-planering)
+   på objekt som hör till den aktuella filtreringen.
+   ------------------------------------------------------------------- */
+function renderComments(list) {
+  const el = document.getElementById("commentsFeed");
+
+  if (!isBackendConfigured()) {
+    el.innerHTML = `<div class="hint">${emptyMessage()}</div>`;
+    return;
+  }
+
+  const itemById = new Map(list.map(it => [it.id, it]));
+  const relevant = recentComments
+    .filter(c => itemById.has(c.plan_item_id))
+    .slice(0, COMMENTS_SHOWN);
+
+  if (relevant.length === 0) {
+    el.innerHTML = `<div class="hint">Inga kommentarer på matchande objekt ännu.</div>`;
+    return;
+  }
+
+  el.innerHTML = relevant.map(c => {
+    const it = itemById.get(c.plan_item_id);
+    const label = itemLabel(it);
+    return `
+      <div class="comment-row">
+        <div class="comment-head">
+          <span class="comment-author">${escapeHtml(c.author || "Anonym")}</span>
+          <span class="comment-time">${relativeTime(c.created_at)}</span>
+        </div>
+        <div class="comment-object" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+        <div class="comment-body">${escapeHtml(truncate(c.body || "", 160))}</div>
+      </div>`;
+  }).join("");
+}
+
+/* ---------------------------------------------------------------------
+   Export – Excel/kalkylark som CSV-filer (en fil per tabell, öppnas
+   direkt i Excel) samt PDF via webbläsarens inbyggda utskrift
+   (window.print) med särskild utskrifts-CSS som gör dashboarden till en
+   ren rapport. Båda helt fristående – ingen extern tjänst eller CDN-
+   biblioteket krävs, vilket gör exporten pålitlig även bakom en
+   företagsbrandvägg som blockar okända skript-CDN:er.
+   ------------------------------------------------------------------- */
+
+// Bygger en CSV-textsträng (semikolon som avgränsare, vilket är vad
+// svenska Excel-installationer förväntar sig som standard) av en lista
+// objekt. `columns` är [ [rubrik, fältnamn-eller-funktion], ... ].
+function toCsv(columns, rows) {
+  const escapeCsv = value => {
+    const s = value === null || value === undefined ? "" : String(value);
+    return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = columns.map(c => escapeCsv(c[0])).join(";");
+  const body = rows.map(row => columns.map(c => {
+    const v = typeof c[1] === "function" ? c[1](row) : row[c[1]];
+    return escapeCsv(v);
+  }).join(";")).join("\r\n");
+  // UTF-8 BOM så att å/ä/ö visas korrekt när filen öppnas i Excel.
+  return "﻿" + header + "\r\n" + body;
+}
+
+function downloadCsv(filename, columns, rows) {
+  const csv = toCsv(columns, rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/* ---------------------------------------------------------------------
+   Kalenderexport (.ics) - milstolpar och leveransplan som en nedladdad
+   fil (ingen delningslänk, ingen levande koppling), så de går att
+   importera i Outlook/Google Kalender. Se Victors förfrågan 2026-09-17.
+   ------------------------------------------------------------------- */
+function icsDateValue(dateStr) {
+  return (dateStr || "").replace(/-/g, "");
+}
+
+function icsAddDays(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Rader i iCalendar-formatet ska inte innehålla otecknade ; , eller radbrytningar. */
+function icsEscape(s) {
+  return String(s || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\r?\n/g, "\\n");
+}
+
+/**
+ * Bygger en .ics-kalender av en lista heldagshändelser [{uid, dateStr,
+ * summary, description}]. DTEND sätts till dagen EFTER dateStr, eftersom
+ * iCalendar-heldagshändelser är exklusiva i slutet (annars visas
+ * händelsen som två dagar lång i de flesta kalenderprogram).
+ */
+function buildIcsCalendar(events) {
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//4D-dashboard//Kalenderexport//SV",
+    "CALSCALE:GREGORIAN"
+  ];
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  events.filter(ev => ev.dateStr).forEach(ev => {
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${ev.uid}@4d-dashboard.vfalk-ncc`);
+    lines.push(`DTSTAMP:${stamp}`);
+    lines.push(`DTSTART;VALUE=DATE:${icsDateValue(ev.dateStr)}`);
+    lines.push(`DTEND;VALUE=DATE:${icsDateValue(icsAddDays(ev.dateStr, 1))}`);
+    lines.push(`SUMMARY:${icsEscape(ev.summary)}`);
+    if (ev.description) lines.push(`DESCRIPTION:${icsEscape(ev.description)}`);
+    lines.push("END:VEVENT");
+  });
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n") + "\r\n";
+}
+
+function downloadIcs(filename, icsContent) {
+  const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function onExportIcs() {
+  if (!isBackendConfigured()) {
+    alert("Ingen databas ansluten – det finns inget att exportera ännu.");
+    return;
+  }
+
+  const events = [
+    ...milestones.map(m => ({
+      uid: `milestone-${m.id}`,
+      dateStr: m.target_date,
+      summary: `Milstolpe: ${m.name || ""}`,
+      description: m.is_done ? "Klarmarkerad" : "Ej klarmarkerad"
+    })),
+    ...deliveries.map(d => ({
+      uid: `delivery-${d.id}`,
+      dateStr: d.planned_date,
+      summary: `Leverans: ${d.description || ""}`,
+      description: [d.supplier, d.contractor, d.area].filter(Boolean).join(" · ")
+    }))
+  ];
+
+  if (events.filter(ev => ev.dateStr).length === 0) {
+    alert("Inga milstolpar eller leveranser med datum att exportera ännu.");
+    return;
+  }
+
+  downloadIcs(`4D-dashboard-kalender-${todayISO()}.ics`, buildIcsCalendar(events));
+}
+
+function onExportExcel() {
+  if (!isBackendConfigured()) {
+    alert("Ingen databas ansluten – det finns inget att exportera ännu.");
+    return;
+  }
+
+  const itemById = new Map(items.map(it => [it.id, it]));
+  const ts = todayISO();
+  const exports = [
+    {
+      name: `4D-dashboard-planeringsobjekt-${ts}.csv`,
+      columns: [
+        ["Objekt", it => itemLabel(it)],
+        ["Status", it => STATUS_LABELS[it.status] || it.status],
+        ["Framdrift (%)", "progress"],
+        ["Område", "area"],
+        ["Aktivitet", "activity"],
+        ["Entreprenör", "contractor"],
+        ["Startdatum", "startDate"],
+        ["Slutdatum", "endDate"],
+        ["Verklig start", "actualStartDate"],
+        ["Verkligt avslut", "actualEndDate"]
+      ],
+      rows: items
+    },
+    {
+      name: `4D-dashboard-cykeltidsanalys-${ts}.csv`,
+      panelId: "cycle-time",
+      columns: [
+        ["Aktivitet", "label"],
+        ["Antal objekt", "count"],
+        ["Varav med verklig start", "realStartCount"],
+        ["Planerad varaktighet (snitt, dagar)", "avgPlanned"],
+        ["Verklig varaktighet (snitt, dagar)", "avgActual"],
+        ["Avvikelse (snitt, dagar)", "avgDeviation"]
+      ],
+      rows: computeCycleTimeByActivity(items)
+    },
+    {
+      name: `4D-dashboard-milstolpar-${ts}.csv`,
+      panelId: "milestones",
+      columns: [
+        ["Namn", "name"],
+        ["Måldatum", "target_date"],
+        ["Klar", m => m.is_done ? "Ja" : "Nej"],
+        ["Klardatum", "completed_date"]
+      ],
+      rows: milestones
+    },
+    {
+      name: `4D-dashboard-bemanning-${ts}.csv`,
+      panelId: "staffing",
+      columns: [
+        ["Entreprenör", "contractor"],
+        ["Veckostart", "week_start"],
+        ["Planerad bemanning", "planned_headcount"],
+        ["Faktisk bemanning", "headcount"]
+      ],
+      rows: staffing
+    },
+    {
+      name: `4D-dashboard-leveransplan-${ts}.csv`,
+      panelId: "deliveries",
+      columns: [
+        ["Beskrivning", "description"],
+        ["Leverantör", "supplier"],
+        ["Entreprenör", "contractor"],
+        ["Område", "area"],
+        ["Planerat datum", "planned_date"],
+        ["Faktiskt datum", "actual_date"],
+        ["Status", d => d.status || "planerad"]
+      ],
+      rows: deliveries
+    },
+    {
+      name: `4D-dashboard-leveransplan-handlingar-${ts}.csv`,
+      panelId: "document-deliveries",
+      columns: [
+        ["Beskrivning", "description"],
+        ["Leverantör", "supplier"],
+        ["Entreprenör", "contractor"],
+        ["Område", "area"],
+        ["Planerat datum", "planned_date"],
+        ["Faktiskt datum", "actual_date"],
+        ["Status", d => d.status || "planerad"]
+      ],
+      rows: documentDeliveries
+    },
+    {
+      name: `4D-dashboard-hinder-${ts}.csv`,
+      panelId: "blockers",
+      columns: [
+        ["Beskrivning", "description"],
+        ["Objekt", b => b.plan_item_id && itemById.has(b.plan_item_id) ? itemLabel(itemById.get(b.plan_item_id)) : ""],
+        ["Påverkade aktiviteter", b => (Array.isArray(b.affected_item_ids) ? b.affected_item_ids : [])
+          .map(id => itemById.get(id)).filter(Boolean).map(itemLabel).join(", ")],
+        ["Ansvarig", "responsible"],
+        ["Deadline", "deadline"],
+        ["Påverkan på produktion", "production_impact"],
+        ["Löst", b => b.is_resolved ? "Ja" : "Nej"],
+        ["Löst datum", "resolved_date"]
+      ],
+      rows: blockers
+    },
+    {
+      name: `4D-dashboard-sakerhet-${ts}.csv`,
+      panelId: "safety",
+      columns: [
+        ["Typ", "event_type"],
+        ["Allvarlighetsgrad", "severity"],
+        ["Beskrivning", "description"],
+        ["Område", "area"],
+        ["Entreprenör", "contractor"],
+        ["Datum", "event_date"],
+        ["Rapporterad av", "reported_by"]
+      ],
+      rows: safetyEvents
+    },
+    {
+      name: `4D-dashboard-besiktningar-${ts}.csv`,
+      panelId: "inspections",
+      columns: [
+        ["Typ", "inspection_type"],
+        ["Resultat", "result"],
+        ["Kommentar", "comment"],
+        ["Besiktigad av", "inspected_by"],
+        ["Datum", "inspected_at"],
+        ["Kopplat objekt", i => i.plan_item_id && itemById.has(i.plan_item_id) ? itemLabel(itemById.get(i.plan_item_id)) : ""]
+      ],
+      rows: inspections
+    }
+  ];
+
+  if (weather && weather.current) {
+    exports.push({
+      name: `4D-dashboard-vader-${ts}.csv`,
+      panelId: "weather",
+      columns: [
+        ["Temperatur (°C)", () => weather.current.temperature_2m],
+        ["Väderbeskrivning", () => weatherDescription(weather.current.weather_code)],
+        ["Vind (m/s)", () => weather.current.wind_speed_10m],
+        ["Nederbörd (mm)", () => weather.current.precipitation ?? 0]
+      ],
+      rows: [{}]
+    });
+  }
+
+  // En fil per tabell (namngiven per kategori), laddas ner i tur och
+  // ordning med en liten fördröjning – annars kan webbläsaren blockera
+  // flera samtidiga nedladdningar från samma klick. Filer vars block är
+  // dolt via "Synliga block" i Inställningar tas inte med (panelId).
+  const visibleExports = exports.filter(exp => !exp.panelId || !hiddenPanels.has(exp.panelId));
+  visibleExports.forEach((exp, idx) => {
+    setTimeout(() => downloadCsv(exp.name, exp.columns, exp.rows), idx * 200);
+  });
+}
+
+// PDF-export byggs på webbläsarens inbyggda "Skriv ut" (Spara som PDF),
+// vilket funkar i alla webbläsare utan extra bibliotek. @media print i
+// style.css döljer knappar/formulär/filter och lägger panelerna i en
+// enkel kolumn så resultatet blir en ren rapport.
+function onExportPdf() {
+  window.print();
+}
+
+/* Handtag under Gantt-schemat: dra för att ställa höjden (sparas i webbläsaren, dubbelklick = automatisk höjd). */
+function initGanttResize() {
+  const chart = document.getElementById("ganttChart"); if (!chart || document.getElementById("ganttResize")) return;
+  const KEY = "4ddash-gantt-height";
+  const apply = h => { if (h) { chart.style.height = h + "px"; chart.style.maxHeight = "none"; chart.style.overflow = "auto"; } else { chart.style.height = chart.style.maxHeight = chart.style.overflow = ""; } };
+  try { const h = parseInt(localStorage.getItem(KEY), 10); if (h >= 80) apply(h); } catch (e) {}
+  const grip = document.createElement("div"); grip.id = "ganttResize"; grip.className = "gantt-resize"; grip.title = "Dra för att ställa höjden – dubbelklicka för automatisk höjd";
+  grip.innerHTML = '<span></span><svg class="gr-corner" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M13 2 L2 13 M13 7 L7 13 M13 12 L12 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>'; chart.after(grip);
+  let y0 = 0, h0 = 0;
+  grip.addEventListener("pointerdown", e => {
+    e.preventDefault(); y0 = e.clientY; h0 = chart.getBoundingClientRect().height; grip.setPointerCapture(e.pointerId); grip.classList.add("drag");
+    document.body.style.userSelect = "none";
+  });
+  grip.addEventListener("pointermove", e => { if (!grip.classList.contains("drag")) return; apply(Math.round(Math.max(80, Math.min(h0 + e.clientY - y0, innerHeight * 3)))); });
+  const end = () => {
+    if (!grip.classList.contains("drag")) return; grip.classList.remove("drag"); document.body.style.userSelect = "";
+    try { if (chart.style.height) localStorage.setItem(KEY, parseInt(chart.style.height, 10)); } catch (e) {}
+    if (typeof drawGanttArrows === "function") try { drawGanttArrows(chart); } catch (e) {}
+  };
+  grip.addEventListener("pointerup", end); grip.addEventListener("pointercancel", end);
+  grip.addEventListener("dblclick", () => { apply(0); try { localStorage.removeItem(KEY); } catch (e) {} });
+}

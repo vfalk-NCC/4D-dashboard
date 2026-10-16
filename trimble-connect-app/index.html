@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8" />
+<title>4D-dashboard</title>
+<!-- Hemskärmsapp (Victor 2026-10-08): lagd på iPadens hemskärm öppnas dashboarden utan webbläsarens fält –
+     helskärm hela tiden, utan systemets helskärm som ett svep nedåt kan stänga. -->
+<link rel="manifest" href="app.webmanifest" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="4D-dashboard" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="theme-color" content="#0f2f73" />
+<link rel="apple-touch-icon" href="icon-180.png" />
+<link rel="stylesheet" href="style.css?v=20261016093130" />
+<script>
+/* Självläkning mot webbläsarens cache (Trimble Connect visar ibland en gammal index.html): jämför den inbyggda versionen med version.txt
+   (hämtas alltid färsk) och laddar om en enda gång om de skiljer sig. */
+(function () {
+  window.addEventListener("load", function () {
+    try {
+      var s = document.querySelector('script[src^="app.js"]'), cur = s ? (s.getAttribute("src").split("v=")[1] || "") : "";
+      if (!cur || !window.fetch) return;
+      fetch("version.txt?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (v) {
+        v = (v || "").trim(); if (!/^\d+$/.test(v) || v === cur) return;
+        var last = 0; try { last = Number(sessionStorage.getItem("4ddash-selfreload") || 0); } catch (e) { /* */ }
+        if (Date.now() - last < 120000) return; // högst en omladdning per två minuter – ingen slinga
+        try { sessionStorage.setItem("4ddash-selfreload", String(Date.now())); } catch (e) { /* */ }
+        location.reload();
+      }).catch(function () { /* offline: inget */ });
+    } catch (e) { /* */ }
+  });
+})();
+</script>
+<script src="error-guard.js"></script>
+<script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
+</head>
+<body>
+
+  <!-- Lösenordsgrind - visas tills rätt lösenord angetts, se app.js -->
+  <div id="accessGate" class="access-gate">
+    <div class="access-box">
+      <h2>Du har ej åtkomst</h2>
+      <input type="password" id="accessPassword" autocomplete="off" placeholder="Lösenord" />
+      <div id="accessError" class="warning hidden">Fel lösenord.</div>
+      <button id="btnAccessSubmit" class="primary">Fortsätt</button>
+    </div>
+  </div>
+
+  <div id="app">
+
+    <details id="appGuide" class="app-guide">
+      <summary><span class="app-guide-ic">📚</span> Guide – alla funktioner <span class="app-guide-sub">(klicka för att öppna)</span></summary>
+      <div class="app-guide-body">
+        <p>Kort översikt. <a href="guide.html" target="_blank" rel="noopener">Öppna hela guiden →</a></p>
+        <ul>
+          <li><b>Gantt-schema</b>: <i>Staplar</i>/<i>Tavla</i>, period, gruppera, färga, filter och sök (🔍), baseline och verkligt, pilar, <b>Uppdatera</b>, <b>Helskärm</b> (⛶) och <b>Dölj knappar</b>. <a href="guide.html#gantt" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>3D-lägen</b> (raden <i>3D</i> över Gantten): <b>Alla</b> · <b>Kopplade</b> · <b>Okopplade</b> · <b>⏱ Tid</b>. <b>Läs in modeller</b> läser in modellerna aktiviteterna är kopplade till. <a href="guide.html#tid" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>⏱ Tid</b>: dragstreck över Gantten, spelare, Från/Till/Auto, färger och <b>opacitet per status</b> (0 = osynligt), <i>Klart</i>-opacitet, <i>Kommande</i>, <b>Pulsera pågående</b> (▾), <b>Markera pågående</b>. Tidslinje-ikonen vid Helskärm slår på dragaren även med dolda knappar.</li>
+          <li><b>Ctrl-klick</b> på flera aktiviteter: <i>Visa i 3D</i> / <i>Bara dessa</i>. <b>💬 Bubblor</b>: info-bubbla vid objekten i TC.</li>
+          <li><b>Redigera</b>: dra/dubbelklicka, <i>Väntar på</i> med glapp, <b>＋ Aktivitet</b>, <b>Temporär</b>, <b>Rivning</b>, <b>Egen färg efter slut</b>, <b>Objekt i aktiviteten</b> (✕ tar bort ett objekt). <a href="guide.html#redigera" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>⇪ Exportera till Powerproject</b>: MS Project-XML (på en mall från Powerproject), med valfria beroenden och resurser.</li>
+          <li><b>Video editor</b> (block under Resurskurvan): kameravyer på datum, provbilder (reglaget hoppar TC-vyn), förhandsvisning och rendering upp till 4K med grafik. <a href="guide.html#video" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>Mängdavtagning</b> (block under Video editor): betong (m³), form (m²), längd, vikt ur modellen för klara objekt enligt Ganttens regel; jämför mot mängdförteckningen (Excel) per post och byggnad; CSV. <a href="guide.html#mangd" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>Övriga block</b>: Översikt, Statusfördelning, Framdrift, Kommande veckor, Försenade, S-kurva, Cykeltid, <b>Resurskurva</b>, Milstolpar, Bemanning, Leveranser, Säkerhet, Kvalitet, Hinder, Väder. <a href="guide.html#ovrigt" target="_blank" rel="noopener">Guide</a></li>
+          <li><b>Samspel med 4D-planering</b>: dashboardens Gantt har företräde i TC:s 3D-vy. Medan ett 3D-läge är på ändrar 4D-planering inget i modellen, och dess reglage flyttar Tid-lägets datum här.</li>
+          <li><b>Export</b>: Excel, Kalender (.ics), PDF och <b>🖨 Skriv ut</b> Gantt-schemat (A4/A3).</li>
+        </ul>
+      </div>
+    </details>
+
+    <!-- ===== Header ===== -->
+    <header>
+      <div class="header-brand">
+        <span class="ncc-mark" title="NCC">NCC</span>
+        <div class="header-titles">
+          <h1>4D-dashboard</h1>
+          <span class="made-by">Made by: VFA</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btnExportExcel" title="Exportera all data som CSV-filer (öppnas direkt i Excel)">Excel ⤓</button>
+        <button id="btnExportIcs" title="Exportera milstolpar och leveransplan som .ics-kalenderfil (importera i Outlook/Google Kalender)">Kalender ⤓</button>
+        <button id="btnExportPdf" title="Exportera/skriv ut dashboarden som PDF">PDF ⤓</button>
+        <button id="btnCollapseAll" title="Minimera/expandera alla block">⊟</button>
+        <button id="btnRefresh" title="Hämta senaste data">↻</button>
+        <button id="btnSettings" title="Inställningar (GitHub-token, väder)">⚙</button>
+      </div>
+    </header>
+    <div id="planSourceBar" class="plan-source" role="group" aria-label="Planering">
+      <span class="plan-source-l">Planering</span>
+      <div class="plan-source-seg">
+        <button type="button" data-src="excel" title="4-veckorsplaneringen från Excel">📊 Excel-import</button>
+        <button type="button" data-src="pp" title="Tidplanen från Asta Powerproject (importeras i 4D-planering → Import &amp; verktyg)">📅 Powerproject</button>
+      </div>
+    </div>
+    <div id="connectionWarning" class="hint warning hidden"></div>
+    <div id="lastUpdated" class="hint"></div>
+    <div id="watchBanner" class="watch-banner hidden"></div>
+
+    <!-- ===== Filtrering ===== -->
+    <div id="filterBar" class="filter-bar">
+      <label>Område
+        <button type="button" id="filterAreaBtn" class="filter-multi" aria-haspopup="listbox">Alla områden ▾</button>
+      </label>
+      <label>Aktivitet
+        <button type="button" id="filterActivityBtn" class="filter-multi" aria-haspopup="listbox">Alla aktiviteter ▾</button>
+      </label>
+      <label>Entreprenör
+        <button type="button" id="filterContractorBtn" class="filter-multi" aria-haspopup="listbox">Alla entreprenörer ▾</button>
+      </label>
+      <label>Sparade filter
+        <button type="button" id="filterSavedBtn" class="filter-multi" aria-haspopup="listbox" title="Spara det du filtrerat på (områden, aktiviteter, entreprenörer) och återställ det med ett klick">Sparade filter ▾</button>
+      </label>
+      <button id="btnResetFilters" title="Rensa all filtrering">Rensa filter</button>
+    </div>
+
+    <!-- ===== Översikt (KPI:er) ===== -->
+    <section class="panel" data-panel-id="overview">
+      <h2>Översikt</h2>
+      <div id="kpiGrid" class="kpi-grid"></div>
+      <div id="statusDonut" class="status-donut"></div>
+    </section>
+
+    <!-- ===== Statusfördelning ===== -->
+    <section class="panel" data-panel-id="status">
+      <h2>Statusfördelning</h2>
+      <div id="statusChart" class="status-chart"></div>
+    </section>
+
+    <!-- ===== S-kurva ===== -->
+    <section class="panel" data-panel-id="scurve">
+      <h2>Framdrift över tid</h2>
+      <div id="scurveChart" class="scurve-chart"></div>
+    </section>
+
+    <!-- ===== Kommande veckor ===== -->
+    <section class="panel" data-panel-id="lookahead">
+      <h2>Kommande veckor</h2>
+      <div id="lookaheadChart" class="lookahead-chart"></div>
+    </section>
+
+    <!-- ===== Gantt-schema ===== -->
+    <section class="panel" data-panel-id="gantt">
+      <h2>Gantt-schema</h2>
+      <p id="ganttHelp" class="hint gantt-help hidden">Staplar: en rad per objekt (planerat start–slut). Klicka på pilen för att fälla ut
+        delaktiviteter, eller på namnet för att markera objektet i 3D-modellen. Hovra en stapel för detaljer.
+        Helger är skuggade och dagens datum är markerat. Tavla: aktiviteterna som post-it-lappar per vecka – en lapp
+        sträcker sig över de veckor aktiviteten pågår, färgad efter entreprenör/område och med statusen i kanten.</p>
+
+      <div class="gantt-fs-bar" aria-label="Helskärm">
+          <div class="gantt-seg gantt-mode-seg" id="ganttModeSeg" role="group" aria-label="3D-läge">
+                        <button type="button" data-gmode="off" aria-pressed="true" class="gantt-toolbar-btn gb-ico" title="Alla – rör inte modellen" aria-label="Alla"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5 16.5 6v8L10 17.5 3.5 14V6z"/><path d="M3.5 6 10 9.7 16.5 6M10 9.7v7.8"/></svg></button>
+            <button type="button" data-gmode="isolate" aria-pressed="false" class="gantt-toolbar-btn gb-ico" title="Kopplade – bara det som är kopplat till schemat" aria-label="Kopplade"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9"/><path d="M11.5 8.5a3 3 0 0 0-4.2 0L4.7 11.1a3 3 0 0 0 4.2 4.2l.9-.9"/></svg></button>
+            <button type="button" data-gmode="hide" aria-pressed="false" class="gantt-toolbar-btn gb-ico" title="Okopplade – dölj kopplade, visa bara det okopplade" aria-label="Okopplade"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9"/><path d="M11.5 8.5a3 3 0 0 0-4.2 0L4.7 11.1a3 3 0 0 0 4.2 4.2l.9-.9"/><path d="M3 3l14 14" stroke-width="2"/></svg></button>
+            <button type="button" data-gmode="time" aria-pressed="false" class="gantt-toolbar-btn gb-ico" title="Tid – se läget ett visst datum" aria-label="Tid"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10.5" r="6.5"/><path d="M10 7v3.8l2.4 1.5M8 2.5h4"/></svg></button>
+          </div>
+          <span class="gfs-sep"></span>
+          <span class="gfs-grp">
+          <button type="button" id="ganttLoadModelsBtn" class="gantt-toolbar-btn gb-ico"  title="Modeller – läs in alla modeller som aktiviteterna är kopplade till" aria-label="Modeller"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5 16.5 6v8L10 17.5 3.5 14V6z"/><path d="M10 7v5m0 0-2-2m2 2 2-2"/></svg></button>
+          <button type="button" id="ganttPpExportBtn" class="gantt-toolbar-btn gb-ico"  title="Till Powerproject – exportera aktiviteter (Microsoft Project-XML)" aria-label="Till Powerproject"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 5H4.5v11h11V13"/><path d="M10 11 16.5 4.5M12 4h4.5v4.5"/></svg></button>
+          <button type="button" id="ganttPrintBtn" class="gantt-toolbar-btn gb-ico"  title="Skriv ut – skriv ut Gantt-schemat eller spara det som PDF, med rubrik, förklaring och tidshuvud på varje sida" aria-label="Skriv ut"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 7V3h8v4M6 13H3.5V8h13v5H14"/><rect x="6" y="11" width="8" height="6" rx="1"/></svg></button>
+          <button type="button" id="ganttFullBtn" class="gantt-toolbar-btn gb-ico"  title="Helskärm – visa Gantt-schemat i helskärm (Esc stänger)" aria-label="Helskärm"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7.5v-4h4M16.5 7.5v-4h-4M3.5 12.5v4h4M16.5 12.5v4h-4"/></svg></button>
+          </span>
+          <span class="gfs-sep"></span>
+          <span class="gfs-grp">
+          <button type="button" id="ganttTimeAuto" class="gantt-toolbar-btn gb-ico"  title="Hela spannet (auto)" aria-label="Hela spannet (auto)"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10h14M6 7l-3 3 3 3M14 7l3 3-3 3"/></svg></button>
+          <button type="button" id="ganttScaleBtn" class="gantt-toolbar-btn gb-ico" aria-haspopup="true" title="Färgskala efter datum – objekten färgas från tidig till sen start (eller slut) mellan två färger du väljer" aria-label="Färgskala efter datum"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="14" height="8" rx="2"/><path d="M7 6v8M11 6v8M15 6v8" opacity=".55"/></svg><span class=gb-caret>▾</span></button>
+          <button type="button" id="ganttStrictBtn" class="gantt-toolbar-btn gb-ico" aria-pressed="false" title="Följ datum – färgen följer strikt start- och slutdatumen (planerad före start, pågående mellan, klar efter slut) och struntar i framdriften i procent" aria-label="Följ datum"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="2"/><path d="M3 8.5h14M7 3v3M13 3v3M7.5 12.5l2 2 3.5-3.5"/></svg></button>
+          <div class="gantt-time-menu-wrap">
+            <button type="button" id="ganttTimeMenuBtn" class="gantt-toolbar-btn gb-ico" aria-expanded="false" aria-haspopup="true" title="Färger & visning – färger, opacitet, Kommande, Pulsera och Markera pågående" aria-label="Färger & visning"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h7M15 6h1M4 14h2M10 14h6"/><circle cx="13" cy="6" r="1.8"/><circle cx="8" cy="14" r="1.8"/></svg><span class=gb-caret>▾</span></button>
+            <div id="ganttTimeMenu" class="gantt-time-menu hidden" role="dialog" aria-label="Färger och visning">
+              <div class="gtm-title">Färger och opacitet</div>
+          <div class="gtm-grid">
+            <span class="gtm-h"></span><span class="gtm-h">Färg</span><span class="gtm-h">Opacitet</span>
+            <span>Pågående</span><input type="color" data-tcol="pagaende" title="Färg: pågående" aria-label="Färg pågående" /><input type="range" class="gantt-tc-op" data-topc="pagaende" min="0" max="100" step="5" value="100" aria-label="Opacitet pågående" />
+            <span>Försenad</span><input type="color" data-tcol="forsenad" title="Färg: försenad (har börjat men mindre än 1 % framdrift)" aria-label="Färg försenad" /><input type="range" class="gantt-tc-op" data-topc="forsenad" min="0" max="100" step="5" value="100" aria-label="Opacitet försenad" />
+            <span>Klart</span><input type="color" data-tcol="klar" title="Färg: klart" aria-label="Färg klart" /><span class="gtm-doneop"><input type="range" id="ganttTimeDoneOp" min="0" max="100" step="5" value="30" aria-label="Opacitet klart" /> <b id="ganttTimeDoneOpVal">30</b>%</span>
+            <span>Kommande</span><input type="color" data-tcol="planerad" title="Färg: kommande" aria-label="Färg kommande" /><input type="range" class="gantt-tc-op" data-topc="planerad" min="0" max="100" step="5" value="100" aria-label="Opacitet kommande" />
+          </div>
+<div class="gtm-title">Visning</div>
+          <div class="gtm-opts">
+          <label class="gtm-opt" title="Visa det som inte startat, i kommande-färgen"><input type="checkbox" id="ganttTimeFuture" /><i class="gtm-sw" aria-hidden="true"></i><span class="gtm-t">Kommande</span></label>
+          <label class="gtm-opt" title="Pågående objekt färgas i sin entreprenörs färg (samma färger som entreprenörsraden och tavlan) i stället för pågående-färgen – så ser du vem som är var vid det här datumet. Försenade behåller sin färg."><input type="checkbox" id="ganttTimeByCon" /><i class="gtm-sw" aria-hidden="true"></i><span class="gtm-t">Pågående i entreprenörens färg</span></label>
+          <label class="gtm-opt" title="Klara objekt återgår till färgen de har i originalmodellen (IFC-filen) i stället för klart-färgen. Egen färg efter slut på en aktivitet gäller fortfarande."><input type="checkbox" id="ganttTimeDoneOrig" /><i class="gtm-sw" aria-hidden="true"></i><span class="gtm-t">Klart i originalfärg</span></label>
+          <div class="gtm-opt gtm-opt-split"><label class="gtm-opt-in" title="Pågående objekt pulserar (ljust gult) i 3D – så ser du direkt vad som händer nu"><input type="checkbox" id="ganttTimePulse" /><i class="gtm-sw" aria-hidden="true"></i><span class="gtm-t">Pulsera pågående</span></label><button type="button" id="ganttPulseCfgBtn" class="gtm-gear" title="Färger, hastighet, stil och styrka för pulsen" aria-label="Pulsinställningar"><svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="2.5"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg></button></div>
+          <label class="gtm-opt" title="Markera de pågående objekten med Trimble Connects egen markering – de lyses upp. Ett klick i modellen byter markering."><input type="checkbox" id="ganttTimeSelAct" /><i class="gtm-sw" aria-hidden="true"></i><span class="gtm-t">Markera pågående</span></label>
+          </div>
+            </div>
+          </div>
+          </span>
+          <span class="gfs-sep"></span>
+        <button type="button" id="ganttFsTime" aria-pressed="false" title="Tidslinjedragaren över Gantt-schemat – av/på, även när knapparna är dolda (3D följer med)"><svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5v15"/><rect x="6" y="2" width="8" height="4" rx="2" fill="currentColor" stroke="none"/><path d="M3 10h2.5M14.5 10H17"/></svg></button>
+        <button type="button" id="ganttOpen3d" title="Öppna 3D-editorn (lägesplanen) i ett eget fönster – med samma tidplan"><svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.2 17 6v8l-7 3.8L3 14V6z"/><path d="M3 6l7 3.9L17 6M10 9.9v7.9"/></svg><span class="gfs-l">3D</span></button>
+        <button type="button" id="ganttPhotoBtn" title="Ta ett foto på 3D-vyn och lägg på bubblor för markerade (annars pågående) aktiviteter – sparas som bild"><svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5h3l1.4-2h5.2l1.4 2h3v9.3H3z"/><circle cx="10" cy="11" r="2.9"/></svg><span class="gfs-l">Foto</span></button>
+        <button type="button" id="ganttViewsBtn" title="Spara hur Gantt-schemat ser ut just nu som en vy – och hämta tillbaka den senare"><svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h9.5L17 6.5V17H4z"/><path d="M7 3v4.5h6V3M7 17v-5h7v5"/></svg><span class="gfs-l">Vyer</span></button>
+          <button type="button" id="ganttRefreshBtn" class="gantt-toolbar-btn gantt-refresh-btn gb-ico" title="Uppdatera – hämta senaste data (aktiviteter, framdrift, kopplingar)" aria-label="Uppdatera"><svg class="gantt-refresh-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.6L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.3 4.6L20 16"/><path d="M20 21v-5h-5"/></svg><span class="gantt-refresh-lbl">Uppdatera</span></button>
+        <button type="button" id="ganttFsTools" title="Dölj knapparna – färgförklaringen ligger kvar" aria-label="Dölj knappar"><svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 10s3.2-5.5 8-5.5S18 10 18 10s-3.2 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.4"/><path d="M3.5 16.5l13-13"/></svg></button>
+        <button type="button" id="ganttFsEnter" title="Helskärm" aria-label="Helskärm"><svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7.5v-4h4M16.5 7.5v-4h-4M3.5 12.5v4h4M16.5 12.5v4h-4"/></svg></button>
+        <button type="button" id="ganttFsClose" title="Stäng helskärm (Esc)" aria-label="Stäng helskärm"><svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15"/></svg></button>
+      </div>
+      <div class="gantt-head">
+        <div class="gantt-head-row">
+          <div class="gantt-seg" role="tablist" aria-label="Visningsläge">
+            <button type="button" class="gantt-seg-btn" data-gantt-view="bars" role="tab">▤ Staplar</button>
+            <button type="button" class="gantt-seg-btn" data-gantt-view="board" role="tab">🗒 Tavla</button>
+          </div>
+          <label class="gantt-toolbar-field">Gruppera
+            <select id="ganttGroupBy">
+              <option value="">Inget</option>
+              <option value="area">Område</option>
+              <option value="contractor">Entreprenör</option>
+              <option value="activity">Aktivitet</option>
+            </select>
+          </label>
+          <label class="gantt-toolbar-field gantt-bars-only">Sortera
+            <select id="ganttSortBy">
+              <option value="startDate">Startdatum</option>
+              <option value="contractor">Entreprenör</option>
+              <option value="status">Status</option>
+              <option value="name">Namn</option>
+            </select>
+          </label>
+          <label class="gantt-toolbar-field gantt-board-only">Färga efter
+            <select id="ganttColorBy">
+              <option value="contractor">Entreprenör</option>
+              <option value="area">Område</option>
+              <option value="activity">Aktivitet</option>
+            </select>
+          </label>
+          <label class="gantt-toolbar-field gantt-search" title="Sök på område, aktivitet, namn eller entreprenör – flera ord = alla ska finnas. Esc rensar.">
+            <input type="search" id="ganttSearch" placeholder="🔍 Sök område eller aktivitet…" autocomplete="off" aria-label="Sök i Gantt-schemat" />
+          </label>
+          <span id="ganttSearchCount" class="hint gantt-search-count"></span>
+          <span class="gantt-head-spacer"></span>
+          <div class="gantt-zoom-group" title="Ångra/gör om ändringar av datum (Ctrl+Z / Ctrl+Y)">
+            <button type="button" id="ganttUndo" class="gantt-toolbar-btn" disabled>↶ Ångra</button>
+            <button type="button" id="ganttRedo" class="gantt-toolbar-btn" disabled>↷ Gör om</button>
+          </div>
+          <button type="button" id="ganttDensityToggle" class="gantt-toolbar-btn gantt-bars-only">Kompakt</button>
+          <div class="gantt-zoom-group gantt-bars-only">
+            <button type="button" id="ganttZoomOut" class="gantt-toolbar-btn" title="Zooma ut">−</button>
+            <button type="button" id="ganttZoomFit" class="gantt-toolbar-btn" title="Anpassa till bredden">Anpassa</button>
+            <button type="button" id="ganttZoomIn" class="gantt-toolbar-btn" title="Zooma in">+</button>
+          </div>
+        </div>
+
+        <div class="gantt-head-row gantt-head-sub gantt-time-row gantt-time-off" id="ganttTimeRow">
+          <button type="button" id="ganttTimePlay" class="gantt-toolbar-btn" title="Spela upp">▶</button>
+          <button type="button" id="ganttTimePrev" class="gantt-toolbar-btn gantt-step" title="Backa en dag" aria-label="Backa en dag">‹</button>
+          <input type="range" id="ganttTimeSlider" class="gantt-time-slider" min="0" max="1" value="0" aria-label="Datum" />
+          <button type="button" id="ganttTimeNext" class="gantt-toolbar-btn gantt-step" title="Fram en dag" aria-label="Fram en dag">›</button>
+          <label class="gantt-toolbar-field"><input type="date" id="ganttTimeDate" aria-label="Datum" /></label>
+          <button type="button" id="ganttTimeToday" class="gantt-toolbar-btn" title="Till idag">Idag</button>
+          <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens start">Från <input type="date" id="ganttTimeFrom" aria-label="Från" /></label>
+          <label class="gantt-toolbar-field gantt-time-lim" title="Tidslinjens slut">Till <input type="date" id="ganttTimeTo" aria-label="Till" /></label>
+          <span id="ganttTimeSum" class="hint gantt-time-sum"></span>
+          <span id="ganttTime3dInfo" class="hint gantt-time-sum"></span>
+        </div>
+
+        <div class="gantt-head-row gantt-head-sub gantt-range-row">
+          <span class="gantt-sub-label" title="Period som visas i schemat"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="2"/><path d="M3 8.5h14M7 3v3M13 3v3"/></svg></span>
+          <div class="gantt-chips">
+            <button type="button" class="gantt-chip" data-gantt-weeks="2">2 v</button>
+            <button type="button" class="gantt-chip" data-gantt-weeks="4">4 v</button>
+            <button type="button" class="gantt-chip" data-gantt-weeks="13">3 mån</button>
+            <button type="button" id="ganttRangeReset" class="gantt-chip" title="Hela spannet (auto)">Allt</button>
+          </div>
+          <label class="gantt-toolbar-field"><input type="date" id="ganttRangeStart" aria-label="Visa från" /></label>
+          <span class="gantt-sub-dash">–</span>
+          <label class="gantt-toolbar-field"><input type="date" id="ganttRangeEnd" aria-label="Visa till" /></label>
+          <button type="button" id="ganttRangeApply" class="gantt-toolbar-btn gb-ico"  title="Använd perioden" aria-label="Använd perioden"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg></button>
+          <span id="ganttRangeStatus" class="hint gantt-range-status"></span>
+          <span class="gantt-head-spacer"></span>
+          <label aria-label="Visar verkliga start/slut som en strecka" class="gantt-pill gp-ico gantt-bars-only" title="Visar verkliga start/slut som en streckad stapel under den planerade">
+            <input type="checkbox" id="ganttShowActual" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="14" height="3.5" rx="1.5"/><path d="M3 13.5h3M8 13.5h3M13 13.5h4"/></svg>
+          </label>
+          <label aria-label="Visa baseline (en tidigare version av ti" class="gantt-pill gp-ico" title="Visa baseline (en tidigare version av tidplanen) som en grå stapel/linje under den planerade, och hur mycket aktiviteten flyttats">
+            <input type="checkbox" id="ganttShowBaseline" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 17V3.5M5 4h9l-2 3 2 3H5"/></svg>
+            <input type="color" id="ganttBaselineColor" class="gantt-bl-color" value="#f59e0b" title="Baseline-färg" aria-label="Baseline-färg" />
+          </label>
+          <label aria-label="Visa bara hur många dagar aktiviteterna " id="ganttBaselineDaysPill" class="gantt-pill gp-ico hidden" title="Visa bara hur många dagar aktiviteterna flyttats mot baseline (+5 d / −2 d) – utan baseline-linjerna">
+            <input type="checkbox" id="ganttBaselineDays" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5v8M6 7.5h8M6 15h8"/></svg>
+          </label>
+          <span id="ganttBlPick" class="gantt-bl-pick hidden" title="Vilken baseline som visas, och en andra att jämföra mot">
+            <select id="ganttBaselineSel" aria-label="Baseline som visas"></select>
+            <span class="hint">mot</span>
+            <select id="ganttBaseline2Sel" aria-label="Jämför även med"></select>
+            <input type="color" id="ganttBaselineColor2" class="gantt-bl-color" value="#2563eb" title="Färg för jämförelsen" aria-label="Färg för jämförelsen" />
+          </span>
+          <label aria-label="Lapparna på en rad (namn, aktivitet och " class="gantt-pill gp-ico gantt-board-only" title="Lapparna på en rad (namn, aktivitet och datum) – av: större lappar på flera rader">
+            <input type="checkbox" id="ganttBoardOneLine" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7.5" width="14" height="5" rx="1.5"/></svg>
+          </label>
+          <label aria-label="Visa hela namnet på alla lappar (av: hög" class="gantt-pill gp-ico gantt-board-only" title="Visa hela namnet på alla lappar (av: högst två rader – hela texten syns när du pekar på lappen)">
+            <input type="checkbox" id="ganttBoardFull" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><text x="10" y="14.2" text-anchor="middle" font-size="11.5" font-weight="700" fill="currentColor" stroke="none" font-family="Segoe UI,Arial">Aa</text></svg>
+          </label>
+          <label aria-label="Pilar för kopplingarna, och att beroende" class="gantt-pill gp-ico" title="Pilar för kopplingarna, och att beroende aktiviteter glider med när du drar">
+            <input type="checkbox" id="ganttShowArrows" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h5a3 3 0 0 1 3 3v5M9.5 11.5 12 14l2.5-2.5"/></svg>
+          </label>
+          <label aria-label="Dra i en stapel/lapp för att flytta den," class="gantt-pill gp-ico" title="Dra i en stapel/lapp för att flytta den, eller i dess kanter för att ändra start-/slutdatum. Sparas direkt till 4D-data (samma som ett sparat formulär i 4D-planering).">
+            <input type="checkbox" id="ganttEditable" /><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 3.5l3 3L7 16l-4 1 1-4z"/></svg>
+          </label>
+        </div>
+      </div>
+      <div id="ganttEditableHint" class="hidden"></div>
+
+      <div class="gantt-legend-row"><div id="ganttLegend" class="gantt-legend"></div><span id="ganttLegendActions" class="gantt-legend-actions"><button type="button" id="ganttAddBtn" class="gantt-toolbar-btn gantt-add-inline" title="Lägg till en egen aktivitet (samma uppbyggnad som de importerade) – högerklick på en lapp: Ny aktivitet efter den här">＋ Aktivitet</button><button type="button" id="ganttUncoupledBtn" class="gantt-toolbar-btn gantt-add-inline" aria-pressed="false" title="Visa bara aktiviteter som ännu inte är kopplade till något objekt i modellen"><svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9"/><path d="M11.5 8.5a3 3 0 0 0-4.2 0L4.7 11.1a3 3 0 0 0 4.2 4.2l.9-.9"/><path d="M3 3l14 14" stroke-width="2"/></svg><span>Ej kopplade <b id="ganttUncoupledN"></b></span></button><button type="button" id="ganttOwnBtn" class="gantt-toolbar-btn gantt-add-inline" aria-pressed="false" title="Visa bara aktiviteter jag själv har skapat (inte de som kommer från Powerproject eller Excel)"><svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="7" r="3"/><path d="M4 16.5c.8-3 3.3-4.5 6-4.5s5.2 1.5 6 4.5"/></svg><span>Egna <b id="ganttOwnN"></b></span></button></span></div>
+      <div id="ganttNotes" class="hint"></div>
+      <div id="ganttChart" class="gantt-chart"></div>
+    </section>
+
+    <!-- ===== Resurskurva (resurser per vecka, följer Gantt-schemats urval) ===== -->
+    <section class="panel" data-panel-id="resource-curve">
+      <h2>Resurskurva</h2>
+      <div id="resourceCurve" class="resource-curve"></div>
+    </section>
+
+    <!-- ===== Video editor (film av tidplanen på TC-modellen) ===== -->
+    <section class="panel" data-panel-id="video-editor">
+      <h2>Video editor</h2>
+      <div id="videoEditor" class="video-editor"></div>
+    </section>
+
+    <!-- ===== Mängdavtagning (mängder ur modellen, för jämförelse mot mängdförteckningen) ===== -->
+    <section class="panel" data-panel-id="quantities">
+      <h2>Mängdavtagning</h2>
+      <div id="qtyBox" class="qty-box"></div>
+    </section>
+
+    <!-- ===== Milstolpar ===== -->
+    <section class="panel" data-panel-id="milestones">
+      <h2>Milstolpar</h2>
+      <div id="milestonesList" class="milestones-list"></div>
+    </section>
+
+    <!-- ===== Försenade objekt ===== -->
+    <section class="panel" data-panel-id="delayed">
+      <h2>Försenade objekt</h2>
+      <div id="delayedList" class="delayed-list"></div>
+    </section>
+
+    <!-- ===== Framdrift per område ===== -->
+    <section class="panel" data-panel-id="area-progress">
+      <h2>Framdrift per område</h2>
+      <div id="areaProgress" class="progress-chart"></div>
+    </section>
+
+    <!-- ===== Framdrift per entreprenör ===== -->
+    <section class="panel" data-panel-id="contractor-progress">
+      <h2>Framdrift per entreprenör</h2>
+      <div id="contractorProgress" class="progress-chart"></div>
+    </section>
+
+    <!-- ===== Planstabilitet ===== -->
+    <section class="panel" data-panel-id="stability">
+      <h2>Planstabilitet</h2>
+      <p class="hint">Hur mycket varje objekts start-/slutdatum har flyttats sedan det först planerades - bra för
+        att hitta de kroniskt instabila delarna av projektet. Bygger på historik som loggas automatiskt varje
+        gång ett datum ändras (i 4D-planering eller genom att dra en stapel i Gantt-schemat här).</p>
+      <div id="stabilityList" class="stability-list"></div>
+    </section>
+
+    <!-- ===== Cykeltidsanalys ===== -->
+    <section class="panel" data-panel-id="cycle-time">
+      <h2>Cykeltidsanalys</h2>
+      <p class="hint">Planerad varaktighet (start- till slutdatum) jämfört med verklig varaktighet (start- till
+        verkligt avslut) per aktivitet, för klarmarkerade objekt med samtliga tre datum ifyllda.</p>
+      <div id="cycleTimeChart" class="cycle-time-chart"></div>
+    </section>
+
+    <!-- ===== Bemanning ===== -->
+    <section class="panel" data-panel-id="staffing">
+      <h2>Bemanning</h2>
+      <div id="staffingChart" class="staffing-chart"></div>
+    </section>
+
+    <!-- ===== Resurstimmar ===== -->
+    <section class="panel" data-panel-id="resource-hours">
+      <h2>Resurstimmar (planerat)</h2>
+      <p class="hint">Ett planeringsunderlag: varje objekts (eller delaktivitets) uppskattade timmar fördelas jämnt
+        över dess datumintervall och summeras per vecka och entreprenör. Bygger på "Uppskattade timmar" i
+        4D-planering. Visar enbart planerad tidsåtgång, ingen jämförelse mot verkligt utfall ännu.</p>
+      <div id="resourceHoursChart" class="reshours-chart"></div>
+    </section>
+
+    <!-- ===== Leveransplan ===== -->
+    <section class="panel" data-panel-id="deliveries">
+      <h2>Leveransplan</h2>
+      <div id="deliveriesList" class="deliveries-list"></div>
+    </section>
+
+    <!-- ===== Leveransplan handlingar ===== -->
+    <section class="panel" data-panel-id="document-deliveries">
+      <h2>Leveransplan handlingar</h2>
+      <div id="documentDeliveriesList" class="deliveries-list"></div>
+    </section>
+
+    <!-- ===== Hinder ===== -->
+    <section class="panel" data-panel-id="blockers">
+      <h2>Hinder</h2>
+      <div id="blockersList" class="blockers-list"></div>
+    </section>
+
+    <!-- ===== Säkerhet ===== -->
+    <section class="panel" data-panel-id="safety">
+      <h2>Säkerhet</h2>
+      <div id="safetyFeed" class="safety-feed"></div>
+    </section>
+
+    <!-- ===== Kvalitet & besiktningar ===== -->
+    <section class="panel" data-panel-id="inspections">
+      <h2>Kvalitet &amp; besiktningar</h2>
+      <div id="inspectionsList" class="inspections-list"></div>
+    </section>
+
+    <!-- ===== Väder ===== -->
+    <section class="panel" data-panel-id="weather">
+      <h2>Väder</h2>
+      <div id="weatherPanel" class="weather-panel"></div>
+    </section>
+
+    <!-- ===== Senaste kommentarer ===== -->
+    <section class="panel" data-panel-id="comments">
+      <h2>Senaste kommentarer</h2>
+      <div id="commentsFeed" class="comments-feed"></div>
+    </section>
+
+  </div>
+
+  <!-- Inställningsdialog -->
+  <div id="settingsDialog" class="dialog hidden">
+    <div class="dialog-box">
+      <h2>Inställningar</h2>
+      <label>GitHub-token <input type="password" id="githubToken" placeholder="github_pat_..." /></label>
+      <label>Latitud (väder, valfritt) <input type="text" id="settingsLatitude" placeholder="59.33" /></label>
+      <label>Longitud (väder, valfritt) <input type="text" id="settingsLongitude" placeholder="18.06" /></label>
+      <label>Platsnamn (väder, valfritt) <input type="text" id="settingsLocationName" placeholder="t.ex. Gällivare" /></label>
+      <label>Bevakning: varna om en milstolpe ligger inom <input type="number" id="settingsWatchDays" min="0" step="1" style="width:4em" /> dagar</label>
+      <p class="hint">En fine-grained token scopead till repot <strong>vfalk-NCC/4D-data</strong> – se GITHUB_TOKEN_SETUP.md
+        för hur du skapar en (tar under en minut). Använd samma token som i 4D-planering, så visar dashboarden
+        samma planeringsdata. Koordinaterna används bara för väderpanelen och sparas lokalt i webbläsaren.</p>
+
+      <h2 style="margin-top:14px">Synliga block</h2>
+      <p class="hint">Bocka ur ett block för att dölja det i dashboarden. Dolda block utesluts även ur Excel- och
+        PDF-exporten. Sparas direkt i webbläsaren, ingen "Spara"-knapp behövs för detta val.</p>
+      <div id="panelVisibilityList" class="panel-visibility-list"></div>
+
+      <h2 style="margin-top:14px">Statusfärger</h2>
+      <p class="hint">Anpassa färgerna som används för respektive status – i Gantt-schemat, cirkeldiagrammet och
+        statusfördelningen. Sparas direkt i webbläsaren, ingen "Spara"-knapp behövs för detta val.</p>
+      <div id="statusColorList" class="status-color-list"></div>
+      <div class="row">
+        <button type="button" id="btnResetStatusColors">Återställ standardfärger</button>
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <button id="btnSaveSettings" class="primary">Spara</button>
+        <button id="btnCloseSettings">Stäng</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="github-storage.js"></script>
+  <script src="ui-dialog.js?v=20261016093130"></script>
+  <script src="app.js?v=20261016093130"></script>
+  <script src="resource-curve.js?v=20261016093130"></script>
+  <script src="pp-export.js?v=20261016093130"></script>
+  <script src="bubbles.js?v=20261016093130"></script>
+  <script src="gantt-views.js?v=20261016093130"></script>
+  <script src="photo-bubbles.js?v=20261016093130"></script>
+  <script src="video-gfx.js?v=20261016093130"></script>
+  <script src="video-editor.js?v=20261016093130"></script>
+  <script src="quantities.js?v=20261016093130"></script>
+  <script src="quantities-mf.js?v=20261016093130"></script>
+  <script src="planning-link.js?v=20261016093130"></script>
+  <script src="console.js?v=20261016093130"></script>
+</body>
+</html>
