@@ -368,6 +368,11 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.waitForTimeout(150); // listan är öppen från början
   if ((await page.locator('.na-obj').count()) !== 2) fail('Objektlistan ska visa två objekt');
   await page.evaluate(() => { window.__setsel = []; const b = items.find(x => x.objectName === 'Pelare B'); b.modelId = 'M1'; b.objectId = 'GB'; });
+  await page.waitForTimeout(1700); await page.evaluate(() => { window.__sel = [{ modelId: 'M1', objectRuntimeIds: ['B'] }]; onTcEvent('viewer.onSelectionChanged'); }); await page.waitForTimeout(700);
+  if ((await page.locator('.na-obj.chk').count()) !== 1 || !(await page.locator('.na-obj.chk', { hasText: 'Pelare B' }).count())) fail('Markering i modellen ska bockas i objektlistan');
+  if (!(await page.locator('.na-ob-del:not([disabled])').count())) fail('Ta bort markerade ska vara aktiv');
+  await page.evaluate(() => { window.__sel = []; onTcEvent('viewer.onSelectionChanged'); }); await page.waitForTimeout(700);
+  if ((await page.locator('.na-obj.chk').count()) !== 0) fail('Tom markering ska rensa bockarna');
   await page.locator('.na-obj', { hasText: 'Pelare B' }).click(); await page.waitForTimeout(500);
   const pk = await page.evaluate(() => (window.__setsel || []).slice(-1)[0]);
   if (!pk || pk.modelObjectIds.flatMap(m => m.objectRuntimeIds).join() !== 'GB') fail('Klick på objektet ska markera och zooma i 3D: ' + JSON.stringify(pk));

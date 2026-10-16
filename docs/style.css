@@ -2668,3 +2668,11 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .phb-zoom button { min-width: 30px; padding: 4px 8px; }
 .phb-zoom #phbZv { min-width: 56px; }
 .phb-note { font-size: 11px; color: #6b7280; line-height: 1.35; }
+.new-act-pop .na-objs-list { max-height: 260px; }
+.new-act-pop .na-objs-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.new-act-pop .na-objs-btns { display: inline-flex; gap: 4px; }
+.new-act-pop .na-objs-btns button { font-size: 11.5px; padding: 2px 8px; }
+.new-act-pop .na-objs-btns .danger:not(:disabled) { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+.new-act-pop .na-obj-c { flex: none; width: 14px !important; height: 14px; min-width: 0; padding: 0; margin: 0 6px 0 0; }
+.new-act-pop .na-obj.chk { background: #fef9c3; outline: 1px solid #fde047; }
+.new-act-pop .na-obj-name { flex: 1; min-width: 0; }

@@ -1350,10 +1350,12 @@ async function commitCouple() {
    ut hopfällda grupper, pulserar två gånger och behåller en ram så länge objekten är markerade.
    Reagerar bara när Gantt-schemat syns, och inte på dashboardens egen markering (klick på en lapp). */
 let ownModelSelectionUntil = 0;
+let naPopSync = null, naPopTimer = null; // redigeringsdialogen för en aktivitet är öppen: modellens markering bockas i dess objektlista
 let ganttModelSel = new Set();      // plan_item-id:n som är markerade i modellen
 let modelSelTimer = null;
 function onTcEvent(event) {
   if (event !== "viewer.onSelectionChanged" && event !== "extension.onSelectionChanged") return;
+  if (naPopSync && Date.now() >= ownModelSelectionUntil) { clearTimeout(naPopTimer); naPopTimer = setTimeout(() => { if (naPopSync) naPopSync(); }, 200); }
   if (coupleState) { clearTimeout(modelSelTimer); modelSelTimer = setTimeout(updateCoupleBar, 200); return; }
   clearTimeout(modelSelTimer);
   modelSelTimer = setTimeout(syncGanttFromModel, 200);
@@ -5235,18 +5237,37 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
     <div class="board-pop-actions"><button type="button" class="na-cancel">Avbryt</button><button type="button" class="na-save primary">${edit ? "Spara" : copy ? "Skapa kopian" : "Lägg till"}</button></div>`;
   overlayHost().appendChild(pop);
   const q = c => pop.querySelector(c);
+  /* Markerade objekt i listan (Victor 2026-10-16): det man markerar i 3D-modellen bockas här, så flera kan tas bort på en gång. */
+  const chk = new Set();
+  const objBar = () => {
+    const list = q(".na-objs-list"); if (!list) return;
+    let bar = q(".na-objs-bar"); if (!bar) { bar = document.createElement("div"); bar.className = "na-objs-bar"; list.parentNode.insertBefore(bar, list); }
+    const n = chk.size;
+    bar.innerHTML = `<span class="hint">${n ? `<b>${n}</b> markerade` : "Markera objekt i modellen – de bockas här"}</span><span class="na-objs-btns"><button type="button" class="na-ob-all">Alla</button><button type="button" class="na-ob-none"${n ? "" : " disabled"}>Inga</button><button type="button" class="na-ob-del danger"${n ? "" : " disabled"}>Ta bort markerade${n ? ` (${n})` : ""}</button></span>`;
+    bar.querySelector(".na-ob-all").onclick = () => { members.forEach(m => chk.add(String(m.id))); renderObjs(); };
+    bar.querySelector(".na-ob-none").onclick = () => { chk.clear(); renderObjs(); };
+    bar.querySelector(".na-ob-del").onclick = async () => {
+      const sel = members.filter(m => chk.has(String(m.id))); if (!sel.length) return;
+      if (sel.length >= members.length) { modelToast("Minst ett objekt måste vara kvar – ta bort hela aktiviteten i stället"); return; }
+      const act = itemLabel(edit), coupled = sel.filter(m => m.modelId).length;
+      const ok = await deleteActivity({ ...sel[0], members: sel }, { ok: `Ta bort ${sel.length} objekt`, msg: `Ta bort ${sel.length} objekt ur aktiviteten "${act}"?\n\nAktiviteten finns kvar med de ${members.length - sel.length} andra objekten.${coupled ? `\n⚠ ${coupled} 3D-koppling${coupled === 1 ? "" : "ar"} försvinner.` : ""}${sel.some(m => m.origin !== "manuell") ? `\n⚠ Objekt från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen kommer tillbaka vid nästa import.` : ""}` });
+      if (ok) { const ids = new Set(sel.map(m => String(m.id))); for (let i = members.length - 1; i >= 0; i--) if (ids.has(String(members[i].id))) members.splice(i, 1); ids.forEach(i => { own.delete(i); chk.delete(i); }); renderObjs(); }
+    };
+  };
   const renderObjs = () => {
     const list = q(".na-objs-list"); if (!list) return;
     const sec = q(".na-objs");
     if (members.length < 1) { if (sec) sec.remove(); return; }
-    list.innerHTML = members.map(m => `<div class="na-obj" data-mid="${escapeHtml(String(m.id))}" title="${m.modelId ? "Klicka för att markera och zooma till objektet i 3D" : ""}"><span class="na-obj-name" title="${escapeHtml(String(m.objectId || ""))}">${escapeHtml(m.objectName || m.objectId || "Objekt")}${m.modelId ? ` <span class="hint">· ${escapeHtml(String(m.objectId || "").slice(-6))} · 3D-kopplad</span>` : ""}${typeof qmfMemberPosts === "function" ? qmfMemberPosts(m).map(x => ` <span class="na-post" title="${escapeHtml(x.post.label)} [${escapeHtml(x.post.unit)}] – ${escapeHtml(QTY_KINDS[x.kind][0])}">${escapeHtml(x.post.ref)}</span>`).join("") : ""}</span><button type="button" class="na-obj-x" data-mid="${escapeHtml(String(m.id))}" title="Ta bort objektet ur aktiviteten" aria-label="Ta bort objektet">✕</button></div>`).join("");
+    list.innerHTML = members.map(m => `<div class="na-obj${chk.has(String(m.id)) ? " chk" : ""}" data-mid="${escapeHtml(String(m.id))}" title="${m.modelId ? "Klicka för att markera och zooma till objektet i 3D" : ""}"><input type="checkbox" class="na-obj-c" aria-label="Markera objektet"${chk.has(String(m.id)) ? " checked" : ""}><span class="na-obj-name" title="${escapeHtml(String(m.objectId || ""))}">${escapeHtml(m.objectName || m.objectId || "Objekt")}${m.modelId ? ` <span class="hint">· ${escapeHtml(String(m.objectId || "").slice(-6))} · 3D-kopplad</span>` : ""}${typeof qmfMemberPosts === "function" ? qmfMemberPosts(m).map(x => ` <span class="na-post" title="${escapeHtml(x.post.label)} [${escapeHtml(x.post.unit)}] – ${escapeHtml(QTY_KINDS[x.kind][0])}">${escapeHtml(x.post.ref)}</span>`).join("") : ""}</span><button type="button" class="na-obj-x" data-mid="${escapeHtml(String(m.id))}" title="Ta bort objektet ur aktiviteten" aria-label="Ta bort objektet">✕</button></div>`).join("");
     q(".na-objs-n").textContent = `(${members.length})`;
     { const agg = new Map(); if (typeof qmfMemberPosts === "function") members.forEach(m => qmfMemberPosts(m).forEach(x => { const e = agg.get(x.post.key) || { x, n: 0 }; e.n++; agg.set(x.post.key, e); }));
       let box = q(".na-posts-sum"); if (!box) { box = document.createElement("div"); box.className = "hint na-posts-sum"; list.parentNode.insertBefore(box, list); }
       box.innerHTML = agg.size ? `Poster i mängdförteckningen: ${[...agg.values()].map(e => `<b>${escapeHtml(e.x.post.ref)}</b> ${escapeHtml(e.x.post.label.slice(0, 60))} [${escapeHtml(e.x.post.unit)}] × ${e.n}`).join(" · ")}` : ""; }
     // Klick på ett objekt: markeras och zoomas in i 3D, så du vet vilket det är.
     const pick = m => { list.querySelectorAll(".na-obj").forEach(r => r.classList.toggle("on", r.dataset.mid === String(m.id))); if (m.modelId) selectActivityInModel({ members: [m] }); };
-    list.querySelectorAll(".na-obj").forEach(row => { row.onclick = e => { if (e.target.closest(".na-obj-x")) return; const m = members.find(x => String(x.id) === row.dataset.mid); if (m) pick(m); }; });
+    list.querySelectorAll(".na-obj-c").forEach(c => { c.onchange = () => { const id = c.closest(".na-obj").dataset.mid; if (c.checked) chk.add(id); else chk.delete(id); c.closest(".na-obj").classList.toggle("chk", c.checked); objBar(); }; });
+    objBar();
+    list.querySelectorAll(".na-obj").forEach(row => { row.onclick = e => { if (e.target.closest(".na-obj-x, .na-obj-c")) return; const m = members.find(x => String(x.id) === row.dataset.mid); if (m) pick(m); }; });
     list.querySelectorAll(".na-obj-x").forEach(b => { b.onclick = async () => {
       const m = members.find(x => String(x.id) === b.dataset.mid); if (!m) return;
       pick(m); // visa vilket objekt det gäller innan frågan
@@ -5262,6 +5283,20 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
     }; });
   };
   renderObjs();
+  if (edit) {
+    // Modellens markering → bockar i listan (och rullar till första träffen).
+    naPopSync = async () => {
+      if (!document.body.contains(pop) || !members.length) { naPopSync = null; return; }
+      if (!API || !API.viewer || typeof API.viewer.getSelection !== "function") return;
+      let sel; try { sel = await API.viewer.getSelection(); } catch (e) { return; }
+      const keys = new Set();
+      for (const m of sel || []) { const rids = m.objectRuntimeIds || []; if (!rids.length) continue; try { (await API.viewer.convertToObjectIds(m.modelId, rids) || []).forEach(x => keys.add(`${m.modelId}|${x}`)); } catch (e) { /* hoppa över */ } }
+      chk.clear(); members.forEach(m => { if (m.modelId && keys.has(`${m.modelId}|${m.objectId}`)) chk.add(String(m.id)); });
+      renderObjs();
+      const first = q(".na-obj.chk"); if (first) first.scrollIntoView({ block: "nearest" });
+      if (chk.size) { const o = q(".na-objs"); if (o && !o.open) o.open = true; }
+    };
+  }
   // Andra rader som pekar på samma 3D-objekt (t.ex. kvar från en äldre import): syns annars inte här och gör att objektet verkar kopplat.
   const renderDups = () => {
     const sec = q(".na-dups"); if (!sec) return;
@@ -5293,7 +5328,7 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
   place();
   window.addEventListener("resize", place);
   pop.addEventListener("toggle", place, true); // när en hopfälld del öppnas eller stängs
-  const close = () => { pop.remove(); window.removeEventListener("resize", place); document.removeEventListener("keydown", onKey, true); };
+  const close = () => { naPopSync = null; pop.remove(); window.removeEventListener("resize", place); document.removeEventListener("keydown", onKey, true); };
   const onKey = e => {
     if (e.key !== "Escape") return;
     e.stopPropagation();
