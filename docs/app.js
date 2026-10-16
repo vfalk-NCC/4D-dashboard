@@ -59,7 +59,6 @@ let ganttView = "bars";            // "bars" (klassiska staplar) | "board" (post
 let ganttColorBy = "contractor";   // tavlans lappfärg: "contractor" | "area" | "activity"
 let ganttBoardScrolled = false;    // tavlan har scrollats till dagens vecka en gång
 let GANTT_MAX_ROWS = 1500; // tidslinjen: fler objekt än så slås ihop per aktivitet
-let ganttBoardSplit = false;       // tavlan: en lapp per 3D-objekt i stället för en per aktivitet
 let ganttBoardFullText = false;    // tavlan: hela namnet på alla lappar (Victor 2026-10-08)
 let ganttBoardOneLine = true;      // tavlan: lapparna på en rad (Victors önskemål 2026-10-06)
 const GANTT_ZOOM_LEVELS = [3, 6, 10, 18, 30, 50]; // px per dag, stigande zoomnivåer
@@ -1411,7 +1410,7 @@ function applyGanttModelSel(pulse) {
   const els = [];
   chart.querySelectorAll(".pnote[data-item-id]").forEach(n => {
     const it = items.find(x => String(x.id) === n.dataset.itemId);
-    const ids = it ? [it.id, ...items.filter(x => it.activityKey && x.activityKey === it.activityKey && !ganttBoardSplit).map(x => x.id)] : [n.dataset.itemId];
+    const ids = it ? [it.id, ...items.filter(x => it.activityKey && x.activityKey === it.activityKey ).map(x => x.id)] : [n.dataset.itemId];
     if (ids.some(id => ganttModelSel.has(String(id)))) els.push(n);
   });
   chart.querySelectorAll(".gantt-bar[data-item-id]").forEach(b => { if (ganttModelSel.has(b.dataset.itemId)) els.push(b); });
@@ -3047,7 +3046,6 @@ function loadGanttPrefs() {
     if (typeof prefs.editable === "boolean") ganttEditable = prefs.editable;
     if (prefs.view === "bars" || prefs.view === "board") ganttView = prefs.view;
     if (["contractor", "area", "activity"].includes(prefs.colorBy)) ganttColorBy = prefs.colorBy;
-    if (typeof prefs.boardSplit === "boolean") ganttBoardSplit = prefs.boardSplit;
     if (typeof prefs.boardOneLine === "boolean") ganttBoardOneLine = prefs.boardOneLine;
     if (typeof prefs.boardFullText === "boolean") ganttBoardFullText = prefs.boardFullText;
     if (typeof prefs.baseline === "boolean") ganttShowBaseline = prefs.baseline;
@@ -3078,7 +3076,6 @@ function saveGanttPrefs() {
       editable: ganttEditable,
       view: ganttView,
       colorBy: ganttColorBy,
-      boardSplit: ganttBoardSplit,
       boardOneLine: ganttBoardOneLine,
       boardFullText: ganttBoardFullText,
       baseline: ganttShowBaseline,
@@ -4652,8 +4649,8 @@ const noteMembersOf = it => (it && it.members) || (it ? [it] : []);
 function noteGroupForId(id) {
   const it = items.find(x => x.id === id);
   if (!it) return null;
-  const members = !ganttBoardSplit && it.activityKey ? items.filter(x => x.activityKey === it.activityKey) : [it];
-  return { key: !ganttBoardSplit && it.activityKey && members.length > 1 ? "a:" + it.activityKey : "i:" + it.id, label: itemLabel(it) + (members.length > 1 ? ` (${members.length} objekt)` : ""), ids: members.map(m => m.id) };
+  const members = it.activityKey ? items.filter(x => x.activityKey === it.activityKey) : [it];
+  return { key: it.activityKey && members.length > 1 ? "a:" + it.activityKey : "i:" + it.id, label: itemLabel(it) + (members.length > 1 ? ` (${members.length} objekt)` : ""), ids: members.map(m => m.id) };
 }
 function groupsOfIds(ids) {
   const out = new Map();
@@ -4866,7 +4863,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
   const nDays = nWeeks * 7;
   const todayCol = Math.round((startOfWeekUTC(todayUTC()) - w0) / (7 * 86400000));
 
-  const visible = (ganttBoardSplit ? withDates : mergeActivityGroups(withDates)).filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
+  const visible = mergeActivityGroups(withDates).filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
   const skippedNoDate = list.length - withDates.length;
   const skippedRange = withDates.filter(it => !(it.startDate <= domainEnd && it.endDate >= domainStart)).length;
   const depById = itemsByIdAll();
@@ -6619,11 +6616,6 @@ function initGanttControls() {
       renderGantt(getFilteredItems());
     };
   });
-  const splitCb = document.getElementById("ganttBoardSplit");
-  if (splitCb) {
-    splitCb.checked = ganttBoardSplit;
-    splitCb.onchange = () => { ganttBoardSplit = splitCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
-  }
   const blCb = document.getElementById("ganttShowBaseline");
   if (blCb) {
     blCb.checked = ganttShowBaseline;
