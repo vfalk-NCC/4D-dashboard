@@ -2651,7 +2651,7 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .gantt-legend .gantt-legend-actions { display: inline-flex; gap: 6px; align-items: center; margin-left: 2px; }
 .gantt-legend-row { display: block; }
 .gantt-legend .gantt-add-inline { height: 20px; font-size: 11px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; }
-#ganttUncoupledBtn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+#ganttUncoupledBtn[aria-pressed="true"], #ganttOwnBtn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 #ganttUncoupledBtn b { font-weight: 600; opacity: .8; }
 .phb-pick { max-height: 240px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 6px; background: #fafbfc; }
 .phb-pg { margin-bottom: 4px; }

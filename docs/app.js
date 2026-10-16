@@ -3618,7 +3618,7 @@ function renderGanttLegend() {
     ${ganttShowBaseline && ganttBaseline2Id ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline2"></span>Jämför: ${escapeHtml(baselineLabel(ganttBaseline2Id))}</span>` : ""}
     ${ganttEditable ? `<span class="gantt-legend-item gl-edit" title="${escapeHtml(editHelp)}" style="cursor:help">✏️</span>` : ""}
   `;
-  if (act) { el.appendChild(act); const n = ganttUncoupledCount(); const nb = document.getElementById("ganttUncoupledN"); if (nb) nb.textContent = n ? `(${n})` : ""; const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); }
+  if (act) { el.appendChild(act); const n = ganttUncoupledCount(); const nb = document.getElementById("ganttUncoupledN"); if (nb) nb.textContent = n ? `(${n})` : ""; const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); const on = ganttOwnCount(), onb = document.getElementById("ganttOwnN"); if (onb) onb.textContent = on ? `(${on})` : ""; const ob = document.getElementById("ganttOwnBtn"); if (ob) ob.setAttribute("aria-pressed", String(ganttOnlyOwn)); }
   // Tavlans färger (Färga efter): en ruta per entreprenör/område/aktivitet – klicka för att välja egen färg.
   if (ganttView === "board") {
     const kind = ganttColorBy, none = { area: NO_AREA_LABEL, contractor: NO_CONTRACTOR_LABEL, activity: NO_ACTIVITY_LABEL }[kind];
@@ -4308,8 +4308,13 @@ const ganttIsCoupled = it => !!(it.modelId && it.objectId);
 const ganttActKey = it => it.activityKey || `i:${it.id}`;
 function ganttUncoupledOnly(list) { const coupled = new Set(list.filter(ganttIsCoupled).map(ganttActKey)); return list.filter(it => !ganttIsCoupled(it) && !coupled.has(ganttActKey(it))); }
 function ganttUncoupledCount() { return new Set(ganttUncoupledOnly(getFilteredItems()).map(ganttActKey)).size; }
+/* Filter: bara egna aktiviteter (Victor 2026-10-16) – de som skapats här (origin "manuell"), inte de från Powerproject/Excel. Kan kombineras med Ej kopplade. */
+let ganttOnlyOwn = false; try { ganttOnlyOwn = localStorage.getItem("4ddash-gantt-own") === "1"; } catch (e) { /* */ }
+function ganttOwnOnly(list) { const own = new Set(list.filter(x => x.origin === "manuell").map(ganttActKey)); return list.filter(x => own.has(ganttActKey(x))); }
+function ganttOwnCount() { return new Set(ganttOwnOnly(getFilteredItems()).map(ganttActKey)).size; }
 function renderGantt(list, target) {
   if (ganttOnlyUncoupled) list = ganttUncoupledOnly(list);
+  if (ganttOnlyOwn) list = ganttOwnOnly(list);
   // Resurskurvan följer Gantt-schemats urval (filter, sök, dolda områden, period) – ritas om efteråt.
   if (!target && typeof renderResourceCurve === "function") setTimeout(renderResourceCurve, 0);
   // target: ritar i ett annat element (utskriften, se printGantt) - utan anteckningar och interaktion.
@@ -6739,6 +6744,7 @@ function initGanttControls() {
     arrCb.checked = ganttShowArrows;
     arrCb.onchange = () => { ganttShowArrows = arrCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
   }
+  { const ob = document.getElementById("ganttOwnBtn"); if (ob) ob.onclick = () => { ganttOnlyOwn = !ganttOnlyOwn; try { localStorage.setItem("4ddash-gantt-own", ganttOnlyOwn ? "1" : "0"); } catch (e) { /* */ } ob.setAttribute("aria-pressed", String(ganttOnlyOwn)); renderGantt(getFilteredItems()); }; }
   { const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.onclick = () => { ganttOnlyUncoupled = !ganttOnlyUncoupled; try { localStorage.setItem("4ddash-gantt-uncoupled", ganttOnlyUncoupled ? "1" : "0"); } catch (e) { /* */ } ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); renderGantt(getFilteredItems()); }; }
   const addBtn = document.getElementById("ganttAddBtn");
   if (addBtn) addBtn.onclick = () => openNewActivityDialog();

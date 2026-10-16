@@ -39,6 +39,13 @@ seed('plan_items.json', [
   await page.evaluate(() => refreshAll()); await page.waitForTimeout(1200);
   m1 = row('M1'); if (m1.start_date !== '2026-11-30' || m1.end_date !== '2026-12-07') fail('Kranen ska följa med efter ny import: ' + m1.start_date + ' – ' + m1.end_date);
   console.log('OK: kranen följer med när aktiviteten flyttas av en ny import');
+  // Filter: bara egna aktiviteter
+  await page.click('#ganttOwnBtn'); await page.waitForTimeout(400);
+  const own = await page.evaluate(() => ({ names: ganttShownItems.map(x => x.objectName).sort().join('|'), n: document.getElementById('ganttOwnN').textContent, p: document.getElementById('ganttOwnBtn').getAttribute('aria-pressed') }));
+  if (own.names !== 'Mobilkran|Pumpbil' || own.n !== '(2)' || own.p !== 'true') fail('Egna-filtret ska visa bara egna aktiviteter: ' + JSON.stringify(own));
+  await page.click('#ganttOwnBtn'); await page.waitForTimeout(300);
+  if ((await page.evaluate(() => ganttShownItems.length)) !== 3) fail('Av: alla visas igen');
+  console.log('OK: filtret Egna visar bara egna aktiviteter');
   // Dialogen: välj aktivitet att följa
   await page.evaluate(() => { ganttEditable = true; openActivityDialog({ edit: items.find(x => x.id === 'M1') }); }); await page.waitForTimeout(200);
   if (!(await page.locator('.na-follow .nf-row').count())) fail('Dialogen ska visa vilken aktivitet som följs');
