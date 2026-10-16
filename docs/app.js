@@ -6892,12 +6892,18 @@ function itemsByIdAll() {
 // tar O(objekt + kopplingar) i stället för ett varv genom alla objekt per steg (2026-10-08:
 // gjorde tavlan sekunder långsam med många objekt). Ordningen är densamma som förut:
 // steg för steg, och inom ett steg i samma ordning som i `items`.
-function downstreamOf(itemId, byId) {
+function downstreamIndex() {
   const succ = new Map(), idx = new Map();
   items.forEach((it, i) => {
     idx.set(it, i);
     if (Array.isArray(it.dependsOn)) it.dependsOn.forEach(d => { const k = String(d); if (!succ.has(k)) succ.set(k, []); succ.get(k).push(it); });
   });
+  return { succ, idx };
+}
+// index: färdigbyggt register (downstreamIndex) när många anrop görs i rad – annars byggs ett nytt per anrop (O(objekt) vardera;
+// computeDependencyRisks gjorde det för varje riskobjekt och tog 3 s vid 3 700 objekt – Victors logg 2026-10-16).
+function downstreamOf(itemId, byId, index) {
+  const { succ, idx } = index || downstreamIndex();
   const result = [];
   const seen = new Set([itemId]);
   let frontier = [itemId];
@@ -6918,7 +6924,7 @@ function downstreamOf(itemId, byId) {
 // "Planstabilitet" kan räkna på den oavsett filter/zoom.
 function computeDependencyRisks() {
   const byId = itemsByIdAll();
-  const risks = [];
+  const risks = [], dIndex = downstreamIndex();
   items.forEach(it => {
     if (!Array.isArray(it.dependsOn) || it.dependsOn.length === 0) return;
     const overlapping = it.dependsOn
@@ -6928,7 +6934,7 @@ function computeDependencyRisks() {
         const predEnd = p.actualEndDate || p.endDate;
         return predEnd && it.startDate && predEnd >= it.startDate;
       });
-    if (overlapping.length > 0) risks.push({ it, blockers: overlapping, downstreamCount: downstreamOf(it.id, byId).length });
+    if (overlapping.length > 0) risks.push({ it, blockers: overlapping, downstreamCount: downstreamOf(it.id, byId, dIndex).length });
   });
   return risks;
 }
