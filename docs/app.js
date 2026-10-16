@@ -3745,6 +3745,7 @@ let ganttPhaseNow = new Map(), ganttTimeBusy = false, ganttTimePending = false, 
 const hexToRgbaObj = (hex, op) => ({ r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16), a: Math.round(Math.max(0, Math.min(1, op)) * 255) });
 function ganttTimeColorOf(t) {
   if (t.phase === "tempon") return "reset";
+  if (t.phase === "klar" && ganttDoneOrig && !t.doneColor && t.doneOpacity === null) return "reset"; // klart i modellens originalfärg (Victor 2026-10-16)
   if (ganttScale.on && !(t.phase === "klar" && (t.doneColor || t.doneOpacity !== null))) { // egen färg efter slut ligger överst
     const hx = ganttScaleHex(t); if (hx) return hexToRgbaObj(hx, (t.phase === "klar" ? ganttDoneOp : (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase])) / 100);
   }
@@ -3753,7 +3754,7 @@ function ganttTimeColorOf(t) {
   return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase]) / 100);
 }
 /* Pågående i entreprenörens färg (Victor 2026-10-15): samma färger som entreprenörsraden och tavlan (egen vald färg, annars paletten), så man ser vem som är var. */
-let ganttByContractor = false;
+let ganttByContractor = false, ganttDoneOrig = false;
 function ganttContractorHex(name) {
   const key = name || NO_CONTRACTOR_LABEL, own = ganttCustomColors.get(`contractor:${key}`);
   return own || softColor("contractor", key).bd;
@@ -4175,6 +4176,9 @@ function initGanttTime() {
   try { ganttTimeFuture = localStorage.getItem("4ddash-gantt-time-future") === "1"; } catch (e) {}
   { const bc = document.getElementById("ganttTimeByCon"); try { ganttByContractor = localStorage.getItem("4ddash-gantt-time-bycontractor") === "1"; } catch (e) {}
     if (bc) { bc.checked = ganttByContractor; bc.onchange = () => { ganttByContractor = bc.checked; try { localStorage.setItem("4ddash-gantt-time-bycontractor", ganttByContractor ? "1" : "0"); } catch (e) {} ganttTimeReset(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); }; } }
+  { const dc = document.getElementById("ganttTimeDoneOrig"); try { ganttDoneOrig = localStorage.getItem("4ddash-gantt-done-orig") === "1"; } catch (e) {}
+    const paintDo = () => { const op = document.getElementById("ganttTimeDoneOp"); if (op) { op.disabled = ganttDoneOrig; op.title = ganttDoneOrig ? "Av – klart visas i originalfärg" : ""; } };
+    if (dc) { dc.checked = ganttDoneOrig; paintDo(); dc.onchange = () => { ganttDoneOrig = dc.checked; paintDo(); try { localStorage.setItem("4ddash-gantt-done-orig", ganttDoneOrig ? "1" : "0"); } catch (e) {} ganttTimeReset(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); }; } }
   { const gb = document.getElementById("ganttScaleBtn"); if (gb) {
     try { Object.assign(ganttScale, JSON.parse(localStorage.getItem("4ddash-gantt-scale") || "{}")); } catch (e) {}
     const paint = () => gb.classList.toggle("on", !!ganttScale.on), save = () => { try { localStorage.setItem("4ddash-gantt-scale", JSON.stringify(ganttScale)); } catch (e) {} paint(); ganttScaleR = null; if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); };

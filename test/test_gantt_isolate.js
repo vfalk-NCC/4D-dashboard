@@ -360,6 +360,9 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   const nRm = await page.evaluate(() => window.__mkRm.length); await page.waitForTimeout(900);
   if (await page.evaluate(() => bubbleIds.length)) fail('Av: alla bubblor borttagna');
   console.log('OK: info-bubblor i 3D – datum, framdrift, område, aktivitet; följer markeringen; av = borta');
+  { const r = await page.evaluate(() => { ganttDoneOrig = true; const a = ganttTimeColorOf({ phase: 'klar', doneColor: null, doneOpacity: null }), b = ganttTimeColorOf({ phase: 'klar', doneColor: '#ff0000', doneOpacity: null }), c = ganttTimeColorOf({ phase: 'pagaende' }); ganttDoneOrig = false; const d = ganttTimeColorOf({ phase: 'klar', doneColor: null, doneOpacity: null }); return { a, b: typeof b, c: typeof c, d: typeof d }; });
+    if (r.a !== 'reset' || r.b !== 'object' || r.c !== 'object' || r.d !== 'object') fail('Klart i originalfärg: ' + JSON.stringify(r)); }
+  console.log('OK: klart kan återgå till modellens originalfärg (egen färg efter slut gäller fortfarande)');
   // Över gränsen slås objekten i samma aktivitet ihop i tidslinjen (tiotusentals rader fryste sidan)
   { const r = await page.evaluate(() => { const v0 = ganttView; ganttView = 'time'; renderGantt(getFilteredItems()); const full = document.querySelectorAll('.gantt-bar[data-item-id]').length; GANTT_MAX_ROWS = 3; renderGantt(getFilteredItems()); const merged = document.querySelectorAll('.gantt-bar[data-item-id]').length; const note = /sammanslagna/.test(document.getElementById('ganttNotes') ? document.getElementById('ganttNotes').textContent : ''); GANTT_MAX_ROWS = 1500; renderGantt(getFilteredItems()); ganttView = v0; return { full, merged, note }; });
     if (!(r.merged < r.full) || !r.note) fail('Tidslinjen ska slå ihop objekt över gränsen: ' + JSON.stringify(r)); }
