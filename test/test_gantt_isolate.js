@@ -360,6 +360,10 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   const nRm = await page.evaluate(() => window.__mkRm.length); await page.waitForTimeout(900);
   if (await page.evaluate(() => bubbleIds.length)) fail('Av: alla bubblor borttagna');
   console.log('OK: info-bubblor i 3D – datum, framdrift, område, aktivitet; följer markeringen; av = borta');
+  // Över gränsen slås objekten i samma aktivitet ihop i tidslinjen (tiotusentals rader fryste sidan)
+  { const r = await page.evaluate(() => { const v0 = ganttView; ganttView = 'time'; renderGantt(getFilteredItems()); const full = document.querySelectorAll('.gantt-bar[data-item-id]').length; GANTT_MAX_ROWS = 3; renderGantt(getFilteredItems()); const merged = document.querySelectorAll('.gantt-bar[data-item-id]').length; const note = /sammanslagna/.test(document.getElementById('ganttNotes') ? document.getElementById('ganttNotes').textContent : ''); GANTT_MAX_ROWS = 1500; renderGantt(getFilteredItems()); ganttView = v0; return { full, merged, note }; });
+    if (!(r.merged < r.full) || !r.note) fail('Tidslinjen ska slå ihop objekt över gränsen: ' + JSON.stringify(r)); }
+  console.log('OK: tidslinjen slår ihop objekt per aktivitet när det blir för många');
   // Ta bort ett objekt ur en aktivitet (redigeringsdialogen): bara det objektet, aktiviteten finns kvar.
   const mergedG1 = () => page.evaluate(() => { const m = mergeActivityGroups(items.filter(x => x.activityKey === 'g:g1'))[0]; return m && m.members ? m.members.length : 0; });
   if ((await mergedG1()) !== 2) fail('Testdata: aktiviteten ska ha två objekt: ' + await mergedG1());

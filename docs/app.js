@@ -58,6 +58,7 @@ const GANTT_PREFS_KEY = "4ddash-gantt-prefs";
 let ganttView = "bars";            // "bars" (klassiska staplar) | "board" (post-it-tavla per vecka)
 let ganttColorBy = "contractor";   // tavlans lappfärg: "contractor" | "area" | "activity"
 let ganttBoardScrolled = false;    // tavlan har scrollats till dagens vecka en gång
+let GANTT_MAX_ROWS = 1500; // tidslinjen: fler objekt än så slås ihop per aktivitet
 let ganttBoardSplit = false;       // tavlan: en lapp per 3D-objekt i stället för en per aktivitet
 let ganttBoardFullText = false;    // tavlan: hela namnet på alla lappar (Victor 2026-10-08)
 let ganttBoardOneLine = true;      // tavlan: lapparna på en rad (Victors önskemål 2026-10-06)
@@ -4289,9 +4290,13 @@ function renderGantt(list, target) {
   // Objekt som (helt eller delvis) överlappar det visade intervallet -
   // objekt helt utanför visas inte (annars skulle en fast angiven "Visa
   // från/till"-ruta kunna svämma över av staplar som klipps bort ändå).
-  const visible = withDates.filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
-  const skippedNoDate = list.length - withDates.length;
+  let visible = withDates.filter(it => it.startDate <= domainEnd && it.endDate >= domainStart);
+  // Många tusen objekt gör tidslinjen obrukbart tung (en rad per objekt, ett DOM-träd på hundratusentals element): över gränsen
+  // slås objekten i samma aktivitet ihop till en stapel, som på tavlan. Filtrera ner urvalet för att se enskilda objekt igen.
+  const ganttMergedN = visible.length > GANTT_MAX_ROWS ? visible.length : 0;
   const skippedRange = withDates.length - visible.length;
+  if (ganttMergedN) visible = mergeActivityGroups(visible);
+  const skippedNoDate = list.length - withDates.length;
 
   if (visible.length === 0) {
     el.className = "gantt-chart";
@@ -4511,6 +4516,7 @@ function renderGantt(list, target) {
     const notes = [];
     if (skippedNoDate > 0) notes.push(`${skippedNoDate} objekt utan både start- och slutdatum visas inte.`);
     if (skippedRange > 0) notes.push(`${skippedRange} objekt utanför det valda datumintervallet visas inte.`);
+    if (ganttMergedN) notes.push(`${ganttMergedN} objekt är sammanslagna till ${visible.length} aktiviteter (över ${GANTT_MAX_ROWS} objekt blir tidslinjen för tung) – filtrera ner urvalet för att se enskilda objekt.`);
     notesEl.innerText = notes.join(" ");
   }
 
@@ -5879,11 +5885,12 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
     };
   });
 
+  const listById = new Map(); list.forEach(x => { const k = String(x.id); if (!listById.has(k)) listById.set(k, x); });
   el.querySelectorAll("[data-gantt-tip]").forEach(markEl => {
-    const html = tooltips.get(markEl.dataset.ganttTip);
-    if (!html) return;
-    markEl.addEventListener("click", () => { if (markEl.isConnected) pinGanttTooltip(markEl, html); });
-    markEl.onfocusin = () => pinGanttTooltip(markEl, html);
+    // Tipset byggs först när det visas (LazyTipMap) – att hämta det här för varje stapel gjorde omritningen till minuter med tiotusentals objekt.
+    const key = markEl.dataset.ganttTip;
+    markEl.addEventListener("click", () => { const html = tooltips.get(key); if (html && markEl.isConnected) pinGanttTooltip(markEl, html); });
+    markEl.onfocusin = () => { const html = tooltips.get(key); if (html) pinGanttTooltip(markEl, html); };
   });
 
   // Klick på en huvudstapel (med beroenden) växlar highlight av dess
@@ -5896,12 +5903,13 @@ function bindGanttInteractions(el, list, tooltips, geometry) {
   const CLICK_MOVE_THRESHOLD_PX = 4;
   {
     const shown = new Set([...el.querySelectorAll(".gantt-bar[data-item-id]")].map(b => b.dataset.itemId));
-    bindNearHighlight(el, ".gantt-bar[data-item-id]", b => list.find(x => String(x.id) === b.dataset.itemId), list.filter(x => shown.has(String(x.id))), "bar",
+    bindNearHighlight(el, ".gantt-bar[data-item-id]", b => listById.get(b.dataset.itemId), list.filter(x => shown.has(String(x.id))), "bar",
       b => (b.closest(".gantt-row") && b.closest(".gantt-row").querySelector(".gantt-label")) || b);
   }
+  const allById = new Map(); items.forEach(x => allById.set(String(x.id), x));
   el.querySelectorAll(".gantt-bar[data-item-id]").forEach(barEl => {
     const itemId = barEl.dataset.itemId;
-    const it = list.find(x => String(x.id) === itemId) || items.find(x => String(x.id) === itemId);
+    const it = listById.get(itemId) || allById.get(itemId);
     if (!it) return;
 
     barEl.addEventListener("keydown", e => { if ((e.key === "Delete" || e.key === "Backspace") && ganttEditable) { e.preventDefault(); deleteActivity(it); } });

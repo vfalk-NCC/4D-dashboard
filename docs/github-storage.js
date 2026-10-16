@@ -55,7 +55,8 @@ function ghUtf8ToB64(str) {
 
 function ghB64ToUtf8(b64) {
   const binary = atob(b64.replace(/\n/g, ""));
-  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length); // enkel slinga: Uint8Array.from(sträng, fn) var flera gånger långsammare på tiotals MB
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new TextDecoder("utf-8").decode(bytes);
 }
 
