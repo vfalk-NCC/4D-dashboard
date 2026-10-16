@@ -1,0 +1,8 @@
+{
+  "title": "Min Trimble Connect App",
+  "name": "min-trimble-connect-app",
+  "version": "1.0.0",
+  "description": "En fristående extension för Trimble Connect",
+  "icon": "icon.svg",
+  "url": "index.html"
+}

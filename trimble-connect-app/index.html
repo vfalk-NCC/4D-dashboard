@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Min Trimble Connect App</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/v1.0/trimble-connect-workspace-api.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <h1>Min Trimble Connect App</h1>
+      <span id="statusBadge" class="badge">Ansluter...</span>
+    </header>
+
+    <main class="app-main">
+      <section class="card">
+        <h2>Projektinformation</h2>
+        <div id="projectInfo">Laddar projektdata...</div>
+      </section>
+
+      <section class="card">
+        <h2>3D-modelleraktioner</h2>
+        <div class="actions">
+          <button id="btnGetSelection" class="btn">Hämta markerade objekt</button>
+        </div>
+        <div id="selectionOutput" class="output"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

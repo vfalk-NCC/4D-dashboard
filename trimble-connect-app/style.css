@@ -1,0 +1,89 @@
+:root {
+  --primary-color: #0063a5;
+  --bg-color: #f4f6f8;
+  --card-bg: #ffffff;
+  --text-color: #333333;
+  --border-color: #e0e0e0;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+}
+
+.app-container {
+  padding: 16px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  border-bottom: 2px solid var(--border-color);
+  padding-bottom: 10px;
+}
+
+.app-header h1 {
+  font-size: 1.4rem;
+  margin: 0;
+  color: var(--primary-color);
+}
+
+.badge {
+  background-color: #e0e0e0;
+  color: #555;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.badge.connected {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.card h2 {
+  font-size: 1.1rem;
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.btn {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.btn:hover {
+  background-color: #004d80;
+}
+
+.output {
+  margin-top: 12px;
+  padding: 8px;
+  background-color: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
