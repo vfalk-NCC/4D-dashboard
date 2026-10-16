@@ -1,89 +1,2716 @@
 :root {
-  --primary-color: #0063a5;
-  --bg-color: #f4f6f8;
-  --card-bg: #ffffff;
-  --text-color: #333333;
-  --border-color: #e0e0e0;
+  --bg: #ffffff;
+  --panel: #f4f5f7;
+  --border: #dcdfe4;
+  --text: #1f2328;
+  --muted: #6b7280;
+  --accent: #0b5fff;
+  font-family: "Segoe UI", Arial, sans-serif;
 }
+
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+#app { padding: 10px; }
+
+/* Bevakningsbanner (renderWatchBanner) - alltid synlig direkt under
+   headern så en försening/passerad milstolpe/beroenderisk syns utan att
+   behöva scrolla ner till respektive panel. Se Victors förfrågan
+   2026-09-21 om "ingen bevakning/notiser". */
+.watch-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.watch-item {
+  border: none;
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.watch-item.ok { background: #eaf7ee; color: #15803d; cursor: default; }
+.watch-item.warn { background: #fff4e5; color: #b45309; }
+.watch-item.danger { background: #fdecea; color: #b3261e; }
+.watch-item.danger:hover, .watch-item.warn:hover { filter: brightness(0.96); }
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+header h1 { font-size: 16px; margin: 0; }
+header button { background: none; border: none; font-size: 16px; cursor: pointer; }
+
+.header-brand { display: flex; align-items: center; gap: 8px; }
+.header-actions { display: flex; align-items: center; gap: 4px; }
+.header-actions #btnExportExcel,
+.header-actions #btnExportIcs,
+.header-actions #btnExportPdf {
+  font-size: 11px;
+  padding: 5px 8px;
+}
+.header-actions #btnCollapseAll {
+  font-size: 14px;
+  padding: 5px 8px;
+}
+.ncc-mark {
+  flex: 0 0 auto;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: .02em;
+  color: #fff;
+  background: var(--accent);
+  padding: 3px 6px;
+  border-radius: 3px;
+  line-height: 1;
+}
+.header-titles { display: flex; flex-direction: column; line-height: 1.15; }
+.header-titles h1 { font-size: 16px; margin: 0; }
+.made-by { font-size: 9px; color: var(--muted); }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.panel h2 {
+  font-size: 13px;
+  margin: 0 0 8px 0;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.panel-collapse-btn {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background-color: var(--bg-color);
-  color: var(--text-color);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: white;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.panel-collapse-btn:hover { color: var(--text); background: var(--panel); }
+.panel.collapsed { padding-bottom: 10px; }
+.panel.collapsed > *:not(h2) { display: none !important; }
+/* Dolt via "Synliga block" i Inställningar - till skillnad från
+   minimering (.collapsed) ska ett dolt block INTE dyka upp i PDF-export/
+   utskrift heller, se onExportPdf/@media print. */
+.panel.panel-hidden { display: none !important; }
+
+.panel-visibility-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 6px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.panel-visibility-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 400;
 }
 
-.app-container {
+/* Statusfärger (Victors förfrågan 2026-09-17: kunna välja egna färger för
+   ej planerad/planerad/pågående/försenad/klar/pausad) - samma listruta-
+   mönster som Synliga block ovan, en <input type="color"> per status. */
+.status-color-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.status-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  margin: 0;
+}
+.status-color-row input[type="color"] {
+  width: 30px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
+.hint.warning { color: #e5484d; font-weight: 600; padding: 6px 8px; background: #fdeceb; border: 1px solid #f3c4c1; border-radius: 4px; }
+
+label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  margin-top: 2px;
+  font-family: inherit;
+}
+/* Kryssrutor ska INTE ärva width:100% - annars blir deras (osynliga)
+   layoutbredd lika bred som hela sin flex-rad, vilket trycker undan
+   text/etikett bredvid och gör att den radbryts konstigt trots gott om
+   plats (hittat 2026-09-21 vid felsökning av det "röriga" Gantt-verktygs-
+   fältet: en kryssruta hade en 66px bred osynlig layout-box). */
+input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+  margin-top: 0;
+}
+
+.row { display: flex; gap: 6px; margin-top: 6px; }
+
+button {
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: white;
+  cursor: pointer;
+  font-size: 12px;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+button:hover { filter: brightness(0.97); }
+button:disabled { opacity: 0.5; cursor: default; filter: none; }
+
+.hidden { display: none !important; }
+
+.dialog {
+  position: fixed; inset: 0;
+  z-index: 1100; /* över Gantt-schemats sticky-linjal och tavlans rubriker */
+  background: rgba(0,0,0,0.35);
+  display: flex; align-items: center; justify-content: center;
+}
+.dialog-box {
+  background: white;
   padding: 16px;
-  max-width: 800px;
-  margin: 0 auto;
+  border-radius: 8px;
+  width: 320px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
-.app-header {
+/* Lösenordsgrind - visas innan appen laddas, se ACCESS_PASSWORD i app.js.
+   Enbart en klientsidesspärr, ingen riktig säkerhet - koden och all data
+   är fortsatt synlig för den som öppnar utvecklarverktygen. */
+.access-gate {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.access-box {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 280px;
+  text-align: center;
+}
+.access-box h2 { margin: 0 0 10px; font-size: 18px; }
+.access-box input {
+  width: 100%;
+  margin: 8px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.access-box button {
+  width: 100%;
+  margin-top: 6px;
+}
+.access-box .warning { color: #e5484d; margin: 4px 0 0; }
+
+/* ---------------------------------------------------------------------
+   KPI-rutnät ("Översikt")
+   ------------------------------------------------------------------- */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.kpi-tile {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  text-align: center;
+}
+.kpi-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.kpi-label {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+.kpi-tile.accent-done .kpi-value { color: #3fb950; }
+.kpi-tile.accent-delayed .kpi-value { color: #e5484d; }
+.kpi-tile.accent-progress .kpi-value { color: var(--accent); }
+
+.status-donut { margin-top: 10px; }
+.donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.donut-svg { width: 120px; height: 120px; flex-shrink: 0; }
+.donut-svg circle { transition: stroke-dasharray 0.3s ease; }
+.donut-center-value { font-size: 22px; font-weight: 700; fill: var(--text); }
+.donut-center-label { font-size: 8px; fill: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 120px;
+}
+.donut-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.donut-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.donut-legend-label { color: var(--text); }
+.donut-legend-value { color: var(--muted); margin-left: auto; font-weight: 600; }
+
+/* ---------------------------------------------------------------------
+   Filtrering (område / aktivitet / entreprenör)
+   ------------------------------------------------------------------- */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.filter-bar label {
+  flex: 1 1 120px;
+  margin-bottom: 0;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+.filter-bar select {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  margin-top: 2px;
+  font-family: inherit;
+  background: white;
+}
+.filter-bar button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------
+   Statusfördelning
+   ------------------------------------------------------------------- */
+.status-chart { display: flex; flex-direction: column; gap: 6px; }
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.status-row .status-label {
+  flex: 0 0 88px;
+  color: var(--text);
+}
+.status-row .status-track {
+  flex: 1;
+  height: 12px;
+  background: #e2e5ea;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.status-row .status-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+.status-row .status-count {
+  flex: 0 0 56px;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------
+   Framdrift per grupp (område / entreprenör)
+   ------------------------------------------------------------------- */
+.progress-chart { display: flex; flex-direction: column; gap: 8px; }
+.progress-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 34px auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.progress-row .progress-label {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.progress-row .progress-track {
+  height: 12px;
+  background: #e2e5ea;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-row .progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+.progress-row .progress-value {
+  text-align: right;
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.progress-row .progress-meta {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------------
+   Cykeltidsanalys - planerad vs. verklig varaktighet per aktivitet.
+   Egen layout (inte progress-row) eftersom varje rad visar TVÅ staplar
+   (planerat/verkligt) istället för en.
+   ------------------------------------------------------------------- */
+.cycle-time-chart { display: flex; flex-direction: column; gap: 10px; }
+.cycle-time-row {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.cycle-time-label {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cycle-time-bars { display: flex; flex-direction: column; gap: 3px; }
+.cycle-time-bar-line { display: grid; grid-template-columns: 46px 1fr 34px; align-items: center; gap: 6px; }
+.cycle-time-bar-caption { color: var(--muted); }
+.cycle-time-track { height: 8px; background: #e2e5ea; border-radius: 3px; overflow: hidden; }
+.cycle-time-fill { display: block; height: 100%; border-radius: 3px; }
+.cycle-time-fill.planned { background: var(--accent); }
+.cycle-time-fill.actual-over { background: #e5484d; }
+.cycle-time-fill.actual-under { background: #3fb950; }
+.cycle-time-bar-value { text-align: right; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cycle-time-meta { color: var(--muted); white-space: nowrap; text-align: right; }
+
+/* ---------------------------------------------------------------------
+   Gantt-schema - en rad per objekt, infällbara delaktivitetsrader under.
+   ------------------------------------------------------------------- */
+.gantt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 8px;
+}
+/* Bara den SISTA .gantt-toolbar-raden innan Gantt-schemat äger den
+   avdelande linjen (annars blir det dubbla/tätt intilliggande linjer när
+   toolbaren delas upp i flera rader, se .gantt-toggle-row nedan). */
+.gantt-toolbar:not(.gantt-toggle-row) {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+/* Kryssrutorna ("Visa verkligt"/"Redigerbar") får en egen rad istället för
+   att blandas in i samma flex-wrap som Gruppera/Sortera/Kompakt/zoom -
+   annars radbryts de oförutsägbart mitt ibland de andra kontrollerna i en
+   smal panel (Victors skärmdumpar 2026-09-21: "det ser rörigt ut"). */
+.gantt-toolbar.gantt-toggle-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: -4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.gantt-toolbar-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.gantt-toolbar-field select,
+.gantt-toolbar-field input[type="date"] {
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: white;
+  color: var(--text);
+}
+.gantt-toolbar-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: white;
+  color: var(--text);
+  cursor: pointer;
+}
+.gantt-toolbar-btn:hover { background: var(--panel); }
+.gantt-toolbar-btn[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.gantt-zoom-group { display: flex; gap: 2px; }
+.gantt-zoom-group .gantt-toolbar-btn { padding: 3px 7px; min-width: 26px; }
+.gantt-actual-toggle { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text); margin: 0; }
+.gantt-range-row { margin-top: -4px; }
+.gantt-range-status { margin: 0; }
+.gantt-range-status.error { color: #e5484d; font-weight: 600; }
+
+.gantt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.gantt-legend-item { display: flex; align-items: center; gap: 4px; }
+.gantt-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+.gantt-legend-dot.gantt-legend-actual {
+  background-image: repeating-linear-gradient(135deg, var(--text) 0 2px, transparent 2px 4px);
+  border-radius: 1px;
+}
+.gantt-legend-dot.gantt-legend-weekend { background: var(--gantt-weekend-solid, #cbd2de); }
+.gantt-legend-dot.gantt-legend-today { width: 2px; height: 10px; background: var(--accent); border-radius: 0; }
+
+.gantt-chart {
+  /* Rutnätet ska vara en tyst bakgrund, inte tävla med staplarna om
+     uppmärksamheten (Victors synpunkt 2026-09-17: för "rutigt papper"-
+     känsla tidigare) - därför bara en aning mörkare än spårets egen
+     bakgrund (#eef0f3), inte tydligt egna färger. Månadslinjen får vara
+     lite tydligare än vecko-/helglagren eftersom den bär mest struktur. */
+  --gantt-grid-week: #e4e7eb;
+  --gantt-grid-month: #c7ccd3;
+  --gantt-weekend-solid: #e3e6ec;
+  display: flex;
+  flex-direction: column;
+  max-height: 460px;
+  overflow: auto;
+}
+/* OBS: inget min-width här - .gantt-inner:s width sätts alltid explicit i
+   JS (100% i "Anpassa"-läge, exakt domainDays*pxPerDay+GANTT_ROW_PREFIX_PX
+   px när inzoomad). Ett min-width:100% skulle tvinga även en smalare
+   inzoomad tidslinje att sträckas ut till hela panelens bredd, vilket gör
+   att spårkolumnens (.gantt-track) faktiska pixelbredd inte längre matchar
+   den bredd bakgrundslagren (grid-/helglinjer) och stapelpositionerna är
+   uträknade för - staplarna hamnar då hoptryckta i vänsterkanten istället
+   för att fylla ut den inzoomade bredden. Se Victors synpunkt 2026-09-17. */
+.gantt-inner { position: relative; }
+
+.gantt-group {
+  /* OBS: INTE position:sticky direkt här - .gantt-group är själv en
+     flex-item (sträckt till full bredd av .gantt-rows-wraps
+     align-items:stretch), och sticky på en sträckt flex-item visade sig
+     inte fungera tillförlitligt (Chromium-versionen i den här miljön
+     "glömde" fastklistringen redan efter ett kort scroll). Samma mönster
+     som funkar för .gantt-toggle/.gantt-label (som är GRID-items, inte
+     flex-items) löses här genom att lägga sticky på ett separat
+     innehållselement (.gantt-group-sticky) EN nivå ner istället - se
+     Victors synpunkt 2026-09-17 om att namnet alltid ska synas vid
+     sidledes scroll. */
+  background: var(--panel);
+  border-radius: 3px;
+  margin: 6px 0 2px;
+  cursor: pointer;
+  user-select: none;
+}
+.gantt-group:first-child { margin-top: 0; }
+.gantt-group-sticky {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  padding: 4px 6px;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: max-content;
+  max-width: 100%;
+}
+.gantt-group-arrow { color: var(--accent); flex: 0 0 auto; }
+.gantt-group-count { color: var(--muted); font-weight: 400; }
+
+.gantt-ruler-row {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 2;
+  min-height: 30px;
+}
+.gantt-ruler-track { position: relative; height: 30px; background-color: transparent !important; overflow: visible; }
+.gantt-month-label {
+  position: absolute;
+  top: 1px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  transform: translateX(2px);
+}
+.gantt-week-label {
+  position: absolute;
+  top: 15px;
+  font-size: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+  transform: translateX(2px);
+}
+.gantt-today-label {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-50%);
+  font-size: 8px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.gantt-rows-wrap { display: flex; flex-direction: column; gap: 3px; padding-top: 3px; }
+
+.gantt-row {
+  display: grid;
+  grid-template-columns: 14px 110px 1fr;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  min-height: 20px;
+}
+.gantt-chart.gantt-density-comfortable .gantt-row { min-height: 28px; font-size: 12px; }
+.gantt-chart.gantt-density-comfortable .gantt-rows-wrap { gap: 5px; }
+.gantt-chart.gantt-density-comfortable .gantt-track { height: 18px; }
+.gantt-chart.gantt-density-comfortable .gantt-bar { top: 3px; height: 12px; }
+.gantt-chart.gantt-density-comfortable .gantt-bar-sub { top: 4px; height: 10px; }
+
+/* Objekt-/delaktivitetsnamnet (och dess pil) ska alltid vara synligt, även
+   vid sidledes scroll i inzoomat läge (Victors synpunkt 2026-09-17) -
+   därför sticky med vänsterkant fastklistrad mot #ganttChart:s (den
+   skrollande förfaderns) synliga kant. Offset för .gantt-label (20px) =
+   togglekolumnens 14px + 6px mellanrum (.gantt-row grid-template-columns/
+   gap), så de två inte hamnar på varandra. Egen, ogenomskinlig bakgrund
+   krävs så att staplar/rutnät i spårkolumnen inte lyser igenom när de
+   skrollar in "under" den fastklistrade etiketten. */
+.gantt-toggle {
+  cursor: pointer;
+  color: var(--accent);
+  text-align: center;
+  user-select: none;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--panel);
+}
+.gantt-toggle-empty { cursor: default; }
+.gantt-label {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: sticky;
+  left: 20px;
+  z-index: 1;
+  background: var(--panel);
+}
+.gantt-label-clickable { cursor: pointer; }
+.gantt-label-clickable:hover, .gantt-label-clickable:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.gantt-subrow { background: rgba(11, 95, 255, 0.03); border-radius: 3px; }
+.gantt-subrow .gantt-toggle, .gantt-subrow .gantt-label { background: #f7f9fe; }
+.gantt-sublabel { color: var(--muted); padding-left: 6px; }
+
+.gantt-track {
+  position: relative;
+  height: 14px;
+  background-color: #eef0f3;
+  background-image: var(--gg-image, none);
+  background-position: var(--gg-pos, 0 0);
+  background-size: var(--gg-size, auto);
+  background-repeat: var(--gg-repeat, repeat);
+  border-radius: 3px;
+  overflow: hidden;
+}
+/* Stapelns "anatomi", omarbetad 2026-09-17 för tydlighet (och för att
+   fungera oavsett hur ljus/mörk en användarvald statusfärg är, se
+   Statusfärger i inställningarna): en fast, neutral bottenfärg som alltid
+   är synlig (oavsett status eller framdrift), en 1px kant i FULL
+   statusfärg runt hela stapeln som bär identiteten (syns även om själva
+   fyllnadsfärgen råkar vara ljus), och en 2px "ring" i panelens egen
+   bakgrundsfärg som lyfter stapeln från det (nu tonade ned) rutnätet
+   bakom den. box-sizing:border-box så kanten ryms inom befintlig höjd
+   istället för att växa stapeln.
+   ------------------------------------------------------------------- */
+.gantt-bar {
+  position: absolute;
+  top: 2px;
+  height: 10px;
+  box-sizing: border-box;
+  background: #e4e7eb;
+  border: 1px solid transparent; /* border-color sätts inline per statusfärg */
+  border-radius: 4px;
+  min-width: 5px;
+  box-shadow: 0 0 0 2px var(--panel);
+  overflow: hidden;
+  cursor: pointer;
+}
+.gantt-bar:hover, .gantt-bar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.gantt-bar-fill { position: absolute; top: 0; left: 0; bottom: 0; }
+.gantt-bar-actual {
+  position: absolute;
+  top: -3px;
+  height: 4px;
+  border-radius: 2px;
+  background-image: repeating-linear-gradient(135deg, var(--text) 0 2px, #4b5563 2px 4px);
+  cursor: pointer;
+}
+.gantt-bar-sub { top: 3px; height: 8px; background: #5c85bf; border-radius: 3px; cursor: pointer; }
+
+/* Beroenden (Victors förfrågan 2026-09-21) - liten märkning i etiketten
+   (🔗/⚠, se rowsHtmlFor) och en varnande streckad ring runt staplar som
+   riskerar försening pga ett ofärdigt beroende. Klick-för-att-visa-kedjan
+   och dra-för-att-schemalägga-om hanteras i bindGanttInteractions. */
+.gantt-dep-badge { margin-left: 4px; font-size: 10px; cursor: help; }
+.gantt-dep-badge.risk { color: #b3261e; }
+.gantt-bar-risk { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px #e5484d; }
+.gantt-bar-draggable { cursor: grab; }
+.gantt-bar-draggable:active, .gantt-bar-dragging { cursor: grabbing; }
+.gantt-bar-dragging { opacity: 0.75; z-index: 2; }
+
+/* Highlightad beroendekedja - övriga rader tonas ned så kedjan (fokus +
+   dess uppströms-/nedströms-objekt) sticker ut. */
+.gantt-row-dim { opacity: 0.25; }
+.gantt-row-chain-focus .gantt-bar { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gantt-row-chain-related .gantt-bar { outline: 2px dashed var(--accent); outline-offset: 1px; }
+
+.gantt-tooltip {
+  position: fixed;
+  z-index: 1000;
+  background: #1f2328;
+  color: #fff;
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  max-width: 220px;
+}
+.gantt-tooltip.hidden { display: none; }
+.gantt-tooltip-title { font-weight: 700; margin-bottom: 3px; }
+.gantt-tooltip-row { display: flex; justify-content: space-between; gap: 10px; }
+.gantt-tooltip-value { font-weight: 700; }
+/* Tipsrutan för en aktivitet: tydliga rader, baseline och beroenden i egna avsnitt. */
+.gantt-tooltip { max-width: 290px; line-height: 1.35; overflow-wrap: anywhere; }
+.gantt-tooltip-title { font-size: 12px; line-height: 1.3; }
+.gantt-tooltip .gantt-tooltip-row { display: grid; grid-template-columns: 70px 1fr; gap: 0 8px; }
+.gantt-tooltip .gantt-tooltip-value { text-align: left; }
+.gantt-tip-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+.gantt-tip-sec { border-top: 1px solid rgba(255,255,255,.14); margin-top: 6px; padding-top: 5px; display: flex; flex-direction: column; gap: 4px; }
+.gantt-tip-sec-h { color: #b6bac2; font-size: 10px; display: flex; align-items: center; gap: 5px; }
+.gantt-tip-sec-h span { color: #8b9099; }
+.gantt-tip-bar { display: inline-block; width: 12px; height: 4px; border-radius: 2px; flex: 0 0 auto; }
+.gantt-tip-bl > div:last-child { font-weight: 700; }
+.gantt-tip-chip { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.gantt-tip-chip.later { background: #7f1d1d; color: #fecaca; }
+.gantt-tip-chip.earlier { background: #064e3b; color: #a7f3d0; }
+.gantt-tip-chip.same { background: #374151; color: #e5e7eb; }
+.gantt-tip-sec ul { margin: 1px 0 3px 14px; padding: 0; }
+.gantt-tip-sec li { font-weight: 600; }
+.gantt-tip-dim { color: #b6bac2; font-weight: 400; }
+.gantt-tip-more { list-style: none; margin-left: -14px; color: #b6bac2; font-weight: 400 !important; }
+.gantt-tooltip-key { color: #b6bac2; }
+
+/* ---------------------------------------------------------------------
+   Kommande veckor (4-veckors lookahead) – ett kort per vecka med fem
+   kategorier av objektnamn (inte bara antal).
+   ------------------------------------------------------------------- */
+.lookahead-chart { display: flex; flex-direction: column; gap: 10px; }
+.la-week {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+.la-week-current { border-color: #93b4f5; box-shadow: 0 0 0 2px #e3ecfe; }
+.la-week-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-bottom: 8px; }
+.la-week-title { display: flex; align-items: baseline; gap: 8px; }
+.la-week-name { font-size: 13px; font-weight: 700; }
+.la-week-dates { font-size: 11px; color: var(--muted); }
+.la-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.la-chip {
+  font: inherit; font-size: 11px; line-height: 1;
+  padding: 5px 9px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: #f8fafc; color: var(--text);
+}
+.la-chip b { font-variant-numeric: tabular-nums; }
+.la-chip.zero { color: #9aa3af; }
+.la-chip.active { background: #1f2937; border-color: #1f2937; color: #fff; }
+.la-chip-start:not(.zero):not(.active) { background: #eaf2ff; border-color: #bcd2fb; }
+.la-chip-done:not(.zero):not(.active) { background: #e8f7ee; border-color: #b4e2c5; }
+.la-chip-late:not(.zero):not(.active) { background: #fdecec; border-color: #f3b4b6; color: #b42318; }
+.la-chip-blocked:not(.zero):not(.active) { background: #fff1e6; border-color: #f6c79b; color: #9a4a00; }
+.la-empty { font-size: 11px; color: var(--muted); padding: 6px 2px; }
+.la-notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+/* Post-it-lapp per område */
+.la-note {
+  background: var(--bg);
+  border-top: 4px solid var(--bd);
+  border-radius: 3px 3px 6px 6px;
+  padding: 7px 9px 8px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 3px 8px rgba(0,0,0,.05);
+  color: #1f2328;
+}
+.la-note-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.la-note-title { font-size: 11px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.la-note-count { font-size: 11px; font-weight: 700; color: var(--ink); opacity: .7; font-variant-numeric: tabular-nums; }
+.la-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.la-item { display: flex; align-items: flex-start; gap: 6px; font-size: 11px; line-height: 1.3; padding: 2px 3px; border-radius: 3px; }
+.la-item[data-action] { cursor: pointer; }
+.la-item[data-action]:hover { background: rgba(255,255,255,.6); }
+.la-item-start .la-name { font-weight: 600; }
+.la-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; margin-top: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.la-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.la-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.la-sub { font-size: 10px; color: #5b6472; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.la-tags { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 2px; justify-content: flex-end; max-width: 45%; }
+.la-tag { font-size: 9px; padding: 1px 5px; border-radius: 3px; background: rgba(255,255,255,.75); color: #4b5563; white-space: nowrap; }
+.la-tag-start { background: #1d4ed8; color: #fff; }
+.la-tag-done { background: #dcf5e6; color: #146c3a; }
+.la-tag-late { background: #e5484d; color: #fff; }
+.la-tag-blocked { background: #9a4a00; color: #fff; }
+.la-more { margin-top: 4px; font: inherit; font-size: 10px; border: none; background: none; color: var(--ink); text-decoration: underline; cursor: pointer; padding: 0; }
+
+/* ---------------------------------------------------------------------
+   Försenade objekt
+   ------------------------------------------------------------------- */
+.delayed-list { display: flex; flex-direction: column; }
+.delayed-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.delayed-row:last-child { border-bottom: none; }
+.delayed-row .delayed-label {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.delayed-row .delayed-meta {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Planstabilitet (renderStability) - se Victors förfrågan 2026-09-21 om
+   att se hur planen själv har ändrats över tid, inte bara planerat vs
+   verkligt. */
+.stability-list { display: flex; flex-direction: column; gap: 8px; }
+.stability-row { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.stability-row:last-child { border-bottom: none; padding-bottom: 0; }
+.stability-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  border-bottom: 2px solid var(--border-color);
-  padding-bottom: 10px;
+  gap: 8px;
+}
+.stability-label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stability-count {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  color: #b45309;
+  background: #fff4e5;
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+.stability-dates { font-size: 11px; color: var(--text); margin-top: 2px; }
+
+.delayed-row .delayed-days {
+  color: #e5484d;
+  font-weight: 700;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
-.app-header h1 {
-  font-size: 1.4rem;
-  margin: 0;
-  color: var(--primary-color);
+/* ---------------------------------------------------------------------
+   Senaste kommentarer
+   ------------------------------------------------------------------- */
+.comments-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
 }
-
-.badge {
-  background-color: #e0e0e0;
-  color: #555;
-  padding: 4px 8px;
+.comment-row {
+  background: white;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  font-size: 0.85rem;
+  padding: 6px 8px;
 }
-
-.badge.connected {
-  background-color: #d4edda;
-  color: #155724;
+.comment-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 2px;
 }
-
-.card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 16px;
-  margin-bottom: 16px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+.comment-head .comment-author { font-weight: 700; color: var(--text); }
+.comment-object {
+  font-size: 10px;
+  color: var(--accent);
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-
-.card h2 {
-  font-size: 1.1rem;
-  margin-top: 0;
-  margin-bottom: 12px;
-}
-
-.btn {
-  background-color: var(--primary-color);
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.9rem;
-}
-
-.btn:hover {
-  background-color: #004d80;
-}
-
-.output {
-  margin-top: 12px;
-  padding: 8px;
-  background-color: #f8f9fa;
-  border: 1px solid #e9ecef;
-  border-radius: 4px;
-  font-family: monospace;
-  font-size: 0.85rem;
+.comment-body {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.4;
   white-space: pre-wrap;
+  word-break: break-word;
 }
+
+/* ---------------------------------------------------------------------
+   Gemensamt: badge + litet "lägg till"-formulär (återanvänds av flera
+   av de nya panelerna nedan)
+   ------------------------------------------------------------------- */
+.badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--muted);
+  white-space: nowrap;
+}
+
+.add-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.add-form input,
+.add-form select {
+  flex: 1 1 110px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  background: white;
+}
+.add-form button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.add-form input[type="file"] {
+  flex: 1 1 170px;
+  padding: 3px 4px;
+  font-size: 10px;
+  background: white;
+}
+/* ---------------------------------------------------------------------
+   Objektval i 3D-modellen – används i formulären för Hinder, Kvalitet/
+   besiktningar och Säkerhet (istället för att koppla till ett planerat
+   objekt), samt som en liten klickbar badge på redan sparade rader.
+   ------------------------------------------------------------------- */
+.model-object-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 200px;
+}
+.model-pick-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: white;
+}
+.model-pick-clear { flex: 0 0 auto; }
+.model-object-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 10px;
+  cursor: pointer;
+}
+.model-object-badge:hover { background: white; border-color: var(--accent); }
+
+.edit-remove-attachment-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.current-attachment { flex: 0 0 auto; }
+
+/* ---------------------------------------------------------------------
+   Bilagor (PDF/bild) på Säkerhet och Kvalitet/besiktningar
+   ------------------------------------------------------------------- */
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.attachment:hover { text-decoration: underline; }
+.attachment-image img {
+  display: block;
+  max-width: 90px;
+  max-height: 90px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+/* ---------------------------------------------------------------------
+   Redigera/ta bort – återanvänds av Milstolpar, Bemanning, Leveransplan,
+   Säkerhet och Kvalitet/besiktningar.
+   ------------------------------------------------------------------- */
+.row-actions {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 6px;
+  flex: 0 0 auto;
+}
+.icon-btn {
+  padding: 3px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  color: var(--text);
+  background: var(--panel);
+  border-color: var(--border);
+  filter: none;
+}
+.row-delete-btn:hover { color: #e5484d; }
+.row-save-btn:hover { color: #3fb950; }
+
+.milestone-row.editing,
+.delivery-row.editing,
+.safety-row.editing,
+.inspection-row.editing {
+  display: flex;
+  flex-wrap: wrap;
+  background: #eef4ff;
+  border-radius: 4px;
+  padding: 6px;
+  margin: -6px 0 -1px 0;
+}
+.delivery-row.editing { border-bottom: none; }
+
+/* ---------------------------------------------------------------------
+   S-kurva (framdrift över tid)
+   ------------------------------------------------------------------- */
+.scurve-chart { display: flex; flex-direction: column; }
+.scurve-svg { width: 100%; height: auto; display: block; }
+.scurve-grid { stroke: var(--border); stroke-width: 1; }
+.scurve-axis-label { font-size: 8px; fill: var(--muted); }
+.scurve-line { fill: none; stroke-width: 2; }
+.scurve-line-planned { stroke: var(--muted); stroke-dasharray: 4 3; }
+.scurve-line-utfall { stroke: var(--accent); }
+.scurve-legend {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.scurve-legend-item { display: flex; align-items: center; }
+.scurve-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  margin-right: 4px;
+}
+.scurve-swatch-planned { background: var(--muted); }
+.scurve-swatch-utfall { background: var(--accent); }
+
+/* ---------------------------------------------------------------------
+   Milstolpar – varje post är ett litet kort (samma mönster som Säkerhet/
+   Besiktningar): en rad för kryssruta+namn+åtgärder, och datumet på en
+   egen rad under. Att lägga datum/åtgärder på en separat rad (istället
+   för att dela utrymmet med namnet på en enda flex-rad) är det som
+   fixar den tidigare layoutbuggen, där ett långt namn kunde tvinga in
+   ett radbrytning mitt i texten bredvid datum/ikoner.
+   ------------------------------------------------------------------- */
+.milestones-list { display: flex; flex-direction: column; gap: 6px; }
+.milestone-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.milestone-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Utan detta ärver kryssrutan den globala "input { width: 100% }"-regeln
+   (tänkt för formulärfält), vilket gjorde att den tog nästan hela radens
+   bredd i flex-layouten och klämde in namnet i en smal remsa – det var
+   den egentliga orsaken till att texten radbröts konstigt. */
+.milestone-row .milestone-check {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+}
+.milestone-row .milestone-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.milestone-row .milestone-date {
+  display: block;
+  margin-top: 3px;
+  padding-left: 24px;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.milestone-row.overdue .milestone-date { color: #e5484d; font-weight: 700; }
+.milestone-row.overdue .milestone-name { color: #e5484d; }
+.milestone-row.done .milestone-name { text-decoration: line-through; color: var(--muted); }
+
+/* ---------------------------------------------------------------------
+   Bemanning
+   ------------------------------------------------------------------- */
+.staffing-chart { display: flex; flex-direction: column; gap: 4px; }
+.staffing-row {
+  display: grid;
+  grid-template-columns: 90px repeat(3, 1fr);
+  gap: 6px;
+  align-items: start;
+  font-size: 11px;
+  padding: 4px 0;
+}
+.staffing-row.header {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+  margin-bottom: 2px;
+}
+.staffing-row .staffing-label {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.staffing-row .staffing-cell {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.staffing-row.header .staffing-cell { color: var(--muted); }
+.staffing-cell.staffing-empty { color: var(--muted); padding-top: 4px; }
+.staffing-cell.staffing-cell-filled,
+.staffing-cell.staffing-cell-editing {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 1px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 5px 4px;
+}
+.staffing-cell-head {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 16px;
+}
+.staffing-cell-head:empty { display: none; }
+.staffing-cell .row-actions { margin-left: 0; }
+.staffing-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  font-size: 9px;
+}
+.staffing-stat-label { color: var(--muted); }
+.staffing-stat-value { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.staffing-deviation.positive .staffing-stat-value { color: #3fb950; }
+.staffing-deviation.negative .staffing-stat-value { color: #e5484d; }
+.staffing-edit-field {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.staffing-cell-editing .edit-headcount,
+.staffing-cell-editing .edit-planned-headcount {
+  width: 40px;
+  padding: 2px 4px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+/* ---------------------------------------------------------------------
+   Resurstimmar
+   ------------------------------------------------------------------- */
+.reshours-scroll { overflow-x: auto; }
+.reshours-table { border-collapse: collapse; font-size: 10px; white-space: nowrap; }
+.reshours-table th, .reshours-table td {
+  padding: 3px 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.reshours-table thead th {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+.reshours-table thead th:first-child { text-align: left; }
+.reshours-table .reshours-rowlabel {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reshours-table td, .reshours-table tbody th { color: var(--text); }
+.reshours-table .reshours-rowtotal { font-weight: 700; }
+.reshours-table tfoot th, .reshours-table tfoot td {
+  border-top: 1px solid var(--border);
+  font-weight: 700;
+  color: var(--text);
+}
+.reshours-table tfoot th { text-align: left; }
+
+/* ---------------------------------------------------------------------
+   Leveransplan
+   ------------------------------------------------------------------- */
+.deliveries-list { display: flex; flex-direction: column; }
+.delivery-row {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.delivery-row .delivery-desc {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.delivery-row .delivery-meta {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.delivery-row .delivery-dates {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-end;
+  color: var(--text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.delivery-date-row { font-size: 10px; }
+.delivery-date-label { color: var(--muted); margin-right: 3px; }
+
+/* ---------------------------------------------------------------------
+   Gemensamma små formulärfält (används av Leveransplan/Leveransplan
+   handlingar för planerat/levererat datum, och av Hinder för
+   flervalslistan över påverkade aktiviteter).
+   ------------------------------------------------------------------- */
+.inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  flex: 0 0 auto;
+  white-space: nowrap;
+  margin-bottom: 0;
+}
+.inline-field input {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 3px 5px;
+}
+.field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--muted);
+  flex: 1 1 220px;
+  margin-bottom: 0;
+}
+.field-label select[multiple] {
+  width: 100%;
+  min-height: 76px;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: white;
+}
+
+/* ---------------------------------------------------------------------
+   Säkerhet
+   ------------------------------------------------------------------- */
+.safety-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.safety-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.safety-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.safety-date { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.safety-desc { font-size: 11px; color: var(--text); margin-bottom: 2px; }
+.safety-meta { font-size: 10px; color: var(--muted); }
+
+/* ---------------------------------------------------------------------
+   Kvalitet / besiktningar
+   ------------------------------------------------------------------- */
+.inspections-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.inspection-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.inspection-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.inspection-date { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.inspection-item { font-size: 10px; color: var(--accent); margin-bottom: 2px; }
+.inspection-comment { font-size: 11px; color: var(--text); margin-bottom: 2px; }
+.inspection-meta { font-size: 10px; color: var(--muted); }
+
+/* ---------------------------------------------------------------------
+   Hinder (blockers)
+   ------------------------------------------------------------------- */
+.blockers-list { display: flex; flex-direction: column; gap: 6px; }
+.blocker-row {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.blocker-row.overdue { border-color: #e5484d; }
+.blocker-row.resolved { opacity: 0.7; }
+.blocker-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.blocker-deadline { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.blocker-row.overdue .blocker-deadline { color: #e5484d; font-weight: 700; }
+.blocker-desc { font-size: 11px; color: var(--text); margin-bottom: 2px; }
+.blocker-item { font-size: 10px; color: var(--accent); margin-bottom: 2px; }
+.blocker-affected { font-size: 10px; color: var(--text); margin-bottom: 2px; }
+.blocker-meta { font-size: 10px; color: var(--muted); margin-bottom: 2px; }
+.blocker-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.blocker-resolve-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text);
+  margin-bottom: 0;
+}
+.blocker-comments-toggle {
+  font-size: 10px;
+  padding: 3px 7px;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--border);
+}
+.blocker-comments {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.blocker-comment-row {
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 5px 7px;
+}
+.blocker-comment-form { margin-top: 2px; padding-top: 0; border-top: none; }
+
+/* ---------------------------------------------------------------------
+   Väder
+   ------------------------------------------------------------------- */
+.weather-current {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.weather-location {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.weather-current-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.weather-emoji { font-size: 32px; line-height: 1; }
+.weather-temp { font-size: 26px; font-weight: 700; color: var(--text); }
+.weather-desc { font-size: 12px; color: var(--text); }
+.weather-meta { font-size: 10px; color: var(--muted); }
+.weather-forecast { display: flex; gap: 8px; }
+.weather-day {
+  flex: 1;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px;
+  text-align: center;
+}
+.weather-day-name { font-size: 10px; font-weight: 700; text-transform: capitalize; color: var(--text); }
+.weather-day-emoji { font-size: 18px; line-height: 1.2; }
+.weather-day-desc { font-size: 9px; color: var(--muted); margin: 2px 0; }
+.weather-day-temp { font-size: 11px; font-weight: 600; color: var(--text); }
+.weather-day-precip { font-size: 9px; color: var(--muted); }
+
+/* ---------------------------------------------------------------------
+   Utskrift / PDF-export (window.print, se onExportPdf i app.js) – döljer
+   knappar, formulär och redigeringskontroller så resultatet blir en ren
+   rapport, och undviker att en panel delas mitt itu över en sidbrytning.
+   ------------------------------------------------------------------- */
+@media print {
+  body { font-size: 11px; background: #fff; }
+  #app { padding: 0; }
+  .header-actions,
+  #btnResetFilters,
+  .add-form,
+  .row-actions,
+  .hint.warning,
+  #lastUpdated,
+  .gantt-toolbar,
+  .gantt-tooltip {
+    display: none !important;
+  }
+  .dialog { display: none !important; }
+  .gantt-chart { max-height: none; overflow: visible; }
+  .panel-collapse-btn { display: none !important; }
+  /* Ett minimerat block ska ändå exporteras i sin helhet till PDF/utskrift
+     – minimeringen är bara en visuell bekvämlighet i appen. */
+  .panel.collapsed > *:not(h2) { display: block !important; }
+  .panel {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #ccc;
+    background: #fff;
+  }
+  .comments-feed, .safety-feed, .inspections-list {
+    max-height: none;
+    overflow: visible;
+  }
+  .filter-bar {
+    background: none;
+    border: none;
+    padding: 0 0 6px 0;
+  }
+  .filter-bar select {
+    border: none;
+    background: none;
+    padding: 0;
+  }
+}
+
+
+/* ---------------------------------------------------------------------
+   Gantt: verktygsrad (två rader), visningsläge och snabbval av period.
+   ------------------------------------------------------------------- */
+.gantt-head {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.gantt-head-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 10px; }
+.gantt-head-sub { background: #f8fafc; border-top: 1px solid var(--border); padding: 6px 10px; }
+.gantt-head-spacer { flex: 1 1 auto; }
+.gantt-sub-label { font-size: 11px; font-weight: 600; color: var(--muted); }
+.gantt-sub-dash { color: var(--muted); }
+.gantt-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; background: #f3f4f6; padding: 2px; gap: 2px; }
+.gantt-seg-btn { font: inherit; font-size: 12px; padding: 4px 12px; border: none; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
+.gantt-seg-btn.active { background: white; color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.gantt-chips { display: inline-flex; gap: 3px; }
+.gantt-chip { font: inherit; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); background: white; cursor: pointer; color: var(--text); }
+.gantt-chip.active { background: var(--accent); border-color: var(--accent); color: white; }
+.gantt-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; background: white; cursor: pointer; margin: 0; }
+.gantt-pill:has(input:checked) { background: #eaf2ff; border-color: #bcd2fb; }
+.gantt-help-btn { border-radius: 50%; width: 24px; height: 24px; padding: 0; font-weight: 700; }
+.gantt-help { background: #f8fafc; border-radius: 6px; padding: 8px 10px; }
+.gantt-head .gantt-range-status { font-size: 11px; }
+section.panel.gantt-view-board .gantt-bars-only { display: none !important; }
+section.panel:not(.gantt-view-board) .gantt-board-only { display: none !important; }
+section.panel.gantt-view-board #ganttLegend .gantt-legend-item.gl-bars-only { display: none; }
+
+/* Svag gruppfärg även i stapelläget */
+.gantt-group.gantt-group-colored { background: var(--grp-bg); box-shadow: inset 4px 0 0 var(--grp); }
+.gantt-group.gantt-group-colored .gantt-group-sticky { color: var(--grp-ink); }
+.gantt-row[style*="--grp"] > .gantt-label { box-shadow: inset 3px 0 0 var(--grp); padding-left: 6px; }
+
+/* ---------------------------------------------------------------------
+   Gantt som post-it-tavla
+   ------------------------------------------------------------------- */
+.gantt-board-chart { overflow: auto; max-height: max(75vh, 360px); background: #f6f4ef; border-radius: 8px; border: 1px solid var(--border); }
+.board { position: relative; }
+.board-head { display: flex; position: sticky; top: 0; z-index: 3; background: #f6f4ef; border-bottom: 1px solid #ddd6c8; }
+.board-corner { flex: 0 0 150px; position: sticky; left: 0; z-index: 4; background: #f6f4ef; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; padding: 8px 10px; }
+.board-weeks { display: grid; grid-template-columns: repeat(var(--cols), var(--col)); }
+.board-week { padding: 5px 8px; font-size: 10px; color: var(--muted); border-left: 1px solid #e4ded2; display: flex; flex-direction: column; }
+.board-week b { font-size: 12px; color: var(--text); }
+.board-week-today { background: #e3ecfe; color: #1e3a8a; }
+.board-week-today b { color: #1e3a8a; }
+.board-lane { display: flex; border-bottom: 1px solid #e4ded2; min-height: 44px; }
+.board-lane-head {
+  flex: 0 0 150px; position: sticky; left: 0; z-index: 2;
+  background: var(--bg); border-right: 3px solid var(--bd); color: var(--ink);
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 2px;
+}
+.board-lane-head[data-action] { cursor: pointer; }
+.board-lane-name { font-size: 11px; font-weight: 700; line-height: 1.25; word-break: break-word; }
+.board-lane-count { font-size: 10px; opacity: .75; }
+.board-lane.collapsed .board-grid { min-height: 30px; }
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--days), var(--day));
+  grid-auto-flow: row dense;
+  grid-auto-rows: minmax(64px, auto);
+  gap: 8px 0;
+  padding: 8px 0;
+  align-content: start;
+  background-image:
+    linear-gradient(to right, rgba(59,130,246,.16), rgba(59,130,246,.16)),
+    repeating-linear-gradient(to right, transparent 0, transparent calc(var(--col) - 1px), #d9d1c1 calc(var(--col) - 1px), #d9d1c1 var(--col)),
+    repeating-linear-gradient(to right, transparent 0, transparent calc(var(--day) * 5), rgba(0,0,0,.045) calc(var(--day) * 5), rgba(0,0,0,.045) var(--col)),
+    repeating-linear-gradient(to right, transparent 0, transparent calc(var(--day) - 1px), rgba(0,0,0,.04) calc(var(--day) - 1px), rgba(0,0,0,.04) var(--day));
+  background-size: var(--day) 100%, auto, auto, auto;
+  background-position: var(--today-left) 0, 0 0, 0 0, 0 0;
+  background-repeat: no-repeat, repeat, repeat, repeat;
+}
+.pnote {
+  margin: 0 2px;
+  background: var(--bg);
+  border-left: 5px solid var(--st);
+  border-radius: 2px 2px 8px 2px;
+  padding: 6px 8px 8px;
+  color: #1f2328;
+  box-shadow: 0 1px 1px rgba(0,0,0,.08), 0 4px 10px -2px rgba(0,0,0,.12);
+  transform: rotate(var(--tilt));
+  cursor: pointer;
+  position: relative;
+  min-width: 0;
+  transition: transform .12s, box-shadow .12s;
+}
+.pnote::after { /* vikt hörn */
+  content: ""; position: absolute; right: 0; bottom: 0; width: 12px; height: 12px;
+  background: linear-gradient(135deg, var(--bd) 50%, #f6f4ef 50%);
+  border-radius: 0 0 8px 0; opacity: .7;
+}
+.pnote:hover, .pnote:focus { transform: rotate(0) translateY(-1px); box-shadow: 0 2px 3px rgba(0,0,0,.1), 0 10px 18px -4px rgba(0,0,0,.18); outline: none; z-index: 1; }
+.pnote-title { font-size: 11px; font-weight: 700; line-height: 1.25; color: var(--ink); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pnote-sub { font-size: 10px; color: #4b5563; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.pnote-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1px 6px; font-size: 9px; color: #4b5563; margin-top: 4px; white-space: nowrap; }
+.pnote-status { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.pnote-status i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.pnote-prog { height: 3px; background: rgba(0,0,0,.08); border-radius: 2px; margin-top: 5px; overflow: hidden; }
+.pnote-prog span { display: block; height: 100%; }
+.pnote-late { box-shadow: 0 0 0 2px #e5484d, 0 4px 10px -2px rgba(0,0,0,.12); }
+.pnote-done { opacity: .72; }
+.gantt-head .gantt-range-row { margin-top: 0; }
+
+/* Omplanering på tavlan */
+.pnote-editable { cursor: grab; touch-action: none; user-select: none; }
+.pnote-dragging { transition: none !important; z-index: 5; opacity: .92; cursor: grabbing !important; }
+.board-pop {
+  position: fixed; z-index: 1200;
+  background: white; border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  padding: 10px 12px; width: 250px;
+  display: flex; flex-direction: column; gap: 6px; font-size: 12px;
+}
+.board-pop-title { font-weight: 700; }
+.board-pop label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.board-pop input[type="date"] { font: inherit; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; }
+.board-pop .bp-deps { justify-content: flex-start; font-size: 11px; color: var(--muted); }
+.board-pop-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
+.board-pop-actions button { font: inherit; padding: 4px 10px; border: 1px solid var(--border); border-radius: 5px; background: white; cursor: pointer; }
+.board-pop-actions button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+
+/* Korta aktiviteter (1–2 dagar): bara namnet, resten i hovringen */
+.pnote-short { padding: 5px 4px 6px 5px; border-left-width: 4px; }
+.pnote-short .pnote-sub, .pnote-short .pnote-meta { display: none; }
+.pnote-short .pnote-title { font-size: 10px; -webkit-line-clamp: 3; word-break: break-all; }
+.pnote-short::after { width: 8px; height: 8px; }
+.gantt-tooltip-warn { margin-top: 4px; color: #fecaca; font-weight: 600; }
+
+/* ---------------------------------------------------------------------
+   Utskrift av Gantt-schemat (🖨 Skriv ut, se printGantt i app.js): en
+   egen vy i exakt sidbredd som ritas utanför skärmen och är det enda som
+   skrivs ut. Tidshuvudet ligger i tabellens thead och upprepas på varje
+   sida; rader och banor delas inte i onödan.
+   ------------------------------------------------------------------- */
+#ganttPrint { position: absolute; left: -30000px; top: 0; background: #fff; }
+.gantt-print, .gantt-print * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.gantt-print { color: var(--text); font-size: 11px; }
+.gp-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 2px solid #1f2328; }
+.gp-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.gp-header h1 { font-size: 18px; line-height: 1.2; margin: 0; }
+.gp-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.gp-filter { font-size: 10px; color: #b45309; font-weight: 600; margin-top: 2px; }
+.gp-meta { font-size: 10px; color: var(--muted); text-align: right; white-space: nowrap; line-height: 1.5; }
+.gp-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 10px; color: #374151; margin: 0 0 10px; }
+.gp-leg { display: inline-flex; align-items: center; gap: 5px; }
+.gp-leg i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.gp-leg i.gp-leg-today { width: 2px; height: 11px; border-radius: 0; background: var(--accent); }
+.gp-leg i.gp-leg-late { box-sizing: border-box; border: 2px solid #e5484d; background: #fff; }
+.gp-leg i.gp-leg-weekend { background: #e3e6ec; }
+.gp-leg i.gp-leg-actual { height: 4px; background-image: repeating-linear-gradient(135deg, #1f2328 0 2px, #4b5563 2px 4px); }
+.gp-section + .gp-section { margin-top: 18px; }
+.gp-section-title { break-after: avoid; page-break-after: avoid; }
+.gantt-print .gantt-today-label { display: none; }
+.gp-section-title { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin: 0 0 6px; }
+.gp-section-title span { font-size: 10px; font-weight: 400; color: var(--muted); }
+.gp-section.gp-empty .gp-chart::after { content: "Inga aktiviteter i den här perioden."; display: block; padding: 10px; color: var(--muted); }
+.gp-table { border-collapse: collapse; width: 100%; }
+.gp-table td { padding: 0; vertical-align: top; }
+.gp-table tbody tr { break-inside: avoid; page-break-inside: avoid; }
+.gp-table tr.gp-keep-next { break-after: avoid; page-break-after: avoid; }
+.gantt-print .gp-chart { max-height: none !important; overflow: visible !important; border-radius: 0; }
+.gantt-print .gantt-toggle, .gantt-print .gantt-label, .gantt-print .gantt-group-sticky, .gantt-print .gantt-ruler-row,
+.gantt-print .board-head, .gantt-print .board-corner, .gantt-print .board-lane-head { position: static !important; }
+/* Staplar: bredare namnkolumn, namnen får radbrytas (högst två rader). */
+.gantt-print .gantt-row { grid-template-columns: 6px 210px 1fr; }
+.gantt-print .gantt-toggle { visibility: hidden; }
+.gantt-print .gantt-group-arrow { display: none; }
+.gantt-print .gantt-label { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.2; text-decoration: none; }
+.gantt-print .gantt-rows-wrap { gap: 0; }
+.gantt-print-bars .gp-table tbody td { padding: 1.5px 0; }
+.gantt-print-bars .gp-table thead td { border-bottom: 1px solid #c7ccd3; background: #fff; }
+.gantt-print .gantt-bar { box-shadow: none; }
+/* Tavlan: raka lappar med tunn kant (skuggor och lutning blir suddiga på papper). */
+.gantt-print .gantt-board-chart { border: 1px solid #ddd6c8; }
+.gantt-print .pnote { transform: none; box-shadow: 0 0 0 1px rgba(0,0,0,.12); break-inside: avoid; }
+.gantt-print .pnote-late { box-shadow: 0 0 0 2px #e5484d; }
+.gantt-print .pnote-done { opacity: .8; }
+.gantt-print .pnote-cont-l .pnote-title::before { content: "◂ "; color: var(--bd); }
+.gantt-print .pnote-cont-r { border-radius: 2px 0 0 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.12), inset -3px 0 0 var(--bd); }
+.gantt-print .pnote-cont-r.pnote-late { box-shadow: 0 0 0 2px #e5484d, inset -3px 0 0 var(--bd); }
+.gantt-print .pnote-cont-r::before { content: "▸"; position: absolute; right: 6px; top: 5px; font-size: 10px; color: var(--ink); }
+.gantt-print .board-lane-head { border-right-width: 4px; }
+
+/* Utskriftsdialogen vid knappen. */
+.gantt-print-pop { width: 260px; }
+.gpp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gantt-print-pop .gpp-check { justify-content: flex-start; }
+.gpp-check { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.gpp-info { font-size: 11px; line-height: 1.4; margin: 0; }
+
+@media print {
+  body.printing-gantt { background: #fff; margin: 0; padding: 0; }
+  body.printing-gantt > *:not(#ganttPrint) { display: none !important; }
+  body.printing-gantt #ganttPrint { position: static; left: auto; }
+}
+
+/* ---------------------------------------------------------------------
+   Tavlan: lappar på en rad (Victors önskemål 2026-10-06) – statusprick,
+   namn, aktivitet/entreprenör och datum i grått, framdriften i underkanten.
+   ------------------------------------------------------------------- */
+.board-grid:has(.pnote-one) { grid-auto-rows: 28px; gap: 5px 0; padding: 6px 0; }
+.pnote.pnote-one { display: flex; align-items: center; gap: 7px; height: 28px; box-sizing: border-box; padding: 0 10px 0 9px; white-space: nowrap; overflow: hidden; }
+.pnote-one .pnote-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 0 1.5px rgba(255,255,255,.8); }
+.pnote-one .pnote-title { display: block; -webkit-line-clamp: unset; flex: 0 1 auto; min-width: 0; max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pnote-one .pnote-sub { flex: 1 1 auto; min-width: 0; margin: 0; }
+.pnote-one .pnote-dates { flex: 0 0 auto; margin-left: auto; padding-right: 8px; font-size: 9.5px; color: #6b7280; }
+.pnote-one .pnote-prog { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; margin: 0; border-radius: 0; }
+.pnote-one.pnote-short .pnote-sub, .pnote-one.pnote-short .pnote-dates, .pnote-one.pnote-short .pnote-dep { display: none; }
+.pnote-dep { font-size: 10px; flex: 0 0 auto; opacity: .75; }
+.gantt-print .pnote-one.pnote-cont-r .pnote-dates { padding-right: 16px; }
+.gantt-print .pnote-one.pnote-cont-r::before { top: 50%; transform: translateY(-50%); }
+
+/* Beroenden: högerklicksmenyn, val av lapp och markering av det som hör ihop. */
+.board-dep-menu { width: 280px; max-height: 70vh; overflow-y: auto; gap: 4px; }
+.bdm-sec { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.bdm-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; background: #f8fafc; }
+.bdm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bdm-x { font: inherit; font-size: 11px; border: none; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; }
+.bdm-x:hover { color: #dc2626; }
+.bdm-none { font-size: 11px; color: var(--muted); padding: 0 4px; }
+.bdm-acts { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.bdm-acts button { font: inherit; text-align: left; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: white; cursor: pointer; }
+.bdm-acts button:hover:not(:disabled) { background: #eaf2ff; border-color: #bcd2fb; }
+.bdm-acts button:disabled { opacity: .5; cursor: default; }
+.bdm-acts small { color: var(--muted); }
+.bdm-hint { font-size: 11px; margin: 4px 0 0; }
+.board-linking .pnote { cursor: crosshair !important; }
+.board-linking .pnote:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pnote.pnote-dep-self { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pnote.pnote-dep-pred { outline: 2px dashed #ea580c; outline-offset: 1px; }
+.pnote.pnote-dep-succ { outline: 2px dashed #2563eb; outline-offset: 1px; }
+
+/* Planeringskälla (Victors önskemål 2026-10-06): Excel-import eller Powerproject (samma som i 4D-planering). */
+.plan-source { display: flex; align-items: center; gap: 8px; padding: 6px 2px 8px; }
+.plan-source-l { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.plan-source-seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); border-radius: 8px; background: #eef0f3; }
+.plan-source-seg button { font: inherit; font-size: 12px; padding: 4px 12px; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.plan-source-seg button.active { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+@media print { .plan-source { display: none !important; } }
+
+/* För kort lapp: namnet på en ljus förlängning till höger (den färgade delen = aktivitetens längd). */
+.pnote.pnote-ext { background: linear-gradient(to right, transparent var(--real), rgba(255,255,255,.92) var(--real)); border-left: none; box-shadow: none; padding-left: 14px; overflow: visible; isolation: isolate; }
+/* Förlängningen: en tunn kant i lappens färg så att den syns höra till lappen (också i utskriften). */
+.pnote.pnote-ext:not(.pnote-one) { outline: 1px solid color-mix(in srgb, var(--bd) 55%, transparent); outline-offset: -1px; }
+.pnote.pnote-ext::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--real); box-sizing: border-box; background: var(--bg); border-left: 5px solid var(--st); border-radius: 2px 2px 8px 2px; box-shadow: 0 1px 1px rgba(0,0,0,.08), 0 4px 10px -2px rgba(0,0,0,.12); z-index: -1; }
+.pnote.pnote-ext::after { display: none; }
+.pnote.pnote-ext.pnote-late { box-shadow: none; }
+.pnote.pnote-ext.pnote-late::before { box-shadow: 0 0 0 2px #e5484d; }
+.pnote-ext .pnote-prog { right: auto; width: var(--real); }
+.pnote-ext .pnote-dates, .pnote-ext .pnote-dep { display: none; }
+.pnote-one.pnote-ext .pnote-sub { flex: 0 0 auto; overflow: visible; }
+.pnote-one.pnote-ext .pnote-title { max-width: none; overflow: visible; }
+/* Större lappar med förlängning: namnet högst två rader, undertexten en rad – inget rinner ut över status/datum. */
+.pnote-ext:not(.pnote-one) .pnote-title { overflow: hidden; -webkit-line-clamp: 2; }
+.pnote-ext:not(.pnote-one) .pnote-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pnote-ext .pnote-dot { position: relative; left: -5px; }
+
+/* Baseline (Victors önskemål 2026-10-06): en tidigare version av tidplanen som en grå stapel/linje. */
+.gantt-show-bl .gantt-bar { top: 1px; height: 9px; }
+.gantt-bar-baseline { position: absolute; top: 11px; height: 3px; border-radius: 2px; background: var(--bl, #f59e0b); min-width: 3px; }
+.gantt-chart.gantt-density-comfortable.gantt-show-bl .gantt-bar { top: 1px; height: 12px; }
+.gantt-chart.gantt-density-comfortable .gantt-bar-baseline { top: 14px; height: 4px; }
+.gantt-legend-baseline { background: var(--bl, #f59e0b) !important; height: 4px !important; border-radius: 2px; }
+.pnote.pnote-hasbl { overflow: visible; }
+.pnote-bl { position: absolute; bottom: -6px; height: 4px; border-radius: 2px; background: var(--bl, #f59e0b); box-shadow: 0 0 0 1px rgba(255,255,255,.9); min-width: 4px; cursor: help; transition: height .1s, opacity .1s; }
+.pnote-bl.cut-l { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.pnote-bl.cut-r { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+/* Streckad länk mellan baseline-linjen och lappen. */
+.pnote-bl-link { position: absolute; bottom: -4px; height: 0; border-top: 1.5px dashed var(--bl, #f59e0b); opacity: .75; pointer-events: none; transition: opacity .1s; }
+.pnote-bl-link.off-l::before, .pnote-bl-link.off-r::after { content: ""; position: absolute; top: -5.5px; border: 4.5px solid transparent; }
+.pnote-bl-link.off-l::before { left: -2px; border-right-color: var(--bl, #f59e0b); border-left: 0; }
+.pnote-bl-link.off-r::after { right: -2px; border-left-color: var(--bl, #f59e0b); border-right: 0; }
+/* Peka på en lapp: dess baseline lyfts fram, de andra tonas ned. */
+.pnote:hover .pnote-bl { height: 6px; bottom: -7px; }
+.pnote:hover .pnote-bl-link { opacity: 1; border-top-width: 2px; }
+.board-grid:has(.pnote:hover) .pnote:not(:hover) .pnote-bl, .board-grid:has(.pnote:hover) .pnote:not(:hover) .pnote-bl-link { opacity: .2; }
+.pnote-bl-d { flex: 0 0 auto; font-size: 9.5px; font-weight: 700; color: #047857; background: #ecfdf5; border-radius: 4px; padding: 0 4px; line-height: 15px; }
+.pnote-bl-d.later { color: #b42318; background: #fef3f2; }
+.pnote:not(.pnote-one) .pnote-bl-d { position: absolute; top: 4px; right: 6px; }
+.gp-leg-baseline { background: var(--bl, #f59e0b) !important; height: 4px !important; }
+.gantt-bl-color { width: 18px; height: 18px; padding: 0; border: 1px solid #d1d5db; border-radius: 4px; background: none; cursor: pointer; margin-left: 2px; }
+.gantt-bl-color::-webkit-color-swatch-wrapper { padding: 0; }
+.gantt-bl-color::-webkit-color-swatch { border: none; border-radius: 3px; }
+/* Peka på en baseline-linje: lappen den hör till får en ram i baseline-färgen. */
+.pnote:has(.pnote-bl:hover) { outline: 2px solid var(--bl, #f59e0b); outline-offset: 2px; }
+/* Två baselines: den andra (jämförelsen) som en tunnare linje under den första. */
+.gantt-bl-pick { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.gantt-bl-pick.hidden { display: none; }
+.gantt-bl-pick select { font: inherit; font-size: 12px; padding: 2px 4px; max-width: 170px; }
+.gantt-show-bl2 .gantt-bar { top: 0; height: 8px; }
+.gantt-show-bl2 .gantt-bar-baseline { top: 9px; height: 2.5px; }
+.gantt-show-bl2 .gantt-bar-baseline.gantt-bar-baseline2 { top: 12px; background: var(--bl2, #2563eb); }
+.gantt-chart.gantt-density-comfortable.gantt-show-bl2 .gantt-bar { top: 0; height: 11px; }
+.gantt-chart.gantt-density-comfortable.gantt-show-bl2 .gantt-bar-baseline { top: 12px; height: 3px; }
+.gantt-chart.gantt-density-comfortable.gantt-show-bl2 .gantt-bar-baseline.gantt-bar-baseline2 { top: 15.5px; }
+.gantt-legend-baseline2 { background: var(--bl2, #2563eb) !important; height: 4px !important; border-radius: 2px; }
+.pnote-bl.pnote-bl2 { bottom: -12px; height: 3px; background: var(--bl2, #2563eb); }
+.pnote:hover .pnote-bl.pnote-bl2 { height: 4px; bottom: -13px; }
+.board-grid:has(.pnote-bl2) { row-gap: 14px; padding-bottom: 14px; }
+
+/* Helskärm: Gantt-panelen fyller skärmen (eller tilläggets yta); diagrammet tar all höjd som blir över. */
+section.panel.gantt-fullscreen { position: fixed; inset: 0; z-index: 900; margin: 0; border-radius: 0; overflow: auto; display: flex; flex-direction: column; background: var(--panel, #fff); }
+section.panel.gantt-fullscreen:fullscreen { width: 100vw; height: 100vh; }
+section.panel.gantt-fullscreen #ganttChart { flex: 1 1 0; max-height: none; min-height: 0; }
+body.gantt-fullscreen-on { overflow: hidden; }
+#ganttFullBtn.active { background: #1f2937; color: #fff; border-color: #1f2937; }
+@media print { #ganttFullBtn { display: none !important; } }
+/* Helskärmens hörnknappar (dölj/visa knappar, stäng) – syns bara i helskärm. */
+section.panel[data-panel-id="gantt"] { position: relative; }
+.gantt-fs-bar { display: flex; gap: 4px; position: absolute; top: 8px; right: 38px; z-index: 5; }
+section.panel.gantt-fullscreen .gantt-fs-bar { right: 10px; }
+#ganttFsClose { display: none; }
+section.panel.gantt-fullscreen #ganttFsClose { display: inline-block; }
+section.panel.gantt-fullscreen #ganttFsEnter { display: none; }
+section.panel.collapsed .gantt-fs-bar { display: none; }
+section.panel.gantt-fullscreen { position: fixed; }
+.gantt-fs-bar button { font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid #d1d5db; background: rgba(255,255,255,.92); cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.12); width: auto; }
+.gantt-fs-bar button:hover { background: #fff; border-color: #9ca3af; }
+/* Utan knappar: rubrik, verktygsrader, tips och panelknappar döljs – färgförklaringen ligger kvar. */
+section.panel.gantt-fullscreen.gantt-fs-clean > h2, section.panel.gantt-fs-clean .gantt-head, section.panel.gantt-fs-clean #ganttHelp,
+section.panel.gantt-fs-clean #ganttEditableHint, section.panel.gantt-fs-clean #ganttNotes { display: none !important; }
+section.panel.gantt-fullscreen.gantt-fs-clean #ganttLegend { padding-right: 190px; }
+section.panel.gantt-fullscreen .panel-collapse-btn { display: none !important; }
+@media print { .gantt-fs-bar { display: none !important; } }
+
+/* Hovring (Victor 2026-10-06): aktiviteten lyfts mjukt; närmaste föregångare och efterföljare (en åt
+   varje håll) pulserar diskret och får en liten etikett. */
+.pnote { transition: transform .2s cubic-bezier(.2,.8,.2,1), box-shadow .2s ease; }
+.pnote.pnote-hot { transform: rotate(0) translateY(-3px) scale(1.012); box-shadow: 0 4px 6px rgba(0,0,0,.08), 0 16px 28px -8px rgba(0,0,0,.28); z-index: 4; }
+.pnote.pnote-near-pred, .pnote.pnote-near-succ { z-index: 3; animation: nearPulse 1.8s ease-in-out infinite; }
+.pnote.pnote-near-pred { --near: 37, 99, 235; }
+.pnote.pnote-near-succ { --near: 124, 58, 237; }
+@keyframes nearPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--near), .0), 0 1px 2px rgba(0,0,0,.08); }
+  50% { box-shadow: 0 0 0 4px rgba(var(--near), .28), 0 6px 14px -6px rgba(var(--near), .45); }
+}
+.near-tag { position: absolute; top: 50%; right: 20px; transform: translateY(-50%); z-index: 6; font-size: 9.5px; font-weight: 700; line-height: 15px; padding: 0 6px; border-radius: 8px; color: #fff; white-space: nowrap; pointer-events: none; animation: nearTagIn .22s ease-out both; box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+.near-tag.near-pred { background: rgb(37, 99, 235); }
+.near-tag.near-succ { background: rgb(124, 58, 237); }
+@keyframes nearTagIn { from { opacity: 0; transform: translate(6px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
+/* Staplarna: samma idé. */
+.gantt-bar[data-item-id] { transition: transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease; }
+.gantt-bar.bar-hot { transform: translateY(-1px) scaleY(1.15); box-shadow: 0 0 0 2px var(--panel), 0 4px 10px -2px rgba(0,0,0,.3); z-index: 3; }
+.gantt-bar.bar-near-pred, .gantt-bar.bar-near-succ { overflow: visible; z-index: 2; animation: nearPulse 1.8s ease-in-out infinite; }
+.gantt-bar.bar-near-pred { --near: 37, 99, 235; }
+.gantt-bar.bar-near-succ { --near: 124, 58, 237; }
+.pnote:not(.pnote-one) .near-tag { top: 14px; right: 8px; }
+.gantt-label.bar-near-pred, .gantt-label.bar-near-succ { position: relative; font-weight: 700; }
+.gantt-label.bar-near-pred { color: rgb(37, 99, 235); }
+.gantt-label.bar-near-succ { color: rgb(124, 58, 237); }
+.gantt-label .near-tag { display: none; }
+.gantt-label.bar-near-pred::before { content: "◀ "; }
+.gantt-label.bar-near-succ::before { content: "▶ "; }
+@media (prefers-reduced-motion: reduce) {
+  .pnote, .gantt-bar[data-item-id] { transition: none; }
+  .pnote.pnote-near-pred, .pnote.pnote-near-succ, .gantt-bar.bar-near-pred, .gantt-bar.bar-near-succ { animation: none; box-shadow: 0 0 0 3px rgba(var(--near), .35); }
+  .near-tag { animation: none; }
+}
+@media print { .near-tag { display: none !important; } }
+/* Helskärm: verktygsraderna får aldrig tryckas ihop av ett stort schema (.gantt-head har overflow:hidden
+   och krympte i flex-kolumnen, så andra raden klipptes bort); schemat tar bara det som blir över. */
+section.panel.gantt-fullscreen > *:not(#ganttChart) { flex-shrink: 0; }
+/* Sökrutan i Gantt-schemat. */
+.gantt-search input { width: 210px; max-width: 40vw; font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.gantt-search input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.gantt-search-count { font-size: 11px; margin: 0; white-space: nowrap; }
+/* "Bara ± dagar" i staplarna: förskjutningen som en liten etikett efter stapeln. */
+.gantt-bl-d { position: absolute; top: 0; font-size: 9.5px; font-weight: 700; line-height: 13px; padding: 0 4px; border-radius: 4px; color: #047857; background: #ecfdf5; white-space: nowrap; cursor: help; }
+.gantt-bl-d.later { color: #b42318; background: #fef3f2; }
+#ganttBaselineDaysPill.hidden { display: none; }
+/* Bekräftelsen när en aktivitet markeras/zoomas i modellen. */
+.model-toast { position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 12px); z-index: 2000; background: #1f2328; color: #fff; font-size: 12px; padding: 7px 12px; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+.model-toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* Markerad i modellen: ram i accentfärg, två pulsar när markeringen kommer. */
+.pnote.model-sel { outline: 3px solid #2563eb; outline-offset: 2px; z-index: 3; }
+.gantt-bar.model-sel { outline: 2px solid #2563eb; outline-offset: 2px; z-index: 2; }
+.model-sel-pulse { animation: modelSelPulse .8s ease-out 2; }
+@keyframes modelSelPulse {
+  0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, .55); }
+  100% { box-shadow: 0 0 0 14px rgba(37, 99, 235, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .model-sel-pulse { animation: none; } }
+.model-toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 10px; }
+.model-toast button { font: inherit; font-size: 12px; font-weight: 700; color: #93c5fd; background: none; border: 1px solid #3b82f6; border-radius: 6px; padding: 2px 8px; cursor: pointer; width: auto; }
+
+/* Pilar för kopplingarna – diskreta i vila, tydliga för aktiviteten man pekar på; röda vid krock. */
+.gantt-chart { position: relative; }
+svg.gantt-arrows { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; z-index: 0; }
+svg.gantt-arrows { z-index: 2; }
+.gantt-board-chart svg.gantt-arrows path.ga { stroke: rgba(71, 85, 105, .5); }
+svg.gantt-arrows path.ga { fill: none; stroke: rgba(71, 85, 105, .42); stroke-width: 1.3; transition: stroke .15s, stroke-width .15s, opacity .15s; }
+svg.gantt-arrows path.ga-late { stroke: rgba(229, 72, 77, .7); stroke-dasharray: 4 3; }
+svg.gantt-arrows.has-hot path.ga { opacity: .14; }
+svg.gantt-arrows.has-hot path.ga.hot { opacity: 1; stroke: #2563eb; stroke-width: 2.2; }
+svg.gantt-arrows.has-hot path.ga.ga-late.hot { stroke: #e5484d; }
+/* Knuffade aktiviteter glider mjukt medan man drar. */
+.ga-pushed { transition: transform .18s cubic-bezier(.2,.8,.2,1) !important; box-shadow: 0 0 0 2px rgba(37, 99, 235, .35), 0 6px 14px -6px rgba(37, 99, 235, .5); }
+@media (prefers-reduced-motion: reduce) { .ga-pushed { transition: none !important; } }
+@media print { svg.gantt-arrows { display: none; } }
+/* Egen aktivitet (finns bara i 4D). */
+.pnote-own { flex: 0 0 auto; margin-left: 5px; font-size: 9px; font-weight: 700; color: #6d28d9; background: #ede9fe; border-radius: 4px; padding: 0 4px; line-height: 14px; }
+.new-act-pop { width: 420px; max-width: calc(100vw - 16px); }
+.new-act-pop label { display: flex; flex-direction: column; align-items: stretch; text-align: left; gap: 2px; font-size: 12px; font-weight: 600; color: #4b5563; margin-bottom: 6px; }
+.new-act-pop input, .new-act-pop select { font: inherit; font-size: 12.5px; font-weight: 400; color: var(--text, #111827); padding: 4px 6px; width: 100%; box-sizing: border-box; }
+.new-act-pop .board-pop-title { text-align: left; margin-bottom: 8px; }
+.new-act-pop .na-row { display: flex; gap: 8px; }
+.new-act-pop .na-row label { flex: 1; }
+/* Framdriften i procent, svagt på framdriftslinjen (vid fyllningens slut). */
+.pnote .pnote-prog { position: relative; overflow: visible; }
+.pnote-one .pnote-prog { position: absolute; }
+.pnote-prog > span:first-child { border-radius: inherit; }
+.pnote-pct { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 8.5px; font-weight: 700; line-height: 11px; padding: 0 3px; border-radius: 6px; color: rgba(17, 24, 39, .5); background: var(--bg, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,.06); white-space: nowrap; pointer-events: none; }
+.pnote-ext .pnote-pct { background: #fff; }
+/* Storleksändring: lappen/stapeln växer och krymper mjukt dag för dag medan man drar i kanten. */
+.pnote.pnote-resizing { transition: width .12s cubic-bezier(.2,.8,.2,1), transform .12s cubic-bezier(.2,.8,.2,1) !important; z-index: 5; }
+.pnote.pnote-resizing::before { transition: width .12s cubic-bezier(.2,.8,.2,1); }
+.gantt-bar.gantt-bar-resizing { transition: width .12s cubic-bezier(.2,.8,.2,1), transform .12s cubic-bezier(.2,.8,.2,1) !important; opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .pnote.pnote-resizing, .gantt-bar.gantt-bar-resizing { transition: none !important; } }
+/* Tipsrutan efter klick: står kvar bredvid aktiviteten (klick utanför / Esc stänger). */
+.gantt-tooltip.pinned { box-shadow: 0 8px 24px rgba(0,0,0,.28); animation: tipIn .14s ease-out; }
+@keyframes tipIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.board-dep-menu .bdm-danger { color: #b42318; }
+.board-dep-menu .bdm-danger:not(:disabled):hover { background: #fef2f2; }
+/* Soptunna på lappen/raden – syns när man pekar (bara med Redigerbar). */
+.pnote-trash { position: absolute; top: 3px; right: 16px; z-index: 3; width: 20px; height: 18px; padding: 0; border: none; border-radius: 5px; background: rgba(255,255,255,.92); box-shadow: 0 1px 3px rgba(0,0,0,.18); font-size: 11px; line-height: 18px; cursor: pointer; opacity: 0; transform: scale(.85); transition: opacity .12s, transform .12s; }
+.pnote:hover .pnote-trash, .pnote:focus-within .pnote-trash { opacity: .85; transform: none; }
+.pnote-trash:hover { opacity: 1 !important; background: #fee2e2; box-shadow: 0 0 0 1px #fca5a5; }
+.pnote-one .pnote-trash { top: 50%; transform: translateY(-50%) scale(.85); right: 4px; }
+.pnote-one:hover .pnote-trash { transform: translateY(-50%); }
+.gantt-row { position: relative; }
+.gantt-row-trash { position: absolute; left: 108px; top: 50%; transform: translateY(-50%); z-index: 4; width: 18px; height: 16px; padding: 0; border: none; border-radius: 4px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.18); font-size: 10px; line-height: 16px; cursor: pointer; opacity: 0; transition: opacity .12s; }
+.gantt-row:hover .gantt-row-trash { opacity: .85; }
+.gantt-row-trash:hover { opacity: 1 !important; background: #fee2e2; }
+@media print { .pnote-trash, .gantt-row-trash { display: none !important; } }
+/* Fokus: det som inte är kopplat till aktiviteten man pekar/klickar på tonas ut. */
+.pnote, .gantt-bar[data-item-id] { transition: opacity .25s ease, filter .25s ease, transform .2s cubic-bezier(.2,.8,.2,1), box-shadow .2s ease; }
+.gantt-chart.focus-mode .pnote:not(.focus-linked) { opacity: .32; filter: saturate(.5); }
+.gantt-chart.focus-mode .gantt-bar[data-item-id]:not(.focus-linked) { opacity: .3; }
+.gantt-chart.focus-mode .gantt-row:not(:has(.focus-linked)) .gantt-label { opacity: .45; }
+@media (prefers-reduced-motion: reduce) { .pnote, .gantt-bar[data-item-id] { transition: none; } }
+.gantt-tip-chain { color: #b6bac2; font-size: 10px; margin-top: 1px; }
+.gantt-tip-chain b { color: #fff; }
+/* Soptunnan får en egen plats längst ut till höger (Redigerbar) – baseline-etiketten (+5 d) och
+   datumen flyttar åt vänster i stället för att hamna under den. */
+.pnote.pnote-editable:not(.pnote-one) .pnote-trash { top: 4px; right: 6px; }
+.pnote.pnote-editable:not(.pnote-one) .pnote-bl-d { right: 30px; }
+.pnote-one.pnote-editable { padding-right: 28px; }
+.pnote-one.pnote-editable .pnote-trash { right: 5px; }
+.new-act-pop .na-act-auto { margin: -2px 0 8px; font-size: 11.5px; }
+/* Baseline-dagarna (±N d) ligger absolut uppe till höger: reservera plats i rubriken så att "Egen" och namnet inte hamnar under. */
+.pnote:not(.pnote-one):has(> .pnote-bl-d) .pnote-title { padding-right: 38px; }
+.pnote.pnote-editable:not(.pnote-one):has(> .pnote-bl-d) .pnote-title { padding-right: 64px; }
+.pnote.pnote-editable:not(.pnote-one):not(:has(> .pnote-bl-d)) .pnote-title { padding-right: 22px; }
+
+/* ----- Aktivitetsdialogen: förslagslistor, Väntar på med glapp, redigering (Victor 2026-10-07) ----- */
+.new-act-pop { width: 460px; max-height: calc(100vh - 16px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.new-act-pop .cb-input { padding-right: 22px !important; background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239ca3af' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 8px center; border: 1px solid var(--border); border-radius: 6px; transition: border-color .12s, box-shadow .12s; }
+.new-act-pop input[type="text"], .new-act-pop input[type="number"], .new-act-pop input[type="date"] { border: 1px solid var(--border); border-radius: 6px; }
+.new-act-pop input:focus { outline: none; border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37,99,235,.14); }
+.cb-list { position: absolute; z-index: 5; max-height: 232px; overflow-y: auto; background: white; border: 1px solid #d6dbe3; border-radius: 8px; box-shadow: 0 10px 28px rgba(15,23,42,.16), 0 2px 6px rgba(15,23,42,.08); padding: 4px; animation: cbIn .12s ease-out; }
+@keyframes cbIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.cb-opt { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; border-radius: 5px; cursor: pointer; font-size: 12.5px; line-height: 1.3; }
+.cb-opt:hover, .cb-opt.on { background: #eaf2ff; }
+.cb-opt.on { box-shadow: inset 2px 0 0 var(--accent, #2563eb); }
+.cb-l { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #111827; }
+.cb-s { flex: 0 1 45%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #6b7280; }
+.cb-n { flex: 0 0 auto; font-size: 10.5px; color: #6b7280; background: #f1f5f9; border-radius: 9px; padding: 0 6px; line-height: 16px; }
+.cb-opt mark { background: #fef08a; color: inherit; border-radius: 2px; padding: 0 1px; }
+.cb-empty, .cb-more { padding: 6px 8px; font-size: 11.5px; color: #6b7280; font-style: italic; }
+.new-act-pop .na-dep { margin: 2px 0 8px; }
+.new-act-pop .na-dep-h { font-size: 12px; font-weight: 600; color: #4b5563; margin-bottom: 4px; }
+.new-act-pop .na-dep-h .hint { font-weight: 400; font-size: 10.5px; }
+.new-act-pop .na-preds { display: flex; flex-direction: column; gap: 4px; margin-bottom: 5px; }
+.na-pred-row { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 8px; background: #f8fafc; border: 1px solid #e5e7eb; border-left: 3px solid #2563eb; border-radius: 6px; animation: cbIn .14s ease-out; }
+.na-pred-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.na-pred-name small { margin-left: 6px; font-size: 10.5px; color: #6b7280; }
+.na-lag-w { flex: 0 0 auto; display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; background: white; overflow: hidden; }
+.na-lag-w i { font-style: normal; font-size: 11px; color: #6b7280; padding: 0 6px 0 2px; }
+.new-act-pop .na-lag { width: 48px !important; border: none !important; border-radius: 0 !important; text-align: center; padding: 3px 2px !important; box-shadow: none !important; -moz-appearance: textfield; }
+.new-act-pop .na-lag::-webkit-outer-spin-button, .new-act-pop .na-lag::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.na-lag-step { border: none; background: #f1f5f9; color: #374151; width: 20px; height: 24px; cursor: pointer; font: inherit; font-size: 13px; line-height: 1; padding: 0; }
+.na-lag-step:hover { background: #e0e7ff; }
+.na-pred-x { flex: 0 0 auto; border: none; background: none; color: #9ca3af; cursor: pointer; font-size: 12px; padding: 2px 5px; border-radius: 4px; }
+.na-pred-x:hover { color: #dc2626; background: #fee2e2; }
+.na-pred-none { font-size: 11.5px; color: #9ca3af; font-style: italic; padding: 2px 2px 0; }
+.new-act-pop .na-withdeps-l { flex-direction: row !important; align-items: center !important; gap: 6px !important; font-weight: 400 !important; font-size: 11.5px !important; }
+.new-act-pop .na-withdeps-l input { width: auto !important; }
+.new-act-pop .na-foot { margin: 0 0 4px; font-size: 11px; }
+.na-flash { animation: naFlash .9s ease-out; }
+@keyframes naFlash { 0% { background: #fef3c7; box-shadow: 0 0 0 3px rgba(245,158,11,.35); } 100% { background: white; } }
+/* Glapp i högerklicksmenyn och på pilarna. */
+.bdm-lag { width: 54px; font: inherit; font-size: 11px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; text-align: center; }
+.bdm-lag-ro, .gantt-tip-lag { font-size: 10px; font-weight: 700; color: #1d4ed8; background: #eff6ff; border-radius: 4px; padding: 0 4px; }
+svg.gantt-arrows text.ga-lag-t { font: 700 10px system-ui, sans-serif; fill: #1d4ed8; paint-order: stroke; stroke: white; stroke-width: 3px; opacity: .55; transition: opacity .12s; }
+svg.gantt-arrows text.ga-lag-t.ga-late { fill: #b42318; }
+svg.gantt-arrows.has-hot text.ga-lag-t { opacity: .15; }
+svg.gantt-arrows.has-hot text.ga-lag-t.hot { opacity: 1; }
+
+/* Koppla i 3D-modellen: list överst medan man markerar i modellen. */
+.couple-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1300; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 24px); padding: 8px 10px 8px 14px; background: #0f172a; color: white; border-radius: 10px; box-shadow: 0 10px 30px rgba(15,23,42,.35); font-size: 12.5px; animation: cbIn .15s ease-out; }
+.couple-bar .couple-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.couple-bar .couple-n { flex: 0 0 auto; font-size: 11.5px; color: #93c5fd; background: rgba(147,197,253,.14); border-radius: 10px; padding: 1px 8px; }
+.couple-bar button { flex: 0 0 auto; font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); background: transparent; color: white; cursor: pointer; }
+.couple-bar button.primary { background: #2563eb; border-color: #2563eb; font-weight: 600; }
+.couple-bar button:disabled { opacity: .45; cursor: default; }
+.couple-target { outline: 2px dashed #2563eb !important; outline-offset: 2px; animation: coupleGlow 1.4s ease-in-out infinite; }
+@keyframes coupleGlow { 50% { outline-color: rgba(37,99,235,.35); } }
+
+/* Dölj grupper (högerklick på en grupps rubrik) */
+.gantt-group-menu { position: fixed; z-index: 2000; min-width: 220px; padding: 4px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.2); font-size: 13px; }
+.gantt-group-menu .ggm-head { padding: 4px 10px 6px; font-size: 11px; font-weight: 650; color: #64748b; text-transform: uppercase; letter-spacing: .4px; }
+.gantt-group-menu button { display: block; width: 100%; text-align: left; border: none; background: none; padding: 7px 10px; border-radius: 6px; font: inherit; cursor: pointer; }
+.gantt-group-menu button:hover:not(:disabled) { background: #eff6ff; }
+.gantt-group-menu button:disabled { opacity: .4; cursor: default; }
+.gantt-hidden-bar { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px; font-size: 12px; color: #475569; }
+.gantt-hidden-bar .ghb-pick { border: 1px solid #cbd5e1; background: #fff; border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer; color: #1f2937; }
+.gantt-hidden-bar .ghb-pick:hover { border-color: #93c5fd; background: #eff6ff; }
+.gantt-hidden-bar .ghb-all { border: none; background: none; color: #2563eb; font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
+.gantt-group-picker { position: fixed; z-index: 2000; width: 330px; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.2); font-size: 12.5px; }
+.gantt-group-picker .ggp-search { width: 100%; box-sizing: border-box; padding: 5px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; }
+.gantt-group-picker .ggp-acts { display: flex; gap: 10px; }
+.gantt-group-picker .ggp-acts button { border: none; background: none; color: #2563eb; cursor: pointer; padding: 0; font-size: 12px; }
+.gantt-group-picker .ggp-acts button.hidden { display: none; }
+.gantt-group-picker .ggp-list { overflow-y: auto; min-height: 0; flex: 1; border-top: 1px solid #e5e7eb; padding-top: 4px; }
+.gantt-group-picker .ggp-row { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; }
+.gantt-group-picker .ggp-row span { overflow: hidden; text-overflow: ellipsis; }
+.gantt-group-picker .ggp-row:hover { background: #f1f5f9; }
+.gantt-group-picker .ggp-empty { color: #94a3b8; padding: 6px; }
+
+/* Egna färger: rutorna under förklaringen (tavlan) */
+.gantt-colorkey { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; width: 100%; margin-top: 4px; }
+.gantt-colorkey .gck-lbl { font-size: 11px; color: #64748b; margin-right: 2px; }
+.gantt-colorkey .gck-chip { border: 1px solid var(--bd); background: var(--bg); color: var(--ink); border-left-width: 4px; border-radius: 4px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
+.gantt-colorkey .gck-chip:hover { filter: brightness(.96); box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+.gantt-colorkey .gck-chip.own::after { content: " ●"; color: var(--bd); }
+.gantt-group-menu hr { border: none; border-top: 1px solid #e5e7eb; margin: 4px 2px; }
+
+/* Namnet i Redigera aktivitet: ruta på fyra rader */
+.new-act-pop textarea.na-name { font: inherit; font-size: 12.5px; font-weight: 400; color: var(--text, #111827); padding: 5px 22px 5px 6px; width: 100%; box-sizing: border-box; resize: vertical; min-height: 4.6em; line-height: 1.35; background-position: right 8px top 10px !important; }
+.new-act-pop textarea.na-name:focus { outline: none; border-color: #93b4f5; box-shadow: 0 0 0 3px rgba(37,99,235,.14); }
+
+/* Avancerat (resurser) i Redigera/Ny aktivitet */
+.new-act-pop .na-res { margin: 2px 0 8px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.new-act-pop .na-res > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: #4b5563; padding: 2px 0; }
+.new-act-pop .na-res[open] > summary { margin-bottom: 4px; }
+.new-act-pop .na-res-h, .new-act-pop .na-res-row { display: grid; grid-template-columns: 1fr 64px 76px 24px; gap: 4px; align-items: center; }
+.new-act-pop .na-res-h { font-size: 10.5px; color: #6b7280; font-weight: 600; margin-bottom: 2px; }
+.new-act-pop .na-res-row { margin-bottom: 3px; }
+.new-act-pop .na-res-row input { border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; font-size: 12px; }
+.new-act-pop .na-res-row .nr-del { border: none; background: none; color: #9ca3af; cursor: pointer; padding: 0; }
+.new-act-pop .na-res-row .nr-del:hover { color: #dc2626; }
+.new-act-pop .na-res-add { border: 1px dashed #cbd5e1; background: #f8fafc; border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; margin: 2px 0 4px; }
+
+/* Resurskurva */
+.resource-curve { position: relative; }
+.rc-ctrl { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; }
+.rc-seg { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+.rc-seg button { border: none; background: #fff; padding: 4px 12px; font-size: 12px; cursor: pointer; color: #374151; }
+.rc-seg button + button { border-left: 1px solid #cbd5e1; }
+.rc-seg button.on { background: #1f2937; color: #fff; }
+.rc-note { font-size: 11.5px; color: #6b7280; }
+.rc-tablebtn { margin-left: auto; border: none; background: none; color: #2563eb; font-size: 12px; cursor: pointer; text-decoration: underline; }
+.rc-legend { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-bottom: 6px; }
+.rc-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #e5e7eb; background: #fff; border-radius: 999px; padding: 2px 9px 2px 6px; font-size: 11.5px; color: #111827; cursor: pointer; }
+.rc-chip i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.rc-chip span { color: #6b7280; }
+.rc-chip.on { border-color: #1f2937; box-shadow: inset 0 0 0 1px #1f2937; }
+.rc-all { border: none; background: none; color: #2563eb; font-size: 11.5px; cursor: pointer; text-decoration: underline; }
+.rc-scroll { position: relative; overflow-x: auto; }
+.rc-svg { display: block; }
+.rc-grid { stroke: #eef0f3; stroke-width: 1; }
+.rc-base { stroke: #9ca3af; stroke-width: 1; }
+.rc-ytick { font-size: 10px; fill: #6b7280; text-anchor: end; }
+.rc-xtick { font-size: 10px; fill: #6b7280; text-anchor: middle; }
+.rc-xtick.now { fill: #2563eb; font-weight: 700; }
+.rc-now { stroke: #2563eb; stroke-width: 1.5; stroke-dasharray: 3 3; }
+.rc-hit { fill: transparent; cursor: default; }
+.rc-hit.on { fill: rgba(15,23,42,.05); }
+.rc-tip { position: absolute; z-index: 5; width: 230px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.16); padding: 8px 10px; font-size: 12px; pointer-events: none; }
+.rc-tip .rc-tot { font-size: 15px; font-weight: 700; margin: 2px 0 4px; }
+.rc-tip .rc-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 6px; align-items: center; padding: 1px 0; }
+.rc-tip .rc-row i { width: 10px; height: 10px; border-radius: 3px; }
+.rc-tip .rc-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-dim { color: #6b7280; font-size: 11px; }
+.rc-tablewrap { overflow: auto; max-height: 420px; }
+.rc-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.rc-table th, .rc-table td { border-bottom: 1px solid #eef0f3; padding: 3px 8px; text-align: right; white-space: nowrap; }
+.rc-table th:first-child, .rc-table td:first-child { text-align: left; }
+.rc-table td span { color: #9ca3af; font-size: 11px; }
+.rc-table thead th { position: sticky; top: 0; background: #f8fafc; }
+.rc-by { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #4b5563; }
+.rc-by select { font-size: 12px; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 6px; }
+
+/* Entreprenörsfiltret med flera val */
+.filter-multi { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; cursor: pointer; min-width: 160px; text-align: left; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-multi.on { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+.cf-pop .cf-none { font-style: italic; color: #4b5563; }
+
+/* Levande grafik per resurs i dialogen */
+.new-act-pop .nr-viz { margin: 0 0 6px; padding: 4px 6px; background: #f8fafc; border-radius: 5px; font-size: 11.5px; color: #374151; }
+.new-act-pop .nr-days { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 3px; }
+.new-act-pop .nr-days i { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 16px; padding: 0 2px; border-radius: 3px; background: #bfdbfe; color: #1e3a8a; font-style: normal; font-size: 9.5px; font-weight: 600; }
+.new-act-pop .nr-more { font-size: 10px; color: #6b7280; align-self: center; margin-left: 2px; }
+.new-act-pop .nr-ok { color: #15803d; }
+.new-act-pop .nr-warn { color: #b45309; }
+.new-act-pop .nr-note { margin-top: 3px; }
+.new-act-pop .nr-fix { border: 1px solid #cbd5e1; background: #fff; border-radius: 4px; padding: 1px 7px; font-size: 11px; cursor: pointer; margin: 2px 2px 0 0; }
+.new-act-pop .nr-fix:hover { border-color: #2563eb; color: #2563eb; }
+
+/* Resurskurvans sammanfattning */
+.rc-sum { margin-top: 10px; }
+.rc-sumtab { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.rc-sumtab th { text-align: right; font-size: 11px; color: #6b7280; font-weight: 600; padding: 4px 10px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+.rc-sumtab td { text-align: right; padding: 4px 10px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+.rc-sumtab th:first-child, .rc-sumtab td:first-child { text-align: left; white-space: normal; }
+.rc-sumtab td:first-child i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.rc-sumtab td b { font-size: 13.5px; }
+.rc-sumtab tfoot td { border-top: 2px solid #e5e7eb; border-bottom: none; font-weight: 600; }
+
+.pnote-res { display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px; background: rgba(255,255,255,.75); border: 1px solid rgba(0,0,0,.12); font-size: 9.5px; font-weight: 700; color: #1f2937; white-space: nowrap; flex: 0 0 auto; }
+.pnote-one .pnote-res { margin-left: auto; }
+.pnote-one .pnote-res + .pnote-dates { margin-left: 0; }
+.pnote-one.pnote-ext .pnote-res { margin-left: 4px; }
+
+/* Helskärm på surfplatta: fyller sidan (inte systemets helskärm), svep rullar bara i schemat och
+   "dra för att uppdatera" är avstängt så länge helskärmen är på. */
+section.panel.gantt-fullscreen { height: 100vh; height: 100dvh; overscroll-behavior: none; }
+section.panel.gantt-fullscreen #ganttChart { overscroll-behavior: contain; }
+html:has(body.gantt-fullscreen-on), body.gantt-fullscreen-on { overscroll-behavior: none; }
+
+/* Hela texten: knappen (alla lappar) och lappen man pekar på */
+.board-fulltext .pnote:not(.pnote-one) .pnote-title, .pnote.pnote-peek .pnote-title { -webkit-line-clamp: unset; display: block; overflow: visible; }
+.board-fulltext .pnote:not(.pnote-one) .pnote-sub, .pnote.pnote-peek .pnote-sub { white-space: normal; }
+.pnote.pnote-peek { z-index: 40; box-shadow: 0 10px 28px rgba(15,23,42,.28); }
+.board-fulltext .pnote-one .pnote-title { max-width: none; }
+
+.gantt-fs-back { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 50; border: none; border-radius: 999px; padding: 8px 18px; background: #1f2937; color: #fff; font-size: 14px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.25); cursor: pointer; }
+
+/* Temporär (t.ex. mobilkran, Victor 2026-10-09): streckad stapel och en markering där den tas bort. */
+.gantt-bar.gantt-bar-temp { border-style: dashed; background-image: repeating-linear-gradient(135deg, transparent 0 5px, rgba(148,163,184,.22) 5px 7px); }
+.gantt-temp-end { position: absolute; top: 50%; transform: translate(2px, -50%); font-size: 10px; line-height: 1; color: #9a3412; pointer-events: auto; cursor: help; }
+.gantt-temp-badge { margin-left: 4px; font-size: 10px; cursor: help; }
+.new-act-pop .na-temp { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; background: #fff7ed; border: 1px dashed #fdba74; cursor: pointer; font-size: 12.5px; line-height: 1.35; color: #431407; }
+.new-act-pop .na-temp input { width: auto; margin-top: 2px; }
+
+/* Leveranser och upplag (Victor 2026-10-09) */
+.delivery-row .delivery-desc .delivery-stor { display: block; font-weight: 400; color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.delivery-warn-tag { margin-left: 6px; font-weight: 700; color: #b45309; }
+.delivery-warn-tag.bad { color: #dc2626; }
+.delivery-warn-sum { margin: 2px 0 6px; padding: 5px 8px; border-radius: 6px; background: rgba(245, 158, 11, .12); color: #b45309; font-size: 11.5px; font-weight: 600; }
+
+.gantt-refresh-btn { display: inline-flex; align-items: center; gap: 5px; }
+.gantt-refresh-btn .gantt-refresh-ico { transition: transform .45s ease; }
+.gantt-refresh-btn:hover .gantt-refresh-ico { transform: rotate(180deg); }
+.gantt-refresh-btn.spin .gantt-refresh-ico { animation: ganttRefreshSpin .8s linear infinite; }
+.gantt-refresh-btn.spin { pointer-events: none; opacity: .85; }
+.gantt-refresh-btn.done { background: #16a34a; color: #fff; border-color: #16a34a; }
+@keyframes ganttRefreshSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .gantt-refresh-btn.spin .gantt-refresh-ico { animation-duration: 2s; } }
+
+.gantt-time-row { align-items: center; gap: 8px; }
+.gantt-time-slider { flex: 1 1 240px; min-width: 120px; accent-color: #f59e0b; }
+.gantt-time-sum { white-space: nowrap; }
+.gantt-today-label.asof { background: #f59e0b; color: #1f2937; }
+
+.gantt-time-row { flex-wrap: wrap; }
+.gantt-time-lim { font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+.gantt-time-cols { display: inline-flex; gap: 8px; font-size: 12px; align-items: center; }
+.gantt-time-cols label { display: inline-flex; align-items: center; gap: 3px; }
+.gantt-time-cols input[type="color"] { width: 24px; height: 20px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; }
+
+.gantt-mode-seg { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel, #fff); }
+.gantt-mode-seg .gantt-seg-lbl { font-size: 11px; font-weight: 700; color: var(--muted); padding: 0 8px; }
+.gantt-mode-seg .gantt-toolbar-btn { border: 0; border-left: 1px solid var(--border); border-radius: 0; margin: 0; }
+
+/* Dragstrecket för tidslinjen ovanpå schemat */
+.gantt-scrub { position: absolute; top: 0; bottom: 0; width: 0; z-index: 40; pointer-events: none; }
+.gantt-scrub-line { position: absolute; top: 0; bottom: 0; left: -1.5px; width: 3px; border-radius: 2px; pointer-events: auto; cursor: ew-resize; touch-action: none;
+  background: linear-gradient(to bottom, #f59e0b, rgba(245,158,11,.75)); box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 0 12px rgba(245,158,11,.45); }
+.gantt-scrub-line::before { content: ""; position: absolute; left: -9px; right: -9px; top: 0; bottom: 0; } /* större träffyta */
+.gantt-scrub-handle { position: sticky; top: 8px; display: flex; align-items: center; gap: 8px; transform: translateX(-50%); width: max-content; z-index: 2;
+  padding: 5px 12px; border-radius: 10px; background: #1f2937; color: #fff; font-size: 12.5px; font-weight: 650; letter-spacing: .01em;
+  border: 2px solid #f59e0b; box-shadow: 0 6px 16px rgba(0,0,0,.30); cursor: ew-resize; pointer-events: auto; user-select: none; touch-action: none; transition: background .12s, box-shadow .12s; }
+.gantt-scrub-handle::after { content: ""; position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); border: 6px solid transparent; border-top: 6px solid #f59e0b; border-bottom: 0; }
+.gantt-scrub-handle:hover { background: #111827; box-shadow: 0 8px 20px rgba(0,0,0,.36); }
+.gs-grip { width: 6px; height: 14px; background: radial-gradient(circle, rgba(255,255,255,.85) 1.2px, transparent 1.6px) 0 0 / 6px 5px; opacity: .8; }
+.gantt-scrub.drag .gantt-scrub-handle { background: #f59e0b; color: #1f2937; border-color: #fff; box-shadow: 0 8px 22px rgba(245,158,11,.55); }
+.gantt-scrub.drag .gantt-scrub-handle::after { border-top-color: #fff; }
+.gantt-scrub.drag .gs-grip { background-image: radial-gradient(circle, rgba(31,41,55,.8) 1.2px, transparent 1.6px); }
+.gantt-scrub.drag .gantt-scrub-line { box-shadow: 0 0 0 1px #fff, 0 0 18px rgba(245,158,11,.8); }
+.gantt-scrub.drag, .gantt-scrub.drag * { cursor: grabbing; }
+@media print { .gantt-scrub { display: none; } }
+
+/* Flera aktiviteter markerade (Ctrl/Cmd-klick) */
+.gantt-multisel { outline: 3px solid #2563eb !important; outline-offset: 1px; box-shadow: 0 0 0 5px rgba(37,99,235,.22) !important; z-index: 6; }
+.gantt-label.gantt-multisel { background: #dbeafe; border-radius: 4px; }
+.gantt-multibar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 3000; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: #1f2937; color: #fff; box-shadow: 0 10px 28px rgba(0,0,0,.35); font-size: 13px; }
+.gantt-multibar button { border: 0; border-radius: 8px; padding: 5px 10px; background: #2563eb; color: #fff; font-weight: 600; cursor: pointer; }
+.gantt-multibar button[data-mb="only"] { background: #0f766e; }
+.gantt-multibar button[data-mb="clear"] { background: rgba(255,255,255,.14); }
+.gantt-multibar button:hover { filter: brightness(1.12); }
+@media print { .gantt-multibar { display: none; } }
+
+.new-act-pop .na-objs, .new-act-pop .na-dups { margin: 2px 0 8px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.new-act-pop .na-objs > summary, .new-act-pop .na-dups > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: #4b5563; padding: 2px 0; }
+.new-act-pop .na-objs-list, .new-act-pop .na-dups-list { max-height: 160px; overflow: auto; margin: 4px 0; }
+.new-act-pop .na-obj { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 4px; border-radius: 4px; font-size: 12.5px; }
+.new-act-pop .na-obj:hover { background: #f1f5f9; }
+.new-act-pop .na-obj-x { border: 0; background: transparent; color: #b91c1c; cursor: pointer; font-size: 14px; padding: 0 6px; border-radius: 4px; }
+.new-act-pop .na-obj-x:hover { background: #fee2e2; }
+
+.ppx-pop { max-width: 380px; }
+.ppx-opts { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.ppx-opt { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.ppx-opt.off { opacity: .5; }
+
+.new-act-pop .na-obj { cursor: pointer; }
+.new-act-pop .na-obj.on { background: #dbeafe; outline: 1px solid #93c5fd; }
+
+/* Långt fönster: rullar när det går utanför bilden, med knapparna kvar längst ner. */
+.new-act-pop .board-pop-actions { position: sticky; bottom: -10px; background: #fff; padding: 8px 0 4px; margin-top: 4px; border-top: 1px solid var(--border); z-index: 3; }
+
+.gantt-pulse-pop { z-index: 3200; gap: 8px; }
+.gantt-pulse-pop label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.gantt-pulse-pop .pp-cols { display: flex; gap: 12px; }
+.gantt-pulse-pop input[type="color"] { width: 34px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 4px; }
+.gantt-pulse-pop select { font: inherit; font-size: 12px; max-width: 150px; }
+.gantt-pulse-pop input[type="range"] { width: 100px; }
+
+.ppx-tpl { font-size: 12px; margin: 6px 0; padding: 6px 8px; border: 1px dashed var(--border); border-radius: 6px; }
+.ppx-tpl input[type=file] { max-width: 100%; font-size: 11px; }
+
+.ppx-pop .ppx-opts { margin: 8px 0; }
+.ppx-pop label.ppx-opt { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; font-size: 13px; font-weight: 400; margin: 0; padding: 3px 0; color: inherit; }
+.ppx-pop label.ppx-opt input { width: auto; margin: 0; flex: none; }
+.ppx-pop label.ppx-opt.off { opacity: .5; }
+.ppx-pop label.na-temp { flex-direction: row; align-items: center; gap: 8px; }
+.ppx-pop label.na-temp input { width: auto; flex: none; }
+
+.bubble-pop { z-index: 3200; gap: 8px; }
+.bubble-pop label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.bubble-pop select { font: inherit; font-size: 12px; max-width: 170px; }
+.bubble-pop input[type="number"] { width: 60px; }
+.bubble-pop .bb-fields { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.bubble-pop label.bb-f { justify-content: flex-start; }
+[aria-pressed="true"]#bubbleBtn { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Video editor */
+.video-editor { display: flex; flex-direction: column; gap: 12px; }
+.vid-hint { font-size: 12.5px; color: #4b5563; max-width: 900px; }
+.vid-sec { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fafafa; }
+.vid-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.vid-row label { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: #374151; }
+.vid-row input[type=number] { width: 64px; }
+.vid-key { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.vid-key .vk-name { flex: 1 1 200px; max-width: 320px; }
+.vid-key button { border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 3px 9px; cursor: pointer; }
+.vid-key .vk-del:hover { background: #fee2e2; color: #b91c1c; }
+.vid-msg { min-height: 1.2em; }
+.vid-shotbox { max-width: 100%; overflow: auto; }
+.vid-shot { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid #d1d5db; }
+.vid-frame input[type=range] { width: 320px; }
+.vid-shotbox { display: flex; flex-wrap: wrap; gap: 10px; }
+.vid-card { width: 260px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.vid-card.big { width: 100%; max-width: 1100px; }
+.vid-card-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: #374151; }
+.vid-card-b button { border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
+.vid-card .vid-shot { width: 100%; height: auto; display: block; cursor: zoom-in; }
+.gantt-tc { display: inline-flex; align-items: center; gap: 3px; }
+.gantt-tc-op { width: 52px; }
+
+/* Mängdavtagning */
+.qty-box { display: flex; flex-direction: column; gap: 10px; }
+.qty-hint { font-size: 12.5px; color: #4b5563; max-width: 900px; }
+.qty-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.qty-row label { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: #374151; }
+.qty-row select { max-width: 320px; }
+.qty-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.qty-table th, .qty-table td { padding: 4px 8px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+.qty-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.qty-table tbody tr { cursor: pointer; } .qty-table tbody tr:hover { background: #eff6ff; }
+.qty-table tfoot td { border-top: 2px solid #9ca3af; border-bottom: none; }
+.qty-props summary { cursor: pointer; font-size: 12px; color: #374151; } .qty-proplist { max-height: 220px; overflow: auto; font-size: 12px; margin-top: 6px; }
+.qmf-box { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e5e7eb; display: flex; flex-direction: column; gap: 10px; }
+.qmf-h { margin: 0; font-size: 14px; }
+.qmf-map summary { cursor: pointer; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.qmf-map select { max-width: 420px; }
+.qmf-table td.qmf-warn { background: #fff7ed; color: #c2410c; } .qmf-table td.qmf-bad { background: #fef2f2; color: #b91c1c; font-weight: 600; }
+.gantt-fs-bar button#ganttFsTime { display: inline-flex; align-items: center; padding: 3px 7px; }
+.gantt-fs-bar button#ganttFsTime[aria-pressed="true"] { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+/* Guide längst upp */
+.app-guide { margin: 8px 0 10px; border: 1px solid #c7d2fe; border-radius: 10px; background: #eef2ff; font-size: 13px; }
+.app-guide > summary { cursor: pointer; list-style: none; padding: 9px 14px; font-weight: 700; color: #1e3a8a; display: flex; align-items: center; gap: 8px; }
+.app-guide > summary::-webkit-details-marker { display: none; }
+.app-guide[open] > summary { border-bottom: 1px solid #c7d2fe; }
+.app-guide-sub { font-weight: 400; color: #64748b; font-size: 12px; }
+.app-guide-body { padding: 8px 16px 12px; max-height: 60vh; overflow-y: auto; }
+.app-guide-body ul { margin: 6px 0 0; padding-left: 18px; } .app-guide-body li { margin: 5px 0; line-height: 1.45; }
+.app-guide-body a { color: #1d4ed8; }
+@media print { .app-guide { display: none !important; } }
+
+/* Färger & visning i en rullgardin + stegknappar vid tidslidern */
+.gantt-time-menu-wrap { position: relative; display: inline-block; }
+.gantt-time-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 60; min-width: 300px; background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 10px 28px rgba(15,23,42,.22); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.gantt-time-menu.hidden { display: none; }
+.gtm-title { font-weight: 700; font-size: 12px; color: #334155; text-transform: uppercase; letter-spacing: .03em; }
+.gtm-grid { display: grid; grid-template-columns: auto 38px 1fr; gap: 6px 10px; align-items: center; font-size: 12.5px; }
+.gtm-h { font-size: 11px; color: #64748b; }
+.gtm-grid input[type="color"] { width: 30px; height: 22px; padding: 0; border: 1px solid #cbd5e1; border-radius: 4px; background: none; }
+.gtm-grid input[type="range"] { width: 130px; }
+.gtm-doneop { display: inline-flex; align-items: center; gap: 4px; }
+.gantt-time-menu .gantt-pill { align-self: flex-start; }
+.gantt-step { min-width: 28px; padding: 2px 6px; }
+@media print { .gantt-time-menu-wrap, .gantt-step { display: none !important; } }
+
+.gantt-step { font-size: 18px; line-height: 1; padding: 1px 8px 3px; }
+
+/* Tidslinjen i videoeditorn (som i 4D-planeringens 3D-editor). */
+.vid-frame-in { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+.vtl { margin: 6px 0 4px; user-select: none; touch-action: none; }
+.vtl-info { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; } .vtl-info b { font-size: 15px; color: #111827; } .vtl-info span { font-size: 11px; color: #6b7280; }
+.vtl-track { position: relative; height: 62px; margin: 0 8px; }
+.vtl-days { position: absolute; left: 0; right: 0; top: 4px; height: 20px; background: linear-gradient(#f8fafc, #eef2f7); border-radius: 4px; overflow: hidden; }
+.vtl-days i { position: absolute; top: 0; bottom: 0; border-left: 1px solid rgba(100,116,139,.12); } .vtl-days i.we { background: rgba(99,102,241,.13); }
+.vtl-axis { position: absolute; left: 0; right: 0; top: 0; bottom: 0; cursor: ew-resize; }
+.vtl-axis::before { content: ""; position: absolute; left: 0; right: 0; top: 14px; height: 2px; background: #475569; border-radius: 1px; }
+.vtl-axis span { position: absolute; top: 30px; font-size: 10px; color: #94a3b8; padding-left: 4px; border-left: 1px solid #cbd5e1; line-height: 24px; height: 24px; white-space: nowrap; transform: none; }
+.vtl-axis span.m { top: 17px; border-left: 2px solid #475569; color: #111827; font-weight: 700; font-size: 11px; height: 30px; line-height: 14px; padding-top: 2px; }
+.vtl-axis span.w { top: 34px; }
+.vtl-key { position: absolute; top: 0; width: 24px; height: 24px; margin-left: -12px; border: 0; background: #fff; border-radius: 50%; box-shadow: 0 1px 4px rgba(15,23,42,.35); font-size: 13px; padding: 0; cursor: pointer; z-index: 2; }
+.vtl-head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #6d5efc; z-index: 3; cursor: ew-resize; }
+.vtl-head::before { content: ""; position: absolute; left: -7px; top: 8px; width: 16px; height: 16px; border-radius: 50%; background: #6d5efc; box-shadow: 0 0 0 3px rgba(255,255,255,.9), 0 1px 6px rgba(79,70,229,.5); }
+
+#ganttStrictBtn.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+#ganttScaleBtn.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+.new-act-pop .na-temp-sub { margin-left: 22px; padding: 3px 8px; font-size: 12px; background: #fffaf3; }
+.gantt-multibar button[data-mb="contractor"] { font-weight: 600; }
+#ganttOpen3d { display: inline-flex; align-items: center; gap: 5px; } #ganttOpen3d .gfs-l { font-weight: 700; font-size: 12px; }
+.sf-pop { display: flex; flex-direction: column; gap: 6px; } .sf-new { display: flex; gap: 6px; } .sf-new .sf-name { flex: 1; min-width: 0; } .sf-hint { margin: 0; }
+.sf-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; } .sf-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-del { border: 0; background: transparent; color: #b91c1c; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 5px; } .sf-del:hover { background: #fee2e2; }
+
+/* Entreprenörsval på flera markerade: egen snygg lista i stället för webbläsarens datalist */
+#ganttMultiCPop #gmcInput { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border, #cfd6e0); font: inherit; }
+.gmc-list { display: flex; flex-direction: column; gap: 2px; max-height: 170px; overflow-y: auto; padding: 4px; border: 1px solid var(--border, #e1e6ee); border-radius: 10px; background: rgba(127,127,127,.06); }
+.gmc-opt { text-align: left; padding: 7px 10px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.gmc-opt:hover { background: rgba(59,111,230,.14); }
+.gmc-opt.on { background: #3b6fe6; color: #fff; }
+
+/* Markeringsfältet (Ctrl-klick) i samma ljusa utseende som resten av Gantt-schemat */
+.gantt-multibar { background: #fff; color: var(--text); border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 10px 28px rgba(15,23,42,.22); padding: 6px 8px 6px 12px; gap: 6px; font-size: 12px; }
+.gantt-multibar #ganttMultiN { font-size: 12px; color: #334155; margin-right: 4px; }
+.gantt-multibar button { font: inherit; font-size: 11px; font-weight: 400; padding: 3px 9px; border: 1px solid var(--border); border-radius: 3px; background: #fff; color: var(--text); }
+.gantt-multibar button:hover { background: var(--panel); filter: none; }
+.gantt-multibar button[data-mb="show"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.gantt-multibar button[data-mb="show"]:hover { background: #0a52de; }
+.gantt-multibar button[data-mb="only"], .gantt-multibar button[data-mb="contractor"] { background: #fff; color: var(--text); font-weight: 400; }
+.gantt-multibar button[data-mb="clear"] { background: #fff; color: #64748b; padding: 3px 8px; }
+#ganttMultiCPop { border-radius: 10px; }
+#ganttMultiCPop button { font: inherit; font-size: 11px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 3px; background: #fff; cursor: pointer; }
+#ganttMultiCPop button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Meddelanden ovanför markeringsfältet (annars döljs de bakom det) */
+body.has-multibar .model-toast { bottom: 74px; z-index: 3200; }
+
+/* Höjdhandtag under Gantt-schemat */
+.gantt-resize { height: 14px; margin-top: 2px; display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none; border-radius: 6px; }
+.gantt-resize span { width: 44px; height: 4px; border-radius: 3px; background: #cbd5e1; transition: background .15s, width .15s; }
+.gantt-resize:hover span, .gantt-resize.drag span { background: var(--accent); width: 64px; }
+section.panel.gantt-fullscreen .gantt-resize { display: none; }
+@media print { .gantt-resize { display: none; } }
+section.panel.gantt-fullscreen #ganttChart { height: auto !important; flex: 1 1 0 !important; max-height: none !important; }
+.gantt-resize { position: relative; }
+.gantt-resize .gr-corner { position: absolute; right: 3px; bottom: 0; color: #94a3b8; transition: color .15s; }
+.gantt-resize:hover .gr-corner, .gantt-resize.drag .gr-corner { color: var(--accent); }
+
+/* Foto med bubblor: förhandsvisning */
+.phb-wrap { position: fixed; inset: 0; z-index: 3300; background: rgba(15,23,42,.6); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.phb-box { background: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.4); max-width: 96vw; max-height: 94vh; display: flex; flex-direction: column; overflow: hidden; }
+.phb-img { overflow: auto; background: #f1f5f9; display: flex; }
+.phb-img img { max-width: 92vw; max-height: 78vh; object-fit: contain; display: block; margin: auto; }
+.phb-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 12px; }
+.phb-info { flex: 1; color: #475569; }
+.phb-bar button { font: inherit; font-size: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
+.phb-bar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media print { .phb-wrap { display: none; } }
+.phb-img canvas { max-width: 92vw; max-height: 74vh; display: block; margin: auto; touch-action: none; }
+.phb-sel { display: inline-flex; align-items: center; gap: 4px; margin: 0; color: #475569; }
+.phb-sel select { font: inherit; font-size: 12px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 5px; }
+
+/* Sparade vyer */
+.gv-pop { position: fixed; z-index: 3300; width: 340px; max-height: 70vh; overflow-y: auto; background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 10px 28px rgba(15,23,42,.22); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.gv-hint { margin: 0; }
+.gv-new { display: flex; gap: 6px; }
+.gv-name { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.gv-pop button { font: inherit; font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 4px; background: #fff; cursor: pointer; }
+.gv-pop button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.gv-list { display: flex; flex-direction: column; gap: 4px; }
+.gv-row { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 8px; }
+.gv-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.gv-t b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gv-t .hint { margin: 0; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gv-del { color: #64748b; }
+@media print { .gv-pop { display: none; } }
+/* Foto med bubblor: redigeringspanel */
+.phb-main { display: flex; min-height: 0; }
+.phb-side { width: 270px; flex: 0 0 270px; max-height: 78vh; overflow-y: auto; border-left: 1px solid #e2e8f0; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; font-size: 12px; background: #fafbfc; }
+.phb-sec { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid #e8ecf1; }
+.phb-sec:last-child { border-bottom: 0; }
+.phb-sel-sec { background: #eef4ff; border: 1px solid #c7d8fb; border-radius: 8px; padding: 8px; }
+.phb-h { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: #334155; }
+.phb-f { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.phb-f span { color: #475569; display: flex; justify-content: space-between; gap: 6px; }
+.phb-f small { color: #94a3b8; font-weight: 400; }
+.phb-f input[type="text"], .phb-f input[type="number"], .phb-f input[type="date"], .phb-f textarea { font: inherit; padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px; width: 100%; resize: vertical; }
+.phb-f input[type="range"] { width: 100%; }
+.phb-f input[type="color"] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; }
+.phb-c { display: flex; align-items: center; gap: 5px; margin: 0; }
+.phb-row { display: flex; align-items: center; gap: 10px; }
+.phb-side button { font: inherit; font-size: 11px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
+.phb-side button.danger { color: #b42318; border-color: #f3c1bd; }
+.phb-side button:disabled { opacity: .45; cursor: default; }
+.phb-img canvas { max-height: 78vh; }
+@media (max-width: 800px) { .phb-main { flex-direction: column; } .phb-side { width: auto; flex: none; max-height: 30vh; border-left: 0; border-top: 1px solid #e2e8f0; } }
+
+/* Ikonmeny: tidsraden (alltid synlig) med lägesknappar och verktyg, ikonknappar och ikon-växlar */
+.gantt-time-row .gtr-sep { width: 1px; height: 22px; background: var(--border); margin: 0 2px; flex: 0 0 auto; }
+.gantt-time-row .gtr-tools { display: inline-flex; gap: 6px; align-items: center; }
+.gantt-time-row.gantt-time-off > :not(.gantt-mode-seg):not(.gtr-tools):not(.gtr-sep) { opacity: .45; cursor: pointer; }
+.gantt-time-row.gantt-time-off .gantt-time-slider { pointer-events: auto; }
+.gb-ico { display: inline-flex; align-items: center; justify-content: center; gap: 2px; min-width: 30px; height: 30px; padding: 0 6px; }
+.gb-ico .gp-svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.gb-caret { font-size: 9px; opacity: .7; }
+.gantt-mode-seg .gb-ico { height: 28px; min-width: 32px; }
+.gantt-mode-seg .gantt-toolbar-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+#ganttStrictBtn[aria-pressed="true"], #ganttScaleBtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.gantt-pill.gp-ico { position: relative; width: 32px; height: 30px; padding: 0; justify-content: center; border-radius: 8px; color: #475569; }
+.gantt-pill.gp-ico > input[type="checkbox"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.gantt-pill.gp-ico .gp-svg { width: 17px; height: 17px; pointer-events: none; }
+.gantt-pill.gp-ico:has(input:checked) { background: #eaf2ff; border-color: #8db4fa; color: #0b5fff; }
+.gantt-pill.gp-ico:has(.gantt-bl-color) { width: auto; padding: 0 6px 0 8px; gap: 6px; }
+.gantt-pill.gp-ico .gantt-bl-color { position: relative; z-index: 1; width: 18px; height: 18px; }
+.gantt-sub-label { display: inline-flex; align-items: center; color: var(--muted); }
+
+/* Kompakta ikonknappar (Victor 2026-10-15: 40 % lägre) – tids-, period- och övre högerraden */
+.gb-ico { height: 18px; min-width: 24px; padding: 0 4px; border-radius: 5px; }
+.gb-ico .gp-svg { width: 12px; height: 12px; }
+.gb-caret { font-size: 8px; }
+.gantt-mode-seg { border-radius: 6px; }
+.gantt-mode-seg .gb-ico { height: 18px; min-width: 26px; border-radius: 0; }
+.gantt-pill.gp-ico { width: 24px; height: 18px; border-radius: 5px; }
+.gantt-pill.gp-ico .gp-svg { width: 12px; height: 12px; }
+.gantt-pill.gp-ico:has(.gantt-bl-color) { width: auto; padding: 0 5px 0 6px; gap: 4px; }
+.gantt-pill.gp-ico .gantt-bl-color { width: 12px; height: 12px; border-radius: 3px; }
+.gantt-time-row .gtr-sep { height: 14px; }
+.gantt-time-row .gtr-tools { gap: 3px; }
+.gantt-time-slider { flex: 1 1 200px; min-width: 120px; }
+/* övre högerraden: samma ikonstil och höjd som de nedre */
+.gantt-fs-bar { gap: 3px; align-items: center; }
+.gantt-fs-bar button { height: 18px; min-width: 24px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; border-radius: 5px; box-shadow: none; }
+.gantt-fs-bar button .gp-svg, .gantt-fs-bar button svg { width: 12px; height: 12px; }
+.gantt-fs-bar .gfs-l { display: none; }
+.gantt-fs-bar button#ganttFsTime { padding: 0 5px; }
+
+/* Övre raden som alltid syns: lägesikoner, verktyg och tidsikoner tillsammans med Tid/3D/Foto/Vyer/Dölj/Helskärm */
+.gantt-fs-bar { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 210px); row-gap: 3px; }
+section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
+.gantt-fs-bar .gfs-grp { display: inline-flex; gap: 3px; align-items: center; }
+.gantt-fs-bar .gfs-sep { width: 1px; height: 14px; background: #cbd5e1; margin: 0 2px; }
+.gantt-fs-bar #ganttFsEnter { display: none !important; }
+.gantt-fs-bar .gantt-mode-seg { display: inline-flex; box-shadow: none; }
+.gantt-fs-bar .gantt-mode-seg .gb-ico { box-shadow: none; border-radius: 0; border: 0; border-left: 1px solid var(--border); }
+.gantt-fs-bar .gantt-mode-seg .gb-ico:first-child { border-left: 0; }
+.gantt-fs-bar .gantt-mode-seg .gantt-toolbar-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.gantt-fs-bar .gantt-time-menu-wrap { position: relative; display: inline-flex; }
+.gantt-fs-bar .gantt-time-menu { top: calc(100% + 4px); right: 0; left: auto; }
+.qty-presets { display: inline-flex; gap: 4px; }
+.qty-presets button { font: inherit; font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; background: #fff; cursor: pointer; }
+.qty-presets button:hover { background: #eaf2ff; border-color: #bcd2fb; }
+
+/* Övre raden: alla ikonknappar exakt lika stora (26 × 18 px, ikon 12 px) */
+.gantt-fs-bar button, .gantt-fs-bar .gantt-mode-seg .gb-ico { box-sizing: border-box; width: 26px; min-width: 26px; max-width: 26px; height: 18px; padding: 0; }
+.gantt-fs-bar button svg, .gantt-fs-bar button .gp-svg, .gantt-fs-bar .gantt-refresh-ico { width: 12px; height: 12px; min-width: 12px; }
+.gantt-fs-bar .gb-caret, .gantt-fs-bar .gantt-refresh-lbl { display: none; }
+.gantt-fs-bar .gantt-time-menu-wrap { display: inline-flex; }
+.gantt-add-inline { height: 18px; padding: 0 8px; font-size: 11px; display: inline-flex; align-items: center; }
+
+.gantt-legend-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+.gantt-legend-row .gantt-legend { flex: 0 1 auto; }
+.gantt-legend-row .gantt-add-inline { margin: 4px 0; }
+
+/* Mängdavtagning i samma stil som Gantt-fliken: verktygskort med rader, segmentknappar, chips och ikonknappar */
+.qty-box { gap: 8px; }
+.qty-hint { font-size: 12px; color: var(--muted); margin: 0; }
+.qty-head { margin-bottom: 0; }
+.qty-head .gantt-toolbar-field input[type="text"] { font-size: 11px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 3px; width: 150px; }
+.qty-head .gantt-toolbar-field select { max-width: 260px; }
+.qty-seg .gantt-seg-btn { padding: 3px 10px; font-size: 11.5px; }
+.qty-read { display: inline-flex; align-items: center; gap: 5px; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; height: 24px; padding: 0 12px; }
+.qty-read:hover { background: #0a52de; }
+.qty-notes .hint { margin: 0; font-size: 11.5px; }
+.qty-card { border: 1px solid var(--border); border-radius: 8px; background: #fff; overflow: auto; }
+.qty-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.qty-table thead th { background: #f6f4ef; color: #475569; font-size: 11px; font-weight: 700; text-transform: none; letter-spacing: .01em; border-bottom: 1px solid #ddd6c8; padding: 6px 10px; position: sticky; top: 0; }
+.qty-table td { padding: 5px 10px; border-bottom: 1px solid #eef0f3; }
+.qty-table tbody tr:nth-child(even) td { background: #fbfbfc; }
+.qty-table tbody tr:hover td { background: #eaf2ff; }
+.qty-table tfoot td { border-top: 2px solid #cbd5e1; background: #f8fafc; font-weight: 700; }
+.qty-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.qty-actions .gantt-toolbar-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; }
+.qty-props { font-size: 12px; color: var(--muted); }
+.qmf-box { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 10px; }
+.qmf-h { font-size: 13px; font-weight: 700; color: #334155; text-transform: uppercase; letter-spacing: .03em; }
+.qmf-box input[type="file"] { font-size: 11.5px; }
+.qmf-box select, .qmf-box input[type="text"] { font-size: 11px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 3px; background: #fff; }
+.qmf-box button { font: inherit; font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
+.qmf-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.qmf-table thead th { background: #f6f4ef; border-bottom: 1px solid #ddd6c8; padding: 6px 10px; font-size: 11px; }
+.qmf-table td { padding: 5px 10px; border-bottom: 1px solid #eef0f3; }
+
+.qmf-click { cursor: pointer; }
+.qmf-click:hover td { background: #eaf2ff !important; }
+
+.qmf-flt { display: block; margin-top: 4px; width: 100%; min-width: 120px; font: inherit; font-size: 11px; font-weight: 400; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+.qmf-flt-n { margin: 2px 0; font-size: 11px; color: var(--muted); min-height: 14px; }
+
+/* Söklista för post/byggnad */
+.qmf-combo { position: fixed; z-index: 3300; background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 10px 28px rgba(15,23,42,.22); padding: 8px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.qmf-combo-q { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.qmf-combo-list { overflow-y: auto; }
+.qmf-combo-g { padding: 5px 8px 3px; font-size: 10.5px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: .03em; }
+.qmf-combo-i { padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+.qmf-combo-i:hover, .qmf-combo-i.hi { background: #eaf2ff; }
+.qmf-combo-i.cur { font-weight: 700; }
+.qmf-combo-i.dis { color: #94a3b8; cursor: default; }
+.qmf-map select { cursor: pointer; }
+
+.qmf-tog { border: 0; background: none; cursor: pointer; padding: 0 4px; color: #64748b; font-size: 12px; }
+.qmf-objn { padding-left: 28px !important; color: #475569; }
+.qmf-obj td { background: #f8fafc !important; font-size: 11.5px; }
+.qmf-chk { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: #475569; }
+.qmf-ask { position: fixed; inset: 0; z-index: 3400; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; }
+.qmf-ask-box { background: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.35); padding: 16px 18px; max-width: 460px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.qmf-ask-b { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.qmf-ask-b button { font: inherit; font-size: 12px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; }
+.qmf-ask-b button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.na-post { display: inline-block; font-size: 10px; font-weight: 700; padding: 0 5px; margin-left: 3px; border-radius: 999px; background: #eaf2ff; color: #1d4ed8; border: 1px solid #bcd2fb; }
+.na-posts-sum { margin: 2px 0 6px; font-size: 11.5px; }
+.qmf-sync { margin-left: auto; font-size: 11px; } .qmf-sync.bad { color: #b42318; }
+
+/* Knapparna Aktivitet och Ej kopplade sitter direkt efter pennan i färgförklaringen */
+.gantt-legend .gantt-legend-actions { display: inline-flex; gap: 6px; align-items: center; margin-left: 2px; }
+.gantt-legend-row { display: block; }
+.gantt-legend .gantt-add-inline { height: 20px; font-size: 11px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; }
+#ganttUncoupledBtn[aria-pressed="true"], #ganttOwnBtn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+#ganttUncoupledBtn b { font-weight: 600; opacity: .8; }
+.phb-pick { max-height: 240px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 6px; background: #fafbfc; }
+.phb-pg { margin-bottom: 4px; }
+.phb-pa { padding-left: 16px; font-size: 12px; }
+.phb-pa span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phb-pa small, .phb-pg small { color: #6b7280; }
+.phb-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+.phb-h.phb-fold { cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between; }
+.phb-h.phb-fold::after { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); transition: transform .15s; margin-right: 4px; opacity: .6; }
+.phb-closed > .phb-h.phb-fold::after { transform: rotate(-45deg); }
+.phb-closed > :not(.phb-h) { display: none !important; }
+.phb-closed { padding-bottom: 4px; }
+.phb-zoom { display: inline-flex; gap: 2px; margin-right: 8px; }
+.phb-zoom button { min-width: 30px; padding: 4px 8px; }
+.phb-zoom #phbZv { min-width: 56px; }
+.phb-note { font-size: 11px; color: #6b7280; line-height: 1.35; }
+.new-act-pop .na-objs-list { max-height: 260px; }
+.new-act-pop .na-objs-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.new-act-pop .na-objs-btns { display: inline-flex; gap: 4px; }
+.new-act-pop .na-objs-btns button { font-size: 11.5px; padding: 2px 8px; }
+.new-act-pop .na-objs-btns .danger:not(:disabled) { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+.new-act-pop .na-obj-c { flex: none; width: 14px !important; height: 14px; min-width: 0; padding: 0; margin: 0 6px 0 0; }
+.new-act-pop .na-obj.chk { background: #fef9c3; outline: 1px solid #fde047; }
+.new-act-pop .na-obj-name { flex: 1; min-width: 0; }
+/* Kommandorad / logg (console.js) */
+#dconBtn { position: fixed; left: 8px; bottom: 8px; z-index: 9990; width: 30px; height: 24px; padding: 0; border-radius: 6px; border: 1px solid #94a3b8; background: rgba(15,23,42,.82); color: #e2e8f0; font: 700 12px/1 ui-monospace, Consolas, monospace; cursor: pointer; opacity: .55; }
+#dconBtn:hover { opacity: 1; }
+#dcon { position: fixed; left: 0; right: 0; bottom: 0; z-index: 9991; height: min(300px, 45vh); display: flex; flex-direction: column; background: #0f172a; color: #e2e8f0; border-top: 2px solid #38bdf8; font: 12px/1.45 ui-monospace, Consolas, "Courier New", monospace; box-shadow: 0 -6px 24px rgba(0,0,0,.35); }
+#dcon.hidden { display: none !important; }
+#dcon .dcon-bar { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: #1e293b; }
+#dcon .dcon-sp { flex: 1; }
+#dcon .dcon-bar button { font: 11px/1 inherit; padding: 3px 8px; border-radius: 4px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; cursor: pointer; }
+#dcon .dcon-bar button:hover { background: #334155; }
+#dcon .dcon-list { flex: 1; overflow: auto; padding: 4px 10px; white-space: pre; user-select: text; }
+#dcon .dcon-l.slow { color: #fbbf24; } #dcon .dcon-l.vslow { color: #fb923c; font-weight: 700; } #dcon .dcon-l.err { color: #f87171; } #dcon .dcon-l.cmd { color: #7dd3fc; }
+#dcon .dcon-in { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-top: 1px solid #334155; }
+#dcon .dcon-in input { flex: 1; background: transparent; border: 0; outline: 0; color: #f8fafc; font: inherit; }
+#dconBtn { bottom: 8px; }
+/* Färger & visning: växlar i stället för piller (Victor 2026-10-16: "mer professionellt") */
+.gantt-time-menu .gtm-opts { display: flex; flex-direction: column; gap: 1px; margin: 0 -6px; }
+.gtm-opt { position: relative; display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 7px; cursor: pointer; font-size: 12.5px; color: #1e293b; user-select: none; }
+.gtm-opt:hover { background: #f1f5f9; }
+.gtm-opt input[type="checkbox"], .gtm-opt-in input[type="checkbox"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+.gtm-sw { flex: none; position: relative; width: 30px; height: 17px; border-radius: 999px; background: #cbd5e1; transition: background .15s; }
+.gtm-sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.35); transition: transform .15s; }
+.gtm-opt input:checked + .gtm-sw { background: #2563eb; }
+.gtm-opt input:checked + .gtm-sw::after { transform: translateX(13px); }
+.gtm-opt input:focus-visible + .gtm-sw { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.gtm-t { flex: 1; min-width: 0; }
+.gtm-opt-split { padding: 0; cursor: default; }
+.gtm-opt-split .gtm-opt-in { position: relative; flex: 1; display: flex; align-items: center; gap: 10px; padding: 6px 8px; cursor: pointer; border-radius: 7px; }
+.gtm-gear { flex: none; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: #64748b; border-radius: 6px; cursor: pointer; margin-right: 4px; padding: 0; }
+.gtm-gear:hover { background: #e2e8f0; color: #0f172a; }
+.gantt-time-menu .gtm-title + .gtm-opts { margin-top: -2px; }
+.gantt-time-menu input[type="range"]:disabled { opacity: .35; }
+.gantt-time-menu .gtm-gear { border: 0; background: transparent; box-shadow: none; padding: 0; min-width: 26px; height: 26px; }
+.gantt-time-menu .gtm-gear:hover { background: #e2e8f0; }
+.gantt-time-menu { min-width: 280px; }
+.new-act-pop .na-follow .nf-opts { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 4px; font-size: 12px; }
+.new-act-pop .na-follow .nf-opts label { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
+.new-act-pop .na-follow .nf-opts input[type="number"] { width: 56px; }
+.new-act-pop .na-follow .nf-mode { flex: 1; min-width: 180px; }

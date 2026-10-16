@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Guide – 4D-dashboard</title>
+<style>
+  :root { --ncc: #1f3b73; --accent: #0b5fff; --text: #1f2937; --muted: #6b7280; --border: #e5e7eb; --bg: #f6f7f9; --tip: #ecfdf5; --tipb: #a7f3d0; --warn: #fff7ed; --warnb: #fed7aa; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.55 "Segoe UI", system-ui, -apple-system, Arial, sans-serif; color: var(--text); background: var(--bg); }
+  header { background: var(--ncc); color: #fff; padding: 18px 20px 0; }
+  header .top { max-width: 860px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+  .mark { font-weight: 800; letter-spacing: .02em; background: #fff; color: var(--ncc); border-radius: 4px; padding: 2px 7px; font-size: 13px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 2px 0 0; opacity: .85; font-size: 13px; }
+  nav { max-width: 860px; margin: 14px auto 0; display: flex; gap: 4px; overflow-x: auto; }
+  nav a { color: #dbe4f5; text-decoration: none; padding: 9px 14px; border-radius: 8px 8px 0 0; white-space: nowrap; font-weight: 600; font-size: 14px; }
+  nav a:hover { color: #fff; background: rgba(255,255,255,.08); }
+  nav a.on { background: var(--bg); color: var(--ncc); }
+  main { max-width: 860px; margin: 0 auto; padding: 22px 20px 60px; }
+  section { display: none; }
+  section.on { display: block; }
+  h2 { margin: 0 0 4px; font-size: 22px; color: var(--ncc); }
+  .lead { margin: 0 0 18px; color: var(--muted); }
+  h3 { margin: 22px 0 8px; font-size: 16px; }
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0; }
+  ol.steps > li { counter-increment: s; position: relative; padding: 10px 14px 10px 50px; margin-bottom: 8px; background: #fff; border: 1px solid var(--border); border-radius: 10px; }
+  ol.steps > li::before { content: counter(s); position: absolute; left: 14px; top: 10px; width: 24px; height: 24px; border-radius: 50%; background: var(--ncc); color: #fff; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+  ol.steps > li b:first-child { display: block; }
+  ul { margin: 6px 0; padding-left: 20px; }
+  .tip, .warn { border-radius: 10px; padding: 10px 14px; margin: 14px 0; border: 1px solid; }
+  .tip { background: var(--tip); border-color: var(--tipb); }
+  .warn { background: var(--warn); border-color: var(--warnb); }
+  .tip::before { content: "💡 Tips "; font-weight: 700; }
+  .warn::before { content: "⚠ Bra att veta "; font-weight: 700; }
+  kbd, .btn { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; font: 600 12.5px/1.3 "Segoe UI", system-ui, sans-serif; padding: 1px 7px; border: 1px solid #cbd5e1; border-bottom-width: 2px; border-radius: 5px; background: #fff; color: #111827; white-space: nowrap; }
+  .btn { border-color: #c7d2fe; background: #eef2ff; color: #1e3a8a; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 14px; }
+  td, th { padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+  th { background: #f8fafc; font-weight: 600; width: 34%; }
+  tr:last-child td, tr:last-child th { border-bottom: none; }
+  .dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #9ca3af; vertical-align: -1px; margin-right: 4px; }
+  .pager { display: flex; justify-content: space-between; margin-top: 26px; gap: 10px; }
+  .pager a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 14px; text-decoration: none; color: inherit; display: block; }
+  .card:hover { border-color: var(--accent); box-shadow: 0 2px 10px rgba(11,95,255,.08); }
+  .card b { display: block; font-size: 15px; color: var(--ncc); margin-bottom: 2px; }
+  .card span { color: var(--muted); font-size: 13.5px; }
+  @media (max-width: 560px) { body { font-size: 14px; } th { width: 42%; } ol.steps > li { padding-left: 44px; } }
+  @media print {
+    body { background: #fff; } header nav, .pager { display: none; } header { background: none; color: var(--text); padding: 0; }
+    .mark { border: 1px solid var(--ncc); }
+    section { display: block !important; page-break-after: always; } section#s-start { display: none !important; }
+    main { padding: 10px 0; } ol.steps > li { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="top"><span class="mark">NCC</span><div><h1>4D-dashboard – guide</h1><p>Alla funktioner – en sida per område.</p></div></div>
+  <nav id="nav">
+    <a href="#start">Start</a>
+    <a href="#gantt">1. Gantt</a>
+    <a href="#tid">2. 3D &amp; tidslinje</a>
+    <a href="#redigera">3. Redigera &amp; Powerproject</a>
+    <a href="#video">4. Video editor</a>
+    <a href="#mangd">5. Mängdavtagning</a>
+    <a href="#ovrigt">6. Övriga block</a>
+    <a href="#alla">7. Alla funktioner</a>
+  </nav>
+</header>
+<main>
+
+<section id="s-start">
+  <h2>Kom igång</h2>
+  <p class="lead">4D-dashboarden är ett tillägg i Trimble Connect. Den visar nyckeltal och Gantt-schema för produktionsplaneringen och styr 3D-modellen i TC.</p>
+  <div class="home-grid">
+    <a class="card" href="#gantt"><b>1. Gantt</b><span>Staplar eller tavla, filter, sök, baseline, pilar, helskärm och utskrift.</span></a>
+    <a class="card" href="#tid"><b>2. 3D &amp; tidslinje</b><span>Alla · Kopplade · Okopplade · ⏱ Tid med dragstreck, pulsering och bubblor.</span></a>
+    <a class="card" href="#redigera"><b>3. Redigera &amp; Powerproject</b><span>Ändra aktiviteter, Temporär/Rivning, export till Powerproject.</span></a>
+    <a class="card" href="#video"><b>4. Video editor</b><span>Gör en film av tidplanen på TC-modellen.</span></a>
+    <a class="card" href="#mangd"><b>5. Mängdavtagning</b><span>Betong, form m.m. ur modellen – jämför mot mängdförteckningen.</span></a>
+    <a class="card" href="#ovrigt"><b>6. Övriga block</b><span>Milstolpar, bemanning, leveranser, säkerhet, kvalitet, väder, resurser.</span></a>
+  </div>
+  <h3>Första gången</h3>
+  <ol class="steps">
+    <li><b>Öppna dashboarden i Trimble Connect</b>Projektet → Tillägg → 4D-dashboard.</li>
+    <li><b>GitHub-token</b>⚙ → klistra in token (samma som i 4D-planering) → Spara.</li>
+    <li><b>Välj planering</b>Överst: <i>Excel-import</i> eller <i>Powerproject</i>.</li>
+  </ol>
+  <h3>Status och färger</h3>
+  <table>
+    <tr><th>Planerad</th><td>Före planerad start (även om aktiviteten har framdrift idag – för tidigare datum).</td></tr>
+    <tr><th>Pågående</th><td>Minst 1 % framdrift och slutdatum har inte passerat.</td></tr>
+    <tr><th>Försenad</th><td>Startdatum passerat utan 1 % framdrift – eller slutdatum passerat utan att vara klar.</td></tr>
+    <tr><th>Klar</th><td>100 %, klarmarkerad eller verkligt avslut.</td></tr>
+  </table>
+  <div class="tip">Samma fasregler gäller i 4D-planering, i 3D-editorn och i dashboarden. Färgerna ändrar du i tidsraden (⏱ Tid) eller i ⚙.</div>
+</section>
+
+<section id="s-gantt">
+  <h2>1. Gantt-schemat</h2>
+  <ul>
+    <li><b>Vy</b>: <i>Staplar</i> eller <i>Tavla</i> (post-it-lappar per vecka). <b>Period</b>: 2 v / 4 v / 3 mån / Allt eller eget intervall. <b>Gruppera</b> på område/entreprenör/aktivitet; <b>Färga efter</b>.</li>
+    <li><b>Filter och sök</b>: område, aktivitet, entreprenör överst; 🔍 söker (flera ord = alla ska finnas). Dölj områden/entreprenörer i raden över schemat.</li>
+    <li><b>Baseline</b>: grå stapel/linje under den planerade med +/− dagar; välj och jämför namngivna baselines. <b>Verkligt</b>: streckad stapel för verklig start/slut.</li>
+    <li><b>Pilar</b> visar beroenden (röd streckad = startar före föregångaren är klar). Hovra för närmaste före/efter.</li>
+    <li><b>Modell ↔ schema</b>: klick på en kopplad aktivitet markerar och zoomar i TC; markerar du objekt i modellen ramas aktiviteterna in i schemat.</li>
+    <li><b>Ctrl-klick</b> på flera aktiviteter markerar dem; raden <i>Visa i 3D</i> / <i>Bara dessa</i> / ✕ (Esc rensar).</li>
+    <li><b>Uppdatera</b> (snurrande ikon) läser om data. <b>Helskärm</b> (⛶) och <b>☰ Dölj knappar</b> (med en tidslinje-ikon som visar dragaren även när knapparna är dolda).</li>
+    <li><b>🖨 Skriv ut</b>: A4/A3 och riktning. <b>Excel/Kalender/PDF</b> uppe till höger i sidhuvudet.</li>
+  </ul>
+  <div class="pager"><a href="#start">← Start</a><a href="#tid">2. 3D &amp; tidslinje →</a></div>
+</section>
+
+<section id="s-tid">
+  <h2>2. 3D-lägen och tidslinjen</h2>
+  <p class="lead">Raden <b>3D</b> ovanför Gantten styr vad som visas i TC:s modell. Bara ett läge åt gången.</p>
+  <table>
+    <tr><th>Alla</th><td>Modellen rörs inte.</td></tr>
+    <tr><th>Kopplade</th><td>Bara det som är kopplat till aktiviteterna som visas (följer sök och filter).</td></tr>
+    <tr><th>Okopplade</th><td>Det kopplade döljs – bara det okopplade visas.</td></tr>
+    <tr><th>⏱ Tid</th><td>Läget ett visst datum. Det som inte startat är släckt (om inte <i>Kommande</i> är ikryssad); pågående, försenat och klart får egna färger.</td></tr>
+  </table>
+  <h3>Tidsraden</h3>
+  <ul>
+    <li><b>Dragstrecket</b> ligger över Gantten – dra det, eller använd reglaget, datumet, <i>Idag</i> och ▶. <b>Från/Till/Auto</b> sätter spannet. 3D följer i realtid.</li>
+    <li><b>Färger</b> och <b>opacitet per status</b> (pågående, försenad, kommande; 0 = osynligt). <b>Klart</b>-reglaget styr färdigt arbete; en aktivitet kan ha <i>egen färg efter slut</i>.</li>
+    <li><b>Pulsera pågående</b> (▾: färger, hastighet, stil, styrka) och <b>Markera pågående</b> (TC:s egen markering).</li>
+    <li>Summeringen visar <i>N klara · N pågår · N försenade · N kvar</i> och <i>N i 3D</i>.</li>
+    <li><b>Läs in modeller</b> läser in alla modeller aktiviteterna är kopplade till.</li>
+  </ul>
+  <h3>Bubblor</h3>
+  <p><b>💬 Bubblor</b> sätter en info-bubbla (namn, datum, framdrift, område, aktivitet) vid objekten i TC. Standard: markerade, annars pågående. TC ritar texten utan ruta, så raderna är korta och färgade efter läge; en linje går ner till objektet.</p>
+  <div class="warn">Dashboardens Gantt har företräde i TC:s 3D-vy. Medan ett 3D-läge är på skriver 4D-planering inget automatiskt till modellen, och 4D-planeringens reglage flyttar dashboardens datum i Tid-läget.</div>
+  <div class="pager"><a href="#gantt">← 1. Gantt</a><a href="#redigera">3. Redigera →</a></div>
+</section>
+
+<section id="s-redigera">
+  <h2>3. Redigera och Powerproject</h2>
+  <ul>
+    <li><b>Redigerbar</b>: dra en stapel/lapp för att flytta, dra kanten för start/slut. Beroende aktiviteter följer med (Shift = bara den). Allt sparas direkt och går att ångra (Ctrl+Z).</li>
+    <li><b>Dubbelklick</b> öppnar redigeringen: namn, område, entreprenör, datum, framdrift, <i>Väntar på</i> med glapp och <b>Avancerat</b>: resurser, <b>Temporär</b>, <b>Rivning</b> och <b>Egen färg efter slut</b>. <b>Objekt i aktiviteten</b>: klick markerar och zoomar i TC, ✕ tar bort ett objekt (efter fråga).</li>
+    <li><b>＋ Aktivitet</b> / högerklick → <i>Ny aktivitet efter den här</i>: egen aktivitet (märks <i>Egen</i>) som importen inte rör.</li>
+    <li><b>Högerklick</b>: beroenden, <i>Väntar på…</i>/<i>Följs av…</i>, 3D-koppling.</li>
+    <li><b>Exportera till Powerproject</b> (⇪): välj egna, markerade, visade eller alla aktiviteter → MS Project-XML. Välj en <b>mall</b> exporterad från Powerproject (annars godtar Powerproject inte filen). <i>Ta med föregångare</i> låter beroenden följa med; resurser är valfria.</li>
+  </ul>
+  <div class="pager"><a href="#tid">← 2. 3D &amp; tidslinje</a><a href="#video">4. Video editor →</a></div>
+</section>
+
+<section id="s-video">
+  <h2>4. Video editor</h2>
+  <p class="lead">Blocket under Resurskurvan gör en film av tidplanen på TC-modellen.</p>
+  <ol class="steps">
+    <li><b>Kameravyer</b>Flytta kameran i TC, välj datum och tryck <i>＋ Lägg till vy från kameran</i>. Kameran glider mellan vyerna.</li>
+    <li><b>Film</b>Från/Till, Längd, Bilder/s, <b>Upplösning</b> (upp till 4K) och <b>Kvalitet</b>. Grafik: datumskylt, Pågår nu, förloppsmätare, milstolpar, tidslinje.</li>
+    <li><b>Provbild</b>Reglaget <i>Bild</i> (och ◀ ▶) hoppar TC-vyn till bildens kamera och datum (<i>Visa i TC</i>). <i>Provbild på vald bild</i> eller <i>på varje vy</i> – samlas, kan förstoras och sparas som PNG.</li>
+    <li><b>Förhandsvisa</b> kör kamera och datum utan att spela in. <b>Rendera video</b> tar en bild i taget (tar minuter) och sparar videon. Väntetid minst 100 ms; bäst resultat med en stor TC-vy.</li>
+  </ol>
+  <div class="pager"><a href="#redigera">← 3. Redigera</a><a href="#mangd">5. Mängdavtagning →</a></div>
+</section>
+
+<section id="s-mangd">
+  <h2>5. Mängdavtagning</h2>
+  <p class="lead">Mängder ur modellen för jämförelse mot mängdförteckningen. Inget sparas i data – resultatet kan exporteras som CSV.</p>
+  <ol class="steps">
+    <li><b>Urval</b>Det som visas i Gantten, hela planen eller markering i TC. Läge: <i>Klara</i> vid datum (Ganttens regel) eller alla. Tryck <i>Läs mängder</i>.</li>
+    <li><b>Mängdslag</b>Betong (volym m³), Form (yta m²), Längd (m) eller Armering (kg). Mängden läses ur TC:s egenskaper, t.ex. <i>Calculated Geometry Values → Volume</i>. Enheten (m³/mm³) kontrolleras mot objektens mått.</li>
+    <li><b>Summera</b>Rader efter valfri egenskap (t.ex. <i>Product Object Type</i>), område, aktivitet eller entreprenör; kolumner efter valfri egenskap; textfilter (t.ex. Concrete). Klick på en rad markerar objekten i TC. <i>Exportera CSV</i>.</li>
+    <li><b>Jämför mot mängdförteckningen</b>Välj Excel-filen (läses bara i webbläsaren). Koppla <i>typ → post</i> (förslag: Basic Wall → ESE.21 m.m.) och <i>område → byggnad</i> (förslag efter namn och områdeskod). Tabellen visar Kontrakt, Prognos, Modell klar, Modell totalt, Klart av prognos och Kvar per post och byggnad.</li>
+  </ol>
+  <div class="tip">"Modell totalt" är objekten som är kopplade i planen – inte hela modellen. Kopplingarna sparas i webbläsaren.</div>
+  <div class="pager"><a href="#video">← 4. Video editor</a><a href="#ovrigt">6. Övriga block →</a></div>
+</section>
+
+<section id="s-ovrigt">
+  <h2>6. Övriga block</h2>
+  <ul>
+    <li><b>Översikt</b> (KPI), <b>Statusfördelning</b>, <b>Framdrift per område/entreprenör</b>, <b>Kommande veckor</b>, <b>Försenade objekt</b>, <b>Framdrift över tid (S-kurva)</b>, <b>Cykeltidsanalys</b>.</li>
+    <li><b>Resurskurva</b>: personer eller timmar per vecka, per resurs; följer Ganttens urval.</li>
+    <li><b>Milstolpar</b>, <b>Bemanning</b>, <b>Leveransplan</b>, <b>Säkerhet</b>, <b>Kvalitet &amp; besiktningar</b>, <b>Hinder</b> – lägg till med formulären i respektive block.</li>
+    <li><b>Väder</b> (Open-Meteo, koordinater i ⚙) och <b>Senaste kommentarer</b>.</li>
+    <li>Block kan minimeras (⊟). Excel, Kalender (.ics) och PDF exporteras överst.</li>
+  </ul>
+  <div class="pager"><a href="#mangd">← 5. Mängdavtagning</a><a href="#alla">7. Alla funktioner →</a></div>
+</section>
+
+<section id="s-alla">
+  <h2>7. Alla funktioner – översikt</h2>
+  <table>
+    <tr><th>Gantt</th><td>Staplar/tavla, period, gruppera, färga, filter, sök, baseline, verkligt, pilar, helskärm, utskrift, Uppdatera, Ctrl-markering.</td></tr>
+    <tr><th>3D i TC</th><td>Alla · Kopplade · Okopplade · ⏱ Tid; dragstreck; färger och opacitet per status; Klart-opacitet; Kommande; pulsera; markera pågående; Läs in modeller; bubblor.</td></tr>
+    <tr><th>Redigera</th><td>Dra/dubbelklicka, beroenden och glapp, ny aktivitet, Temporär/Rivning/egen färg, objekt i aktiviteten, resurser.</td></tr>
+    <tr><th>Powerproject</th><td>Import i 4D-planering; export av aktiviteter (MS Project-XML med mall).</td></tr>
+    <tr><th>Video editor</th><td>Kameravyer på datum, provbilder, förhandsvisning, rendering (upp till 4K) med grafik.</td></tr>
+    <tr><th>Mängdavtagning</th><td>Betong/form/längd/vikt ur modellen, summering, jämförelse mot mängdförteckningen, CSV.</td></tr>
+    <tr><th>Övrigt</th><td>Resurskurva, milstolpar, bemanning, leveranser, säkerhet, kvalitet, hinder, väder, S-kurva, cykeltid, export (Excel/ICS/PDF).</td></tr>
+    <tr><th>Samspel</th><td>Dashboardens Gantt har företräde i TC:s 3D-vy; 4D-planeringens reglage flyttar dashboardens datum.</td></tr>
+  </table>
+  <div class="pager"><a href="#ovrigt">← 6. Övriga block</a><a href="#start">Start ↑</a></div>
+</section>
+
+</main>
+<script>
+  const ids = ["start", "gantt", "tid", "redigera", "video", "mangd", "ovrigt", "alla"];
+  function show() {
+    const id = ids.includes(location.hash.slice(1)) ? location.hash.slice(1) : "start";
+    ids.forEach(s => document.getElementById("s-" + s).classList.toggle("on", s === id));
+    document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", a.getAttribute("href") === "#" + id));
+    window.scrollTo(0, 0);
+    const on = document.querySelector("#nav a.on"), nav = document.getElementById("nav");
+    if (on) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
+  }
+  window.addEventListener("hashchange", show);
+  show();
+</script>
+</body>
+</html>
