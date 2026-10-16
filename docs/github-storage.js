@@ -53,6 +53,40 @@ function ghUtf8ToB64(str) {
   return btoa(binary);
 }
 
+/* Stora datafiler lagras gzippade (Victor 2026-10-16: "jag vill kunna spara fler kopplingar"). JSON komprimeras ~10 gånger, så taket för
+   hur mycket som ryms i en fil (GitHub vägrar 422 över ~50 MB per anrop) höjs lika mycket och hämtningen blir mycket snabbare. Under
+   gränsen sparas filen som vanlig JSON som förut. Läsningen känner igen gzip på de första byten, så båda sorterna fungerar överallt.
+   Före skrivning kontrolleras att den komprimerade filen packas upp till exakt samma text – annars sparas den okomprimerad. */
+const GH_GZIP_MIN = 8e6;
+async function ghStreamBytes(bytes, Ctor, fmt) {
+  const st = new Blob([bytes]).stream().pipeThrough(new Ctor(fmt));
+  return new Uint8Array(await new Response(st).arrayBuffer());
+}
+function ghBytesToB64(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return btoa(binary);
+}
+async function ghEncodeJSON(obj) {
+  const text = JSON.stringify(obj);
+  if (text.length < GH_GZIP_MIN || typeof CompressionStream === "undefined" || typeof DecompressionStream === "undefined") return ghUtf8ToB64(text);
+  try {
+    const raw = new TextEncoder().encode(text), gz = await ghStreamBytes(raw, CompressionStream, "gzip");
+    const back = new TextDecoder("utf-8").decode(await ghStreamBytes(gz, DecompressionStream, "gzip"));
+    if (back !== text) throw new Error("gzip-kontroll misslyckades");
+    return ghBytesToB64(gz);
+  } catch (e) { console.warn("Kunde inte gzippa – sparar okomprimerat", e); return ghUtf8ToB64(text); }
+}
+async function ghDecodeRaw(res) {
+  const buf = new Uint8Array(await res.arrayBuffer());
+  if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
+    if (typeof DecompressionStream === "undefined") throw new Error("Webbläsaren kan inte packa upp gzip (DecompressionStream saknas)");
+    return new TextDecoder("utf-8").decode(await ghStreamBytes(buf, DecompressionStream, "gzip"));
+  }
+  return new TextDecoder("utf-8").decode(buf);
+}
+
 function ghB64ToUtf8(b64) {
   const binary = atob(b64.replace(/\n/g, ""));
   const bytes = new Uint8Array(binary.length); // enkel slinga: Uint8Array.from(sträng, fn) var flera gånger långsammare på tiotals MB
@@ -116,7 +150,7 @@ async function ghGetFile(token, path) {
       cache: "no-store",
     });
     if (!raw.ok) throw new Error(`GitHub GET (raw) ${path} misslyckades: ${raw.status}`);
-    text = await raw.text();
+    text = await ghDecodeRaw(raw);
   }
   const result = { data: text.trim() ? JSON.parse(text) : null, sha: json.sha };
   ghFileCache.set(path, result);
@@ -362,7 +396,7 @@ async function ghWriteJSONAttempt(token, path, mutateFn, message, maxRetries, pr
       // syfte - filen är inte tänkt att läsas för hand. Bonus: eftersom
       // filen sedan LAGRAS kompakt blir även nästa sparnings inledande
       // läsning av filen mindre, så vinsten byggs på sig själv över tid.
-      const put = await ghPutFile(token, path, ghUtf8ToB64(JSON.stringify(next)), sha, message);
+      const put = await ghPutFile(token, path, await ghEncodeJSON(next), sha, message);
       if (put && put.content && put.content.sha) ghFileCache.set(path, { data: next, sha: put.content.sha });
       else ghFileCache.delete(path);
       return next;
