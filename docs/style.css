@@ -2710,3 +2710,7 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .gantt-time-menu .gtm-gear { border: 0; background: transparent; box-shadow: none; padding: 0; min-width: 26px; height: 26px; }
 .gantt-time-menu .gtm-gear:hover { background: #e2e8f0; }
 .gantt-time-menu { min-width: 280px; }
+.new-act-pop .na-follow .nf-opts { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 4px; font-size: 12px; }
+.new-act-pop .na-follow .nf-opts label { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
+.new-act-pop .na-follow .nf-opts input[type="number"] { width: 56px; }
+.new-act-pop .na-follow .nf-mode { flex: 1; min-width: 180px; }

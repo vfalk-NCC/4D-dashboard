@@ -982,6 +982,7 @@ async function refreshAll() {
     fetchWeather()
   ]);
   populateFilterOptions();
+  try { await Promise.race([applyFollowLinks(), new Promise(r => setTimeout(r, 4000))]); } catch (e) { console.warn("Följa aktivitet", e); }
   renderAll();
   updateLastUpdated();
 }
@@ -1136,8 +1137,15 @@ function fromRow(row) {
     doneColor: /^#[0-9a-f]{6}$/i.test(String(row.done_color || "")) ? row.done_color : null,
     doneOpacity: Number.isFinite(Number(row.done_opacity)) && row.done_opacity !== null && row.done_opacity !== "" ? Math.max(0, Math.min(100, Number(row.done_opacity))) : null,
     // Rivning (Victor 2026-10-13): syns även före start, försvinner efter slut.
-    demolition: row.demolition === true
+    demolition: row.demolition === true,
+    // Följer en annan aktivitet (Victor 2026-10-16, t.ex. en egen mobilkran som ska följa en Powerproject-aktivitet även efter ny import).
+    follows: normFollow(row.follows)
   };
+}
+function normFollow(f) {
+  if (!f || typeof f !== "object" || Array.isArray(f) || (!f.id && !f.key)) return null;
+  const n = v => (Number.isFinite(Number(v)) && v !== "" && v !== null ? Math.round(Number(v)) : 0);
+  return { id: f.id ? String(f.id) : null, key: f.key ? String(f.key) : null, mode: f.mode === "start" || f.mode === "end" ? f.mode : "span", d0: n(f.d0), d1: n(f.d1) };
 }
 
 /* En aktivitet med flera 3D-objekt lagras som en rad per objekt (med egna
@@ -2496,7 +2504,71 @@ function planSize(plan) { return plan.items.size + plan.acts.size + (plan.deps ?
 /* Glappet (dagar) på kopplingen pred -> succ, eller undefined om inget glapp är satt. */
 const lagLabel = lag => `${lag > 0 ? "+" : lag < 0 ? "−" : "±"}${Math.abs(lag)} d`;
 function lagOf(succ, predId) { const v = succ && succ.depLags ? succ.depLags[String(predId)] : undefined; return Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : undefined; }
-const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary", bubbleOff: "bubble_off", demolition: "demolition", doneColor: "done_color", doneOpacity: "done_opacity" };
+/* ----- Följ en annan aktivitet (Victor 2026-10-16) --------------------------------------------------------
+   En egen aktivitet (t.ex. "Mobilkran") kan följa en annan, typiskt en Powerproject-aktivitet: samma period, samma start eller samma slut
+   (med förskjutning i dagar). Länken pekar på aktivitetens id och dess source_key, så den överlever en ny Powerproject-import (raderna behåller
+   sina id:n). Datumen läggs om när data hämtas, när aktiviteten ändras i schemat och när importen är klar. */
+function followSpan(f, selfId) {
+  const own = String(selfId);
+  let members = null;
+  const byId = f.id ? items.find(x => String(x.id) === f.id) : null;
+  if (byId && String(byId.id) !== own) members = byId.activityKey ? items.filter(x => x.activityKey === byId.activityKey) : [byId];
+  else if (f.key) members = items.filter(x => x.activityKey === "s:" + f.key);
+  members = (members || []).filter(x => String(x.id) !== own && x.startDate && x.endDate);
+  if (!members.length) return null;
+  return { start: members.map(x => x.startDate).sort()[0], end: members.map(x => x.endDate).sort().pop() };
+}
+function followDates(f, t, dur) {
+  let st, en;
+  if (f.mode === "end") { en = addDaysIso(t.end, f.d1); st = addDaysIso(en, -dur); }
+  else if (f.mode === "start") { st = addDaysIso(t.start, f.d0); en = addDaysIso(st, dur); }
+  else { st = addDaysIso(t.start, f.d0); en = addDaysIso(t.end, f.d1); if (en < st) en = st; }
+  return { startDate: st, endDate: en };
+}
+let followWriting = false;
+async function applyFollowLinks() {
+  const changed = new Map();
+  for (let pass = 0; pass < 4; pass++) {
+    let any = false;
+    items.forEach(it => {
+      if (!it.follows || !it.startDate || !it.endDate) return;
+      const t = followSpan(it.follows, it.id); if (!t) return;
+      const n = followDates(it.follows, t, daysBetweenIso(it.startDate, it.endDate));
+      if (n.startDate !== it.startDate || n.endDate !== it.endDate) {
+        it.startDate = n.startDate; it.endDate = n.endDate; changed.set(String(it.id), n); any = true;
+        it.status = liveStatusOfRow({ status: it.storedStatus, start_date: it.startDate, end_date: it.endDate, actual_start_date: it.actualStartDate, actual_end_date: it.actualEndDate, progress: it.progress });
+      }
+    });
+    if (!any) break;
+  }
+  if (!changed.size) return 0;
+  if (typeof isBackendConfigured === "function" && isBackendConfigured() && !followWriting) {
+    followWriting = true;
+    try {
+      const now = new Date().toISOString();
+      await ghWriteJSON(settings.githubToken, tablePath("plan_items"), arr => arr.map(r => { const n = changed.get(String(r.id)); return n ? { ...r, start_date: n.startDate, end_date: n.endDate, updated_at: now } : r; }), `Aktiviteter följde med sin aktivitet (${changed.size} st)`);
+      modelToast(`${changed.size} aktivitet${changed.size > 1 ? "er" : ""} följde med den aktivitet de är kopplade till`);
+    } catch (e) { console.warn("Kunde inte spara följda aktiviteter (försöker igen vid nästa hämtning)", e); }
+    finally { followWriting = false; }
+  }
+  if (typeof ganttTimeReset === "function") ganttTimeReset();
+  renderAll();
+  return changed.size;
+}
+/* Flyttar man själv en aktivitet som följer en annan behålls läget: förskjutningen räknas om från de nya datumen. */
+function followKeepOffsets(plan) {
+  plan.fields = plan.fields || new Map();
+  plan.items.forEach((d, id) => {
+    const it = items.find(x => String(x.id) === String(id)); if (!it || !it.follows) return;
+    const cur = plan.fields.get(id); if (cur && "follows" in cur) return;
+    const t = followSpan(it.follows, it.id); if (!t) return;
+    const nf = { ...it.follows };
+    if (nf.mode !== "end") nf.d0 = daysBetweenIso(t.start, d.startDate);
+    if (nf.mode !== "start") nf.d1 = daysBetweenIso(t.end, d.endDate);
+    if (nf.d0 !== it.follows.d0 || nf.d1 !== it.follows.d1) plan.fields.set(id, { ...(cur || {}), follows: nf });
+  });
+}
+const FIELD_COLS = { objectName: "object_name", area: "area", activity: "activity", contractor: "contractor", progress: "progress", resources: "resources", temporary: "temporary", bubbleOff: "bubble_off", demolition: "demolition", doneColor: "done_color", doneOpacity: "done_opacity", follows: "follows" };
 function curItemDates(it, plan) { return plan.items.get(it.id) || { startDate: it.startDate, endDate: it.endDate }; }
 function curActDates(a, plan) { return plan.acts.get(a.id) || { start_date: a.start_date, end_date: a.end_date }; }
 
@@ -2738,6 +2810,7 @@ function setScheduleStatus(text) {
 
 async function applySchedulePlan(plan, label, opts = {}) {
   if (!planSize(plan)) return false;
+  if (opts.record !== false) followKeepOffsets(plan);
   const before = opts.before || planBefore(plan);
   applyPlanLocally(plan);
   if (opts.record !== false) {
@@ -2752,6 +2825,7 @@ async function applySchedulePlan(plan, label, opts = {}) {
     await writePlan(plan);
     setScheduleStatus(`✓ ${label}`);
     renderStability();
+    applyFollowLinks(); // de som följer en flyttad aktivitet följer med
     return true;
   } catch (e) {
     console.error("Kunde inte spara omplaneringen", e);
@@ -3504,6 +3578,7 @@ function ganttTooltipHtmlForItem(it, depById) {
     const succs = uniq(items.filter(x => !own.has(String(x.id)) && (x.dependsOn || []).some(d => own.has(String(d)))))
       .sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")));
     const lagTip = x => { const l = mem.map(m => lagOf(m, x.id)).find(v => v !== undefined); return l === undefined ? "" : ` <span class="gantt-tip-lag">glapp ${e(lagLabel(l))}</span>`; };
+    { const fm = mem.map(m => m.follows).find(Boolean); if (fm) { const t = followSpan(fm, mem[0].id), nm = (() => { const x = fm.id ? items.find(i => String(i.id) === fm.id) : null; return x ? itemLabel(x) : "aktivitet"; })(); deps.push(`<div class="gantt-tip-sec-h">Följer</div><ul><li>${e(tipShort(nm))}${t ? ` <span class="gantt-tip-dim">· ${e(tipRange(t.start, t.end))}</span>` : ""}</li></ul>`); } }
     if (preds.length) deps.push(`<div class="gantt-tip-sec-h">Väntar på</div><ul>${list(preds, x => `<li>${e(tipShort(x.objectName || x.objectId || "?"))}${statusTxt(x)}${lagTip(x)}</li>`)}</ul>`);
     if (succs.length) deps.push(`<div class="gantt-tip-sec-h">Efterföljande</div><ul>${list(succs, x => `<li>${e(tipShort(x.objectName || x.objectId || "?"))}${x.startDate ? ` <span class="gantt-tip-dim">· ${e(tipDate(x.startDate))}</span>` : ""}</li>`)}</ul>`);
     const chain = uniq(downstreamOf(it.id, depById).filter(x => !own.has(String(x.id))));
@@ -5164,7 +5239,7 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
   const imported = members.some(m => m.origin !== "manuell");
   // Alla aktiviteter (sammanslagna) – underlag för förslagen och för Väntar på.
   const acts = mergeActivityGroups(items.slice()).sort((a, b) => itemLabel(a).localeCompare(itemLabel(b), "sv", { numeric: true }));
-  const entryOf = a => ({ key: String(a.id), label: itemLabel(a), area: a.area || "", ids: (a.members || [a]).map(m => String(m.id)), end: a.endDate || null, start: a.startDate || null, status: a.status });
+  const entryOf = a => ({ key: String(a.id), label: itemLabel(a), area: a.area || "", ids: (a.members || [a]).map(m => String(m.id)), end: a.endDate || null, start: a.startDate || null, status: a.status, src: /^s:/.test(a.activityKey || "") ? a.activityKey.slice(2) : null });
   const entries = acts.map(entryOf);
   const entryForId = id => entries.find(en => en.ids.includes(String(id)));
   const counted = f => {
@@ -5226,6 +5301,11 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
       <div class="na-preds"></div>
       <input type="text" class="na-pred-search" placeholder="＋ Sök aktivitet att vänta på…" />
       <input type="hidden" class="na-pred" />
+    </div>
+    <div class="na-dep na-follow">
+      <div class="na-dep-h">Följer aktivitet <span class="hint">· flyttar sig själv när den aktiviteten ändras – även efter ny Powerproject-import</span></div>
+      <div class="na-follow-sel"></div>
+      <input type="text" class="na-follow-search" placeholder="＋ Sök aktivitet att följa (t.ex. för en mobilkran)…" />
     </div>
     ${edit && members.length >= 1 ? `<details class="na-objs" open><summary>Objekt i aktiviteten <span class="hint na-objs-n">(${members.length})</span></summary><div class="na-objs-list"></div><div class="hint">✕ tar bort bara det objektet ur aktiviteten – aktiviteten och de andra objekten finns kvar. På det sista objektet tas bara 3D-kopplingen bort (aktiviteten finns kvar).</div></details><details class="na-dups hidden" open><summary>Andra rader kopplade till samma 3D-objekt <span class="hint na-dups-n"></span></summary><div class="na-dups-list"></div><div class="hint">Dessa kommer från en annan aktivitet (t.ex. en äldre import) men pekar på samma objekt – därför kan objektet verka kopplat trots att det inte syns i listan ovan. ✕ tar bort raden.</div></details>` : ""}
     <details class="na-res"${(res0.length && naResOpen()) || temp0 || demo0 || doneCol0 ? " open" : ""}><summary>Avancerat (temporär, rivning, resurser) <span class="hint na-res-sum"></span></summary>
@@ -5484,6 +5564,33 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
     if (o.entry.end && o.entry.status !== "klar" && q(".na-start").value <= o.entry.end) setStart(addDaysIso(o.entry.end, 1));
     q(".na-pred-search").focus();
   } });
+  /* Följer en aktivitet: vald aktivitet, läge och förskjutning; datumen fylls i direkt och hålls efter varje ny hämtning. */
+  let follow = edit ? (members.map(m => m.follows).find(Boolean) ? { ...members.map(m => m.follows).find(Boolean) } : null) : null;
+  const followEntry = () => follow ? (entries.find(en => follow.id && en.ids.includes(String(follow.id))) || entries.find(en => follow.key && en.src === follow.key) || null) : null;
+  const followPreview = () => {
+    const en = followEntry(); if (!follow || !en || !en.start || !en.end) return;
+    const d = followDates(follow, { start: en.start, end: en.end }, Math.max(0, daysBetweenIso(q(".na-start").value || en.start, q(".na-end").value || en.end)));
+    q(".na-start").value = d.startDate; q(".na-end").value = d.endDate; dur = daysBetweenIso(d.startDate, d.endDate);
+    flash(q(".na-start")); flash(q(".na-end"));
+  };
+  const renderFollow = () => {
+    const box = q(".na-follow-sel"), en = followEntry();
+    if (!follow) { box.innerHTML = `<div class="na-pred-none">Ingen – datumen styrs här</div>`; return; }
+    const m = follow.mode, offs = `${m !== "end" ? `<label>Start <input type="number" class="nf-d0" step="1" value="${follow.d0}" title="Dagar efter (+) eller före (−) aktivitetens start" /> d</label>` : ""}${m !== "start" ? `<label>Slut <input type="number" class="nf-d1" step="1" value="${follow.d1}" title="Dagar efter (+) eller före (−) aktivitetens slut" /> d</label>` : ""}`;
+    box.innerHTML = `<div class="na-pred-row nf-row"><span class="na-pred-name" title="${escapeHtml(en ? en.label : "")}">${en ? escapeHtml(tipShort(en.label, 46)) + (en.start && en.end ? `<small>${escapeHtml(tipRange(en.start, en.end))}</small>` : "") : `<i>Aktiviteten hittas inte (borttagen?)</i>`}</span><button type="button" class="na-pred-x nf-x" title="Sluta följa" aria-label="Sluta följa">✕</button></div>
+      <div class="nf-opts"><select class="nf-mode" aria-label="Hur den följer"><option value="span"${m === "span" ? " selected" : ""}>Samma period (start och slut)</option><option value="start"${m === "start" ? " selected" : ""}>Samma start – behåll längd</option><option value="end"${m === "end" ? " selected" : ""}>Samma slut – behåll längd</option></select>${offs}</div>`;
+    box.querySelector(".nf-x").onclick = () => { follow = null; renderFollow(); };
+    box.querySelector(".nf-mode").onchange = e => { follow.mode = e.target.value; renderFollow(); followPreview(); };
+    const n0 = box.querySelector(".nf-d0"), n1 = box.querySelector(".nf-d1");
+    if (n0) n0.oninput = () => { follow.d0 = Math.round(Number(n0.value) || 0); followPreview(); };
+    if (n1) n1.oninput = () => { follow.d1 = Math.round(Number(n1.value) || 0); followPreview(); };
+  };
+  renderFollow();
+  attachCombo(q(".na-follow-search"), () => entries.filter(en => !en.ids.some(id => own.has(id)))
+    .map(en => ({ value: en.key, label: en.label, sub: [en.area, en.start && en.end ? tipRange(en.start, en.end) : ""].filter(Boolean).join(" · "), entry: en })), { empty: "Ingen aktivitet matchar", onPick: o => {
+    follow = { id: o.entry.ids[0], key: o.entry.src, mode: "span", d0: 0, d1: 0 };
+    q(".na-follow-search").value = ""; renderFollow(); followPreview();
+  } });
   // Namnet i en ruta på fyra rader (Victor 2026-10-08) – men det är en rad text: Enter gör ingen radbrytning.
   q(".na-name").addEventListener("keydown", e => { if (e.key === "Enter" && !e.defaultPrevented) e.preventDefault(); });
   q(".na-name").addEventListener("input", e => { const t = e.target; if (/[\r\n]/.test(t.value)) t.value = t.value.replace(/\s*[\r\n]+\s*/g, " "); });
@@ -5494,6 +5601,7 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
     const name = v(".na-name"), s0 = v(".na-start"), e0 = v(".na-end");
     if (!name && !edit) { alert("Ge aktiviteten ett namn."); return; }
     if (!s0 || !e0 || s0 > e0) { alert("Ange start och slut (start före eller samma dag som slut)."); return; }
+    if (follow) { const fe = followEntry(); if (fe && fe.start && fe.end) { if (follow.mode !== "end") follow.d0 = daysBetweenIso(fe.start, s0); if (follow.mode !== "start") follow.d1 = daysBetweenIso(fe.end, e0); } } // förskjutningen följer de datum som står i rutorna
     const area = v(".na-area"), contractor = v(".na-contr");
     const activity = pp ? actFromArea(area) : v(".na-act");
     const progress = Math.max(0, Math.min(100, Number(v(".na-prog")) || 0));
@@ -5528,6 +5636,7 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
         if (bub === !!m.bubbleOff) f.bubbleOff = !bub; // sparas bara när det ändras
         const dem = q(".na-demo-chk").checked;
         if (dem !== !!m.demolition) f.demolition = dem;
+        { const fo = JSON.stringify(m.follows || null), fn = JSON.stringify(follow || null); if (fo !== fn) f.follows = follow ? { ...follow } : null; }
         const dOn = q(".na-done-chk").checked, dCol = dOn ? q(".na-done-col").value : null, dOp = dOn ? Number(q(".na-done-op").value) : null;
         if ((dCol || null) !== (m.doneColor || null)) f.doneColor = dCol;
         if (dOp !== (m.doneOpacity === undefined ? null : m.doneOpacity)) f.doneOpacity = dOp;
@@ -5561,7 +5670,7 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
     const row = { id, project_id: projectId, model_id: null, object_id: `manual-${id}`, object_name: name, element_type: null,
       area: area || null, activity: activity || null, contractor: contractor || null, status: "planerad",
       start_date: s0, end_date: e0, actual_start_date: null, actual_end_date: null, progress,
-      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), ...(q(".na-temp-chk").checked && !q(".na-bub-chk").checked ? { bubble_off: true } : {}), ...(q(".na-demo-chk").checked ? { demolition: true } : {}), ...(q(".na-done-chk").checked ? { done_color: q(".na-done-col").value, done_opacity: Number(q(".na-done-op").value) } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
+      estimated_hours: null, ...(resOut() ? { resources: resOut() } : {}), ...(q(".na-temp-chk").checked ? { temporary: true } : {}), ...(follow ? { follows: { ...follow } } : {}), ...(q(".na-temp-chk").checked && !q(".na-bub-chk").checked ? { bubble_off: true } : {}), ...(q(".na-demo-chk").checked ? { demolition: true } : {}), ...(q(".na-done-chk").checked ? { done_color: q(".na-done-col").value, done_opacity: Number(q(".na-done-op").value) } : {}), depends_on: predIds, ...(Object.keys(lagMap).length ? { dep_lags: lagMap } : {}), source_key: null, origin: "manuell", group_id: null,
       baseline_start_date: mainSet ? s0 : null, baseline_end_date: mainSet ? e0 : null, created_at: now, updated_at: now };
     const btn = q(".na-save");
     btn.disabled = true;
