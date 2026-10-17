@@ -1,6 +1,8 @@
 {
-  "title": "4D-dashboard",
-  "icon": "https://vfalk-ncc.github.io/4D-dashboard/icon.svg",
-  "description": "Överblick och nyckeltal för produktionsplaneringen (samma databas som 4D-planering)",
-  "url": "https://vfalk-ncc.github.io/4D-dashboard/index.html"
+  "title": "Jules Dashboard & Gantt",
+  "name": "jules-dashboard",
+  "version": "1.0.0",
+  "description": "4D Dashboard och Gantt-schema i Jules-Dashboard för Trimble Connect",
+  "icon": "icon.svg",
+  "url": "index.html"
 }

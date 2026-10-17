@@ -1188,6 +1188,9 @@ function mergeActivityGroups(list) {
 
 /** Markerar en post (eller alla objekt i en sammanslagen aktivitet) i 3D och zoomar dit
     (Victor 2026-10-06: "markeras och zoomas det objektet in i TC"). */
+const ganttRuntimeIdCache = new Map(); // "modelId:objectId" -> runtimeId
+const ganttExtObjectIdCache = new Map(); // "modelId:runtimeId" -> objectId
+
 async function selectActivityInModel(it) {
   if (!it) return;
   const targets = (it.members || [it]).filter(m => m.modelId && m.objectId);
@@ -1196,13 +1199,41 @@ async function selectActivityInModel(it) {
   try {
     const byModel = {};
     targets.forEach(m => { (byModel[m.modelId] = byModel[m.modelId] || []).push(m.objectId); });
+    const modelKeys = Object.keys(byModel);
     const modelObjectIds = [];
-    for (const modelId of Object.keys(byModel)) {
-      let rids = [];
-      try { rids = (await API.viewer.convertToObjectRuntimeIds(modelId, byModel[modelId])).filter(id => id !== undefined && id !== null); }
-      catch (e) { console.warn("Hoppar över modell som inte är inläst", modelId, e); continue; }
-      if (rids.length) modelObjectIds.push({ modelId, objectRuntimeIds: rids });
-    }
+
+    const results = await Promise.all(modelKeys.map(async (modelId) => {
+      const objIds = byModel[modelId];
+      const uncached = [];
+      const resolved = [];
+
+      objIds.forEach(id => {
+        const k = `${modelId}:${id}`;
+        if (ganttRuntimeIdCache.has(k)) {
+          const cachedRid = ganttRuntimeIdCache.get(k);
+          if (cachedRid !== null) resolved.push(cachedRid);
+        } else {
+          uncached.push(id);
+        }
+      });
+
+      if (uncached.length > 0) {
+        try {
+          const rids = await API.viewer.convertToObjectRuntimeIds(modelId, uncached);
+          uncached.forEach((id, idx) => {
+            const rid = rids && rids[idx] !== undefined && rids[idx] !== null ? rids[idx] : null;
+            ganttRuntimeIdCache.set(`${modelId}:${id}`, rid);
+            if (rid !== null) resolved.push(rid);
+          });
+        } catch (e) {
+          console.warn("Hoppar över modell som inte är inläst", modelId, e);
+        }
+      }
+
+      return resolved.length ? { modelId, objectRuntimeIds: resolved } : null;
+    }));
+
+    results.forEach(res => { if (res) modelObjectIds.push(res); });
     if (!modelObjectIds.length) { modelToast("Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); return; }
     ownModelSelectionUntil = Date.now() + 1500; // vår egen markering ska inte studsa tillbaka till schemat
     await API.viewer.setSelection({ modelObjectIds }, "set");
@@ -1383,9 +1414,34 @@ async function syncGanttFromModel() {
     const rids = m.objectRuntimeIds || [];
     if (!rids.length) continue;
     objects += rids.length;
-    let ext = [];
-    try { ext = await API.viewer.convertToObjectIds(m.modelId, rids); } catch (e) { continue; }
-    const set = new Set((ext || []).map(String));
+
+    const uncachedRids = [];
+    const resolvedExtIds = [];
+
+    rids.forEach(rid => {
+      const k = `${m.modelId}:${rid}`;
+      if (ganttExtObjectIdCache.has(k)) {
+        const extId = ganttExtObjectIdCache.get(k);
+        if (extId !== null) resolvedExtIds.push(extId);
+      } else {
+        uncachedRids.push(rid);
+      }
+    });
+
+    if (uncachedRids.length > 0) {
+      try {
+        const ext = await API.viewer.convertToObjectIds(m.modelId, uncachedRids);
+        uncachedRids.forEach((rid, idx) => {
+          const extId = ext && ext[idx] !== undefined && ext[idx] !== null ? ext[idx] : null;
+          ganttExtObjectIdCache.set(`${m.modelId}:${rid}`, extId);
+          if (extId !== null) resolvedExtIds.push(extId);
+        });
+      } catch (e) {
+        console.warn("Kunde inte konvertera runtime-ID i modell", m.modelId, e);
+      }
+    }
+
+    const set = new Set((resolvedExtIds || []).map(String));
     items.forEach(it => { if (it.modelId === m.modelId && set.has(String(it.objectId))) ids.add(String(it.id)); });
   }
   ganttModelSel = ids;

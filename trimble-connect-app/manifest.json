@@ -1,8 +1,8 @@
 {
-  "title": "4D Dashboard & Gantt (Trimble Connect)",
-  "name": "4d-dashboard-gantt",
-  "version": "1.1.0",
-  "description": "4D Dashboard och Gantt-schema med direktkoppling till Trimble Connect 3D-modell",
+  "title": "Jules Dashboard & Gantt",
+  "name": "jules-dashboard",
+  "version": "1.0.0",
+  "description": "4D Dashboard och Gantt-schema i Jules-Dashboard för Trimble Connect",
   "icon": "icon.svg",
   "url": "index.html"
 }
