@@ -196,6 +196,25 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     const fg = fk.find(r => r[1] === 750); if (!fg || fg[1] !== 750 || Math.abs(fg[3] - Math.round((A(6) + A(4)) * 100) / 100) > 0.02) fail('Form per byggnad (grundsulor Krosshall): ' + JSON.stringify(fk));
     await page.click('[data-qkind="vol"]'); await page.waitForTimeout(300);
     if ((await page.evaluate(() => qty.cfg.valKey)).match(/Surface/)) fail('Tillbaka till betong ska välja volym igen');
+    // Egna poster (Victor 2026-10-19): saknas koden skapar man en egen post direkt i sökrutan – den väljs, sparas och delas.
+    { await page.evaluate(() => { qmf.build = ''; qmfRender(); });
+      const ty0 = await page.evaluate(() => document.querySelector('select[data-ty]').dataset.ty);
+      await page.dispatchEvent('select[data-ty]', 'mousedown'); await page.waitForSelector('.qmf-combo');
+      await page.fill('.qmf-combo-q', 'EGEN.9'); await page.click('.qmf-combo-new'); await page.waitForSelector('.qmf-np');
+      if ((await page.inputValue('.np-ref')) !== 'EGEN.9') fail('Koden i sökrutan ska fyllas i');
+      await page.fill('.np-label', 'Prefabväggar (egen)'); await page.selectOption('.np-unit', 'm³'); await page.click('.np-ok'); await page.waitForTimeout(400);
+      const C1 = await page.evaluate(ty => ({ n: qmf.custom.length, p: qmf.custom[0], mapped: (qmf.map.types.vol || {})[ty], all: qmfAllPosts().some(x => x.ref === 'EGEN.9'), grp: qmfPostGroups('')[0].items.some(i => i.post && i.post.ref === 'EGEN.9'), ls: !!localStorage.getItem('4ddash-qty-custom') }), ty0);
+      if (C1.n !== 1 || !C1.all || !C1.grp || !C1.ls || C1.mapped !== C1.p.key) fail('Egen post ska skapas, väljas och finnas i listorna: ' + JSON.stringify(C1));
+      if (!(await page.locator('.qmf-custom tr[data-ck]').count())) fail('Egna poster ska listas');
+      // Ändra och ta bort
+      await page.evaluate(() => { document.querySelector('.qmf-custom').open = true; });
+      await page.click('.qmf-cedit'); await page.waitForSelector('.qmf-np'); await page.fill('.np-label', 'Prefabväggar B'); await page.click('.np-ok'); await page.waitForTimeout(200);
+      const C2 = await page.evaluate(ty => ({ label: qmf.custom[0].label, mapped: (qmf.map.types.vol || {})[ty] === qmf.custom[0].key }), ty0);
+      if (C2.label !== 'Prefabväggar B' || !C2.mapped) fail('Ändrad egen post ska behålla sina kopplingar: ' + JSON.stringify(C2));
+      await page.evaluate(() => { document.querySelector('.qmf-custom').open = true; });
+      await page.click('.qmf-cdel'); await page.waitForSelector('.qmf-ask'); await page.click('.qmf-ask button[data-k="ja"]'); await page.waitForTimeout(200);
+      if (await page.evaluate(ty => qmf.custom.length !== 0 || (qmf.map.types.vol || {})[ty] === 'x', ty0)) fail('Borttagen egen post ska försvinna'); }
+    console.log('OK: egna poster i mängdavtagningen');
     // Klick på en rad markerar objekten i TC.
     await page.evaluate(() => { window.__sel = []; }); await page.click('#qtyTable tbody tr'); await page.waitForTimeout(300);
     if (!(await page.evaluate(() => window.__sel.length))) fail('Klick på rad ska markera i TC');

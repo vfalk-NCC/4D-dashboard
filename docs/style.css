@@ -2754,3 +2754,9 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .gantt-fs-bar .gdd-menu button, .gantt-fs-bar .gdd-menu .gantt-mode-seg .gb-ico, .gantt-fs-bar .gdd-menu .gantt-mode-seg button { width: 100% !important; min-width: 0 !important; max-width: none !important; height: auto !important; min-height: 30px; padding: 4px 8px !important; justify-content: flex-start; }
 .gantt-fs-bar .gdd-menu .gantt-mode-seg { width: 100%; }
 .gdd-lbl { flex: 1; }
+
+/* Egna poster i mängdavtagningen */
+.qmf-combo-top { display: flex; gap: 6px; align-items: center; } .qmf-combo-top .qmf-combo-q { flex: 1; }
+.qmf-combo-new { white-space: nowrap; font-size: 12px; padding: 5px 9px; border-radius: 6px; border: 1px solid #93c5fd; background: #eff6ff; color: #1e40af; cursor: pointer; }
+.qmf-np { display: flex; flex-direction: column; gap: 8px; min-width: min(420px, 92vw); } .qmf-np label { display: flex; flex-direction: column; font-size: 12px; color: #475569; gap: 2px; } .qmf-np input, .qmf-np select { font: inherit; padding: 6px 8px; }
+.qmf-custom { margin: 6px 0; } .qmf-custom summary { cursor: pointer; font-weight: 600; } .qmf-ctab td { padding: 3px 6px; } .qmf-cref { font-weight: 700; white-space: nowrap; } .qmf-cedit, .qmf-cdel { border: 0; background: transparent; cursor: pointer; } .qmf-cdel { color: #b91c1c; }

@@ -6,9 +6,16 @@
    Förslag fylls i automatiskt (väggar → ESE.21 m.m., byggnad efter namn och områdeskod) men kan ändras. Förteckningen ändras aldrig. */
 
 const QMF_KEY = "4ddash-qty-mf", QMF_MAP = "4ddash-qty-map";
-const qmf = { f: { ty: "", po: "", ar: "", by: "" },  posts: [], builds: [], file: "", build: "", typeKey: "", map: { types: {}, areas: {}, obj: {}, mvO: {}, mvT: {} }, groupId: true, open: new Set(), msg: "" };
+const QMF_CUSTOM = "4ddash-qty-custom";
+const qmf = { f: { ty: "", po: "", ar: "", by: "" },  posts: [], custom: [], builds: [], file: "", build: "", typeKey: "", map: { types: {}, areas: {}, obj: {}, mvO: {}, mvT: {} }, groupId: true, open: new Set(), msg: "" };
 try { const s = JSON.parse(localStorage.getItem(QMF_KEY) || "null"); if (s && Array.isArray(s.posts)) { qmf.posts = s.posts; qmf.builds = s.builds || []; qmf.file = s.file || ""; } } catch (e) { /* ingen sparad */ }
 try { const m = JSON.parse(localStorage.getItem(QMF_MAP) || "null"); if (m) { let ty = m.types || {}; if (Object.values(ty).some(v => typeof v === "string")) ty = { vol: ty }; /* äldre sparning: bara volym */ qmf.map = { types: ty, areas: m.areas || {}, obj: m.obj || {}, mvO: m.mvO || {}, mvT: m.mvT || {} }; qmf.groupId = m.groupId !== false; qmf.typeKey = m.typeKey || ""; qmf.build = m.build || ""; qmf.stamp = m.updated_at || ""; } } catch (e) { /* standard */ }
+try { const c = JSON.parse(localStorage.getItem(QMF_CUSTOM) || "null"); if (Array.isArray(c)) qmf.custom = c; } catch (e) { /* inga egna poster */ }
+/* Egna poster (Victor 2026-10-19: "skapa egna kategorier i mängdavtagningen om jag saknar en kod"): koder som inte finns i förteckningen.
+   De ligger skilda från den inlästa förteckningen (en ny Excel-fil ersätter inte dem), delas i 4D-data (qty_custom_posts.json) och
+   fungerar överallt som vanliga poster – i listorna, kopplingarna, jämförelsen och Gantt-dialogen. Förteckningens mängder saknas (–). */
+const qmfAllPosts = () => qmf.posts.concat(qmf.custom);
+const qmfSaveCustom = () => { try { localStorage.setItem(QMF_CUSTOM, JSON.stringify(qmf.custom)); } catch (e) { /* ingen lagring */ } qmfSyncSoon("custom"); };
 const qmfSave = () => { try { localStorage.setItem(QMF_MAP, JSON.stringify({ types: qmf.map.types, areas: qmf.map.areas, obj: qmf.map.obj || {}, mvO: qmf.map.mvO || {}, mvT: qmf.map.mvT || {}, groupId: qmf.groupId, typeKey: qmf.typeKey, build: qmf.build, updated_at: qmf.stamp || "" })); } catch (e) { /* ingen lagring */ } qmfSyncSoon("map"); };
 const qmfSavePosts = () => { try { localStorage.setItem(QMF_KEY, JSON.stringify({ posts: qmf.posts, builds: qmf.builds, file: qmf.file })); } catch (e) { qmf.msg = "Förteckningen är för stor för att sparas i webbläsaren – den gäller bara tills sidan laddas om."; } qmfSyncSoon("posts"); };
 
@@ -16,7 +23,7 @@ const qmfSavePosts = () => { try { localStorage.setItem(QMF_KEY, JSON.stringify(
    Kopplingarna (typ/objekt → post, område → byggnad) och mängdförteckningens poster sparas i projektets mapp i det privata datarepot
    (projects/<projekt>/qty_mapping.json och qty_posts.json), så att alla som öppnar projektet ser samma kopplingar. Webbläsaren behåller en lokal kopia.
    Skrivs efter en kort paus; vid skrivning slås fjärrfilens kopplingar ihop med dina (dina ändringar går före). */
-const QMF_PATH = k => `projects/${encodeURIComponent(typeof projectId !== "undefined" ? projectId : "_")}/${k === "posts" ? "qty_posts" : "qty_mapping"}.json`;
+const QMF_PATH = k => `projects/${encodeURIComponent(typeof projectId !== "undefined" ? projectId : "_")}/${k === "posts" ? "qty_posts" : k === "custom" ? "qty_custom_posts" : "qty_mapping"}.json`;
 const qmfSync = { timers: {}, state: "", busy: false };
 function qmfSyncState(t, bad) { qmfSync.state = t; const el = document.getElementById("qmfSyncState"); if (el) { el.textContent = t; el.classList.toggle("bad", !!bad); } }
 const qmfCanSync = () => typeof settings !== "undefined" && settings.githubToken && typeof projectId !== "undefined" && projectId && typeof ghWriteJSON === "function";
@@ -35,7 +42,10 @@ function qmfMergeMaps(remote, local) { // dina kopplingar går före fjärrfilen
 async function qmfSyncPush(kind) {
   if (!qmfCanSync()) return;
   try {
-    if (kind === "posts") {
+    if (kind === "custom") {
+      await ghWriteJSON(settings.githubToken, QMF_PATH("custom"), arr => { const m = new Map((Array.isArray(arr) ? arr : []).map(x => [x.key, x])); qmf.custom.forEach(x => m.set(x.key, x)); (qmf.customGone || []).forEach(k => m.delete(k)); return [...m.values()]; }, "Egna poster i mängdavtagningen");
+      qmf.customGone = [];
+    } else if (kind === "posts") {
       const payload = { updated_at: qmf.stamp || new Date().toISOString(), posts: qmf.posts, builds: qmf.builds, file: qmf.file };
       if (JSON.stringify(payload).length > 900000) { qmfSyncState("Förteckningen är för stor för att delas i 4D-data – den sparas bara i den här webbläsaren.", true); return; }
       await ghWriteJSON(settings.githubToken, QMF_PATH("posts"), () => [payload], "Mängdförteckning (poster)");
@@ -51,6 +61,7 @@ async function qmfSyncPush(kind) {
 async function qmfSyncLoad() {
   if (!qmfCanSync()) return; qmfSync.loading = true;
   try {
+    try { const cr = await ghReadJSON(settings.githubToken, QMF_PATH("custom")); if (Array.isArray(cr) && cr.length) { const m = new Map(cr.map(x => [x.key, x])); qmf.custom.forEach(x => m.set(x.key, x)); const before = qmf.custom.length; qmf.custom = [...m.values()]; try { localStorage.setItem(QMF_CUSTOM, JSON.stringify(qmf.custom)); } catch (e) { /* */ } if (qmf.custom.length !== before && typeof qtyRender === "function") setTimeout(qtyRender, 0); } else if (qmf.custom.length) qmfSyncSoon("custom"); } catch (e) { /* ingen delad fil */ }
     const [pr, mr] = await Promise.all([ghReadJSON(settings.githubToken, QMF_PATH("posts")).catch(() => []), ghReadJSON(settings.githubToken, QMF_PATH("map")).catch(() => [])]);
     const rp = pr[0], rm = mr[0]; let localStamp = ""; try { localStamp = (JSON.parse(localStorage.getItem(QMF_MAP) || "{}").updated_at) || ""; } catch (e) { /* */ }
     let changed = false;
@@ -138,7 +149,7 @@ async function qmfLoadFile(file) {
 }
 /* ---- Kopplingarna ----------------------------------------------------------------------------------- */
 /* Poster med enheten för valt mängdslag (betong m³, form m², längd m, armering kg). */
-const qmfPosts = () => qmf.posts.filter(p => p.unit === QTY_KINDS[qtyKind()][1]);
+const qmfPosts = () => qmfAllPosts().filter(p => p.unit === QTY_KINDS[qtyKind()][1]);
 const qmfTypes = () => (qmf.map.types[qtyKind()] = qmf.map.types[qtyKind()] || {});
 const qmfStem = s => String(s || "").toLowerCase().replace(/[^a-zåäö0-9 ]/g, "").replace(/(huset|hus|et|en|n|t)$/i, "").trim();
 const qmfRawName = o => String(o.flat[qmf.typeKey] === undefined ? "(saknas)" : o.flat[qmf.typeKey]);
@@ -199,7 +210,7 @@ function qmfAsk(text, buttons) {
 function qmfCombo(se, groups, onPick) {
   document.querySelectorAll(".qmf-combo").forEach(x => x.remove());
   const pop = document.createElement("div"); pop.className = "qmf-combo";
-  pop.innerHTML = `<input type="search" class="qmf-combo-q" placeholder="Sök post…  (flera ord, t.ex. väggar betong)" autocomplete="off" /><div class="qmf-combo-list"></div>`;
+  pop.innerHTML = `<div class="qmf-combo-top"><input type="search" class="qmf-combo-q" placeholder="Sök post…  (flera ord, t.ex. väggar betong)" autocomplete="off" /><button type="button" class="qmf-combo-new" title="Saknar du koden? Skapa en egen post (kod, beskrivning och enhet)">＋ Egen post</button></div><div class="qmf-combo-list"></div>`;
   (document.fullscreenElement || document.body).appendChild(pop);
   const r = se.getBoundingClientRect(), W = Math.min(innerWidth - 16, Math.max(r.width, 560));
   pop.style.width = W + "px"; pop.style.left = Math.max(8, Math.min(r.left, innerWidth - W - 8)) + "px";
@@ -209,13 +220,14 @@ function qmfCombo(se, groups, onPick) {
   const draw = () => {
     const w = words(); let n = 0, html = "";
     groups.forEach(g => { const it = g.items.filter(x => w.every(k => (x.t + " " + (g.label || "")).toLowerCase().includes(k))); if (!it.length) return; html += `<div class="qmf-combo-g">${E(g.label)}</div>` + it.map(x => `<div class="qmf-combo-i${x.dis ? " dis" : ""}${x.cur ? " cur" : ""}" data-i="${E(String(x.id))}">${E(x.t)}</div>`).join(""); n += it.length; });
-    list.innerHTML = html || `<div class="qmf-combo-g">Inga poster matchar</div>`;
+    list.innerHTML = html || `<div class="qmf-combo-g">Inga poster matchar – ${w.length ? "tryck på ＋ Egen post för att skapa " + E(qi.value.trim()) : "skapa en egen post med knappen ovan"}</div>`;
     const els = [...list.querySelectorAll(".qmf-combo-i:not(.dis)")]; hi = Math.min(hi, Math.max(0, els.length - 1)); if (els[hi]) els[hi].classList.add("hi");
   };
   const all = groups.flatMap(g => g.items), byId = new Map(all.map(x => [String(x.id), x]));
   const close = () => { pop.remove(); document.removeEventListener("pointerdown", out, true); };
   const out = e => { if (!pop.contains(e.target) && e.target !== se) close(); };
   const pick = id => { const it = byId.get(String(id)); if (!it || it.dis) return; close(); onPick(it); };
+  pop.querySelector(".qmf-combo-new").onclick = () => { const pre = qi.value.trim(); close(); qmfNewPost(pre, post => { if (post) onPick({ id: post.key, v: post.key, t: `${post.ref} – ${post.label} [${post.unit}]`, post }); }); };
   qi.addEventListener("input", () => { hi = 0; draw(); });
   qi.addEventListener("keydown", e => {
     e.stopPropagation(); const els = [...list.querySelectorAll(".qmf-combo-i:not(.dis)")];
@@ -254,8 +266,8 @@ function qmfCsv(C) {
 /* Postlistans grupper (poster i nuvarande mängdslags enhet först, sedan övriga enheter under egna rubriker). */
 function qmfPostGroups(selKey) {
   const cur = qtyKind(), curU = QTY_KINDS[cur][1], kname = k => QTY_KINDS[k][0];
-  const g = [{ label: `Poster i ${curU} – gäller mängdslaget ${kname(cur)}`, items: [{ id: "", v: "", t: "(ingen post)", cur: !selKey }, ...qmf.posts.filter(p => p.unit === curU).map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, cur: p.key === selKey }))] }];
-  const other = qmf.posts.filter(p => p.unit !== curU), kinds = [...new Set(other.map(p => qmfKindOfPost(p)))].sort();
+  const g = [{ label: `Poster i ${curU} – gäller mängdslaget ${kname(cur)}`, items: [{ id: "", v: "", t: "(ingen post)", cur: !selKey }, ...qmfAllPosts().filter(p => p.unit === curU).map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, cur: p.key === selKey }))] }];
+  const other = qmfAllPosts().filter(p => p.unit !== curU), kinds = [...new Set(other.map(p => qmfKindOfPost(p)))].sort();
   kinds.forEach(k => { const ps = other.filter(p => qmfKindOfPost(p) === k), u = ps[0].unit;
     g.push({ label: k ? `Poster i ${u} – väljer du en av dem läggs objekten till i mängdslaget ${kname(k)} (de finns kvar i ${kname(cur)})` : `Poster i ${u} – inget mängdslag för den enheten`, items: ps.map(p => ({ id: p.key, v: p.key, t: `${p.ref} – ${p.label} [${p.unit}]`, post: p, dis: !k })) }); });
   return g;
@@ -280,23 +292,87 @@ async function qmfAssignSelection(anchor) {
 }
 /* Poster ett objekt hör till (per mängdslag) – används även i Gantt-schemats aktivitetsdialog. */
 function qmfMemberPosts(m) {
-  if (!m || !m.modelId || !m.objectId || !qmf.posts.length) return [];
+  if (!m || !m.modelId || !m.objectId || !qmfAllPosts().length) return [];
   const ok = `${m.modelId}|${m.objectId}`, out = [];
   if (qmfMemberPosts._src !== qty.objs) { qmfMemberPosts._src = qty.objs; qmfMemberPosts._idx = new Map(qty.objs.map(o => [qmfObjKey(o), o])); }
   const o = qmfMemberPosts._idx.get(ok);
-  Object.keys(QTY_KINDS).forEach(k => { const ov = (qmf.map.obj[k] || {})[ok]; const key = ov !== undefined ? ov : (o ? qmfEffPost(o, k) : ""); const p = key && qmf.posts.find(x => x.key === key); if (p) out.push({ kind: k, post: p }); });
+  Object.keys(QTY_KINDS).forEach(k => { const ov = (qmf.map.obj[k] || {})[ok]; const key = ov !== undefined ? ov : (o ? qmfEffPost(o, k) : ""); const p = key && qmfAllPosts().find(x => x.key === key); if (p) out.push({ kind: k, post: p }); });
   return out;
 }
+const QMF_UNITS = ["m³", "m²", "m", "st", "kg"];
+const qmfCustomKey = (ref, label, unit) => `egen|${ref}|${label}|${unit}`;
+/* Skapa (eller ändra) en egen post. pre = det som skrevs i sökrutan; done(post | null). */
+function qmfNewPost(pre, done, edit) {
+  const E = qtyEsc, looksCode = /^[A-Za-zÅÄÖåäö]{2,5}[.\-]?\d/.test(String(pre || "").trim()) && String(pre || "").trim().length <= 14;
+  const unit0 = edit ? edit.unit : (QTY_KINDS[qtyKind()] || [])[1] || "m³";
+  const w = document.createElement("div"); w.className = "qmf-ask";
+  w.innerHTML = `<div class="qmf-ask-box qmf-np"><div class="qmf-ask-t">${edit ? "Ändra egen post" : "Ny egen post"}</div>
+    <label>Kod <input type="text" class="np-ref" value="${E(edit ? edit.ref : looksCode ? pre : "")}" placeholder="t.ex. EGEN.1 eller ESB.7" /></label>
+    <label>Beskrivning <input type="text" class="np-label" value="${E(edit ? edit.label : looksCode ? "" : pre || "")}" placeholder="t.ex. Väggar av prefab betong" /></label>
+    <label>Enhet <select class="np-unit">${QMF_UNITS.map(u => `<option value="${E(u)}"${u === unit0 ? " selected" : ""}>${E(u)}</option>`).join("")}</select></label>
+    <div class="hint np-hint">Posten sparas i 4D-data och finns i alla listor. Mängden i förteckningen saknas, så jämförelsen visar bara vad modellen räknar.</div>
+    <div class="qmf-ask-b"><button type="button" class="primary np-ok">${edit ? "Spara" : "Skapa post"}</button><button type="button" class="np-cancel">Avbryt</button></div></div>`;
+  (document.fullscreenElement || document.body).appendChild(w);
+  const q = c => w.querySelector(c), fin = r => { w.remove(); document.removeEventListener("keydown", key, true); done(r); };
+  const key = e => { if (e.key === "Escape") { e.stopPropagation(); fin(null); } else if (e.key === "Enter" && e.target.tagName !== "BUTTON") { e.preventDefault(); q(".np-ok").click(); } };
+  document.addEventListener("keydown", key, true);
+  q(".np-cancel").onclick = () => fin(null);
+  w.addEventListener("pointerdown", e => { if (e.target === w) fin(null); });
+  q(".np-ok").onclick = () => {
+    const ref = q(".np-ref").value.trim(), label = q(".np-label").value.trim(), unit = q(".np-unit").value;
+    if (!ref && !label) { q(".np-hint").textContent = "Ange en kod eller en beskrivning."; q(".np-ref").focus(); return; }
+    const r = ref || "EGEN", l = label || ref;
+    if (edit) {
+      const oldKey = edit.key, key2 = qmfCustomKey(r, l, unit);
+      if (key2 !== oldKey && qmfAllPosts().some(p => p.key === key2)) { q(".np-hint").textContent = "Det finns redan en post med samma kod, beskrivning och enhet."; return; }
+      Object.assign(edit, { key: key2, ref: r, label: l, unit });
+      if (key2 !== oldKey) qmfRekey(oldKey, key2); // kopplingarna följer med
+      qmfSaveCustom(); fin(edit); return;
+    }
+    const key2 = qmfCustomKey(r, l, unit), ex = qmfAllPosts().find(p => p.key === key2 || (p.ref === r && p.label === l && p.unit === unit));
+    if (ex) { fin(ex); return; } // finns redan – använd den
+    const post = { key: key2, ref: r, label: l, unit, k: {}, p: {}, custom: true };
+    qmf.custom.push(post); qmfSaveCustom(); qmf.msg = `Egen post ${r} skapad.`; fin(post);
+  };
+  setTimeout(() => { const f = q(looksCode || edit ? ".np-label" : ".np-ref"); if (f) { f.focus(); f.select && f.select(); } }, 0);
+}
+/* Byter nyckel på en post i alla kopplingar (typ, objekt). */
+function qmfRekey(oldKey, newKey) {
+  ["types", "obj"].forEach(k => Object.values(qmf.map[k] || {}).forEach(m => Object.keys(m).forEach(x => { if (m[x] === oldKey) m[x] = newKey; })));
+  qmfSave();
+}
+function qmfCustomHtml() {
+  const E = qtyEsc;
+  return `<details class="qmf-custom"${qmf.custom.length ? "" : ""}><summary>Egna poster <span class="hint">(${qmf.custom.length})</span></summary>
+    ${qmf.custom.length ? `<table class="qty-table qmf-ctab"><tbody>${qmf.custom.map(p => { const n = qmfCustomUse(p.key); return `<tr data-ck="${E(p.key)}"><td class="qmf-cref">${E(p.ref)}</td><td>${E(p.label)} <span class="hint">[${E(p.unit)}]</span></td><td class="hint">${n ? n + " koppling" + (n > 1 ? "ar" : "") : "används inte"}</td><td><button type="button" class="qmf-cedit" title="Ändra">✎</button><button type="button" class="qmf-cdel" title="Ta bort posten">✕</button></td></tr>`; }).join("")}</tbody></table>` : `<div class="hint">Saknar du en kod? Välj ＋ Egen post i listan där du väljer post, eller skapa en här.</div>`}
+    <div class="qty-row"><button type="button" id="qmfNewPost">＋ Ny egen post…</button></div></details>`;
+}
+const qmfCustomUse = key => { let n = 0; ["types", "obj"].forEach(k => Object.values(qmf.map[k] || {}).forEach(m => Object.values(m).forEach(v => { if (v === key) n++; }))); return n; };
+function qmfCustomWire(host) {
+  const nb = host.querySelector("#qmfNewPost"); if (nb) nb.onclick = () => qmfNewPost("", p => { if (p) qmfRender(); });
+  host.querySelectorAll("tr[data-ck]").forEach(tr => {
+    const p = qmf.custom.find(x => x.key === tr.dataset.ck); if (!p) return;
+    tr.querySelector(".qmf-cedit").onclick = () => qmfNewPost("", r => { if (r) qmfRender(); }, p);
+    tr.querySelector(".qmf-cdel").onclick = async () => {
+      const n = qmfCustomUse(p.key);
+      const ok = await qmfAsk(`Ta bort den egna posten "${p.ref} – ${p.label}"?${n ? ` ${n} koppling${n > 1 ? "ar" : ""} till den tas bort.` : ""}`, [["ja", "Ta bort"], ["", "Avbryt"]]);
+      if (!ok) return;
+      ["types", "obj"].forEach(k => Object.values(qmf.map[k] || {}).forEach(m => Object.keys(m).forEach(x => { if (m[x] === p.key) delete m[x]; })));
+      qmf.custom = qmf.custom.filter(x => x !== p); (qmf.customGone = qmf.customGone || []).push(p.key); qmfSave(); qmfSaveCustom(); qmfRender();
+    };
+  });
+}
+
 function qmfRender() {
   const host = document.getElementById("qmfBox"); if (!host) return;
-  const E = qtyEsc, hasObjs = typeof qty !== "undefined" && qty.objs.length > 0, hasMf = qmf.posts.length > 0;
-  let html = `<h3 class="qmf-h">Jämför mot mängdförteckningen <span class="hint">· mängdslag: ${E(QTY_KINDS[qtyKind()][0])} (byts ovan)</span></h3><div class="qty-row"><label>Mängdförteckning (.xlsx) <input type="file" id="qmfFile" accept=".xlsx" /></label>${hasMf ? `<span class="hint">✓ ${E(qmf.file)} · ${qmf.posts.length} poster · ${qmf.builds.length} byggnader</span><button type="button" id="qmfClear">Ta bort</button>` : ""}<span class="hint" id="qmfMsg">${E(qmf.msg)}</span><span class="hint qmf-sync" id="qmfSyncState">${E(qmfSync.state)}</span></div>`;
-  if (!hasMf || !hasObjs) { host.innerHTML = html + `<div class="hint">${!hasMf ? "Välj mängdförteckningen (Excel). Filen läses bara i din webbläsare och ändras inte." : "Tryck på Läs mängder ovan först."}</div>`; wire(); return; }
+  const E = qtyEsc, hasObjs = typeof qty !== "undefined" && qty.objs.length > 0, hasMf = qmfAllPosts().length > 0;
+  let html = `<h3 class="qmf-h">Jämför mot mängdförteckningen <span class="hint">· mängdslag: ${E(QTY_KINDS[qtyKind()][0])} (byts ovan)</span></h3><div class="qty-row"><label>Mängdförteckning (.xlsx) <input type="file" id="qmfFile" accept=".xlsx" /></label>${qmf.posts.length ? `<span class="hint">✓ ${E(qmf.file)} · ${qmf.posts.length} poster · ${qmf.builds.length} byggnader</span><button type="button" id="qmfClear">Ta bort</button>` : ""}<span class="hint" id="qmfMsg">${E(qmf.msg)}</span><span class="hint qmf-sync" id="qmfSyncState">${E(qmfSync.state)}</span></div>${qmfCustomHtml()}`;
+  if (!hasMf || !hasObjs) { host.innerHTML = html + `<div class="hint">${!hasMf ? "Välj mängdförteckningen (Excel) eller skapa egna poster ovan. Filen läses bara i din webbläsare och ändras inte." : "Tryck på Läs mängder ovan först."}</div>`; wire(); return; }
   const types = new Map(), areas = new Map();
   qty.objs.forEach(o => { const t = qmfTypeVal(o), a = qmfAreaOf(o), v = qtyValue(o) ?? 0;
     const te = types.get(t) || { n: 0, v: 0, objs: [] }; te.n++; te.v += v; te.objs.push(o); types.set(t, te); const ae = areas.get(a) || { n: 0, v: 0, objs: [] }; ae.n++; ae.v += v; ae.objs.push(o); areas.set(a, ae); });
-  const postLabel = k => { const p = qmf.posts.find(x => x.key === k); return p ? `${p.ref} – ${p.label.slice(0, 100)} [${p.unit}]` : ""; };
-  const objPostText = o => { const k = qmfEffPost(o), ex = Object.keys(QTY_KINDS).filter(x => x !== qtyKind() && qmfEffPost(o, x)).map(x => { const p = qmf.posts.find(y => y.key === qmfEffPost(o, x)); return `${QTY_KINDS[x][1]}: ${p ? p.ref : "?"}`; }); return (k ? postLabel(k) : "(ingen post)") + (ex.length ? `  ·  även ${ex.join(", ")}` : ""); };
+  const postLabel = k => { const p = qmfAllPosts().find(x => x.key === k); return p ? `${p.ref} – ${p.label.slice(0, 100)} [${p.unit}]` : ""; };
+  const objPostText = o => { const k = qmfEffPost(o), ex = Object.keys(QTY_KINDS).filter(x => x !== qtyKind() && qmfEffPost(o, x)).map(x => { const p = qmfAllPosts().find(y => y.key === qmfEffPost(o, x)); return `${QTY_KINDS[x][1]}: ${p ? p.ref : "?"}`; }); return (k ? postLabel(k) : "(ingen post)") + (ex.length ? `  ·  även ${ex.join(", ")}` : ""); };
   const grpRows = ([t, e]) => {
     const texts = [...new Set(e.objs.map(objPostText))], shown = texts.length === 1 ? texts[0] : `Blandat (${texts.length} olika)`, open = qmf.open.has(t);
     let h = `<tr class="qmf-click qmf-grp" data-tyrow="${E(t)}" data-ptxt="${E(texts.join(" | ").toLowerCase())}" title="Klicka för att markera de ${e.n} objekten i TC"><td><button type="button" class="qmf-tog" data-tog="${E(t)}" title="${open ? "Dölj" : "Visa"} objekten i typen – välj post per objekt">${open ? "▾" : "▸"}</button> ${E(t)}</td><td class="num">${e.n}</td><td class="num">${qtyFmt(e.v)}</td><td><select data-ty="${E(t)}"><option>${E(shown)}</option></select></td></tr>`;
@@ -320,6 +396,7 @@ function qmfRender() {
   function wire() {
     const q = s => host.querySelector(s);
     const fi = q("#qmfFile"); if (fi) fi.onchange = () => { if (fi.files && fi.files[0]) qmfLoadFile(fi.files[0]); };
+    qmfCustomWire(host);
     const cl = q("#qmfClear"); if (cl) cl.onclick = () => { qmf.posts = []; qmf.builds = []; qmf.file = ""; qmf.msg = ""; try { localStorage.removeItem(QMF_KEY); } catch (e) { /* */ } qmfRender(); };
     if (!hasMf || !hasObjs) return;
     if (q("#qmfGroupId")) q("#qmfGroupId").onchange = e => { qmf.groupId = e.target.checked; qmf.open.clear(); qmfSave(); qmfAutoMap(); qmfRender(); };
