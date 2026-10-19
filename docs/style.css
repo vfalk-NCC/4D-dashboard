@@ -2824,3 +2824,18 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .phb-side button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .phb-side button.danger { color: #b42318; }
 .phb-side input[type=text], .phb-side select { font: inherit; font-size: 11px; min-width: 0; flex: 1; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; color: #111827; background: #fff; }
+
+/* PDF/utskrift: färger och bakgrunder (statuskort, märken, rader) ska med – annars blir allt vitt (Victor 2026-10-19). */
+@media print {
+  *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  .print-skip, .print-pick { display: none !important; }
+}
+.print-pick { position: fixed; inset: 0; z-index: 9999; background: rgba(15, 23, 42, .45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.print-pick-box { background: var(--card, #fff); color: var(--text, #111827); border-radius: 10px; padding: 16px 18px; width: min(420px, 100%); max-height: 86vh; overflow: auto; box-shadow: 0 12px 40px rgba(0, 0, 0, .35); display: flex; flex-direction: column; gap: 10px; }
+.print-pick-box h3 { margin: 0; font-size: 15px; }
+.print-pick-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.print-pick-list label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.print-pick-row { display: flex; gap: 8px; align-items: center; }
+.print-pick-row .sp { flex: 1; }
+.print-pick-row button { font: inherit; font-size: 12px; padding: 5px 12px; border: 1px solid var(--border, #d1d5db); border-radius: 6px; background: var(--card, #fff); color: var(--text, #111827); cursor: pointer; }
+.print-pick-row button.primary { background: var(--accent, #2563eb); border-color: var(--accent, #2563eb); color: #fff; }

@@ -8815,8 +8815,34 @@ function onExportExcel() {
 // vilket funkar i alla webbläsare utan extra bibliotek. @media print i
 // style.css döljer knappar/formulär/filter och lägger panelerna i en
 // enkel kolumn så resultatet blir en ren rapport.
+const PRINT_PANELS_KEY = "4ddash-print-panels-off";
 function onExportPdf() {
-  window.print();
+  const panels = [...document.querySelectorAll(".panel[data-panel-id]")].filter(p => !hiddenPanels.has(p.dataset.panelId));
+  if (!panels.length) { window.print(); return; }
+  let off = new Set(); try { off = new Set(JSON.parse(localStorage.getItem(PRINT_PANELS_KEY) || "[]")); } catch (e) { /* alla med */ }
+  const title = p => { const h2 = p.querySelector("h2"); return h2 && h2.childNodes[0] ? h2.childNodes[0].textContent.trim() : p.dataset.panelId; };
+  document.getElementById("printPick")?.remove();
+  const w = document.createElement("div"); w.id = "printPick"; w.className = "print-pick";
+  w.innerHTML = `<div class="print-pick-box" role="dialog" aria-label="Välj block att skriva ut"><h3>Vilka block ska med i PDF:en?</h3>
+    <div class="print-pick-list">${panels.map(p => `<label><input type="checkbox" data-pp="${escapeHtml(p.dataset.panelId)}"${off.has(p.dataset.panelId) ? "" : " checked"}> ${escapeHtml(title(p))}</label>`).join("")}</div>
+    <div class="print-pick-row"><button type="button" id="printPickAll">Alla</button><button type="button" id="printPickNone">Inga</button><span class="sp"></span><button type="button" id="printPickCancel">Avbryt</button><button type="button" id="printPickGo" class="primary">Skriv ut / spara PDF</button></div>
+    <div class="hint">Färger och bakgrunder följer med. Välj "Spara som PDF" som skrivare. Valet kommer ihåg till nästa gång.</div></div>`;
+  document.body.appendChild(w);
+  const boxes = () => [...w.querySelectorAll("[data-pp]")];
+  w.querySelector("#printPickAll").onclick = () => boxes().forEach(b => { b.checked = true; });
+  w.querySelector("#printPickNone").onclick = () => boxes().forEach(b => { b.checked = false; });
+  w.querySelector("#printPickCancel").onclick = () => w.remove();
+  w.addEventListener("click", e => { if (e.target === w) w.remove(); });
+  w.querySelector("#printPickGo").onclick = () => {
+    const skip = boxes().filter(b => !b.checked).map(b => b.dataset.pp);
+    try { localStorage.setItem(PRINT_PANELS_KEY, JSON.stringify(skip)); } catch (e) { /* ingen lagring */ }
+    w.remove();
+    const hide = panels.filter(p => skip.includes(p.dataset.panelId));
+    hide.forEach(p => p.classList.add("print-skip"));
+    const done = () => hide.forEach(p => p.classList.remove("print-skip"));
+    window.addEventListener("afterprint", done, { once: true });
+    requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+  };
 }
 
 /* Handtag under Gantt-schemat: dra för att ställa höjden (sparas i webbläsaren, dubbelklick = automatisk höjd). */
