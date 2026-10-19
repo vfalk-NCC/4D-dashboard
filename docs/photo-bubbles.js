@@ -279,7 +279,7 @@ async function phbBuild(blob, cam, scopeOverride) {
   const sc0 = bubbleCfg.scope; let acts, scope;
   try { if (scopeOverride && scopeOverride !== "auto") bubbleCfg.scope = scopeOverride; ({ acts, scope } = bubbleActs()); } finally { bubbleCfg.scope = sc0; }
   const anchors = await phbAnchors(acts);
-  const st = { ocards: [], camC: null, bmp, s, W, H, k, at, sharp: 0.6, progMode: "entered", cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
+  const st = { cam, ocards: [], camC: null, bmp, s, W, H, k, at, sharp: 0.6, progMode: "entered", cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
     dateObj: { on: typeof ganttMode !== "undefined" && ganttMode === "time", iso: at, x: 20 * k, y: 20 * k, scale: 1 },
     list: { on: false, title: "Pågår just nu", max: 40, scale: 1, weeks: 2, x: W - 360 * k, y: 20 * k, cands: [], sel: new Set(), items: [] } };
   st.list.cands = phbCandidates(at, 2); phbActiveList(at).forEach(a => st.list.sel.add(phbKey(a)));
@@ -519,6 +519,7 @@ function phbPreview(st) {
       <div class="phb-sec"><div class="phb-h">Pågår just nu</div>${chk("phbListOn", `Visa listan (${L.items.length} aktiviteter)`, L.on)}${L.on ? `<label class="phb-f"><span>Rubrik</span><input type="text" id="phbListTitle" value="${phbEsc(L.title)}" maxlength="60"></label>${phbListPick(L)}<label class="phb-f"><span>Högst antal rader</span><input type="number" id="phbListMax" min="1" max="60" value="${L.max}"></label>${rng("phbListScale", "Skala", Math.round(L.scale * 100), 40, 250, 5)}` : ""}</div>
       <div class="phb-sec"><div class="phb-h">Datumskylt</div>${chk("phbDateOn", "Visa datumskylten", D.on)}${D.on ? `<label class="phb-f"><span>Datum</span><input type="date" id="phbDateVal" value="${D.iso}"></label>${rng("phbDateScale", "Skala", Math.round(D.scale * 100), 40, 250, 5)}` : ""}</div>
       ${typeof phbOcSide === "function" ? phbOcSide(api) : ""}
+      ${typeof phbVwSide === "function" ? phbVwSide(api) : ""}
       <div class="phb-sec"><button type="button" id="phbAddText">＋ Text</button></div>`;
     if (it && it.type === "card") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald bubbla</div><label class="phb-f"><span>Rubrik <small>(tomt = aktivitetens namn)</small></span><textarea id="phbCText" rows="3">${phbEsc(o.text != null ? o.text : "")}</textarea></label>${rng("phbCScale", "Bubblans skala", Math.round(o.scale * 100), 40, 300, 5)}<div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbCCol" value="${phbCol(o)}"></label><button type="button" id="phbCAuto" title="Färg efter status"${o.colOver ? "" : " disabled"}>Auto</button></div>${chk("phbCDate", "Datum", o.show.date)}${chk("phbCArea", "Område", o.show.area)}${chk("phbCProg", "Framdrift", o.show.prog)}<button type="button" id="phbCDel" class="danger">Ta bort bubblan</button></div>`;
     else if (it && it.type === "ocard" && typeof phbOcSelSide === "function") h += phbOcSelSide(api, o);
@@ -560,6 +561,7 @@ function phbPreview(st) {
     range("phbDateScale", v => { cur.dateObj.scale = v; remeasure(); });
     on("phbAddText", "click", () => { const t = { id: cur.nextId++, x: cur.W * 0.35, y: cur.H * 0.08, text: "Text", size: 22, col: "#111827", bg: true, bgCol: "#ffffff", bold: true }; phbTextMeasure(t, cur); cur.texts.push(t); cur.sel = t; draw(); renderSide(); const ta = q("phbTText"); if (ta) { ta.focus(); ta.select(); } });
     if (typeof phbOcBind === "function") phbOcBind(api, side);
+    if (typeof phbVwBind === "function") phbVwBind(api, side);
     const c = cur.sel && cur.cards.includes(cur.sel) ? cur.sel : null, t = cur.sel && cur.texts.includes(cur.sel) ? cur.sel : null;
     if (c) {
       on("phbCText", "input", e => { c.text = e.target.value; remeasure(); });
@@ -603,7 +605,7 @@ function phbPreview(st) {
   cv._zoom = () => zoom;
   const pos = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * cur.W / r.width, y: (e.clientY - r.top) * cur.H / r.height }; };
   const hit = p => [...phbObjects(cur)].reverse().find(i => { const b = phbBox(i); return p.x >= b.x && p.x <= b.x + b.W && p.y >= b.y && p.y <= b.y + b.h; });
-  const hitDot = p => cur.placed && cur.g.lines ? [...cur.cards, ...(cur.ocards || [])].reverse().find(c => Math.hypot(p.x - c.ax, p.y - c.ay) <= (8 * cur.g.dot + 5) * cur.k) : null;
+  const hitDot = p => cur.g.lines ? [...(cur.placed ? cur.cards : []), ...(cur.ocards || [])].reverse().find(c => isFinite(c.ax) && Math.hypot(p.x - c.ax, p.y - c.ay) <= (8 * cur.g.dot + 5) * cur.k) : null;
   const onClose = (p, it) => { const b = phbCloseBox(it, cur.k); return Math.hypot(p.x - b.x, p.y - b.y) <= b.r * 1.15; };
   cv.addEventListener("pointerdown", e => {
     if (e.button === 2) return; const p = pos(e), hv = phbObjects(cur).find(i => i.o === cur.hover);

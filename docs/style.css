@@ -2820,3 +2820,7 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .phb-ocf-r { display:flex; align-items:center; gap:4px; font-size:12px; padding:2px 4px; border:1px solid #e5e7eb; border-radius:4px; background:#fff; }
 .phb-ocf-r > span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .phb-ocf-r button { border:0; background:none; cursor:pointer; padding:0 3px; color:#6b7280; }
+.phb-side button { color: #111827; }
+.phb-side button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.phb-side button.danger { color: #b42318; }
+.phb-side input[type=text], .phb-side select { font: inherit; font-size: 11px; min-width: 0; flex: 1; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; color: #111827; background: #fff; }

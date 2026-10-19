@@ -37,7 +37,23 @@ function phbOcCodes(o) {
   return out;
 }
 const phbOcUniq = a => [...new Set(a.filter(x => x !== "" && x != null))];
-const phbOcNum = v => { const n = qtyNum(v); return n !== null && /^[-+]?[\d\s.,]+$/.test(String(v).trim()) ? qtyFmt(n, 2) : String(v); };
+/* Tal med enhet: m³/m² (eller m) läses ur egenskapens namn; mm-enheter räknas om. Antal decimaler väljs per bubbla. */
+function phbOcUnit(key) {
+  const k = String(key).toLowerCase(), has = r => r.test(k);
+  if (has(/mm\s*[³3]/)) return { f: 1e-9, u: "m³" }; if (has(/mm\s*[²2]/)) return { f: 1e-6, u: "m²" };
+  if (has(/m\s*[³3]|volym|volume/)) return { f: has(/volym|volume/) && !has(/m\s*[³3]/) && typeof qty !== "undefined" && qty.kv && qty.kv.vol ? qty.kv.vol.factor ? 1 / qty.kv.vol.factor : 1 : 1, u: "m³" };
+  if (has(/m\s*[²2]|area|yta/)) return { f: has(/m\s*[²2]/) || typeof qty === "undefined" || !qty.kv || !qty.kv.form || !qty.kv.form.factor ? 1 : 1 / qty.kv.form.factor, u: "m²" };
+  if (has(/\bmm\b/)) return { f: 1e-3, u: "m" };
+  if (has(/\bkg\b/)) return { f: 1, u: "kg" };
+  if (has(/längd|length|\(m\)/)) return { f: 1, u: "m" };
+  return null;
+}
+const phbOcNum = (v, key, dec) => {
+  const n = qtyNum(v); if (n === null || !/^[-+]?[\d\s.,]+$/.test(String(v).trim())) return String(v);
+  const un = key ? phbOcUnit(key) : null, d = dec == null ? 2 : dec;
+  const fm = x => x.toLocaleString("sv-SE", { minimumFractionDigits: d, maximumFractionDigits: d });
+  return un ? `${fm(n * un.f)} ${un.u}` : fm(n);
+};
 /* Värdet för ett fält som rader (en eller flera). */
 function phbOcVal(st, oc, key) {
   const objs = oc.objs, n = objs.length;
@@ -56,14 +72,21 @@ function phbOcVal(st, oc, key) {
     if (typeof qty === "undefined" || !qty.objs.length) return ["– (läs mängder först)"];
     const byKey = new Map(qty.objs.map(o => [`${o.modelId}|${o.objectId || o.rid}`, o])), sums = new Map();
     objs.forEach(o => { const q = byKey.get(`${o.modelId}|${o.objectId || o.rid}`); if (!q) return; phbOcCodes(q).forEach(p => { const v = qtyValue(q, qmfKindOfPost(p)); if (v !== null) { const e = sums.get(p.key) || { p, v: 0 }; e.v += v; sums.set(p.key, e); } }); });
-    const l = [...sums.values()].map(e => `${qtyFmt(e.v, 2)} ${e.p.unit} (${e.p.ref})`); return l.length ? l : ["–"];
+    const l = [...sums.values()].map(e => `${e.v.toLocaleString("sv-SE", { minimumFractionDigits: oc.dec == null ? 2 : oc.dec, maximumFractionDigits: oc.dec == null ? 2 : oc.dec })} ${e.p.unit} (${e.p.ref})`); return l.length ? l : ["–"];
   }
   const vals = phbOcUniq(objs.map(o => (o.flat || {})[key])); if (!vals.length) return ["–"];
-  return vals.length <= 3 ? [vals.map(phbOcNum).join(" / ")] : [`${vals.length} olika värden`];
+  return vals.length <= 3 ? [vals.map(x => phbOcNum(x, key, oc.dec)).join(" / ")] : [`${vals.length} olika värden`];
 }
 function phbOcAutoColor(st, oc) {
   const its = phbOcUniq(oc.objs.map(o => phbOcItemOf(o))); if (!its.length) return "#2563eb";
   const phs = its.map(a => ganttPhaseAt(a, st.at)); return PHB_COL[phs.includes("forsenad") ? "forsenad" : phs.includes("pagaende") ? "pagaende" : phs.every(p => p === "klar") ? "klar" : "planerad"];
+}
+/* Rubrik ur Ganttens koppling till objektet (t.ex. J34): objektnamn, område eller aktivitet. */
+const PHB_OC_TSRC = [["", "Objektets namn i modellen"], ["name", "Gantt: objektnamn"], ["area", "Gantt: område"], ["act", "Gantt: aktivitet"], ["areaact", "Gantt: område · aktivitet"]];
+function phbOcTitleFromGantt(oc) {
+  const its = phbOcUniq(oc.objs.map(o => phbOcItemOf(o))); if (!oc.titleSrc || !its.length) return "";
+  const f = { name: a => a.objectName, area: a => a.area, act: a => a.activity, areaact: a => [a.area, a.activity].filter(Boolean).join(" · ") }[oc.titleSrc];
+  const v = phbOcUniq(its.map(a => f ? f(a) : "")); return v.length ? v.slice(0, 4).join(" / ") + (v.length > 4 ? " …" : "") : "";
 }
 const phbOcCol = oc => oc.colOver || oc.autoCol || "#2563eb";
 
@@ -71,7 +94,7 @@ const phbOcCol = oc => oc.colOver || oc.autoCol || "#2563eb";
 function phbOcMeasure(oc, st) {
   const ctx = phbMeasure(), kk = st.k * st.g.bscale * oc.scale, W = 270 * kk; oc.kk = kk; oc.W = W; oc.autoCol = phbOcAutoColor(st, oc);
   ctx.font = `700 ${15 * kk}px ${PHB_FAM}`;
-  oc.tl = phbWrap(ctx, oc.title != null && oc.title !== "" ? oc.title : (oc.objs.length === 1 ? phbOcName(oc.objs[0]) : `${oc.objs.length} objekt`), W - 30 * kk, 2);
+  oc.tl = phbWrap(ctx, oc.title != null && oc.title !== "" ? oc.title : phbOcTitleFromGantt(oc) || (oc.objs.length === 1 ? phbOcName(oc.objs[0]) : `${oc.objs.length} objekt`), W - 30 * kk, 2);
   ctx.font = `${11.5 * kk}px ${PHB_FAM}`; const rows = [];
   oc.fields.forEach(key => phbOcVal(st, oc, key).forEach((v, i) => rows.push({ lab: i === 0 ? phbOcLabel(key) : "", v })));
   oc.rows = rows.slice(0, 16).map(r => { const lw = r.lab ? ctx.measureText(r.lab + ": ").width : 0; let t = String(r.v); const maxW = W - 30 * kk - lw; while (t.length > 1 && ctx.measureText(t).width > maxW) t = t.slice(0, -1); return { lab: r.lab ? r.lab + ":" : "", lw, v: t.length < String(r.v).length ? t.replace(/\s+$/, "") + "…" : t }; });
@@ -91,7 +114,7 @@ function phbOcDraw(ctx, c) {
 }
 function phbOcRender(ctx, st) {
   const k = st.k, list = st.ocards || [];
-  if (st.placed && st.g.lines) list.forEach(c => { if (!isFinite(c.ax)) return; const p = phbLeaderStart(c); if (!p) return;
+  if (st.g.lines) list.forEach(c => { if (!isFinite(c.ax)) return; const p = phbLeaderStart(c); if (!p) return;
     ctx.strokeStyle = phbOcCol(c); ctx.lineWidth = 2.5 * k * st.g.lineW; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(c.ax, c.ay); ctx.stroke();
     ctx.fillStyle = phbOcCol(c); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * k; ctx.beginPath(); ctx.arc(c.ax, c.ay, 6 * k * st.g.dot, 0, 7); ctx.fill(); ctx.stroke(); });
   list.forEach(c => phbOcDraw(ctx, c));
@@ -109,7 +132,7 @@ function phbOcPdfCard(c, f) {
   return o;
 }
 function phbOcPdfBubble(st, c, f) {
-  const k = st.k, withLine = st.placed && st.g.lines && isFinite(c.ax), r = 8 * k * Math.max(1, st.g.dot), lw = 2.5 * k * st.g.lineW;
+  const k = st.k, withLine = st.g.lines && isFinite(c.ax), r = 8 * k * Math.max(1, st.g.dot), lw = 2.5 * k * st.g.lineW;
   const x0 = withLine ? Math.min(c.x, c.ax - r) : c.x, x1 = withLine ? Math.max(c.x + c.W, c.ax + r) : c.x + c.W, y0 = withLine ? Math.min(c.y, c.ay - r) : c.y, y1 = withLine ? Math.max(c.y + c.h, c.ay + r) : c.y + c.h; let o = "";
   if (withLine) { const p = phbLeaderStart(c); if (p) { const lx = v => (v - x0) * f, ly = v => (y1 - v) * f;
     o += `${phbRgb(phbOcCol(c))} RG ${phbN(lw * f)} w 1 J ${phbN(lx(p.x))} ${phbN(ly(p.y))} m ${phbN(lx(c.ax))} ${phbN(ly(c.ay))} l S `;
@@ -125,6 +148,13 @@ function phbOcAnchor(st, objs) {
   bs.forEach(b => ["x", "y", "z"].forEach(k => { lo[k] = Math.min(lo[k], b.min[k]); hi[k] = Math.max(hi[k], b.max[k]); }));
   return phbProject(st.camC, { x: (lo.x + hi.x) / 2, y: (lo.y + hi.y) / 2, z: hi.z }, st.W, st.H);
 }
+/* Kameran tas ur fotots kamera även när inga aktiviteter fanns att räkna ut den med. */
+function phbOcEnsureCam(st, objs) {
+  if (st.camC || !st.cam) return;
+  const pts = objs.map(o => o.box && { x: (o.box.min.x + o.box.max.x) / 2, y: (o.box.min.y + o.box.max.y) / 2, z: (o.box.min.z + o.box.max.z) / 2 }).filter(Boolean);
+  if (!pts.length) return;
+  try { const c = phbPickCamera(st.cam, pts, st.W, st.H); if (c) st.camC = c; } catch (e) { /* okänd kamera */ }
+}
 function phbOcGroups(draft) {
   const objs = draft.objs;
   if (draft.group === "all") return [objs];
@@ -134,11 +164,12 @@ function phbOcGroups(draft) {
 function phbOcCreate(st, draft) {
   let n = 0;
   phbOcGroups(draft).forEach(g => {
-    const oc = { id: (st.nextId = (st.nextId || 1) + 1), objs: g, fields: draft.fields.slice(), text: draft.text || "", title: "", scale: 1, colOver: null, x: 0, y: 0, ax: NaN, ay: NaN };
-    phbOcMeasure(oc, st); const q = phbOcAnchor(st, g), k = st.k;
+    const oc = { id: (st.nextId = (st.nextId || 1) + 1), objs: g, fields: draft.fields.slice(), text: draft.text || "", title: "", dec: draft.dec == null ? 2 : draft.dec, titleSrc: draft.titleSrc || "", scale: 1, colOver: null, x: 0, y: 0, ax: NaN, ay: NaN };
+    phbOcEnsureCam(st, g); phbOcMeasure(oc, st); const q = phbOcAnchor(st, g), k = st.k;
     if (q && q.x > -0.05 * st.W && q.x < 1.05 * st.W && q.y > -0.05 * st.H && q.y < 1.05 * st.H) { oc.ax = q.x; oc.ay = q.y; oc.x = oc.ax - oc.W / 2; oc.y = oc.ay - oc.h - 56 * oc.kk; }
     else { oc.x = st.W - oc.W - 20 * k; oc.y = 20 * k + (st.ocards.length + n) * (oc.h + 8 * k); }
     oc.x = Math.max(10 * k, Math.min(st.W - oc.W - 10 * k, oc.x)); oc.y = Math.max(10 * k, Math.min(st.H - oc.h - 10 * k, oc.y));
+    if (!isFinite(oc.ax)) { oc.ax = oc.x + oc.W / 2; oc.ay = Math.min(st.H - 10 * k, oc.y + oc.h + 60 * k); oc.free = true; } // läget ej känt: punkten dras till objektet
     st.ocards.push(oc); st.sel = oc; n++;
   });
   return n;
@@ -156,19 +187,25 @@ function phbOcSide(api) {
   let h = `<div class="phb-sec"><div class="phb-h">Egna bubblor</div>`;
   if (d) {
     h += `<div class="phb-note">${d.objs.length} markerade objekt · ${d.keys.length} egenskaper. Välj vad bubblan ska visa.</div>${phbOcFieldsHtml(d.keys, d.fields, esc, "d")}
+      <label class="phb-f"><span>Rubrik hämtas från</span><select id="phbOcDTSrc">${PHB_OC_TSRC.map(([v, l]) => `<option value="${v}"${(d.titleSrc || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label class="phb-f"><span>Decimaler på tal</span><select id="phbOcDDec">${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${(d.dec == null ? 2 : d.dec) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
       <label class="phb-f"><span>Egen text <small>(valfritt)</small></span><textarea id="phbOcDText" rows="2">${esc(d.text || "")}</textarea></label>
       <label class="phb-f"><span>Bubblor</span><select id="phbOcDGroup"><option value="obj"${d.group === "obj" ? " selected" : ""}>En per objekt (högst 15)</option><option value="code"${d.group === "code" ? " selected" : ""}>En per AMA-kod</option><option value="all"${d.group === "all" ? " selected" : ""}>En gemensam</option></select></label>
       <div class="phb-row"><button type="button" id="phbOcMake" class="primary">Skapa bubblor</button><button type="button" id="phbOcCancel">Avbryt</button></div>`;
   } else {
     h += `<button type="button" id="phbOcNew" title="Markera först ett eller flera objekt i modellen i Trimble Connect">＋ Bubbla från markerade i TC</button><div class="phb-note">${(cur.ocards || []).length ? `${cur.ocards.length} objektbubbl${cur.ocards.length === 1 ? "a" : "or"} på bilden. ` : ""}Bubblor med valfria egenskaper (UDA) från modellen, egen text och AMA-koden från mängdavtagningen.</div><div id="phbOcMsg" class="phb-note"></div>`;
   }
+  h += `<div class="phb-row"><button type="button" id="phbOcQty" title="Läser mängderna och AMA-koderna från mängdavtagningen – samma som Läs in i mängdavtagningen, utan att lämna fotot">Läs in mängder</button></div><div id="phbOcQtyMsg" class="phb-note">${typeof qty !== "undefined" && qty.objs && qty.objs.length ? `${qty.objs.length} objekt inlästa.` : "Mängder är inte inlästa – fälten ◆ Mängd och ◆ AMA-kod behöver dem."}</div>`;
+  if (cur.ocards && cur.ocards.some(c => c.free)) h += `<div class="phb-note">Bubblor med lös punkt: dra punkten på objektet i bilden.</div>`;
   return h + `</div>`;
 }
 function phbOcSelSide(api, oc) {
   const esc = api.esc;
   return `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald objektbubbla</div>
-    <label class="phb-f"><span>Rubrik <small>(tomt = objektets namn)</small></span><input type="text" id="phbOcTitle" value="${esc(oc.title || "")}" placeholder="${esc(oc.tl ? oc.tl.join(" ") : "")}"></label>
+    <label class="phb-f"><span>Rubrik hämtas från</span><select id="phbOcTSrc">${PHB_OC_TSRC.map(([v, l]) => `<option value="${v}"${(oc.titleSrc || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+    <label class="phb-f"><span>Rubrik <small>(egen text ersätter)</small></span><input type="text" id="phbOcTitle" value="${esc(oc.title || "")}" placeholder="${esc(oc.tl ? oc.tl.join(" ") : "")}"></label>
     ${phbOcFieldsHtml(phbOcKeys(oc.objs), oc.fields, esc, "c")}
+    <label class="phb-f"><span>Decimaler på tal</span><select id="phbOcDec">${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${(oc.dec == null ? 2 : oc.dec) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
     <label class="phb-f"><span>Egen text</span><textarea id="phbOcText" rows="3">${esc(oc.text || "")}</textarea></label>
     ${api.rng("phbOcScale", "Bubblans skala", Math.round(oc.scale * 100), 40, 300, 5)}
     <div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbOcCol" value="${phbOcCol(oc)}"></label><button type="button" id="phbOcAuto" title="Färg efter aktivitetens status"${oc.colOver ? "" : " disabled"}>Auto</button></div>
@@ -191,13 +228,20 @@ function phbOcBind(api, side) {
       cur.ocDraft = { objs, keys: phbOcKeys(objs), fields: phbOcDefaults().filter(f => f.startsWith("◆") || phbOcKeys(objs).includes(f)), text: "", group: objs.length > 1 && objs.length <= 15 ? "obj" : objs.length > 15 ? "code" : "obj" }; api.renderSide();
     } catch (e) { if (msg) msg.textContent = "Kunde inte läsa markeringen: " + ((e && e.message) || e); }
   });
+  on("phbOcQty", "click", async () => {
+    const b = q("phbOcQty"), m = q("phbOcQtyMsg"); if (typeof qtyRead !== "function") return; b.disabled = true; if (m) m.textContent = "Läser mängder …";
+    try { await qtyRead(); (cur.ocards || []).forEach(c => { }); api.remeasure(); api.renderSide(); const m2 = side.querySelector("#phbOcQtyMsg"); if (m2) m2.textContent = qty.objs.length ? `${qty.objs.length} objekt inlästa.` : "Inga objekt lästes – kolla urvalet i mängdavtagningen."; }
+    catch (e) { if (m) m.textContent = "Kunde inte läsa mängder: " + ((e && e.message) || e); b.disabled = false; }
+  });
   const d = cur.ocDraft;
-  if (d) { bindFields(d.fields, d.keys, () => api.renderSide()); on("phbOcDText", "input", e => { d.text = e.target.value; }); on("phbOcDGroup", "change", e => { d.group = e.target.value; });
+  if (d) { bindFields(d.fields, d.keys, () => api.renderSide()); on("phbOcDText", "input", e => { d.text = e.target.value; }); on("phbOcDDec", "change", e => { d.dec = Number(e.target.value); }); on("phbOcDTSrc", "change", e => { d.titleSrc = e.target.value; }); on("phbOcDGroup", "change", e => { d.group = e.target.value; });
     on("phbOcCancel", "click", () => { cur.ocDraft = null; api.renderSide(); });
     on("phbOcMake", "click", () => { phbOcRemember(d.fields); const n = phbOcCreate(cur, d); cur.ocDraft = null; api.remeasure(); api.renderSide(); if (typeof modelToast === "function") modelToast(`${n} bubbl${n === 1 ? "a" : "or"} skapade`); }); }
   const oc = cur.sel && (cur.ocards || []).includes(cur.sel) ? cur.sel : null;
   if (oc) {
     bindFields(oc.fields, phbOcKeys(oc.objs), () => { api.remeasure(); api.renderSide(); });
+    on("phbOcDec", "change", e => { oc.dec = Number(e.target.value); api.remeasure(); });
+    on("phbOcTSrc", "change", e => { oc.titleSrc = e.target.value; api.remeasure(); api.renderSide(); });
     on("phbOcTitle", "input", e => { oc.title = e.target.value; api.remeasure(); }); on("phbOcText", "input", e => { oc.text = e.target.value; api.remeasure(); });
     on("phbOcScale", "input", e => { oc.scale = Number(e.target.value) / 100; const l = q("phbOcScaleV"); if (l) l.textContent = e.target.value + "%"; api.remeasure(); });
     on("phbOcCol", "input", e => { oc.colOver = e.target.value; const a = q("phbOcAuto"); if (a) a.disabled = false; api.draw(); });
@@ -205,4 +249,52 @@ function phbOcBind(api, side) {
     on("phbOcSaveDef", "click", () => { phbOcRemember(oc.fields); if (typeof modelToast === "function") modelToast("Fälten sparade som förval"); });
     on("phbOcDel", "click", () => api.removeObj({ type: "ocard", o: oc }));
   }
+}
+
+/* ---- Sparade vyer (hela uppsättningen i bildredigeraren) ------------------------------------------------------------------------------ */
+const PHB_VW_KEY = "4ddash-phb-views";
+const phbVwLoad = () => { try { const a = JSON.parse(localStorage.getItem(PHB_VW_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+const phbVwStore = a => { try { localStorage.setItem(PHB_VW_KEY, JSON.stringify(a)); return true; } catch (e) { return false; } };
+function phbVwSnap(st) {
+  const W = st.W, H = st.H, lst = st.list, dt = st.dateObj;
+  return {
+    g: { ...st.g }, progMode: st.progMode, sharp: st.sharp,
+    list: { on: lst.on, title: lst.title, max: lst.max, scale: lst.scale, weeks: lst.weeks, fx: lst.x / W, fy: lst.y / H },
+    dateObj: { on: dt.on, scale: dt.scale, fx: dt.x / W, fy: dt.y / H },
+    texts: st.texts.map(t => { const c = { ...t, fx: t.x / W, fy: t.y / H }; delete c.id; delete c.x; delete c.y; return c; }),
+    oc: (st.ocards || []).map(c => ({ fields: c.fields.slice(), text: c.text, title: c.title, dec: c.dec, titleSrc: c.titleSrc || "", scale: c.scale, colOver: c.colOver, fx: c.x / W, fy: c.y / H, fax: c.ax / W, fay: c.ay / H, free: !!c.free,
+      objs: c.objs.slice(0, 60).map(o => ({ modelId: o.modelId, objectId: o.objectId, rid: o.rid, box: o.box, flat: o.flat })) }))
+  };
+}
+function phbVwApply(st, v) {
+  const W = st.W, H = st.H;
+  Object.assign(st.g, v.g || {}); if (v.progMode) st.progMode = v.progMode; if (v.sharp != null) st.sharp = v.sharp;
+  if (v.list) Object.assign(st.list, { on: v.list.on, title: v.list.title, max: v.list.max, scale: v.list.scale, weeks: v.list.weeks, x: v.list.fx * W, y: v.list.fy * H });
+  if (v.dateObj) Object.assign(st.dateObj, { on: v.dateObj.on, scale: v.dateObj.scale, x: v.dateObj.fx * W, y: v.dateObj.fy * H });
+  st.texts = (v.texts || []).map(t => { const c = { ...t, id: st.nextId++, x: t.fx * W, y: t.fy * H }; delete c.fx; delete c.fy; if (typeof phbTextMeasure === "function") phbTextMeasure(c, st); return c; });
+  st.ocards = (v.oc || []).map(d => {
+    const oc = { id: st.nextId++, objs: d.objs, fields: d.fields.slice(), text: d.text || "", title: d.title || "", dec: d.dec == null ? 2 : d.dec, titleSrc: d.titleSrc || "", scale: d.scale || 1, colOver: d.colOver || null, x: d.fx * W, y: d.fy * H, ax: d.fax * W, ay: d.fay * H, free: !!d.free };
+    phbOcEnsureCam(st, oc.objs); const q = phbOcAnchor(st, oc.objs);
+    if (q && q.x > -0.05 * W && q.x < 1.05 * W && q.y > -0.05 * H && q.y < 1.05 * H) { oc.ax = q.x; oc.ay = q.y; oc.free = false; }
+    return oc;
+  });
+  st.sel = st.ocards[0] || null; st.ocDraft = null;
+}
+function phbVwSide(api) {
+  const esc = api.esc, vs = phbVwLoad(), sel = (api.cur.vwSel != null && vs[api.cur.vwSel]) ? api.cur.vwSel : -1;
+  return `<div class="phb-sec"><div class="phb-h">Sparade vyer</div>
+    <div class="phb-row"><input type="text" id="phbVwName" placeholder="Namn på vyn" maxlength="60"><button type="button" id="phbVwSave" class="primary">Spara vy</button></div>
+    ${vs.length ? `<div class="phb-row"><select id="phbVwSel">${vs.map((v, i) => `<option value="${i}"${i === sel ? " selected" : ""}>${esc(v.name)}</option>`).join("")}</select></div>
+    <div class="phb-row"><button type="button" id="phbVwUse">Använd</button><button type="button" id="phbVwUpd" title="Skriv över den valda vyn med det som är på bilden nu">Uppdatera</button><button type="button" id="phbVwDel" class="danger">Ta bort</button></div>` : ""}
+    <div class="phb-note" id="phbVwMsg">${vs.length ? "" : "Spara bubblor, text, lista, datum och inställningar som en vy och återanvänd dem på nästa foto."} Vyerna sparas i den här webbläsaren.</div></div>`;
+}
+function phbVwBind(api, side) {
+  const q = id => side.querySelector("#" + id), on = (id, fn) => { const e = q(id); if (e) e.addEventListener("click", fn); }, cur = api.cur;
+  const say = t => { const m = q("phbVwMsg"); if (m) m.textContent = t; };
+  on("phbVwSave", () => { const nm = (q("phbVwName").value || "").trim(); if (!nm) { say("Skriv ett namn först."); return; }
+    const vs = phbVwLoad(), i = vs.findIndex(v => v.name === nm), rec = { name: nm, data: phbVwSnap(cur) }; if (i >= 0) vs[i] = rec; else vs.push(rec);
+    if (!phbVwStore(vs)) { say("Kunde inte spara – webbläsarens lagring är full eller avstängd."); return; } cur.vwSel = i >= 0 ? i : vs.length - 1; api.renderSide(); if (typeof modelToast === "function") modelToast(`Vyn "${nm}" sparad`); });
+  on("phbVwUse", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value), v = vs[i]; if (!v) return; phbVwApply(cur, v.data); cur.vwSel = i; api.remeasure(); api.renderSide(); if (typeof modelToast === "function") modelToast(`Vyn "${v.name}" inläst`); });
+  on("phbVwUpd", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i]) return; vs[i].data = phbVwSnap(cur); if (!phbVwStore(vs)) { say("Kunde inte spara."); return; } if (typeof modelToast === "function") modelToast(`Vyn "${vs[i].name}" uppdaterad`); });
+  on("phbVwDel", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i] || !confirm(`Ta bort vyn "${vs[i].name}"?`)) return; vs.splice(i, 1); phbVwStore(vs); cur.vwSel = null; api.renderSide(); });
 }
