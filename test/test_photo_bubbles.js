@@ -33,7 +33,7 @@ seed('plan_items.json', [
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `
     window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({
       project: { getProject: () => Promise.resolve({ id: '${PID}', name: 'Test' }) },
-      viewer: { getSelection: () => Promise.resolve([]), convertToObjectIds: () => Promise.resolve([]), convertToObjectRuntimeIds: (m, ids) => Promise.resolve(ids.map((x, i) => i + 1)), getObjectProperties: () => Promise.resolve([]),
+      viewer: { getSelection: () => Promise.resolve(window.__sel || []), convertToObjectIds: () => Promise.resolve([]), convertToObjectRuntimeIds: (m, ids) => Promise.resolve(ids.map((x, i) => i + 1)), getObjectProperties: (m, rids) => Promise.resolve(rids.map(id => ({ id, properties: [{ name: 'Produkt', properties: [{ name: 'Namn', value: 'Vägg ' + id }, { name: 'HPM', value: 'Typ' + id }] }] }))),
         getCamera: () => Promise.resolve(window.__cam || { position: { x: 0, y: -40, z: 20 }, target: { x: 0, y: 0, z: 0 }, fov: 60 }),
         getObjectBoundingBoxes: (m, rids) => Promise.resolve(rids.map(id => ({ id, boundingBox: { min: { x: -20 + id * 10, y: -2, z: 0 }, max: { x: -15 + id * 10, y: 2, z: 3 } } }))),
         getSnapshot: () => { const c = document.createElement('canvas'); c.width = 1200; c.height = 700; const x = c.getContext('2d'); x.fillStyle = '#e9edf0'; x.fillRect(0, 0, 1200, 700); x.fillStyle = '#6fbf73'; x.fillRect(300, 350, 600, 200); return Promise.resolve(c.toDataURL('image/png')); },
@@ -125,6 +125,20 @@ seed('plan_items.json', [
       const s4 = await S(); if (s4.texts !== 1) fail('Text ska finnas: ' + s4.texts);
       const [dl3] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]); await dl3.saveAs(process.env.PHB_OUT + '/foto2.pdf');
       const [dl4] = await Promise.all([page.waitForEvent('download'), page.click('#phbPng')]); await dl4.saveAs(process.env.PHB_OUT + '/foto2.png');
+
+      // Objektbubblor (valfria egenskaper + egen text + AMA-kod)
+      await page.evaluate(() => { window.__sel = [{ modelId: 'm1', objectRuntimeIds: [1, 2] }]; });
+      await page.click('#phbOcNew'); await page.waitForSelector('#phbOcMake', { timeout: 5000 });
+      await page.fill('#phbOcDText', 'Egen text här');
+      await page.selectOption('#phbOcDGroup', 'all');
+      await page.click('#phbOcMake'); await page.waitForTimeout(300);
+      const oc = await page.evaluate(() => { const s = document.getElementById('phbCv')._state(); return { n: (s.ocards || []).length, text: (s.ocards[0] || {}).text, objs: ((s.ocards[0] || {}).objs || []).length }; });
+      if (oc.n !== 1 || oc.text !== 'Egen text här' || oc.objs !== 2) fail('Objektbubbla: ' + JSON.stringify(oc));
+      const [dl5] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]); await dl5.saveAs(process.env.PHB_OUT + '/foto3.pdf');
+      if (!fs.readFileSync(process.env.PHB_OUT + '/foto3.pdf', 'latin1').includes('bubbla-obj')) fail('PDF saknar objektbubbla');
+      await page.click('#phbOcDel'); await page.waitForTimeout(100);
+      const oc2 = await page.evaluate(() => document.getElementById('phbCv')._state().ocards.length); if (oc2 !== 0) fail('Borttagning: ' + oc2);
+      await page.evaluate(() => { window.__sel = []; });
       await page.selectOption('#phbScope', 'marked'); await page.waitForTimeout(500);
       const i2 = await page.textContent('.phb-info'); if (!/^0 bubblor/.test(i2)) fail('Bara markerade utan markering: ' + i2);
     }

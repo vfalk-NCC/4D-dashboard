@@ -2816,3 +2816,7 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .xl-ar { width: 100%; max-width: 560px; } .xl-cu { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
 .xl-bar .gantt-toolbar-field { white-space: nowrap; }
 .qmf-mxt tr.mx-head.fold { cursor: pointer; } .qmf-mxt tr.mx-head.fold:hover td { filter: brightness(.96); } .mx-caret { display: inline-block; width: 12px; color: #64748b; }
+.phb-ocf { display:flex; flex-direction:column; gap:3px; margin:4px 0; }
+.phb-ocf-r { display:flex; align-items:center; gap:4px; font-size:12px; padding:2px 4px; border:1px solid #e5e7eb; border-radius:4px; background:#fff; }
+.phb-ocf-r > span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.phb-ocf-r button { border:0; background:none; cursor:pointer; padding:0 3px; color:#6b7280; }
