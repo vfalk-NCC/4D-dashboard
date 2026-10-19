@@ -5,7 +5,8 @@
 
 const XL_NOB = "(ingen byggnad)";
 const XL_MODES = [["k", "Kontrakt"], ["pr", "Prognos"], ["tot", "Modell"], ["klar", "Klart"], ["kvar", "Kvar"]];
-const xl = { mode: "tot", q: "", active: "", settings: false, sel: new Set(), find: "", open: new Set(), onlyUnlinked: true, last: null, toast: "" };
+const XL_CLOSED = "4ddash-qty-closed";
+const xl = { closed: new Set((() => { try { return JSON.parse(localStorage.getItem(XL_CLOSED) || "[]"); } catch (e) { return []; } })()), mode: "tot", q: "", active: "", settings: false, sel: new Set(), find: "", open: new Set(), onlyUnlinked: true, last: null, toast: "" };
 const xlKindsAll = () => Object.keys(QTY_KINDS);
 const xlPost = key => qmfAllPosts().find(p => p.key === key);
 const xlKindOf = p => (p ? qmfKindOfPost(p) : "");
@@ -27,19 +28,25 @@ function xlCompute() {
   return { cells, cols, unlinked, noValue };
 }
 /* Radernas ordning: som i Excel (med rubriker) om filen lästs med radordning, annars kodernas ordning. En rubrik visas bara om något under den visas. */
-function xlRows(M) {
+function xlRows(M, collapse) {
   const w = xl.q.toLowerCase().split(/\s+/).filter(Boolean), posts = qmfAllPosts();
   const has = p => (M.cells.has(p.key)) || Object.values(p.k || {}).some(Boolean) || Object.values(p.p || {}).some(Boolean);
   const match = p => !w.length || w.every(x => `${p.ref} ${p.label} ${p.unit}`.toLowerCase().includes(x));
   const vis = new Map(posts.filter(p => has(p) && match(p)).map(p => [p.key, p]));
   if (!qmf.layout || !qmf.layout.length) return posts.filter(p => vis.has(p.key)).map(p => ({ p }));
-  const rows = []; qmf.layout.forEach(e => { if (e.h) rows.push({ h: e }); else if (vis.has(e.p)) rows.push({ p: vis.get(e.p) }); });
+  const rows = []; qmf.layout.forEach((e, i) => { if (e.h) rows.push({ h: e, i }); else if (vis.has(e.p)) rows.push({ p: vis.get(e.p) }); });
   const inLayout = new Set(qmf.layout.filter(e => e.p).map(e => e.p)); const extra = [...vis.values()].filter(p => !inLayout.has(p.key));
-  if (extra.length) { rows.push({ h: { ref: "", text: "Egna koder", lvl: 0 } }); extra.forEach(p => rows.push({ p })); }
+  if (extra.length) { rows.push({ h: { ref: "", text: "Egna koder", lvl: 0 }, i: -1 }); extra.forEach(p => rows.push({ p })); }
   const keep = rows.map(r => !!r.p);
   for (let i = rows.length - 1; i >= 0; i--) if (rows[i].h) { const lv = rows[i].h.lvl; for (let j = i + 1; j < rows.length; j++) { if (keep[j] && rows[j].p) { keep[i] = true; break; } if (rows[j].h && rows[j].h.lvl <= lv) break; } }
-  return rows.filter((r, i) => keep[i]);
+  const out = rows.filter((r, i) => keep[i]);
+  if (!collapse || w.length) return out; // vid sökning visas alla träffar
+  const res = []; let hideLv = null;   // hopfällda rubriker döljer raderna under sig, tills en rubrik på samma eller högre nivå kommer
+  out.forEach(r => { if (r.h) { if (hideLv !== null && r.h.lvl > hideLv) return; hideLv = null; res.push(r); if (xl.closed.has(xlHKey(r))) hideLv = r.h.lvl; } else if (hideLv === null) res.push(r); });
+  return res;
 }
+const xlHKey = r => `${r.i}|${r.h.ref}|${r.h.text}`;
+function xlSaveClosed() { try { localStorage.setItem(XL_CLOSED, JSON.stringify([...xl.closed])); } catch (e) { /* */ } }
 const xlMxFilter = (objs, mode) => (mode === "klar" ? objs.filter(qtyDone) : mode === "kvar" ? objs.filter(o => !qtyDone(o)) : objs);
 function xlVal(M, p, b, mode) {
   const c = (M.cells.get(p.key) || new Map()).get(b) || { tot: 0, klar: 0 }, pr = (p.p || {})[b] || 0, k = (p.k || {})[b] || 0;
@@ -73,11 +80,11 @@ function xlRender() {
   host.innerHTML = html; xlWire(host, M);
 }
 function xlMatrixHtml(M) {
-  const E = qtyEsc, hasObjs = qty.objs.length > 0, rows = xlRows(M);
+  const E = qtyEsc, hasObjs = qty.objs.length > 0, rows = xlRows(M, true), canFold = !xl.q.trim() && !!(qmf.layout && qmf.layout.length);
   if (!qmfAllPosts().length) return "";
   const nc = M.cols.length + 4, un = M.unlinked.length;
   const body = rows.map(r => {
-    if (r.h) { const h = r.h; return `<tr class="mx-head${h.ref ? " top" : ""}"><td class="mx-ref"><b>${E(h.ref)}</b></td><td colspan="${nc - 1}" style="padding-left:${6 + Math.max(0, h.lvl - 1) * 10}px">${h.ref || h.lvl <= 1 ? `<b>${E(h.text)}</b>` : E(h.text)}</td></tr>`; }
+    if (r.h) { const h = r.h, shut = xl.closed.has(xlHKey(r)); return `<tr class="mx-head${h.ref ? " top" : ""}${canFold ? " fold" : ""}" data-hk="${E(xlHKey(r))}"><td class="mx-ref"><b>${canFold ? `<span class="mx-caret">${shut ? "▸" : "▾"}</span> ` : ""}${E(h.ref)}</b></td><td colspan="${nc - 1}" style="padding-left:${6 + Math.max(0, h.lvl - 1) * 10}px">${h.ref || h.lvl <= 1 ? `<b>${E(h.text)}</b>` : E(h.text)}</td></tr>`; }
     const p = r.p, byB = M.cells.get(p.key) || new Map(); let tot = 0;
     const tds = M.cols.map(b => { const c = byB.get(b), v = xlVal(M, p, b, xl.mode); tot += v; const done = c && c.tot > 0 && c.klar >= c.tot * 0.999, nm = c ? xlMxFilter(c.objs, xl.mode).length : 0;
       return `<td class="num mx-c${c ? " has" : ""}${done ? " done" : ""}"${c ? ` data-mp="${E(p.key)}" data-mb="${E(b)}" title="${nm} objekt räknas i ${E((XL_MODES.find(m => m[0] === xl.mode) || [])[1])} – klicka för att markera dem i TC"` : ""}>${xlFmt(v)}</td>`; }).join("");
@@ -86,6 +93,7 @@ function xlMatrixHtml(M) {
   return `<div class="xl-mx">
     <div class="xl-tools">${xlSeg("data-mxmode", xl.mode, XL_MODES.map(([v, t]) => [v, t, { k: "Mängd enligt kontraktet (Excel)", pr: "Prognos (Excel)", tot: "Alla objekt i modellen som är kopplade till koden", klar: "Det som är klart enligt Ganttens regel vid valt datum", kvar: "Prognos minus klart" }[v]]))}
       <input type="search" id="xlQ" class="xl-q" placeholder="Sök kod eller text…" value="${E(xl.q)}" autocomplete="off" />
+      ${canFold ? `<button type="button" id="xlFoldAll" class="gantt-toolbar-btn xl-btn" title="Fäll ihop alla rubriker">▸ Fäll ihop</button><button type="button" id="xlUnfoldAll" class="gantt-toolbar-btn xl-btn" title="Fäll ut alla rubriker">▾ Fäll ut</button>` : ""}
       <span class="gantt-head-spacer"></span>
       ${hasObjs ? `<button type="button" id="xlUnl" class="gantt-toolbar-btn xl-btn${un ? " warn" : ""}" title="Modellens objekt som inte har någon kod ännu">${un ? `${un.toLocaleString("sv-SE")} objekt saknar kod` : "Alla objekt har kod"}</button>` : ""}
       <button type="button" id="xlHtml" class="gantt-toolbar-btn xl-btn" title="Spara matrisen som en fristående HTML-sida">HTML</button><button type="button" id="xlCsv" class="gantt-toolbar-btn xl-btn" title="Spara matrisen som CSV (Excel)">CSV</button></div>
@@ -197,6 +205,9 @@ function xlWire(host, M) {
   const f = $("#qtyFollow"); if (f) f.onchange = () => { qty.cfg.follow = f.checked; if (f.checked) qty.cfg.date = ""; qtySave(); qtyRender(); };
   // matrisen
   host.querySelectorAll("[data-mxmode]").forEach(b => b.onclick = () => { xl.mode = b.dataset.mxmode; qtyRender(); });
+  host.querySelectorAll(".qmf-mxt tr.mx-head.fold").forEach(tr => tr.addEventListener("click", () => { const k = tr.dataset.hk; if (xl.closed.has(k)) xl.closed.delete(k); else xl.closed.add(k); xlSaveClosed(); qtyRender(); }));
+  const fa = $("#xlFoldAll"); if (fa) fa.onclick = () => { xlRows(M, false).forEach(r => { if (r.h) xl.closed.add(xlHKey(r)); }); xlSaveClosed(); qtyRender(); };
+  const ua = $("#xlUnfoldAll"); if (ua) ua.onclick = () => { xl.closed.clear(); xlSaveClosed(); qtyRender(); };
   const q = $("#xlQ"); if (q) { let t = null; q.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { xl.q = q.value; qtyRender(); const q2 = document.getElementById("xlQ"); if (q2) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); } }, 250); }); q.addEventListener("keydown", e => e.stopPropagation()); }
   host.querySelectorAll(".qmf-mxt td.mx-c[data-mp]").forEach(td => td.addEventListener("click", () => { const c = (M.cells.get(td.dataset.mp) || new Map()).get(td.dataset.mb), p = xlPost(td.dataset.mp); sel(c ? c.objs : [], `${p ? p.ref : ""} i ${td.dataset.mb}`); }));
   host.querySelectorAll(".qmf-mxt td.mx-ref[data-mp]").forEach(td => td.addEventListener("click", () => { const p = xlPost(td.dataset.mp); xl.active = td.dataset.mp; xl.find = ""; xl.sel.clear(); sel([...(M.cells.get(td.dataset.mp) || new Map()).values()].flatMap(c => c.objs), p ? p.ref : "kod"); qtyRender(); }));

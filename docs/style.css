@@ -2815,3 +2815,4 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .xl-sg label { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
 .xl-ar { width: 100%; max-width: 560px; } .xl-cu { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
 .xl-bar .gantt-toolbar-field { white-space: nowrap; }
+.qmf-mxt tr.mx-head.fold { cursor: pointer; } .qmf-mxt tr.mx-head.fold:hover td { filter: brightness(.96); } .mx-caret { display: inline-block; width: 12px; color: #64748b; }

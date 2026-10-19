@@ -87,6 +87,13 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
         const r = { tot: at('tot'), klar: at('klar'), kvar: at('kvar') }; xl.mode = 'tot'; qtyRender(); return r; });
       if (S.tot !== 2 || S.klar !== 1 || S.kvar !== 1) fail('Läget ska styra markeringen (2/1/1): ' + JSON.stringify(S)); }
     console.log('OK: klick på siffra markerar de objekt som räknas');
+    // Rubriker kan fällas ihop och ut (sparas), och sökning visar alla träffar.
+    { const F = await page.evaluate(() => { xl.closed.clear(); xl.q = ''; qtyRender(); const rows = () => document.querySelectorAll('.qmf-mxt tbody tr:not(.mx-head)').length, a = rows();
+        document.querySelector('.qmf-mxt tr.mx-head.fold').click(); const b = rows(); const saved = JSON.parse(localStorage.getItem('4ddash-qty-closed') || '[]').length;
+        document.querySelector('#xlUnfoldAll').click(); const c = rows(); document.querySelector('#xlFoldAll').click(); const d = rows(); document.querySelector('#xlUnfoldAll').click();
+        return { a, b, c, d, saved, caret: !!document.querySelector('.mx-caret') }; });
+      if (!(F.a >= 2) || !(F.b < F.a) || F.c !== F.a || F.d !== 0 || F.saved < 1 || !F.caret) fail('Fälla ihop rubriker: ' + JSON.stringify(F)); }
+    console.log('OK: rubriker kan fällas ihop');
     // Koppla: klick på kod öppnar panelen; en sökruta (HPM-fallet) ger objekt; koppla valda; ångra.
     { const ese = await page.evaluate(() => { const p = qmfAllPosts().find(x => x.ref === 'ESE.2431' && x.unit === 'm³') || qmfAllPosts().find(x => x.unit === 'm³' && x.ref !== 'ESE.21' && x.ref !== 'ESE.15'); return { key: p.key, ref: p.ref }; });
       await page.evaluate(k => { xl.active = k; xl.find = ''; xl.sel.clear(); qtyRender(); }, ese.key);
