@@ -65,6 +65,15 @@ seed('plan_items.json', [
     if (name !== 'bad' && /kanten|Inga/.test(info)) fail('Bubblor placerades inte: ' + info);
     if (name === 'bad' && !/kanten/.test(info)) fail('Reservläget förväntades: ' + info);
     if (!/^4 bubblor/.test(info)) fail('Antal: ' + info);
+    if (name === 'pos') { // zoom: 100 % ryms i fönstret, zoomen går hela vägen och bevarar proportionerna
+      const M = () => page.evaluate(() => { const c = document.getElementById('phbCv'), b = document.querySelector('.phb-img'), r = c.getBoundingClientRect(); return { w: r.width, ar: r.width / r.height, ar0: c.width / c.height, sw: b.scrollWidth, cw: b.clientWidth }; });
+      const z0 = await M(); if (z0.sw > z0.cw + 1) fail('100 % ska rymmas i fönstret utan rullning: ' + JSON.stringify(z0));
+      for (let i = 0; i < 6; i++) await page.click('#phbZp');
+      const z1 = await M(); if (z1.w < z0.w * 3.5 || Math.abs(z1.ar - z1.ar0) > 0.01) fail('Zoomen ska nå ~380 % med rätt proportioner: ' + JSON.stringify([z0, z1]));
+      await page.hover('#phbCv'); await page.mouse.wheel(0, -2000); await page.waitForTimeout(100);
+      const z2 = await M(); if (z2.w < z0.w * 7.5) fail('Mushjulet ska zooma upp till 800 %: ' + JSON.stringify(z2));
+      await page.click('#phbZv'); const z3 = await M(); if (Math.abs(z3.w - z0.w) > 2) fail('100 % ska återställa: ' + JSON.stringify(z3));
+    }
     if (name === 'pos') { // dra en bubbla
       const before = await page.evaluate(() => 1);
       const bb = await page.locator('#phbCv').boundingBox();

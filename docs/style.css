@@ -2839,3 +2839,6 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .print-pick-row .sp { flex: 1; }
 .print-pick-row button { font: inherit; font-size: 12px; padding: 5px 12px; border: 1px solid var(--border, #d1d5db); border-radius: 6px; background: var(--card, #fff); color: var(--text, #111827); cursor: pointer; }
 .print-pick-row button.primary { background: var(--accent, #2563eb); border-color: var(--accent, #2563eb); color: #fff; }
+/* Bildredigeraren: bildytan tar resten av bredden (inte bildens egen storlek) och bilden zoomas med pixelbredd från JS. */
+.phb-img { flex: 1 1 0; min-width: 0; max-height: 78vh; }
+.phb-img canvas { flex: none; max-width: none; max-height: none; margin: auto; }

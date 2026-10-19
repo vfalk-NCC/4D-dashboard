@@ -586,16 +586,20 @@ function phbPreview(st) {
     }
   }
   /* Zoom i förhandsvisningen: bara visningen ändras (arbetsytan och exporten är oförändrade). */
-  const imgBox = d.querySelector(".phb-img"), zv = d.querySelector("#phbZv"); let zoom = 1, fitW = 0, space = false, pan = null;
+  const imgBox = d.querySelector(".phb-img"), zv = d.querySelector("#phbZv"); let zoom = 1, space = false, pan = null;
+  /* "100 %" = hela bilden ryms i fönstret (bredd och höjd); därifrån zoomas visningsbredden i pixlar (inga CSS-tak som stoppar zoomen). */
+  const fitWidth = () => Math.max(120, Math.min(imgBox.clientWidth || 800, window.innerHeight * 0.76 * (cv.width / cv.height)));
+  const applySize = () => { cv.style.width = Math.round(fitWidth() * zoom) + "px"; cv.style.height = "auto"; };
   const setZoom = (z, cx, cy) => {
-    if (!fitW || zoom === 1) { cv.style.width = ""; const r0 = cv.getBoundingClientRect(); if (zoom === 1) fitW = r0.width; }
     const r = cv.getBoundingClientRect(), nz = Math.max(1, Math.min(8, z));
     const px = cx == null ? r.left + r.width / 2 : cx, py = cy == null ? r.top + r.height / 2 : cy, fx = (px - r.left) / r.width, fy = (py - r.top) / r.height;
-    zoom = nz; cv.style.maxWidth = nz === 1 ? "" : "none"; cv.style.maxHeight = nz === 1 ? "" : "none"; cv.style.width = nz === 1 ? "" : (fitW * nz) + "px"; cv.style.height = nz === 1 ? "" : "auto";
+    zoom = nz; applySize();
     const r2 = cv.getBoundingClientRect(); imgBox.scrollLeft += r2.left + fx * r2.width - px; imgBox.scrollTop += r2.top + fy * r2.height - py;
+    if (nz === 1) { imgBox.scrollLeft = 0; imgBox.scrollTop = 0; }
     zv.textContent = Math.round(nz * 100) + " %"; cv.style.cursor = nz > 1 && space ? "grab" : "";
   };
-  requestAnimationFrame(() => { fitW = cv.getBoundingClientRect().width; });
+  applySize(); window.addEventListener("resize", applySize);
+  new MutationObserver(() => { if (!document.body.contains(d)) window.removeEventListener("resize", applySize); }).observe(document.body, { childList: true });
   d.querySelector("#phbZp").onclick = () => setZoom(zoom * 1.25); d.querySelector("#phbZm").onclick = () => setZoom(zoom / 1.25); zv.onclick = () => setZoom(1);
   imgBox.addEventListener("wheel", e => { e.preventDefault(); setZoom(zoom * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX, e.clientY); }, { passive: false });
   d.addEventListener("keydown", e => {
