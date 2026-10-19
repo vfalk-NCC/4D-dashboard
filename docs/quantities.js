@@ -201,7 +201,18 @@ function qtyExport() {
   const blob = new Blob([qtyCsv()], { type: "text/csv;charset=utf-8" }), url = URL.createObjectURL(blob), a = document.createElement("a");
   a.href = url; a.download = `Mängder ${todayISO()}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
-function qtyRender() { qtyRender0(); qtyAfterRender(); }
+/* Stå kvar på samma ställe när listorna ritas om (Victor 2026-10-19: "det hoppar till botten när jag trycker på spara"): rullningen hos fönstret och alla
+   rullbara föräldrar sparas före omritningen och sätts tillbaka efteråt. */
+["wheel", "keydown", "pointerdown", "touchstart"].forEach(ev => window.addEventListener(ev, () => { qtyKeepScroll.userAt = Date.now(); }, { capture: true, passive: true }));
+function qtyKeepScroll(fn) {
+  const host = document.getElementById("qtyBox"), saved = [];
+  for (let n = host; n; n = n.parentElement) if (n.scrollTop > 0) saved.push([n, n.scrollTop]);
+  const wy = window.scrollY, wx = window.scrollX;
+  const restore = () => { saved.forEach(([n, t]) => { if (n.isConnected && n.scrollTop !== t) n.scrollTop = t; }); if (window.scrollY !== wy) window.scrollTo(wx, wy); };
+  const t0 = Date.now(); qtyKeepScroll.userAt = 0;
+  try { return fn(); } finally { restore(); requestAnimationFrame(() => { if (!qtyKeepScroll.userAt || qtyKeepScroll.userAt < t0) restore(); }); }
+}
+function qtyRender() { qtyKeepScroll(() => { qtyRender0(); qtyAfterRender(); }); }
 function qtyRender0() {
   const host = document.getElementById("qtyBox"); if (!host) return;
   const C = qty.cfg, E = qtyEsc, hasData = qty.objs.length > 0;

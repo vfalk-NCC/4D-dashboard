@@ -236,7 +236,8 @@ function qmfCombo(se, groups, onPick) {
   });
   list.addEventListener("click", e => { const x = e.target.closest(".qmf-combo-i"); if (x) pick(x.dataset.i); });
   const below = innerHeight - r.bottom, up = r.top > below + 120; list.style.maxHeight = Math.max(160, Math.min(380, (up ? r.top : below) - 70)) + "px";
-  pop.style.top = up ? "" : r.bottom + 4 + "px"; pop.style.bottom = up ? innerHeight - r.top + 4 + "px" : "";
+  const cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v)); // listan hålls alltid inom fönstret (även om fältet scrollats utom synhåll)
+  pop.style.top = up ? "" : cl(r.bottom + 4, 8, innerHeight - 200) + "px"; pop.style.bottom = up ? cl(innerHeight - r.top + 4, 8, innerHeight - 200) + "px" : "";
   draw(); setTimeout(() => { document.addEventListener("pointerdown", out, true); qi.focus(); const c = list.querySelector(".cur"); if (c) c.scrollIntoView({ block: "center" }); }, 0);
 }
 /* ---- Jämförelsen ------------------------------------------------------------------------------------ */
@@ -397,7 +398,8 @@ function qmfCustomWire(host) {
   });
 }
 
-function qmfRender() {
+function qmfRender() { if (typeof qtyKeepScroll === "function") return qtyKeepScroll(qmfRender0); return qmfRender0(); }
+function qmfRender0() {
   const host = document.getElementById("qmfBox"); if (!host) return;
   const E = qtyEsc, hasObjs = typeof qty !== "undefined" && qty.objs.length > 0, hasMf = qmfAllPosts().length > 0;
   let html = `<h3 class="qmf-h">Jämför mot mängdförteckningen <span class="hint">· mängdslag: ${E(QTY_KINDS[qtyKind()][0])} (byts ovan)</span></h3><div class="qty-row"><label>Mängdförteckning (.xlsx) <input type="file" id="qmfFile" accept=".xlsx" /></label>${qmf.posts.length ? `<span class="hint">✓ ${E(qmf.file)} · ${qmf.posts.length} poster · ${qmf.builds.length} byggnader</span><button type="button" id="qmfClear">Ta bort</button>` : ""}<span class="hint" id="qmfMsg">${E(qmf.msg)}</span><span class="hint qmf-sync" id="qmfSyncState">${E(qmfSync.state)}</span></div>${qmfCustomHtml()}`;
