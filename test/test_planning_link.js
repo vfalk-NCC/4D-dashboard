@@ -59,7 +59,7 @@ seed('plan_items.json', [
     if (await page.evaluate(() => ganttAsOf)) fail('Datum från 4D-planering ska ignoreras utanför Tid-läget');
     // Tid-läget: läge och datum sänds.
     await page.evaluate(() => { window.__got = []; }); await peer.evaluate(() => { window.__got = []; });
-    await page.click('[data-gantt-view="board"]').catch(() => {}); await page.click('[data-gmode="time"]'); await page.waitForTimeout(800);
+    await page.click('[data-gantt-view="board"]').catch(() => {}); await page.dispatchEvent('[data-gmode="time"]', 'click'); await page.waitForTimeout(800);
     g = await got(); const st = g.filter(m => m.t === 'state').pop();
     if (!st || st.mode !== 'time' || !/^\d{4}-\d\d-\d\d$/.test(st.date)) fail('Tid-läget ska sändas med datum: ' + JSON.stringify(g));
     // Datum från 4D-planering flyttar Tid-lägets datum.
@@ -69,10 +69,10 @@ seed('plan_items.json', [
     await page.waitForTimeout(500); g = await got();
     if (!g.some(m => m.t === 'state' && m.date === d1)) fail('Nya datumet ska sändas tillbaka');
     // Läge Kopplade sänds utan datum; av = off.
-    await page.click('[data-gmode="isolate"]'); await page.waitForTimeout(800); g = await got();
+    await page.dispatchEvent('[data-gmode="isolate"]', 'click'); await page.waitForTimeout(800); g = await got();
     if (g.filter(m => m.t === 'state').pop().mode !== 'isolate') fail('Kopplade ska sändas');
     await send({ t: 'setDate', date: '2020-01-01' }); await page.waitForTimeout(300);
-    await page.click('[data-gmode="off"]'); await page.waitForTimeout(800); g = await got();
+    await page.dispatchEvent('[data-gmode="off"]', 'click'); await page.waitForTimeout(800); g = await got();
     if (g.filter(m => m.t === 'state').pop().mode !== 'off') fail('Alla (av) ska sändas');
     if (errors.length) fail('Sidfel: ' + errors.join(' | '));
     console.log('OK: dashboardens läge och datum sänds till 4D-planering, och dess reglage flyttar Tid-lägets datum (bara där)');

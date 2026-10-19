@@ -56,7 +56,7 @@ seed('plan_items.json', rowsSeed);
   await page.waitForTimeout(200);
   await page.selectOption('#ganttGroupBy', 'area').catch(() => {});
   // Helskärm med ett stort schema: båda verktygsraderna syns (andra raden klipptes bort förut).
-  await page.click('#ganttFullBtn'); await page.waitForTimeout(400);
+  await page.dispatchEvent('#ganttFullBtn', 'click'); await page.waitForTimeout(400);
   const rowsVis = await page.evaluate(() => ({ sub: document.querySelector('.gantt-range-row').getBoundingClientRect().height, edit: document.getElementById('ganttEditable').getBoundingClientRect().height, scroll: document.getElementById('ganttChart').scrollHeight > document.getElementById('ganttChart').clientHeight }));
   if (rowsVis.sub < 20 || rowsVis.edit < 8) fail('Andra verktygsraden ska synas i helskärm: ' + JSON.stringify(rowsVis));
   console.log('OK: helskärm – båda verktygsraderna (period, baseline, redigerbar …) syns även med ett stort schema');

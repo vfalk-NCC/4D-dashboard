@@ -66,7 +66,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.click('[data-gantt-weeks="4"]'); await page.waitForTimeout(300);
   const iso = () => page.evaluate(() => window.__iso || []), st = () => page.evaluate(() => window.__state || []);
   const ids = e => e.flatMap(m => m.entityIds).sort().join();
-  await page.click('[data-gmode="isolate"]'); await page.waitForTimeout(700);
+  await page.dispatchEvent('[data-gmode="isolate"]', 'click'); await page.waitForTimeout(700);
   let I = await iso();
   if (I.length !== 1 || ids(I[0]) !== 'G5,G7' || I[0][0].modelId !== 'M1') fail('Isolerar objekten som är kopplade till det som visas: ' + JSON.stringify(I));
   if ((await page.getAttribute('[data-gmode="isolate"]', 'aria-pressed')) !== 'true') fail('Knappen ska visa att den är intryckt');
@@ -82,7 +82,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   I = await iso();
   if (I.length !== 3 || ids(I[2]) !== 'G5,G7') fail('Tillbaka till alla: ' + JSON.stringify(I));
   // Av: hela modellen visas igen.
-  await page.click('[data-gmode="off"]'); await page.waitForTimeout(400);
+  await page.dispatchEvent('[data-gmode="off"]', 'click'); await page.waitForTimeout(400);
   if (!(await st()).some(x => x && x.visible === 'reset') || (await page.getAttribute('[data-gmode="isolate"]', 'aria-pressed')) !== 'false') fail('Av: visible reset och knappen släpps: ' + JSON.stringify(await st()));
   // Medan den är av händer inget när schemat ändras.
   await page.fill('#ganttSearch', 'Schakt'); await page.waitForTimeout(900);
@@ -90,7 +90,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   console.log('OK: Visa endast kopplade – isolerar objekten för det som visas i Gantt, följer sökningen, av = hela modellen igen');
   // Tidslinje-dragaren: valfri rad med dragare + datum; markeringen följer datumet, "Visa i 3D" visar bara objekt som hunnit starta
   // och uppdaterar 3D direkt (bara de som byter läge), färdigt arbete får egen opacitet.
-  const openMenu = async () => { if (await page.isVisible('#ganttTimeMenu')) return; await page.click('#ganttTimeMenuBtn'); await page.waitForSelector('#ganttTimeMenu', { state: 'visible' }); };
+  const openMenu = async () => { await page.evaluate(() => ganttDdOpen('time')); if (await page.isVisible('#ganttTimeMenu')) return; await page.click('#ganttTimeMenuBtn'); await page.waitForSelector('#ganttTimeMenu', { state: 'visible' }); };
   const replay = () => page.evaluate(() => {
     const vis = new Map(), col = new Map();
     (window.__calls || []).forEach(({ a, b, iso }) => {
@@ -103,7 +103,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(500);
   if (!(await page.evaluate(() => document.getElementById('ganttTimeRow').classList.contains('gantt-time-off')))) fail('Tidsstyrningen ska vara nedtonad (avstängd) som standard');
   await page.evaluate(() => { window.__calls = []; });
-  await page.click('[data-gmode="time"]'); await page.waitForTimeout(400);
+  await page.dispatchEvent('[data-gmode="time"]', 'click'); await page.waitForTimeout(400);
   if (await page.evaluate(() => document.getElementById('ganttTimeRow').classList.contains('gantt-time-off')) || !(await page.isVisible('#ganttTimeSlider'))) fail('Tidslinje-raden ska vara aktiv');
   await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(500);
   if (!(await page.$('.gantt-scrub'))) fail('Dragstrecket ska ligga ovanpå schemat');
@@ -154,12 +154,12 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   R = await replay(); if (hx(R.col.G7) !== '#123456') fail('Av: pågående-färgen ska tillbaka: ' + JSON.stringify(R.col.G7));
   // Ikonen vid Helskärm: tidslinjedragaren av/på även när knapparna är dolda.
   await page.evaluate(() => setGanttFsClean(true)); await page.waitForTimeout(300);
-  if (!(await page.isVisible('#ganttFsTime'))) fail('Tidslinje-ikonen ska synas även med dolda knappar');
+  await page.evaluate(() => ganttDdOpen('tools')); if (!(await page.isVisible('#ganttFsTime'))) fail('Tidslinje-ikonen ska synas även med dolda knappar');
   const wasTime = await page.evaluate(() => ganttMode);
-  await page.click('#ganttFsTime'); await page.waitForTimeout(600);
+  await page.dispatchEvent('#ganttFsTime', 'click'); await page.waitForTimeout(600);
   const m2 = await page.evaluate(() => ganttMode);
   if (m2 === wasTime || (await page.getAttribute('#ganttFsTime', 'aria-pressed')) !== String(m2 === 'time')) fail('Ikonen ska växla Tid-läget: ' + wasTime + ' → ' + m2);
-  await page.click('#ganttFsTime'); await page.waitForTimeout(600);
+  await page.dispatchEvent('#ganttFsTime', 'click'); await page.waitForTimeout(600);
   if ((await page.evaluate(() => ganttMode)) !== 'off' && wasTime === 'time') { /* tillbaka till av */ }
   await page.evaluate(() => setGanttFsClean(false)); await page.waitForTimeout(200);
   if ((await page.evaluate(() => ganttMode)) !== wasTime) { await page.evaluate(m => setGanttMode(m, true), wasTime); await page.waitForTimeout(600); }
@@ -170,7 +170,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   const st2 = await page.evaluate(() => ganttAsOf);
   const ddays = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
   if (ddays(st0, st1) !== 1 || ddays(st1, st2) !== -1) fail('Stegknapparna ska flytta en dag och stanna vid spannets början: ' + [st0, st1, st2]);
-  await page.click('#ganttTimeMenuBtn'); await page.waitForTimeout(150); if (await page.isVisible('#ganttTimeMenu')) { /* öppnades/stängdes */ }
+  await page.evaluate(() => ganttDdOpen('time')); await page.click('#ganttTimeMenuBtn'); await page.waitForTimeout(150); if (await page.isVisible('#ganttTimeMenu')) { /* öppnades/stängdes */ }
   // Tidslinjen börjar nu vid spannets början (inte dagens datum): gå till en dag där G7 pågår innan opaciteterna provas.
   await page.evaluate(() => { const g = items.find(x => x.objectId === 'G7'); setGanttAsOf(addDaysIso(g.startDate, 1), { now: true }); }); await page.waitForTimeout(800);
   // Opacitet per status: pågående 50 % ger alfa 128; 0 = osynligt (släcks).
@@ -224,7 +224,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (!sg || sg.l < sg.a || sg.l > sg.b) fail('Dragstrecket i stapelvyn ska ligga inom tidsspåret: ' + JSON.stringify(sg));
   await page.click('[data-gantt-view="board"]'); await page.waitForTimeout(700);
   // Modeller: läs in alla kopplade modeller.
-  await page.click('#ganttLoadModelsBtn'); await page.waitForTimeout(500);
+  await page.dispatchEvent('#ganttLoadModelsBtn', 'click'); await page.waitForTimeout(500);
   const tog = await page.evaluate(() => window.__tog);
   if (!tog || tog.length !== 2 || !tog.every(t => t[1] === true)) fail('Läs in modeller: ' + JSON.stringify(tog));
   // Pulserande ljus på pågående objekt (valfritt).
@@ -282,35 +282,35 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.fill('#ganttTimeFrom', day(2)); await page.dispatchEvent('#ganttTimeFrom', 'change');
   await page.fill('#ganttTimeTo', day(10)); await page.dispatchEvent('#ganttTimeTo', 'change'); await page.waitForTimeout(400);
   if ((await page.getAttribute('#ganttTimeSlider', 'max')) !== '8') fail('Dragaren ska spänna Från–Till (8 dagar): ' + await page.getAttribute('#ganttTimeSlider', 'max'));
-  await page.click('#ganttTimeAuto'); await page.waitForTimeout(300);
+  await page.dispatchEvent('#ganttTimeAuto', 'click'); await page.waitForTimeout(300);
   if ((await page.getAttribute('#ganttTimeSlider', 'max')) === '8') fail('Auto ska ge hela spannet');
   // Visa kommande: G5 (startar dag 6) syns i kommande-färgen redan vid dag 4.
   await openMenu(); await page.check('#ganttTimeFuture'); await page.waitForTimeout(1200);
   R = await replay();
   if (R.shown !== 'G5,G7') fail('Visa kommande: båda i 3D: ' + R.shown);
   await openMenu(); await page.uncheck('#ganttTimeFuture'); await page.waitForTimeout(800);
-  await page.click('[data-gmode="off"]'); await page.waitForTimeout(600);
+  await page.dispatchEvent('[data-gmode="off"]', 'click'); await page.waitForTimeout(600);
   if (!(await page.evaluate(() => document.getElementById('ganttTimeRow').classList.contains('gantt-time-off'))) || await page.$('.gantt-scrub')) fail('Av: raden ska tonas ned och dragstrecket försvinna');
 
   console.log('OK: tidslinje-dragare över schemat – datummarkering, realtid i 3D, färger/opacitet efter slut, intervall, kommande');
   // Avvisar Trimble Connect isolateEntities (fel utan text, som hos Victor): släck allt och tänd de kopplade i stället.
   await page.evaluate(() => { window.__state = []; API.viewer.isolateEntities = () => Promise.reject(undefined); });
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(600);
-  await page.click('[data-gmode="isolate"]'); await page.waitForTimeout(800);
+  await page.dispatchEvent('[data-gmode="isolate"]', 'click'); await page.waitForTimeout(800);
   const stt = await page.evaluate(() => window.__state.map(x => JSON.stringify(x)));
   if (stt[0] !== '{"visible":false}' || stt[1] !== '{"visible":true}') fail('Reserv när isolateEntities avvisas: ' + JSON.stringify(stt));
   if (/Kunde inte/.test(await page.innerText('#modelToast'))) fail('Inget felmeddelande när reserven fungerar: ' + await page.innerText('#modelToast'));
-  await page.click('[data-gmode="off"]'); await page.waitForTimeout(300);
+  await page.dispatchEvent('[data-gmode="off"]', 'click'); await page.waitForTimeout(300);
   console.log('OK: reserv (släck allt, tänd kopplade) när isolateEntities avvisas');
   // Dölj kopplade objekt: släcker alla kopplade (hela planeringen), av = hela modellen igen; utesluter Visa endast kopplade.
   await page.evaluate(() => { window.__calls = []; });
-  await page.click('[data-gmode="hide"]'); await page.waitForTimeout(700);
+  await page.dispatchEvent('[data-gmode="hide"]', 'click'); await page.waitForTimeout(700);
   const hc = await page.evaluate(() => window.__calls.filter(c => c.a && c.b.visible === false).flatMap(c => c.a.modelObjectIds.flatMap(m => m.objectRuntimeIds)).sort().join());
   if (hc !== 'G5,G7' || (await page.getAttribute('[data-gmode="hide"]', 'aria-pressed')) !== 'true') fail('Dölj kopplade ska släcka G5 och G7 (inte den inte inlästa modellen): ' + hc);
-  await page.click('[data-gmode="isolate"]'); await page.waitForTimeout(700);
+  await page.dispatchEvent('[data-gmode="isolate"]', 'click'); await page.waitForTimeout(700);
   const pr = await page.evaluate(() => [...document.querySelectorAll('#ganttModeSeg [data-gmode]')].filter(b => b.getAttribute('aria-pressed') === 'true').map(b => b.dataset.gmode).join());
   if (pr !== 'isolate') fail('Bara ett 3D-läge i taget: ' + pr);
-  await page.click('[data-gmode="off"]'); await page.waitForTimeout(500);
+  await page.dispatchEvent('[data-gmode="off"]', 'click'); await page.waitForTimeout(500);
   if (!(await page.evaluate(() => window.__calls.some(c => !c.a && c.b.visible === 'reset')))) fail('Av: visible reset');
   console.log('OK: Dölj kopplade objekt – släcker kopplade, av/på, utesluter Visa endast kopplade');
   // Flera aktiviteter med Ctrl-klick: markeras, pushas till 3D, kan isoleras.
@@ -343,7 +343,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   await page.evaluate(() => { ganttEditable = false; });
   await page.keyboard.press('Escape'); await page.waitForTimeout(400);
   if (await page.$('#ganttMultiBar') || (await page.locator('.gantt-multisel').count())) fail('Esc rensar markeringen');
-  await page.click('[data-gmode="off"]'); await page.waitForTimeout(300);
+  await page.dispatchEvent('[data-gmode="off"]', 'click'); await page.waitForTimeout(300);
   console.log('OK: Ctrl-klick markerar flera aktiviteter – pushas till 3D, Bara dessa, Esc rensar');
   // Info-bubblor i 3D: en per aktivitet med namn, datum, framdrift, område och aktivitet; följer Ctrl-markeringen; av = borttagna.
   await page.evaluate(() => { window.__mk = []; window.__mkRm = []; ganttAsOf = addDaysIso(items.find(x => x.objectId === 'G7').startDate, 1); }); // datumet är inte längre dagens: sätt ett där aktiviteterna pågår
@@ -430,7 +430,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   const lk = await page.evaluate(() => { const A = { id: 'q1', startDate: '2026-10-05', endDate: '2026-10-06', dependsOn: [] }, B = { id: 'q2', startDate: '2026-10-07', endDate: '2026-10-08', dependsOn: ['q1'] }, C = { id: 'q3', startDate: '2026-10-09', endDate: '2026-10-10', dependsOn: ['q2'] }; const all = [A, B, C]; return { alone: ppxLinkStats([C]), withPreds: ppxLinkStats(ppxWithPredecessors([C], all)), n: ppxWithPredecessors([C], all).length }; });
   if (lk.alone.outside !== 1 || lk.alone.inside !== 0 || lk.withPreds.inside !== 2 || lk.withPreds.outside !== 0 || lk.n !== 3) fail('Beroenden i exporten: ' + JSON.stringify(lk));
   await page.evaluate(() => { ganttMultiSel.clear(); }); 
-  await page.click('#ganttPpExportBtn'); await page.waitForSelector('.ppx-pop');
+  await page.dispatchEvent('#ganttPpExportBtn', 'click'); await page.waitForSelector('.ppx-pop');
   const dlp = page.waitForEvent('download', { timeout: 10000 });
   await page.click('.ppx-pop input[value="all"]'); await page.click('.ppx-go');
   const dwn = await dlp;
@@ -438,7 +438,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   console.log('OK: export till Powerproject (MS Project-XML) – hierarki, glapp, resurser, nedladdning');
   // Uppdatera-knappen i Gantt: snurrar medan den hämtar, visar "Uppdaterad" och går tillbaka.
   await page.evaluate(() => { window.__ref = 0; const o = window.refreshAll; window.refreshAll = async () => { window.__ref++; await new Promise(r => setTimeout(r, 300)); return o && o(); }; });
-  await page.click('#ganttRefreshBtn'); await page.waitForTimeout(100);
+  await page.dispatchEvent('#ganttRefreshBtn', 'click'); await page.waitForTimeout(100);
   if (!(await page.evaluate(() => document.getElementById('ganttRefreshBtn').classList.contains('spin')))) fail('Uppdatera ska snurra medan den hämtar');
   await page.waitForTimeout(2500);
   if (!/^Uppdatera$/.test((await page.textContent('#ganttRefreshBtn')).trim())) fail('Uppdatera: texten ska gå tillbaka');

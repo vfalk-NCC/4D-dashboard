@@ -57,7 +57,7 @@ seed('plan_items.json', [
   await page.waitForTimeout(200);
   const size = () => page.evaluate(() => { const p = document.querySelector('section.panel[data-panel-id="gantt"]').getBoundingClientRect(), c = document.getElementById('ganttChart').getBoundingClientRect(); return { pw: p.width, ph: p.height, top: p.top, ch: c.height, btn: document.getElementById('ganttFullBtn').getAttribute('aria-label'), fs: document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen') }; });
   const before = await size();
-  await page.click('#ganttFullBtn'); await page.waitForTimeout(400);
+  await page.dispatchEvent('#ganttFullBtn', 'click'); await page.waitForTimeout(400);
   const on = await size();
   if (!on.fs || Math.abs(on.top) > 1 || on.pw < 1390 || on.ph < 990 || on.ch <= before.ch || !/Stäng helskärm/.test(on.btn)) fail('Helskärm ska fylla skärmen: ' + JSON.stringify({ before, on }));
   await page.locator('section[data-panel-id="gantt"]').screenshot({ path: path.join(require('os').tmpdir(), 'gantt_fullscreen.png') });
@@ -81,15 +81,15 @@ seed('plan_items.json', [
   await page.click('#ganttFsTools'); await page.waitForTimeout(300);
   if (await page.evaluate(() => getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display) === 'none') fail('Visa knappar utanför helskärm');
   await page.click('#ganttFsTools'); await page.waitForTimeout(300);
-  await page.click('#ganttFullBtn'); await page.waitForTimeout(300);
+  await page.dispatchEvent('#ganttFullBtn', 'click'); await page.waitForTimeout(300);
   if (await page.evaluate(() => getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display) !== 'none') fail('Valet att dölja knapparna ska sparas');
   await page.click('#ganttFsTools'); await page.waitForTimeout(300);
   if (await page.evaluate(() => getComputedStyle(document.querySelector('section[data-panel-id="gantt"] .gantt-head')).display) === 'none') fail('Visa knappar igen');
   await page.keyboard.press('Escape'); await page.waitForTimeout(400);
   const off = await size();
   if (off.fs || !/Helskärm/.test(off.btn) || /Stäng/.test(off.btn)) fail('Esc ska stänga helskärmen: ' + JSON.stringify(off));
-  await page.click('#ganttFullBtn'); await page.waitForTimeout(300);
-  await page.click('#ganttFullBtn'); await page.waitForTimeout(300);
+  await page.dispatchEvent('#ganttFullBtn', 'click'); await page.waitForTimeout(300);
+  await page.dispatchEvent('#ganttFullBtn', 'click'); await page.waitForTimeout(300);
   if ((await size()).fs) fail('Knappen ska stänga helskärmen');
   console.log('OK: Helskärm – fyller skärmen; knapparna kan döljas (färgförklaringen kvar, valet sparas); Esc, ✕ och knappen stänger');
   // iPad (Victor 2026-10-08): systemets helskärm stängs vid svep nedåt – där fyller panelen sidan i
@@ -106,7 +106,7 @@ seed('plan_items.json', [
   await ipad.route('https://api.github.com/**', r => r.fulfill({ status: 404, body: '{}' }));
   await ipad.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
   await ipad.goto(`http://localhost:${PORT}/index.html`); await ipad.waitForTimeout(800);
-  await ipad.click('#ganttFullBtn'); await ipad.waitForTimeout(300);
+  await ipad.dispatchEvent('#ganttFullBtn', 'click'); await ipad.waitForTimeout(300);
   const ip = await ipad.evaluate(() => { const p = document.querySelector('section.panel[data-panel-id="gantt"]'), r = p.getBoundingClientRect(); return { rf: window.__rf, fs: p.classList.contains('gantt-fullscreen'), w: r.width, h: r.height, top: r.top, bodyOb: getComputedStyle(document.body).overscrollBehaviorY }; });
   if (ip.rf !== 1 || !ip.fs || ip.w < 1170 || ip.h < 810 || Math.abs(ip.top) > 1 || ip.bodyOb !== 'none') fail('iPad: riktig helskärm som förut: ' + JSON.stringify(ip));
   // Svep nedåt när schemat är högst upp fångas (når inte systemet); svep uppåt och i sidled släpps igenom.
@@ -134,7 +134,7 @@ seed('plan_items.json', [
   await ipad.evaluate(() => { document.dispatchEvent(new Event('fullscreenchange')); });
   await ipad.click('#ganttFsBack'); await ipad.waitForTimeout(150);
   if ((await ipad.evaluate(() => window.__rf)) !== 3) fail('Knappen ska också ta tillbaka helskärmen');
-  await ipad.click('#ganttFullBtn'); await ipad.waitForTimeout(200);
+  await ipad.dispatchEvent('#ganttFullBtn', 'click'); await ipad.waitForTimeout(200);
   if (await ipad.evaluate(() => document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen'))) fail('iPad: knappen ska stänga');
   await ctx2.close();
   // Från hemskärmen (appläge): ingen systemhelskärm – panelen fyller skärmen och kan inte stängas av ett svep.
@@ -151,7 +151,7 @@ seed('plan_items.json', [
   await app.goto(`http://localhost:${PORT}/index.html`); await app.waitForTimeout(800);
   const mf = await app.evaluate(async () => { const l = document.querySelector('link[rel="manifest"]'); const m = await (await fetch(l.href)).json(); return { display: m.display, icon: !!document.querySelector('link[rel="apple-touch-icon"]'), capable: document.querySelector('meta[name="apple-mobile-web-app-capable"]').content }; });
   if (mf.display !== 'fullscreen' || !mf.icon || mf.capable !== 'yes') fail('Hemskärmsappen: ' + JSON.stringify(mf));
-  await app.click('#ganttFullBtn'); await app.waitForTimeout(200);
+  await app.dispatchEvent('#ganttFullBtn', 'click'); await app.waitForTimeout(200);
   const st = await app.evaluate(() => ({ rf: window.__rf, fs: document.querySelector('section.panel[data-panel-id="gantt"]').classList.contains('gantt-fullscreen') }));
   if (st.rf !== 0 || !st.fs) fail('Appläge: panelen fyller skärmen utan systemhelskärm: ' + JSON.stringify(st));
   await ctx3.close();

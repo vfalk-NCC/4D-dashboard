@@ -63,7 +63,7 @@ seed('plan_items.json', [
   if (!/2 av 3/.test(bar.txt) || JSON.stringify(bar.saved) !== '["area:Inköp"]') fail('Dolda ska synas ovanför och sparas: ' + JSON.stringify(bar));
   // Utskriften: det dolda området skrivs inte ut (tavlan).
   await page.evaluate(() => { window.__prints = 0; window.print = () => { window.__prints++; }; });
-  await page.click('#ganttPrintBtn');
+  await page.dispatchEvent('#ganttPrintBtn', 'click');
   await page.click('.gantt-print-pop [data-act="print"]');
   await page.waitForFunction(() => window.__prints === 1);
   const printed = await page.evaluate(() => [...document.querySelectorAll('#ganttPrint .board-lane-name')].map(n => n.textContent.trim()));

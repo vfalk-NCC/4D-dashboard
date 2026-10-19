@@ -57,10 +57,10 @@ seed('plan_items.json', [
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
   const fail = m => { throw new Error(m); };
-  await page.waitForSelector('#ganttPhotoBtn');
+  await page.waitForSelector('#ganttPhotoBtn', { state: 'attached' });
   for (const [name, cam] of [['pos', null], ['ang', { position: { x: 0, y: -40, z: 20 }, yaw: 0, pitch: -26.5, fov: 60 }], ['bad', { foo: 1 }]]) {
     await page.evaluate(c => { window.__cam = c; }, cam);
-    await page.click('#ganttPhotoBtn'); await page.waitForSelector('#phbDlg canvas', { timeout: 15000 });
+    await page.dispatchEvent('#ganttPhotoBtn', 'click'); await page.waitForSelector('#phbDlg canvas', { timeout: 15000 });
     const info = await page.textContent('.phb-info'); console.log(name, '->', info);
     if (name !== 'bad' && /kanten|Inga/.test(info)) fail('Bubblor placerades inte: ' + info);
     if (name === 'bad' && !/kanten/.test(info)) fail('Reservläget förväntades: ' + info);

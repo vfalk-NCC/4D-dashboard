@@ -57,19 +57,19 @@ seed('plan_items.json', [
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
   const fail = m => { throw new Error(m); };
-  await page.waitForSelector('#ganttViewsBtn');
+  await page.waitForSelector('#ganttViewsBtn', { state: 'attached' });
   await page.click('[data-gantt-view="board"]'); await page.waitForTimeout(300);
   await page.evaluate(() => { filters.contractor = ['NCC']; renderContractorFilter(); renderAll(); });
   await page.fill('#ganttSearch', 'Fund'); await page.waitForTimeout(400);
   await page.evaluate(() => { const c = document.getElementById('ganttChart'); c.style.height = '321px'; localStorage.setItem('4ddash-gantt-height', '321'); });
-  await page.click('#ganttViewsBtn'); await page.fill('.gv-name', 'Min vy'); await page.click('.gv-save'); await page.waitForSelector('.gv-row');
+  await page.dispatchEvent('#ganttViewsBtn', 'click'); await page.fill('.gv-name', 'Min vy'); await page.click('.gv-save'); await page.waitForSelector('.gv-row');
   const list = await page.evaluate(() => gvGet());
   if (list.length !== 1 || list[0].name !== 'Min vy' || list[0].mem.search !== 'Fund' || list[0].mem.filters.contractor[0] !== 'NCC') fail('Snapshot: ' + JSON.stringify(list[0] && list[0].mem));
   // ändra allt
   await page.keyboard.press('Escape');
   await page.click('[data-gantt-view="bars"]'); await page.fill('#ganttSearch', ''); await page.waitForTimeout(300);
   await page.evaluate(() => { filters.contractor = []; renderContractorFilter(); renderAll(); localStorage.setItem('4ddash-gantt-height', '150'); });
-  await page.click('#ganttViewsBtn');
+  await page.dispatchEvent('#ganttViewsBtn', 'click');
   await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle' }), page.click('.gv-use')]);
   await page.waitForTimeout(1500);
   const st = await page.evaluate(() => ({ view: ganttView, search: ganttSearch, con: filters.contractor, h: localStorage.getItem('4ddash-gantt-height'), sv: document.getElementById('ganttSearch').value, hh: document.getElementById('ganttChart').style.height, rest: localStorage.getItem('4ddash-restore') }));

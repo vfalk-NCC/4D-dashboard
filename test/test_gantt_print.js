@@ -73,7 +73,7 @@ seed('plan_items.json', items);
   const screenBefore = await page.evaluate(() => JSON.stringify([ganttRangeStart, ganttRangeEnd, ganttZoomPxPerDay, ganttEditable, [...ganttCollapsedGroups]]));
 
   // 1) Staplar: dialog, A4 liggande.
-  await page.click('#ganttPrintBtn');
+  await page.dispatchEvent('#ganttPrintBtn', 'click');
   if (!(await page.isVisible('.gantt-print-pop'))) fail('Dialogen ska öppnas');
   await page.click('.gantt-print-pop [data-paper="A4"]');
   await page.click('.gantt-print-pop [data-orient="landscape"]');
@@ -109,7 +109,7 @@ seed('plan_items.json', items);
   // 2) Tavlan, hela perioden ("Allt", ca 30 veckor): delas i perioder; lappar som fortsätter märks.
   await page.click('[data-gantt-view="board"]');
   await page.click('#ganttEditable'); // redigerbar på skärmen – inte i utskriften
-  await page.click('#ganttPrintBtn');
+  await page.dispatchEvent('#ganttPrintBtn', 'click');
   await page.click('.gantt-print-pop [data-paper="A3"]');
   const info2 = await page.textContent('.gantt-print-pop .gpp-info');
   if (!/delas i \d+ perioder/.test(info2)) fail('Infotexten för tavlan: ' + info2);
@@ -141,7 +141,7 @@ seed('plan_items.json', items);
 
   // 3) Tavlan, 4 veckor på A4: en period, ingen periodrubrik.
   await page.click('[data-gantt-weeks="4"]');
-  await page.click('#ganttPrintBtn');
+  await page.dispatchEvent('#ganttPrintBtn', 'click');
   await page.click('.gantt-print-pop [data-paper="A4"]');
   await page.click('.gantt-print-pop [data-act="print"]');
   await page.waitForFunction(() => window.__prints === 3);

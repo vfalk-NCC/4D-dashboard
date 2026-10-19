@@ -3551,6 +3551,7 @@ function ganttTooltipHtmlForItem(it, depById) {
   if (resOf(it).length) rows.push(row("Resurser", resOf(it).map(r => `${e(r.name)} <b>${(Math.round((Number(r.qty) || 0) * 10) / 10).toLocaleString("sv-SE")} pers</b> · ${Math.round(Number(r.hours) || 0).toLocaleString("sv-SE")} h`).join("<br>")));
   if (it.demolition) rows.push(row("Rivning", `syns före start, tas bort efter ${e(tipDate(it.actualEndDate || it.endDate))}`));
   if (it.temporary) rows.push(row("Temporär", `syns i 3D ${e(tipRange(it.startDate, it.actualEndDate || it.endDate))} <span class="gantt-tip-dim">· tas bort sedan</span>`));
+  { const uw = typeof dpWorkersFor === "function" ? dpWorkersFor(it) : null; if (uw) rows.push(row("UE-plan", `${uw.n} personer <span class="gantt-tip-dim">· ${e(tipDate(uw.date))}${uw.company ? " · " + e(uw.company) : ""}</span>`)); }
   if (it.origin === "manuell") rows.push(row("Källa", "Egen aktivitet <span class=\"gantt-tip-dim\">· finns inte i Powerproject</span>"));
   let html = `<div class="gantt-tooltip-title">${e(itemLabel(it))}</div>${rows.join("")}`;
   // Baseline: namnet (och källan) en gång, datumen, förskjutningen som etikett.
@@ -5036,7 +5037,7 @@ function renderGanttBoard(list, target, minColPx = BOARD_COL_PX) {
     if (ganttBoardOneLine) return `<div class="${cls}" ${attrs}>
         <i class="pnote-dot" style="background:${st}"></i><span class="pnote-title">${blocked ? "⛔ " : ""}${escapeHtml(name)}</span>${ownTag}${depMark}
         ${subParts.length ? `<span class="pnote-sub">${escapeHtml(subParts.join(" · "))}</span>` : ""}
-        ${resTag}<span class="pnote-dates">${dates}</span>${blHtml}
+        ${resTag}${typeof dpChip === "function" ? dpChip(it) : ""}<span class="pnote-dates">${dates}</span>${blHtml}
         <div class="pnote-prog"><span style="width:${prog}%; background:${st};"></span>${prog > 0 ? `<b class="pnote-pct" style="left:clamp(14px, ${prog}%, calc(100% - 18px))">${prog} %</b>` : ""}</div>
       </div>`;
     return `<div class="${cls}" ${attrs}>
