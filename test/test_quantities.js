@@ -58,241 +58,95 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     if (!(await page.$('[data-panel-id="quantities"] #qtyBox'))) fail('Blocket Mängdavtagning saknas');
     const order = await page.evaluate(() => [...document.querySelectorAll('.panel[data-panel-id]')].map(p => p.dataset.panelId));
     if (order.indexOf('quantities') !== order.indexOf('video-editor') + 1) fail('Blocket ska ligga under video-editorn: ' + order.join());
-    // Klara objekt (Ganttens regel): de tre som är klara idag – den framtida väggen ingår inte.
+    // Tomt läge: ingen förteckning ännu -> uppmaning att läsa in Excel.
+    if (!(await page.evaluate(() => /Börja med mängdförteckningen/.test(document.getElementById('qtyBox').textContent)))) fail('Tomt läge ska be om Excel-filen');
+    // Läs mängder: 4 objekt, enheten (mm³) upptäcks.
     await page.click('#qtyRead'); await page.waitForFunction(() => qty.objs.length > 0, null, { timeout: 15000 });
-    let R = await page.evaluate(() => ({ n: qty.objs.length, piv: qtyPivot().nObj, val: qty.cfg.valKey, row: qty.cfg.rowKey, f: qty.factor, note: qty.unitNote, P: (() => { const p = qtyPivot(); return { total: p.total, rows: p.rows.map(r => [r.key, Math.round(r.sum * 100) / 100, r.n]) }; })() }));
-    if (R.n !== 4 || R.piv !== 3 || !/Volume$/.test(R.val) || !/Product Object Type/.test(R.row) || R.f !== 1e9 || !/mm³/.test(R.note)) fail('Läsning och enhet: ' + JSON.stringify(R));
-    if (Math.abs(R.P.total - 12.5) > 0.001) fail('Summa klara volymer (6 + 4 + 2,5 m³): ' + JSON.stringify(R.P));
-    if (R.P.rows.map(r => r.join(':')).join('|') !== 'Foundation Slab:Concrete - Cast-in-Place - 1200:10:2|Wall:Concrete - Cast-in-Place - 300:2.5:1') fail('Summering per typ: ' + JSON.stringify(R.P.rows));
-    // Rader per område, kolumner per typ; filter; CSV.
-    await page.selectOption('#qtyRowKey', '◆ Område (sista ledet)'); await page.selectOption('#qtyColKey', { index: 0 }).catch(() => {});
-    R = await page.evaluate(() => { qty.cfg.rowKey = '◆ Område (sista ledet)'; qty.cfg.colKey = [...qty.keys.keys()].find(k => /Product Object Type/.test(k)); qtyRender(); const p = qtyPivot(); return { rows: p.rows.map(r => r.key + ':' + Math.round(r.sum * 10) / 10).join('|'), cols: p.cols.length, csv: qtyCsv() }; });
-    if (R.rows !== '743 Krosshall:10|744 Fläkthuset:2.5' || R.cols !== 2 || !/743 Krosshall";"10";/.test(R.csv.replace(/"10"/, '"10"')) && !/743 Krosshall";"[\d,]*";"10";2/.test(R.csv)) fail('Område × typ och CSV: ' + JSON.stringify(R));
-    await page.evaluate(() => { qty.cfg.filter = 'Wall'; qtyRender(); });
-    if ((await page.evaluate(() => qtyPivot().total)) !== 2.5) fail('Filter Innehåller: Wall ska ge 2,5 m³');
-    await page.evaluate(() => { qty.cfg.filter = ''; qty.cfg.exclude = 'wall'; qtyRender(); });
-    if ((await page.evaluate(() => qtyPivot().total)) !== 10) fail('Utesluter: wall ska ge bara fundamentet (10 m³)');
-    await page.evaluate(() => { qty.cfg.filter = 'foundation, wall'; qty.cfg.exclude = 'foundation'; qtyRender(); });
-    if ((await page.evaluate(() => qtyPivot().total)) !== 2.5) fail('Flera ord med komma: Innehåller foundation, wall och Utesluter foundation ska ge 2,5 m³');
-    await page.evaluate(() => { qty.cfg.filter = ''; qty.cfg.exclude = ''; qtyRender(); });
-    await page.click('[data-qpre="steel"]'); if ((await page.evaluate(() => qty.cfg.filter)) !== 'Steel, Stål, Pile, Påle, Rebar, Armering') fail('Snabbval Bara stål');
-    await page.click('[data-qpre="all"]'); if ((await page.evaluate(() => qty.cfg.filter + qty.cfg.exclude)) !== '') fail('Snabbval Allt');
-    // Alla oavsett läge.
-    await page.evaluate(() => { qty.cfg.phase = 'all'; qtyRender(); });
-    if (Math.abs((await page.evaluate(() => qtyPivot().total)) - 21.5) > 0.001) fail('Alla objekt: 21,5 m³');
-    // Klara under period: långt tillbaka = samma som Klara; Från efter Till = inget; UI:t visar Från/Till.
-    await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.date = ''; qty.cfg.from = ''; qtyRender(); });
-    const base = await page.evaluate(() => qtyPivot().total);
-    await page.click('[data-qphase="period"]'); await page.waitForSelector('#qtyFrom');
-    const per = await page.evaluate(() => { const r = {}; qty.cfg.from = '2000-01-01'; r.old = qtyPivot().total; qty.cfg.from = addDaysIso(qtyAt(), 1); r.after = qtyPivot().total; qty.cfg.from = ''; r.def = qtyFrom(); qtyRender(); r.hint = document.querySelector('#qtyBox').textContent.includes('Klart under perioden'); return r; });
-    if (Math.abs(per.old - base) > 0.001 || per.after !== 0 || !per.hint) fail('Klara under period: ' + JSON.stringify({ base, per }));
-    await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.from = ''; qtyRender(); });
-    // Följer tidslinjen: flyttas Ganttens tidslinje räknas "klart" om till det datumet (Victor 2026-10-19).
-    { await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.date = ''; qty.cfg.follow = undefined; qtyRender(); });
-      const T = async n => { await page.evaluate(n => setGanttAsOf(addDaysIso(todayISO(), n), { noRender: true }), n); await page.waitForTimeout(450); return page.evaluate(() => ({ tot: qtyPivot().total, at: qtyAt(), input: document.getElementById('qtyDate').value })); };
+    const R = await page.evaluate(() => ({ n: qty.objs.length, vf: qty.volFactor, vk: qty.kv.vol.valKey, af: qty.kv.form.factor, note: qty.notes.join(' ') }));
+    if (R.n !== 4 || R.vf !== 1e9 || !/Volume$/.test(R.vk) || R.af !== 1e6 || !/mm³/.test(R.note)) fail('Läsning och enhet: ' + JSON.stringify(R));
+    console.log('OK: läsning, mängdslag och enhet');
+    // Excel: koder, byggnader, rubriker och radordning; kopplingar föreslås.
+    await page.setInputFiles('#qmfFile', path.join(__dirname, 'fixtures', 'mf_test.xlsx'));
+    await page.waitForFunction(() => qmf.posts.length > 0, null, { timeout: 10000 });
+    const X = await page.evaluate(() => ({ posts: qmf.posts.length, builds: qmf.builds.join(), ese21: qmf.posts.find(p => p.ref === 'ESE.21'), types: qmf.map.types, areas: qmf.map.areas, heads: qmf.layout.filter(e => e.h).length, order: qmf.layout.filter(e => e.p).map(e => e.p).join('|') === qmf.posts.map(p => p.key).join('|') }));
+    if (X.posts < 5 || X.builds !== 'Sektionsfickor,Sikthall,Krosshall,Fläkthus,Förtjockarhus,Ställverk,Personal' || !X.ese21 || X.ese21.k.Krosshall !== 2575 || X.ese21.p.Krosshall !== 2600) fail('Läsning av mängdförteckningen: ' + JSON.stringify(X));
+    if (X.areas['743 Krosshall'] !== 'Krosshall' || X.areas['744 Fläkthuset'] !== 'Fläkthus') fail('Byggnad föreslås efter områdets namn: ' + JSON.stringify(X.areas));
+    if (Object.entries(X.types.vol).map(([k, v]) => k.split(':')[0] + '=' + v.split('|')[0]).sort().join() !== 'Foundation Slab=ESE.15,Wall=ESE.21') fail('Typ → kod föreslås: ' + JSON.stringify(X.types));
+    if (!(X.heads > 0) || !X.order) fail('Rubriker och radordning från Excel: ' + JSON.stringify({ heads: X.heads, order: X.order }));
+    // Matrisen: rader i Excel-ordning, rubriker, celler med mängder.
+    const MX = await page.evaluate(() => { const M = xlCompute(), P = r => qmfAllPosts().find(p => p.ref === r), v = (r, b, m) => Math.round(xlVal(M, P(r), b, m) * 100) / 100;
+      return { tbl: !!document.querySelector('.qmf-mxt'), heads: document.querySelectorAll('.qmf-mxt tr.mx-head').length, rows: document.querySelectorAll('.qmf-mxt tbody tr:not(.mx-head)').length, unl: M.unlinked.length,
+        a: [v('ESE.15', 'Krosshall', 'tot'), v('ESE.15', 'Krosshall', 'klar'), v('ESE.21', 'Fläkthus', 'tot'), v('ESE.21', 'Fläkthus', 'klar'), v('ESE.21', 'Fläkthus', 'kvar'), v('ESE.21', 'Krosshall', 'k'), v('ESE.21', 'Krosshall', 'pr')] }; });
+    if (!MX.tbl || !(MX.heads > 0) || !(MX.rows >= 2) || MX.unl !== 0 || JSON.stringify(MX.a) !== '[10,10,11.5,2.5,11.5,2575,2600]') fail('Matrisen (modell totalt/klart, kontrakt, prognos): ' + JSON.stringify(MX));
+    console.log('OK: Excel-förteckningen som matris (kod × byggnad, rubriker, radordning)');
+    // Klick på en cell markerar bara det som räknas i läget (Modell = alla, Klart = klara, Kvar = ej klara).
+    { const S = await page.evaluate(async () => { window.__calls = []; window.qtySelectRows = async o => { window.__calls.push(o.length); };
+        const click = m => { xl.mode = m; qtyRender(); window.__calls.length = 0; document.querySelector('.qmf-mxt td.mx-c[data-mp][data-mb="Fläkthus"]').click(); return window.__calls[0] ?? 0; };
+        const wallCell = [...document.querySelectorAll('.qmf-mxt td.mx-c.has')].find(td => qmfAllPosts().find(p => p.key === td.dataset.mp).ref === 'ESE.21' && td.dataset.mb === 'Fläkthus');
+        const at = m => { xl.mode = m; qtyRender(); window.__calls.length = 0; [...document.querySelectorAll('.qmf-mxt td.mx-c.has')].find(td => qmfAllPosts().find(p => p.key === td.dataset.mp).ref === 'ESE.21' && td.dataset.mb === 'Fläkthus').click(); return window.__calls.length ? window.__calls[0] : 0; };
+        const r = { tot: at('tot'), klar: at('klar'), kvar: at('kvar') }; xl.mode = 'tot'; qtyRender(); return r; });
+      if (S.tot !== 2 || S.klar !== 1 || S.kvar !== 1) fail('Läget ska styra markeringen (2/1/1): ' + JSON.stringify(S)); }
+    console.log('OK: klick på siffra markerar de objekt som räknas');
+    // Koppla: klick på kod öppnar panelen; en sökruta (HPM-fallet) ger objekt; koppla valda; ångra.
+    { const ese = await page.evaluate(() => { const p = qmfAllPosts().find(x => x.ref === 'ESE.2431' && x.unit === 'm³') || qmfAllPosts().find(x => x.unit === 'm³' && x.ref !== 'ESE.21' && x.ref !== 'ESE.15'); return { key: p.key, ref: p.ref }; });
+      await page.evaluate(k => { xl.active = k; xl.find = ''; xl.sel.clear(); qtyRender(); }, ese.key);
+      if (!(await page.$('.xl-link'))) fail('Koppla-panelen ska öppnas för en kod');
+      await page.fill('#xlFind', 'foundation'); await page.waitForTimeout(450);
+      const f1 = await page.evaluate(() => ({ rows: document.querySelectorAll('.xl-list input[data-xo]').length, txt: document.querySelector('.xl-ls .hint').textContent }));
+      if (f1.rows !== 2 || !/2 objekt matchar/.test(f1.txt)) fail('Sök i alla egenskaper: ' + JSON.stringify(f1));
+      await page.evaluate(() => { document.querySelectorAll('.xl-list input[data-xo]').forEach(c => { c.checked = true; c.dispatchEvent(new Event('change')); }); });
+      await page.click('#xlApply'); await page.waitForTimeout(400);
+      const a1 = await page.evaluate(k => ({ eff: qty.objs.filter(o => /Foundation/.test(o.flat['Produkt / Namn'])).map(o => qmfEffPost(o, 'vol')), undo: !!document.querySelector('#xlUndo'), saved: Object.values(JSON.parse(localStorage.getItem('4ddash-qty-map')).obj.vol || {}).filter(v => v === k).length }), ese.key);
+      if (a1.eff.length !== 2 || a1.eff.some(e => e !== ese.key) || !a1.undo || a1.saved !== 2) fail('Koppla valda objekt till koden (och spara): ' + JSON.stringify(a1));
+      await page.click('#xlUndo'); await page.waitForTimeout(300);
+      const a2 = await page.evaluate(() => qty.objs.filter(o => /Foundation/.test(o.flat['Produkt / Namn'])).map(o => qmfEffPost(o, 'vol').split('|')[0]));
+      if (a2.join() !== 'ESE.15,ESE.15' && a2.some(e => /ESE\.2431/.test(e))) fail('Ångra ska återställa: ' + JSON.stringify(a2));
+      await page.evaluate(() => { xl.active = ''; xl.find = ''; qtyRender(); }); }
+    console.log('OK: koppla via sökruta och ångra');
+    // Form och betong kopplas var för sig (mängdslaget följer kodens enhet): formkod på väggtypen ändrar inte betongkopplingen.
+    { const F = await page.evaluate(async () => { const P = qmfAllPosts().find(p => p.unit === 'm²' && /form/i.test(p.ref + ' ' + p.label)), t = qty.objs.map(qmfTypeVal).find(x => /^Wall/.test(x));
+        qmfSetLink({ types: [t] }, P.key); await qtyLoadBoxes(); qtyRender(); const M = xlCompute(), c = (M.cells.get(P.key) || new Map()).get('Fläkthus');
+        const w1 = qty.objs.find(o => o.item.objectName === 'Vägg 1'); return { kind: qmfKindOfPost(P), vol: qmfEffPost(w1, 'vol').split('|')[0], form: qmfEffPost(w1, 'form') === P.key, klar: c && Math.round(c.klar * 100) / 100, tot: c && Math.round(c.tot * 100) / 100 }; });
+      if (F.kind !== 'form' || F.vol !== 'ESE.21' || !F.form || Math.abs(F.klar - 7.83) > 0.06 || Math.abs(F.tot - (7.83 + (6 * Math.pow(9, 2 / 3) - 2 * 9 / Math.cbrt(13.5)))) > 0.1) fail('Form och betong kopplade var för sig: ' + JSON.stringify(F)); }
+    console.log('OK: form och betong på samma objekt, var för sig');
+    // Armering: schablon (kg per m³ betong) för koder i kg och ton; vikt ur modellen saknas -> räknas inte.
+    { const A = await page.evaluate(() => { qmf.custom.push({ key: 'egen|ARM|Armering|kg', ref: 'ARM', label: 'Armering', unit: 'kg', k: {}, p: {}, custom: true }, { key: 'egen|ARMT|Armering ton|ton', ref: 'ARMT', label: 'Armering ton', unit: 'ton', k: {}, p: {}, custom: true });
+        const t = qty.objs.map(qmfTypeVal).find(x => /^Wall/.test(x)); qmfSetLink({ types: [t] }, 'egen|ARM|Armering|kg'); qmfSetLink({ types: [t] }, 'egen|ARMT|Armering ton|ton'); qty.cfg.rebarKg = 100; qty.cfg.rebarMode = 'schablon';
+        const w1 = qty.objs.find(o => o.item.objectName === 'Vägg 1'), r = { kg: qtyValue(w1, 'kg'), ton: qtyValue(w1, 'rebar') }; qty.cfg.rebarMode = 'modell'; r.modell = qtyValue(w1, 'kg'); qty.cfg.rebarMode = 'schablon'; return r; });
+      if (Math.abs(A.kg - 250) > 0.01 || Math.abs(A.ton - 0.25) > 0.001 || A.modell !== null) fail('Armering på schablon (2,5 m³ × 100 kg/m³): ' + JSON.stringify(A)); }
+    console.log('OK: armering på schablon');
+    // Utan kod: objekt som saknar kod räknas och knappen visar det.
+    { const U = await page.evaluate(() => { const t = qty.objs.map(qmfTypeVal).find(x => /^Foundation/.test(x)); qmfSetLink({ types: [t] }, '', 'vol'); qmfSetLink({ types: [t] }, '', 'form'); qtyRender(); return { n: xlCompute().unlinked.length, btn: (document.querySelector('#xlUnl') || {}).textContent }; });
+      if (U.n !== 2 || !/2 objekt saknar kod/.test(U.btn)) fail('Objekt utan kod: ' + JSON.stringify(U)); await page.evaluate(() => qmfUndo()); }
+    // Följer tidslinjen: flyttas Ganttens tidslinje räknas "klart" om till det datumet.
+    { await page.evaluate(() => { qty.cfg.date = ''; qty.cfg.follow = undefined; xl.mode = 'klar'; qtyRender(); });
+      const T = async n => { await page.evaluate(n => setGanttAsOf(addDaysIso(todayISO(), n), { noRender: true }), n); await page.waitForTimeout(450); return page.evaluate(() => { const M = xlCompute(); let s = 0; M.cells.forEach((m, k) => { if (/egen/.test(k)) return; m.forEach(c => { s += c.klar; }); }); return { s, at: qtyAt(), input: document.getElementById('qtyDate').value }; }); };
       const a = await T(-15), b = await T(-5), c = await T(1);
-      if (!(a.tot < b.tot && b.tot < c.tot)) fail('Mängden klar ska växa med tidslinjen: ' + JSON.stringify([a, b, c]));
+      if (!(a.s < b.s && b.s < c.s)) fail('Klart ska växa med tidslinjen: ' + JSON.stringify([a, b, c]));
       if (c.input !== c.at || (await page.evaluate(() => document.getElementById('qtyFollow').checked)) !== true) fail('Datumrutan ska visa tidslinjens datum: ' + JSON.stringify(c));
       await page.evaluate(() => { document.getElementById('qtyDate').value = '2000-01-01'; document.getElementById('qtyDate').dispatchEvent(new Event('change')); });
       const d = await page.evaluate(() => ({ follow: qtyFollow(), at: qtyAt() })); if (d.follow || d.at !== '2000-01-01') fail('Eget datum stänger av följningen: ' + JSON.stringify(d));
-      await page.evaluate(() => { qty.cfg.follow = undefined; qty.cfg.date = ''; setGanttAsOf(null, { noRender: true }); qtyRender(); }); }
-    console.log('OK: mängdavtagningen följer tidslinjen');
-    // Mängdförteckningen (Excel): läses utan bibliotek, kopplingar föreslås, jämförelse per post och byggnad.
-    await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.filter = ''; qtyRender(); });
-    await page.setInputFiles('#qmfFile', path.join(__dirname, 'fixtures', 'mf_test.xlsx'));
-    await page.waitForFunction(() => qmf.posts.length > 0, null, { timeout: 10000 });
-    const M = await page.evaluate(() => ({ posts: qmf.posts.length, builds: qmf.builds.join(), ese21: qmf.posts.find(p => p.ref === 'ESE.21'), types: qmf.map.types, areas: qmf.map.areas, sub: qmf.posts.some(p => /tillägg för anläggningscement/.test(p.label) && p.unit === 'm³') }));
-    if (M.posts < 5 || M.builds !== 'Sektionsfickor,Sikthall,Krosshall,Fläkthus,Förtjockarhus,Ställverk,Personal' || !M.ese21 || M.ese21.k.Krosshall !== 2575 || M.ese21.p.Krosshall !== 2600 || !M.sub) fail('Läsning av mängdförteckningen: ' + JSON.stringify(M));
-    if (M.areas['743 Krosshall'] !== 'Krosshall' || M.areas['744 Fläkthuset'] !== 'Fläkthus') fail('Byggnad föreslås efter områdets namn: ' + JSON.stringify(M.areas));
-    const tv = Object.entries(M.types.vol).map(([k, v]) => k.split(':')[0] + '=' + v.split('|')[0]).sort().join();
-    if (tv !== 'Foundation Slab=ESE.15,Wall=ESE.21') fail('Typ → post föreslås: ' + tv);
-    const cmp = b => page.evaluate(b => { qmf.build = b; qmfRender(); const c = qmfCompare(); return Object.fromEntries(c.list.map(r => [r.p.ref, [r.k, r.pr, Math.round(r.klar * 100) / 100, Math.round(r.tot * 100) / 100]])); }, b);
-    let K = await cmp('Krosshall');
-    if (JSON.stringify(K['ESE.15']) !== '[669,669,10,10]' || JSON.stringify(K['ESE.21']) !== '[2575,2600,0,0]') fail('Jämförelse Krosshall: ' + JSON.stringify(K));
-    K = await cmp('Fläkthus');
-    if (JSON.stringify(K['ESE.21']) !== '[14,14,2.5,11.5]') fail('Jämförelse Fläkthus (klar 2,5 av totalt 11,5 m³): ' + JSON.stringify(K));
-    K = await cmp('');
-    if (K['ESE.21'][2] !== 2.5 || K['ESE.15'][2] !== 10) fail('Jämförelse alla byggnader: ' + JSON.stringify(K));
-    const csv = await page.evaluate(() => qmfCsv(qmfCompare())); if (!/ESE\.21/.test(csv)) fail('CSV för jämförelsen');
-    // Klick på en typrad / postrad markerar objekten i TC.
-    { await page.evaluate(() => { window.__selRows = null; const o = window.qtySelectRows; window.qtySelectRows = async objs => { window.__selRows = objs.length; return o && o(objs); }; qmf.build = ''; qmfRender(); });
-      await page.click('tr[data-tyrow] td:first-child'); await page.waitForTimeout(200);
-      const n1 = await page.evaluate(() => window.__selRows); if (!(n1 >= 1)) fail('Klick på typrad ska markera objekt: ' + n1);
-      await page.evaluate(() => { window.__selRows = null; }); await page.evaluate(() => { const tr = [...document.querySelectorAll('tr[data-postrow]')].find(x => !/markera de 0 objekten/.test(x.title)); tr.querySelector('td').click(); }); await page.waitForTimeout(200);
-      const n2 = await page.evaluate(() => window.__selRows); if (!(n2 >= 1)) fail('Klick på postrad ska markera objekt: ' + n2);
-      await page.evaluate(() => { window.__selRows = null; }); await page.click('tr[data-arrow] td:first-child'); await page.waitForTimeout(200);
-      if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Klick på områdesrad ska markera objekt'); }
-    // Bläddra bland koderna: ◀ ▶ markerar objekten på posten i TC och följer med i tabellen.
-    { const bar = await page.evaluate(() => ({ has: !!document.querySelector('#qmfBrowse'), n: document.querySelectorAll('#qmfBrowse option').length, info: (document.querySelector('#qmfBrowseInfo') || {}).textContent }));
-      if (!bar.has || bar.n < 1) fail('Bläddra-fältet saknas: ' + JSON.stringify(bar));
-      await page.evaluate(() => { window.__selRows = null; qmf.build = ''; qmfRender(); });
-      await page.click('#qmfNext'); await page.waitForTimeout(200);
-      const r = await page.evaluate(() => ({ sel: window.__selRows, cur: document.querySelectorAll('tr.qmf-cur').length, val: document.querySelector('#qmfBrowse').value, key: qmf.browse }));
-      if (!(r.sel >= 1) || r.val !== r.key || (bar.n > 1 && r.cur !== 1)) fail('Nästa kod ska markera objekten och markera raden: ' + JSON.stringify(r));
-      await page.evaluate(() => { window.__selRows = null; }); await page.click('#qmfPrev'); await page.waitForTimeout(200);
-      if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Föregående kod ska markera objekt'); }
-    // Sök objekt i alla egenskaper: träffarna listas och kan läggas på en post (alla eller ett).
-    { const savedObj = await page.evaluate(() => JSON.stringify(qmf.map.obj)); await page.evaluate(() => { qmf.find = ''; qmfRender(); });
-      await page.fill('#qmfFind', 'wall'); await page.waitForTimeout(500);
-      const f1 = await page.evaluate(() => ({ n: document.querySelector('#qmfFindN').textContent, rows: document.querySelectorAll('#qmfFindRes tr[data-fk]').length, btn: !!document.querySelector('#qmfFindAssign') }));
-      if (!/matchar/.test(f1.n) || f1.rows < 1 || !f1.btn) fail('Sök i alla egenskaper: ' + JSON.stringify(f1));
-      await page.evaluate(() => { window.__selRows = null; document.querySelector('#qmfFindMark').click(); }); await page.waitForTimeout(150);
-      if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Markera träffarna i TC');
-      const as = await page.evaluate(() => { const hits = qmfFindHits(), P = qmfAllPosts().find(p => p.unit === 'm³'); qmfAssignObjs(hits, { post: P, v: P.key }); return { n: hits.length, ok: hits.every(o => qmfEffPost(o) === P.key), still: !!document.querySelector('#qmfFind') && document.querySelector('#qmfFind').value === 'wall' }; });
-      if (!as.n || !as.ok || !as.still) fail('Alla träffar ska läggas på posten och sökningen ligga kvar: ' + JSON.stringify(as));
-      const none = await page.evaluate(() => { qmf.find = 'finns-inte-xyz'; qmfFindRender(document.getElementById('qmfBox')); return /Inga objekt matchar/.test(document.querySelector('#qmfFindRes').textContent); });
-      if (!none) fail('Ingen träff ska ge ett meddelande'); await page.evaluate(sv => { qmf.find = ''; qmf.map.obj = JSON.parse(sv); qmfSave(); qmfRender(); }, savedObj); }
-    // Filtrera raderna efteråt: alla rader listas, sökrutan snävar in och summan följer.
-    { const r = await page.evaluate(async () => { const tb = document.querySelector('#qtyTable'), all = tb.querySelectorAll('tr[data-r]').length; const i = tb.querySelector('#qtyRowFlt'); i.value = 'zzzz-finns-inte'; i.dispatchEvent(new Event('input')); const none = [...tb.querySelectorAll('tr[data-r]')].every(t => t.style.display === 'none'); const tot0 = tb.querySelector('tfoot td:nth-last-child(2)').textContent; i.value = ''; i.dispatchEvent(new Event('input')); const back = [...tb.querySelectorAll('tr[data-r]')].every(t => t.style.display !== 'none'); return { all, none, tot0, back }; });
-      if (!(r.all >= 1) || !r.none || !r.back) fail('Filtrera raderna efteråt: ' + JSON.stringify(r)); }
-    // Lägg markerade i TC på en NY egen post: ska sparas (kopplingen, posten och i jämförelsen).
-    { const setup = await page.evaluate(() => { const o = qty.objs.slice(0, 2); window.API = window.API || {}; API.viewer = API.viewer || {}; API.viewer.getSelection = async () => { const by = new Map(); o.forEach(x => (by.get(x.modelId) || by.set(x.modelId, []).get(x.modelId)).push(x.rid)); return [...by].map(([modelId, objectRuntimeIds]) => ({ modelId, objectRuntimeIds })); }; window.__selObjs = o.map(x => qmfObjKey(x)); qmf.build = ''; qmfRender(); return o.length; }); await page.waitForTimeout(150);
-      await page.click('#qmfSelAssign'); await page.waitForSelector('.qmf-combo-new'); await page.evaluate(() => document.querySelector('.qmf-combo-new').click());
-      await page.waitForSelector('.qmf-np'); await page.fill('.np-ref', 'TEST.99'); await page.fill('.np-label', 'Provpost'); await page.click('.np-ok');
-      await page.waitForSelector('.qmf-ask-b button'); const btns = await page.$$eval('.qmf-ask-b button', bs => bs.map(b => b.textContent)); await page.click('.qmf-ask-b button:first-child'); await page.waitForTimeout(500);
-      const r = await page.evaluate(() => { const P = qmfAllPosts().find(p => p.ref === 'TEST.99'); const eff = window.__selObjs.map(k => ((qmf.map.obj[qtyKind()] || {})[k])); const saved = JSON.parse(localStorage.getItem('4ddash-qty-map') || '{}'); const sv = Object.values((saved.obj || {})[qtyKind()] || {}).includes(P && P.key); const row = qmfCompare().list.find(x => x.p.ref === 'TEST.99'); return { post: !!P, eff: eff.every(e => P && e === P.key), saved: sv, cmp: row && row.n, custom: JSON.parse(localStorage.getItem('4ddash-qty-custom') || '[]').some(x => x.ref === 'TEST.99') }; });
-      if (!r.post || !r.eff || !r.saved || !(r.cmp >= 1) || !r.custom) fail('Markerade på ny egen post ska sparas: ' + JSON.stringify({ r, btns, setup }));
-      await page.evaluate(() => { const P = qmfAllPosts().find(p => p.ref === 'TEST.99'); Object.values(qmf.map.obj).forEach(m => Object.keys(m).forEach(k => { if (m[k] === P.key) delete m[k]; })); qmf.custom = qmf.custom.filter(p => p !== P); qmfSave(); qmfSaveCustom(); qmfRender(); }); }
-    // Rullningen ska ligga kvar när listan ritas om (t.ex. efter Spara).
-    { const sc = await page.evaluate(async () => { const el = document.scrollingElement; const h = document.getElementById('qmfBox').getBoundingClientRect().top + window.scrollY; window.scrollTo(0, h + 200); const y0 = Math.round(window.scrollY); qmfRender(); await new Promise(r => setTimeout(r, 200)); return { y0, y1: Math.round(window.scrollY) }; });
+      await page.evaluate(() => { qty.cfg.follow = undefined; qty.cfg.date = ''; setGanttAsOf(null, { noRender: true }); xl.mode = 'tot'; qtyRender(); }); }
+    console.log('OK: följer tidslinjen');
+    // Delning i 4D-data: kopplingar och förteckning (med rubriker) sparas i projektets mapp.
+    { await page.evaluate(() => { qmfSave(); qmfSavePosts(); }); await page.waitForTimeout(2500);
+      const keys = [...store.keys()].filter(k => /qty_(mapping|posts)\.json$/.test(k)); const posts = store.get(keys.find(k => /qty_posts/.test(k)) || '');
+      if (keys.length < 2 || !posts || !JSON.parse(posts.content)[0].layout.length) fail('Kopplingar och förteckning (med rubriker) ska delas i 4D-data: ' + keys.join()); }
+    // Egen kod: skapas i dialogen, kopplas via Koppla-panelen och sparas.
+    { await page.evaluate(() => { xl.settings = true; qtyRender(); }); await page.click('#qmfNewPost'); await page.waitForSelector('.qmf-np');
+      await page.fill('.np-ref', 'TEST.99'); await page.fill('.np-label', 'Provkod'); await page.click('.np-ok'); await page.waitForTimeout(200);
+      const k = await page.evaluate(() => { const p = qmfAllPosts().find(x => x.ref === 'TEST.99'); xl.active = p.key; xl.settings = false; xl.find = 'wall'; qtyRender(); return p.key; });
+      await page.waitForTimeout(100); await page.evaluate(() => { document.querySelectorAll('.xl-list input[data-xo]').forEach(c => { c.checked = true; c.dispatchEvent(new Event('change')); }); });
+      await page.click('#xlApply'); await page.waitForTimeout(400);
+      const r = await page.evaluate(k => ({ saved: Object.values(JSON.parse(localStorage.getItem('4ddash-qty-map')).obj.vol || {}).filter(v => v === k).length, custom: JSON.parse(localStorage.getItem('4ddash-qty-custom') || '[]').some(x => x.ref === 'TEST.99'), row: [...document.querySelectorAll('.qmf-mxt td.mx-ref')].some(td => td.textContent === 'TEST.99') }), k);
+      if (r.saved !== 2 || !r.custom || !r.row) fail('Egen kod ska skapas, kopplas och sparas: ' + JSON.stringify(r)); }
+    console.log('OK: egen kod');
+    // Export och rullning.
+    { const E = await page.evaluate(() => { const M = xlCompute(); return { html: xlHtml(M), csv: xlCsv(M) }; });
+      if (!/<table>/.test(E.html) || !/ESE\.21/.test(E.html) || !/ESE\.21/.test(E.csv) || !/class="hd/.test(E.html)) fail('HTML/CSV-exporten ska innehålla matrisen med rubriker');
+      const sc = await page.evaluate(async () => { const h = document.getElementById('qtyBox').getBoundingClientRect().top + window.scrollY; window.scrollTo(0, h + 200); const y0 = Math.round(window.scrollY); qtyRender(); await new Promise(r => setTimeout(r, 200)); return { y0, y1: Math.round(window.scrollY) }; });
       if (sc.y0 > 0 && Math.abs(sc.y1 - sc.y0) > 2) fail('Rullningen ska ligga kvar vid omritning: ' + JSON.stringify(sc)); }
-    // Matris kod × byggnad: celler klickbara, rubriker markerar, HTML-export.
-    { const mx = await page.evaluate(() => { qmf.mx = 'tot'; qmfRender(); const t = document.querySelector('.qmf-mxt'); return { has: !!t, cells: document.querySelectorAll('.qmf-mxt td.mx-c.has').length, rows: document.querySelectorAll('.qmf-mxt tbody tr').length, html: /<table>/.test(qmfMatrixExportHtml()) && /Mängdavtagning/.test(qmfMatrixExportHtml()) }; });
-      if (!mx.has || mx.rows < 1) fail('Matrisen saknas: ' + JSON.stringify(mx));
-      if (mx.cells >= 1) { await page.evaluate(() => { window.__selRows = null; document.querySelector('.qmf-mxt td.mx-c.has').click(); }); await page.waitForTimeout(150); if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Klick på matriscell ska markera objekt'); }
-      await page.evaluate(() => { qmf.mx = 'pr'; qmfRender(); }); if (!(await page.evaluate(() => document.querySelector('[data-mxmode="pr"]').classList.contains('active')))) fail('Visa-läget ska kunna bytas');
-      const ly = await page.evaluate(() => { qmf.mx = 'tot'; qmfRender(); const heads = document.querySelectorAll('.qmf-mxt tr.mx-head').length, ord = qmf.layout.filter(e => e.p).map(e => e.p).join('|') === qmf.posts.map(p => p.key).join('|'); const ex = qmfMatrixExportHtml(); return { n: qmf.layout.length, posts: qmf.posts.length, heads, ord, exh: /class="hd/.test(ex) || heads === 0, hasH: qmf.layout.some(e => e.h) }; });
-      if (!(ly.n > ly.posts) || !ly.hasH || !ly.ord || (ly.hasH && !(ly.heads >= 0))) fail('Radordning/rubriker från Excel: ' + JSON.stringify(ly));
-      // Läget styr markeringen: bara de objekt som räknas i läget markeras.
-      const md = await page.evaluate(async () => { const td = document.querySelector('.qmf-mxt td.mx-c.has'); if (!td) return { skip: true }; const M = qmfMatrix(), c = M.cells.get(td.dataset.mp).get(td.dataset.mb);
-        const calls = []; const o = window.qtySelectRows; window.qtySelectRows = async objs => { calls.push(objs.length); };
-        const out = { all: c.objs.length, done: c.objs.filter(qtyDone).length, undone: c.objs.filter(x => !qtyDone(x)).length };
-        qmf.mx = 'klar'; qmfRender(); document.querySelector(`.qmf-mxt td[data-mp="${CSS.escape(td.dataset.mp)}"][data-mb="${CSS.escape(td.dataset.mb)}"]`).click(); await new Promise(r => setTimeout(r, 100)); out.klarSel = calls.length ? calls[calls.length - 1] : 0; calls.length = 0;
-        qmf.mx = 'kvar'; qmfRender(); document.querySelector(`.qmf-mxt td[data-mp="${CSS.escape(td.dataset.mp)}"][data-mb="${CSS.escape(td.dataset.mb)}"]`).click(); await new Promise(r => setTimeout(r, 100)); out.kvarSel = calls.length ? calls[calls.length - 1] : 0;
-        window.qtySelectRows = o; qmf.mx = 'tot'; qmfRender(); return out; });
-      if (!md.skip && ((md.done === 0 ? md.klarSel !== 0 : md.klarSel !== md.done) || (md.undone === 0 ? md.kvarSel !== 0 : md.kvarSel !== md.undone))) fail('Läget ska styra vilka objekt som markeras: ' + JSON.stringify(md));
-      if (!mx.html) fail('HTML-exporten ska innehålla tabellen'); await page.evaluate(() => { qmf.mx = 'tot'; qmfRender(); }); }
-    // Sök/filtrera typ- och postkolumnerna.
-    { const vis = () => page.evaluate(() => [...document.querySelectorAll('tr[data-tyrow]')].filter(r => r.style.display !== 'none').length), tot = await page.evaluate(() => document.querySelectorAll('tr[data-tyrow]').length);
-      await page.fill('[data-flt="ty"]', 'wall'); const v1 = await vis(); if (!(v1 >= 1 && v1 < tot)) fail('Sök typ ska dölja övriga rader: ' + v1 + '/' + tot);
-      await page.fill('[data-flt="ty"]', ''); await page.fill('[data-flt="po"]', 'ESE.21'); const v2 = await vis(); if (!(v2 >= 1 && v2 < tot)) fail('Sök post ska filtrera på vald post: ' + v2 + '/' + tot);
-      await page.fill('[data-flt="po"]', 'finns-inte-xyz'); if ((await vis()) !== 0) fail('Inga träffar ska ge inga rader');
-      await page.fill('[data-flt="po"]', ''); if ((await vis()) !== tot) fail('Tomt filter visar allt'); }
-    // Söklista för post: sök, poster i andra enheter under egna rubriker; väljer man en post i annan enhet flyttas typen till det mängdslaget.
-    { await page.evaluate(() => { qmf.build = ''; qmfRender(); });
-      const ty = await page.evaluate(() => document.querySelector('select[data-ty]').dataset.ty);
-      const prev = await page.evaluate(ty => ({ vol: (qmf.map.types.vol || {})[ty], form: (qmf.map.types.form || {})[ty] }), ty);
-      await page.dispatchEvent('select[data-ty]', 'mousedown'); await page.waitForSelector('.qmf-combo');
-      const heads = await page.evaluate(() => [...document.querySelectorAll('.qmf-combo-g')].map(g => g.textContent)); if (!heads.some(h => /Poster i m³/.test(h)) || !heads.some(h => /Poster i m².*läggs objekten till/.test(h))) fail('Grupper i söklistan: ' + heads.join(' | '));
-      await page.fill('.qmf-combo-q', 'grundsulor'); const hit = await page.evaluate(() => [...document.querySelectorAll('.qmf-combo-i')].map(x => x.textContent)); if (hit.length < 1 || !hit.every(x => /grundsulor/i.test(x))) fail('Sök i söklistan: ' + hit.join(' | '));
-      await page.fill('.qmf-combo-q', 'xyz-finns-inte'); if (!/Inga poster/.test(await page.textContent('.qmf-combo-list'))) fail('Inga träffar'); await page.keyboard.press('Escape');
-      // välj en m²-post för en m³-typ: objekten läggs TILL i Form, och finns kvar i Betong (form ligger "ovanpå" objektet)
-      await page.dispatchEvent('select[data-ty]', 'mousedown'); await page.waitForSelector('.qmf-combo');
-      const m2 = await page.evaluate(() => { const post = qmf.posts.find(p => p.unit === 'm²' && /form/i.test(p.ref + ' ' + p.label)); const el = [...document.querySelectorAll('.qmf-combo-i')].find(x => x.textContent.startsWith(post.ref + ' –')); el.click(); return post.key; });
-      await page.waitForTimeout(200);
-      const mv = await page.evaluate(ty => ({ vol: (qmf.map.types.vol || {})[ty], form: (qmf.map.types.form || {})[ty] }), ty);
-      if (mv.form !== m2 || mv.vol !== prev.vol) fail('Formposten ska läggas till utan att ta bort betongposten: ' + JSON.stringify({ mv, prev, m2 }));
-      if (!/även m²/.test(await page.evaluate(() => document.querySelector('select[data-ty]').options[0].textContent))) fail('Raden ska visa att typen även finns i ett annat mängdslag');
-      await page.evaluate(([ty, prev]) => { if (prev.form === undefined) delete qmf.map.types.form[ty]; else qmf.map.types.form[ty] = prev.form; qmfRender(); }, [ty, prev]);
-      // per objekt: expandera typen, välj post för ett enskilt objekt – frågan om bara det eller alla
-      await page.evaluate(ty => { qmf.open.add(ty); qmfRender(); }, ty);
-      const nObj = await page.evaluate(ty => document.querySelectorAll('tr.qmf-obj[data-og]').length, ty);
-      if (nObj >= 1) { const multi = await page.evaluate(ty => (qmfObjsOf = null, [...document.querySelectorAll('tr[data-tyrow]')].find(r => r.dataset.tyrow === ty).children[1].textContent), ty);
-        await page.dispatchEvent('select[data-ob]', 'mousedown'); await page.waitForSelector('.qmf-combo');
-        const pickKey = await page.evaluate(() => { const p = qmf.posts.find(x => x.unit === 'm³'); [...document.querySelectorAll('.qmf-combo-i')].find(x => x.textContent.startsWith(p.ref + ' –') && !x.classList.contains('cur')) .click(); return p.key; }).catch(() => null);
-        if (Number(multi) > 1) { await page.waitForSelector('.qmf-ask'); await page.click('.qmf-ask button[data-k="obj"]'); await page.waitForTimeout(200);
-          const ov = await page.evaluate(() => Object.values(qmf.map.obj.vol || {}).length); if (ov < 1) fail('Valet för ett objekt ska sparas som objektets egen koppling'); }
-        await page.evaluate(() => { qmf.map.obj = {}; qmfRender(); }); }
-      await page.evaluate(ty => { qmf.open.delete(ty); qmfRender(); }, ty); }
-    { const g = await page.evaluate(() => { const K = qmf.typeKey; const o = { modelId: 'm', objectId: 'a', flat: { [K]: 'Basic Wall:Concrete - Cast-in-Place - 1000:1788329' } }, o2 = { modelId: 'm', objectId: 'b', flat: { [K]: 'Basic Wall:Concrete - Cast-in-Place - 1000:1788331' } };
-        const r = { a: qmfTypeVal(o), same: qmfTypeVal(o) === qmfTypeVal(o2), raw: qmfRawName(o) }; qmf.groupId = false; r.off = qmfTypeVal(o); qmf.groupId = true;
-        qmf.map.obj.vol = { 'm|a': 'X' }; r.eff = qmfEffPost(o, 'vol'); r.eff2 = qmfEffPost(o2, 'vol') === ((qmf.map.types.vol || {})[qmfTypeVal(o2)] || ''); delete qmf.map.obj.vol;
-        const kk = qty.cfg.kind; qty.cfg.kind = 'area'; const vk = Object.keys(qty.objs[0].flat).find(k => /volume$/i.test(k)); const w = { flat: { [vk]: 6 }, hz: 3, bx: 0.2, by: 5 }; qty.volFactor = 1; r.area = qtyValue(w); qty.cfg.kind = kk; return r; });
-      if (g.a !== 'Basic Wall:Concrete - Cast-in-Place - 1000' || !g.same || g.off !== g.raw || g.eff !== 'X' || !g.eff2) fail('Gruppering bort objekt-ID och objektets egen koppling: ' + JSON.stringify(g));
-      if (Math.abs(g.area - 30) > 1e-6) fail('Yta en sida = volym ÷ tjocklek (6 ÷ 0,2 = 30): ' + g.area); }
-    // Lägg markerade objekt i TC på en post på en gång; posten syns sedan via qmfMemberPosts (Gantt-dialogen).
-    { await page.evaluate(() => { qmf.map.obj = {}; qmf.build = ''; qmfRender(); });
-      const info = await page.evaluate(() => { const os = qty.objs.slice(0, 3); API.viewer.getSelection = async () => [{ modelId: os[0].modelId, objectRuntimeIds: os.map(o => o.rid) }]; return { n: os.length, keys: os.map(o => o.modelId + '|' + o.objectId) }; });
-      await page.click('#qmfSelAssign'); await page.waitForSelector('.qmf-combo'); await page.waitForTimeout(300);
-      const pk = await page.evaluate(() => { const p = qmf.posts.find(x => x.unit === 'm³'); [...document.querySelectorAll('.qmf-combo-i')].find(x => x.textContent.startsWith(p.ref + ' –')).click(); return p.key; });
-      await page.waitForSelector('.qmf-ask'); const q = await page.textContent('.qmf-ask-t'); if (!new RegExp('Lägga ' + info.n + ' markerade').test(q)) fail('Frågan ska nämna antalet: ' + q);
-      await page.click('.qmf-ask button[data-k="ja"]'); await page.waitForTimeout(300);
-      const set = await page.evaluate(([keys, pk]) => keys.filter(k => (qmf.map.obj.vol || {})[k] === pk).length, [info.keys, pk]);
-      if (set !== info.n) fail('Alla markerade ska läggas på posten: ' + set + '/' + info.n);
-      const mp = await page.evaluate(k => { const [m, id] = k.split('|'); return qmfMemberPosts({ modelId: m, objectId: id }).map(x => x.kind + ':' + x.post.ref); }, info.keys[0]);
-      if (!mp.some(x => x.startsWith('vol:'))) fail('qmfMemberPosts (Gantt-dialogen) ska visa posten: ' + mp.join()); 
-      await page.evaluate(() => { qmf.map.obj = {}; qmfRender(); }); }
-    // Delning via 4D-data: kopplingar och poster skrivs till projektets mapp och läses tillbaka (den nyaste gäller).
-    { await page.evaluate(() => { qmf.map.obj = { vol: { 'm1|o1': 'KEY1' } }; qmfSave(); qmfSavePosts(); });
-      await page.waitForTimeout(2600);
-      const sm = [...store.keys()].filter(k => /qty_mapping\.json$/.test(k)), sp = [...store.keys()].filter(k => /qty_posts\.json$/.test(k));
-      if (sm.length !== 1 || sp.length !== 1) fail('Kopplingar och poster ska skrivas till 4D-data: ' + [...store.keys()].join());
-      const wm = JSON.parse(store.get(sm[0]).content)[0]; if (!wm.updated_at || !wm.map.obj.vol || wm.map.obj.vol['m1|o1'] !== 'KEY1') fail('Skriven fil: ' + JSON.stringify(wm).slice(0, 200));
-      const wp = JSON.parse(store.get(sp[0]).content)[0]; if (!wp.posts || wp.posts.length !== await page.evaluate(() => qmf.posts.length)) fail('Postfilen ska innehålla förteckningens poster');
-      // fjärrfilen är nyare (någon annan har ändrat) → hämtas
-      const remote = { ...wm, updated_at: '2999-01-01T00:00:00.000Z', map: { ...wm.map, obj: { vol: { 'm1|o1': 'FROM-REMOTE' } } } };
-      store.set(sm[0], { content: JSON.stringify([remote]), sha: 'sx' + Date.now() });
-      await page.evaluate(() => qmfSyncLoad()); await page.waitForTimeout(500);
-      if ((await page.evaluate(() => qmf.map.obj.vol['m1|o1'])) !== 'FROM-REMOTE') fail('Nyare fjärrfil ska hämtas');
-      await page.evaluate(() => { qmf.map.obj = {}; qmfSaveLocalOnly(); }); }
-    { // Antal (st) räknar objekt.
-      await page.click('[data-qkind="cnt"]'); await page.waitForTimeout(300);
-      const cn = await page.evaluate(() => ({ tot: qtyPivot().total, n: qtyPivot().nObj, val: !!document.getElementById('qtyVal') })); if (cn.tot !== cn.n || cn.val) fail('Antal (st): summan ska vara antalet objekt: ' + JSON.stringify(cn));
-      await page.click('[data-qkind="vol"]'); await page.waitForTimeout(300); }
-    // Ändrad koppling slår igenom: Wall → ESE.1 ger ESE.21 noll.
-    await page.evaluate(() => { const t = Object.keys(qmf.map.types.vol).find(k => /^Wall/.test(k)); qmf.map.types.vol[t] = qmf.posts.find(p => p.ref === 'ESE.1').key; qmfRender(); });
-    K = await cmp('Fläkthus'); if (K['ESE.1'][2] !== 2.5) fail('Ändrad typ→post ska slå igenom: ' + JSON.stringify(K));
-    // Form (m²): mängdslaget byter egenskap, enhet och poster; typ → ESB-post föreslås.
-    await page.evaluate(() => { qty.cfg.formTop = true; }); // hela ytan (som förut) i den här kontrollen
-    await page.click('[data-qkind="form"]'); await page.waitForTimeout(400);
-    const FM = await page.evaluate(() => ({ key: qty.cfg.valKey, f: qty.factor, u: qtyUnitLabel(), types: Object.fromEntries(Object.entries(qmf.map.types.form || {}).map(([k, v]) => [k.split(':')[0], (qmf.posts.find(p => p.key === v) || {}).label])), posts: qmfPosts().length }));
-    if (!/Surface Area$/.test(FM.key) || FM.f !== 1e6 || FM.u !== 'm²' || !/väggar/.test(FM.types.Wall || '') || !/grundsulor/.test(FM.types['Foundation Slab'] || '') || FM.posts < 2) fail('Mängdslag Form: ' + JSON.stringify(FM));
-    // Formyta utan över-/underyta: hela ytan − 2 × volym ÷ höjd (höjd = lådans z-mått i mocken).
-    { const R2 = await page.evaluate(async () => { const o = qty.objs.find(x => qtyFormDeduct(x) !== null); const full = (qtyNum(o.flat[qty.cfg.valKey]) / qty.factor); qty.cfg.formTop = true; const a = qtyValue(o); qty.cfg.formTop = false; const b = qtyValue(o); return { full, a, b, d: qtyFormDeduct(o), hz: o.hz, vf: qty.volFactor }; });
-      if (Math.abs(R2.a - R2.full) > 1e-6 || !(R2.b < R2.a) || Math.abs((R2.a - R2.b) - R2.d) > 1e-6 || !(R2.hz > 0)) fail('Formyta: sidoyta ska vara hela ytan minus över-/underytan: ' + JSON.stringify(R2));
-      await page.evaluate(() => { qty.cfg.formTop = true; }); }
-    const A = v => 6 * Math.pow(v, 2 / 3);
-    const fk = await page.evaluate(b => { qmf.build = b; qmfRender(); const c = qmfCompare(); return c.list.map(r => [r.p.label.split(' › ').pop().slice(0, 12), r.k, r.pr, Math.round(r.klar * 100) / 100]); }, 'Krosshall');
-    const fg = fk.find(r => r[1] === 750); if (!fg || fg[1] !== 750 || Math.abs(fg[3] - Math.round((A(6) + A(4)) * 100) / 100) > 0.02) fail('Form per byggnad (grundsulor Krosshall): ' + JSON.stringify(fk));
-    await page.click('[data-qkind="vol"]'); await page.waitForTimeout(300);
-    if ((await page.evaluate(() => qty.cfg.valKey)).match(/Surface/)) fail('Tillbaka till betong ska välja volym igen');
-    // Egna poster (Victor 2026-10-19): saknas koden skapar man en egen post direkt i sökrutan – den väljs, sparas och delas.
-    { await page.evaluate(() => { qmf.build = ''; qmfRender(); });
-      const ty0 = await page.evaluate(() => document.querySelector('select[data-ty]').dataset.ty);
-      await page.dispatchEvent('select[data-ty]', 'mousedown'); await page.waitForSelector('.qmf-combo');
-      await page.fill('.qmf-combo-q', 'EGEN.9'); await page.click('.qmf-combo-new'); await page.waitForSelector('.qmf-np');
-      if ((await page.inputValue('.np-ref')) !== 'EGEN.9') fail('Koden i sökrutan ska fyllas i');
-      await page.fill('.np-label', 'Prefabväggar (egen)'); await page.selectOption('.np-unit', 'm³'); await page.click('.np-ok'); await page.waitForTimeout(400);
-      const C1 = await page.evaluate(ty => ({ n: qmf.custom.length, p: qmf.custom[0], mapped: (qmf.map.types.vol || {})[ty], all: qmfAllPosts().some(x => x.ref === 'EGEN.9'), grp: qmfPostGroups('')[0].items.some(i => i.post && i.post.ref === 'EGEN.9'), ls: !!localStorage.getItem('4ddash-qty-custom') }), ty0);
-      if (C1.n !== 1 || !C1.all || !C1.grp || !C1.ls || C1.mapped !== C1.p.key) fail('Egen post ska skapas, väljas och finnas i listorna: ' + JSON.stringify(C1));
-      if (!(await page.locator('.qmf-custom tr[data-ck]').count())) fail('Egna poster ska listas');
-      // Ändra och ta bort
-      await page.evaluate(() => { document.querySelector('.qmf-custom').open = true; });
-      await page.click('.qmf-cedit'); await page.waitForSelector('.qmf-np'); await page.fill('.np-label', 'Prefabväggar B'); await page.click('.np-ok'); await page.waitForTimeout(200);
-      const C2 = await page.evaluate(ty => ({ label: qmf.custom[0].label, mapped: (qmf.map.types.vol || {})[ty] === qmf.custom[0].key }), ty0);
-      if (C2.label !== 'Prefabväggar B' || !C2.mapped) fail('Ändrad egen post ska behålla sina kopplingar: ' + JSON.stringify(C2));
-      await page.evaluate(() => { document.querySelector('.qmf-custom').open = true; });
-      await page.click('.qmf-cdel'); await page.waitForSelector('.qmf-ask'); await page.click('.qmf-ask button[data-k="ja"]'); await page.waitForTimeout(200);
-      if (await page.evaluate(ty => qmf.custom.length !== 0 || (qmf.map.types.vol || {})[ty] === 'x', ty0)) fail('Borttagen egen post ska försvinna'); }
-    console.log('OK: egna poster i mängdavtagningen');
-    // Klick på en rad markerar objekten i TC.
-    await page.evaluate(() => { window.__sel = []; }); await page.click('#qtyTable tbody tr'); await page.waitForTimeout(300);
-    if (!(await page.evaluate(() => window.__sel.length))) fail('Klick på rad ska markera i TC');
     if (errors.length) fail('Sidfel: ' + errors.join(' | '));
-    console.log('OK: Mängdavtagning – klara objekt (Ganttens regel), volym ur Calculated Geometry Values med enhetskontroll, summering per typ/område, filter, CSV, markera i TC');
-    // Armering på schablon: betongvolym × ton/m³ (ton).
-    const rb = await page.evaluate(async () => {
-      qty.cfg.filter = ''; qty.cfg.exclude = ''; qty.cfg.kind = 'vol'; qtyPickDefaults(); await qtyUnitCheck(); qtyRender(); const vol = qtyPivot().total;
-      qty.cfg.kind = 'rebar'; qty.cfg.rebarT = 0.12; qtyPickDefaults(); await qtyUnitCheck(); qtyRender();
-      const out = { vol, ton: qtyPivot().total, unit: qtyUnitLabel(), field: !!document.querySelector('#qtyRebarT'), note: /schablon/i.test(qty.unitNote), btn: [...document.querySelectorAll('[data-qkind]')].some(b => /Armering \(schablon\)/.test(b.textContent)) };
-      const f = document.querySelector('#qtyRebarT'); f.value = '0.2'; f.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 200)); out.ton2 = qtyPivot().total;
-      qty.cfg.kind = 'vol'; qtyPickDefaults(); await qtyUnitCheck(); qtyRender(); return out;
-    });
-    if (!(rb.vol > 0) || Math.abs(rb.ton - rb.vol * 0.12) > 1e-6 || rb.unit !== 'ton' || !rb.field || !rb.note || !rb.btn || Math.abs(rb.ton2 - rb.vol * 0.2) > 1e-6) fail('Armering schablon: ' + JSON.stringify(rb));
-    // Gantt-urvalet = det som ritas inom datumintervallet: objekt utanför intervallet räknas inte med.
-    const rg = await page.evaluate(() => { const keep = ganttInRangeItems; qty.cfg.scope = 'gantt'; const a = qtyObjects().length; ganttInRangeItems = (ganttShownItems || []).slice(0, 1); const b = qtyObjects().length; ganttInRangeItems = []; const c = qtyObjects().length; ganttInRangeItems = keep; return { a, b, c }; });
-    if (!(rg.a >= rg.b && rg.b <= 1 && rg.c === 0)) fail('Gantt-urval ska följa det som ritas inom intervallet: ' + JSON.stringify(rg));
     console.log('ALLA TESTER OK');
-  } catch (e) { console.log('FEL: ' + e.message); process.exitCode = 1; }
-  await browser.close(); server.close();
-})();
+  } finally { await browser.close(); server.close(); }
+})().catch(e => { console.error('FEL:', e.message); process.exit(1); });
