@@ -122,6 +122,15 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
       const n2 = await page.evaluate(() => window.__selRows); if (!(n2 >= 1)) fail('Klick på postrad ska markera objekt: ' + n2);
       await page.evaluate(() => { window.__selRows = null; }); await page.click('tr[data-arrow] td:first-child'); await page.waitForTimeout(200);
       if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Klick på områdesrad ska markera objekt'); }
+    // Bläddra bland koderna: ◀ ▶ markerar objekten på posten i TC och följer med i tabellen.
+    { const bar = await page.evaluate(() => ({ has: !!document.querySelector('#qmfBrowse'), n: document.querySelectorAll('#qmfBrowse option').length, info: (document.querySelector('#qmfBrowseInfo') || {}).textContent }));
+      if (!bar.has || bar.n < 1) fail('Bläddra-fältet saknas: ' + JSON.stringify(bar));
+      await page.evaluate(() => { window.__selRows = null; qmf.build = ''; qmfRender(); });
+      await page.click('#qmfNext'); await page.waitForTimeout(200);
+      const r = await page.evaluate(() => ({ sel: window.__selRows, cur: document.querySelectorAll('tr.qmf-cur').length, val: document.querySelector('#qmfBrowse').value, key: qmf.browse }));
+      if (!(r.sel >= 1) || r.val !== r.key || (bar.n > 1 && r.cur !== 1)) fail('Nästa kod ska markera objekten och markera raden: ' + JSON.stringify(r));
+      await page.evaluate(() => { window.__selRows = null; }); await page.click('#qmfPrev'); await page.waitForTimeout(200);
+      if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Föregående kod ska markera objekt'); }
     // Sök/filtrera typ- och postkolumnerna.
     { const vis = () => page.evaluate(() => [...document.querySelectorAll('tr[data-tyrow]')].filter(r => r.style.display !== 'none').length), tot = await page.evaluate(() => document.querySelectorAll('tr[data-tyrow]').length);
       await page.fill('[data-flt="ty"]', 'wall'); const v1 = await vis(); if (!(v1 >= 1 && v1 < tot)) fail('Sök typ ska dölja övriga rader: ' + v1 + '/' + tot);

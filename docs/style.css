@@ -2763,3 +2763,9 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 
 /* Sökrutans lista (cb-list) ska ligga över dialogerna, t.ex. dagsplanen (z-index 3400). */
 .cb-list { z-index: 3600; }
+
+/* Bläddra bland koderna i mängdavtagningen */
+.qmf-browse { display: flex; align-items: center; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+.qmf-browse button { height: 30px; min-width: 30px; padding: 0 8px; }
+.qmf-browse select { flex: 1; min-width: 160px; max-width: 100%; height: 30px; }
+.qmf-table tr.qmf-cur td { background: #eff6ff; box-shadow: inset 3px 0 0 #2563eb; }
