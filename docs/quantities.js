@@ -25,7 +25,17 @@ function qtyFlat(obj) {
   return f;
 }
 /* Klar vid valt datum enligt Ganttens regel (räknas vid summeringen, så datumet kan ändras utan att läsa om). */
-const qtyAt = () => qty.cfg.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO();
+/* Datum för "klart vid": följer tidslinjen i Gantt-schemat (Victor 2026-10-19: "mängdavtagningen ska avspeglas på vart jag har ställt
+   tidslinjen") – som standard, tills man själv skriver ett datum (då avstängt; kryssrutan Följ tidslinjen slår på det igen). */
+const qtyFollow = () => qty.cfg.follow !== false;
+const qtyAt = () => (qtyFollow() ? ((typeof ganttAsOf !== "undefined" && ganttAsOf) || qty.cfg.date) : (qty.cfg.date || (typeof ganttAsOf !== "undefined" && ganttAsOf))) || todayISO();
+let qtyFollowT = 0;
+/* Anropas när tidslinjen flyttas: räknar om mängderna (utan att läsa om modellen) om fliken syns. */
+function qtyFollowTick() {
+  if (!qtyFollow()) return;
+  const host = document.getElementById("qtyBox"); if (!host || !host.offsetParent || !qty.objs.length) return;
+  clearTimeout(qtyFollowT); qtyFollowT = setTimeout(() => { try { qtyRender(); } catch (e) { console.warn("Mängdavtagning följer tidslinjen", e); } }, 220);
+}
 /* Läge "Klara under period" (Victor 2026-10-15): det som blev klart mellan Från och Till – klart vid Till men inte redan klart dagen före Från. */
 const qtyFrom = () => qty.cfg.phase === "period" ? (qty.cfg.from || addDaysIso(qtyAt(), -6)) : "";
 const qtyDone = o => {
@@ -200,7 +210,7 @@ function qtyRender0() {
         <span class="gantt-sub-label">Urval</span>${seg("data-qscope", C.scope, [["gantt", "Gantt-schemat", "Det som visas i Gantt-schemat"], ["all", "Hela planen"], ["sel", "Markerat i TC"]])}
         ${C.scope !== "sel" ? `<span class="gantt-sub-label">Läge</span>${seg("data-qphase", C.phase, [["klar", "Klara"], ["period", "Under period", "Klara under en period (Från–Till)"], ["all", "Alla", "Alla oavsett läge"]])}
         ${C.phase === "period" ? `<label class="gantt-toolbar-field" title="Första dagen i perioden – bara det som blev klart från och med den här dagen räknas">Från <input type="date" id="qtyFrom" value="${E(C.from || addDaysIso(qtyAt(), -6))}" /></label>` : ""}
-        ${C.phase === "klar" || C.phase === "period" ? `<label class="gantt-toolbar-field" title="${C.phase === "period" ? "Sista dagen i perioden" : "Klara enligt Ganttens regel vid det här datumet"}">${C.phase === "period" ? "Till" : "Datum"} <input type="date" id="qtyDate" value="${E(C.date || (typeof ganttAsOf !== "undefined" && ganttAsOf) || todayISO())}" /></label><button type="button" id="qtyToday" class="gantt-chip" title="Använd dagens datum">Idag</button>` : ""}` : ""}
+        ${C.phase === "klar" || C.phase === "period" ? `<label class="gantt-toolbar-field" title="${C.phase === "period" ? "Sista dagen i perioden" : "Klara enligt Ganttens regel vid det här datumet"}">${C.phase === "period" ? "Till" : "Datum"} <input type="date" id="qtyDate" value="${E(qtyAt())}" /></label><label class="gantt-toolbar-field qty-follow" title="Datumet följer tidslinjen i Gantt-schemat – dra i tidslinjen så ändras mängderna. Skriver du ett eget datum stängs det av."><input type="checkbox" id="qtyFollow"${qtyFollow() ? " checked" : ""} /> Följ tidslinjen</label><button type="button" id="qtyToday" class="gantt-chip" title="Använd dagens datum">Idag</button>` : ""}` : ""}
         <span class="gantt-head-spacer"></span><span id="qtyMsg" class="hint"></span>
         <button type="button" id="qtyRead" class="gantt-toolbar-btn qty-read">${ic('<path d="M4 10a6 6 0 0 1 10.5-4L16 7.5M16 3v4.5h-4.5M16 10a6 6 0 0 1-10.5 4L4 12.5M4 17v-4.5h4.5"/>')}<span>Läs mängder</span></button>
       </div>
@@ -226,9 +236,10 @@ function qtyRender0() {
   const q = s => host.querySelector(s), put = (k, v) => { qty.cfg[k] = v; qtySave(); };
   host.querySelectorAll("[data-qscope]").forEach(b => b.onclick = () => { put("scope", b.dataset.qscope); qtyRender(); });
   host.querySelectorAll("[data-qphase]").forEach(b => b.onclick = () => { put("phase", b.dataset.qphase); qtyRender(); });
-  if (q("#qtyDate")) q("#qtyDate").onchange = e => { put("date", e.target.value); if (C.phase === "period") qtyRender(); };
+  if (q("#qtyDate")) q("#qtyDate").onchange = e => { put("date", e.target.value); put("follow", false); qtyRender(); };
+  if (q("#qtyFollow")) q("#qtyFollow").onchange = e => { put("follow", e.target.checked); qtyRender(); };
   if (q("#qtyFrom")) q("#qtyFrom").onchange = e => { put("from", e.target.value); qtyRender(); };
-  if (q("#qtyToday")) q("#qtyToday").onclick = () => { put("date", todayISO()); qtyRender(); };
+  if (q("#qtyToday")) q("#qtyToday").onclick = () => { put("date", todayISO()); put("follow", false); qtyRender(); };
   q("#qtyRead").onclick = qtyRead;
   if (!hasData) return;
   host.querySelectorAll("[data-qkind]").forEach(b => b.onclick = async () => { put("kind", b.dataset.qkind); qtyPickDefaults(); qtySave(); await qtyUnitCheck(); if (typeof qmfAutoMap === "function" && typeof qmf !== "undefined" && qmf.posts.length) qmfAutoMap(); qtyRender(); });

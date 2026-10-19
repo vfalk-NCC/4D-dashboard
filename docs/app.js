@@ -4190,6 +4190,7 @@ function updateGanttTimeUi() {
 function setGanttAsOf(iso, opts = {}) {
   ganttAsOf = iso || null;
   updateGanttTimeUi();
+  if (typeof qtyFollowTick === "function") qtyFollowTick(); // mängdavtagningen följer tidslinjen
   if (ganttAsOf && ganttIsolate && ganttTime3d) ganttTimeApply3d(); // 3D följer direkt medan man drar
   placeGanttScrub(); // dragstrecket följer direkt
   if (opts.noRender) return;

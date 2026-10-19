@@ -87,6 +87,16 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     const per = await page.evaluate(() => { const r = {}; qty.cfg.from = '2000-01-01'; r.old = qtyPivot().total; qty.cfg.from = addDaysIso(qtyAt(), 1); r.after = qtyPivot().total; qty.cfg.from = ''; r.def = qtyFrom(); qtyRender(); r.hint = document.querySelector('#qtyBox').textContent.includes('Klart under perioden'); return r; });
     if (Math.abs(per.old - base) > 0.001 || per.after !== 0 || !per.hint) fail('Klara under period: ' + JSON.stringify({ base, per }));
     await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.from = ''; qtyRender(); });
+    // Följer tidslinjen: flyttas Ganttens tidslinje räknas "klart" om till det datumet (Victor 2026-10-19).
+    { await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.date = ''; qty.cfg.follow = undefined; qtyRender(); });
+      const T = async n => { await page.evaluate(n => setGanttAsOf(addDaysIso(todayISO(), n), { noRender: true }), n); await page.waitForTimeout(450); return page.evaluate(() => ({ tot: qtyPivot().total, at: qtyAt(), input: document.getElementById('qtyDate').value })); };
+      const a = await T(-15), b = await T(-5), c = await T(1);
+      if (!(a.tot < b.tot && b.tot < c.tot)) fail('Mängden klar ska växa med tidslinjen: ' + JSON.stringify([a, b, c]));
+      if (c.input !== c.at || (await page.evaluate(() => document.getElementById('qtyFollow').checked)) !== true) fail('Datumrutan ska visa tidslinjens datum: ' + JSON.stringify(c));
+      await page.evaluate(() => { document.getElementById('qtyDate').value = '2000-01-01'; document.getElementById('qtyDate').dispatchEvent(new Event('change')); });
+      const d = await page.evaluate(() => ({ follow: qtyFollow(), at: qtyAt() })); if (d.follow || d.at !== '2000-01-01') fail('Eget datum stänger av följningen: ' + JSON.stringify(d));
+      await page.evaluate(() => { qty.cfg.follow = undefined; qty.cfg.date = ''; setGanttAsOf(null, { noRender: true }); qtyRender(); }); }
+    console.log('OK: mängdavtagningen följer tidslinjen');
     // Mängdförteckningen (Excel): läses utan bibliotek, kopplingar föreslås, jämförelse per post och byggnad.
     await page.evaluate(() => { qty.cfg.phase = 'klar'; qty.cfg.filter = ''; qtyRender(); });
     await page.setInputFiles('#qmfFile', path.join(__dirname, 'fixtures', 'mf_test.xlsx'));
