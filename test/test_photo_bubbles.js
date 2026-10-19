@@ -130,7 +130,7 @@ seed('plan_items.json', [
       await page.evaluate(() => { window.__sel = [{ modelId: 'm1', objectRuntimeIds: [1, 2] }]; });
       await page.click('#phbOcNew'); await page.waitForSelector('#phbOcMake', { timeout: 5000 });
       await page.fill('#phbOcDText', 'Egen text här');
-      await page.selectOption('#phbOcDGroup', 'all');
+      await page.click('[data-ocp="1"]'); await page.selectOption('#phbOcDGroup', 'obj'); await page.click('[data-ocp="1"]'); await page.selectOption('#phbOcDGroup', 'all');
       await page.click('#phbOcMake'); await page.waitForTimeout(300);
       const oc = await page.evaluate(() => { const s = document.getElementById('phbCv')._state(); return { n: (s.ocards || []).length, text: (s.ocards[0] || {}).text, objs: ((s.ocards[0] || {}).objs || []).length }; });
       if (oc.n !== 1 || oc.text !== 'Egen text här' || oc.objs !== 2) fail('Objektbubbla: ' + JSON.stringify(oc));

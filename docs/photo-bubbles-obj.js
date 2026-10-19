@@ -156,10 +156,10 @@ function phbOcEnsureCam(st, objs) {
   try { const c = phbPickCamera(st.cam, pts, st.W, st.H); if (c) st.camC = c; } catch (e) { /* okänd kamera */ }
 }
 function phbOcGroups(draft) {
-  const objs = draft.objs;
+  const objs = draft.objs.filter((o, i) => !draft.pick || draft.pick.has(i));
   if (draft.group === "all") return [objs];
   if (draft.group === "code") { const m = new Map(); objs.forEach(o => { const c = phbOcCodes(o)[0], k = c ? c.ref : "(ingen kod)"; (m.get(k) || m.set(k, []).get(k)).push(o); }); return [...m.values()]; }
-  return objs.slice(0, 15).map(o => [o]);
+  return objs.slice(0, 40).map(o => [o]);
 }
 function phbOcCreate(st, draft) {
   let n = 0;
@@ -190,8 +190,10 @@ function phbOcSide(api) {
       <label class="phb-f"><span>Rubrik hämtas från</span><select id="phbOcDTSrc">${PHB_OC_TSRC.map(([v, l]) => `<option value="${v}"${(d.titleSrc || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
       <label class="phb-f"><span>Decimaler på tal</span><select id="phbOcDDec">${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${(d.dec == null ? 2 : d.dec) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
       <label class="phb-f"><span>Egen text <small>(valfritt)</small></span><textarea id="phbOcDText" rows="2">${esc(d.text || "")}</textarea></label>
-      <label class="phb-f"><span>Bubblor</span><select id="phbOcDGroup"><option value="obj"${d.group === "obj" ? " selected" : ""}>En per objekt (högst 15)</option><option value="code"${d.group === "code" ? " selected" : ""}>En per AMA-kod</option><option value="all"${d.group === "all" ? " selected" : ""}>En gemensam</option></select></label>
-      <div class="phb-row"><button type="button" id="phbOcMake" class="primary">Skapa bubblor</button><button type="button" id="phbOcCancel">Avbryt</button></div>`;
+      <div class="phb-f"><span>Objekt – ${d.pick.size} av ${d.objs.length} valda (en bubbla per valt objekt, högst 40)</span><div class="phb-row"><button type="button" id="phbOcPAll">Alla</button><button type="button" id="phbOcPNone">Inga</button></div>
+        <div class="phb-ocf" style="max-height:160px;overflow:auto">${d.objs.map((o, i) => `<label class="phb-c"><input type="checkbox" data-ocp="${i}"${d.pick.has(i) ? " checked" : ""}> ${esc(phbOcName(o))}${o.objectId ? ` <small>${esc(String(o.objectId).slice(-8))}</small>` : ""}</label>`).join("")}</div></div>
+      <label class="phb-f"><span>Bubblor</span><select id="phbOcDGroup"><option value="obj"${d.group === "obj" ? " selected" : ""}>En per objekt – varje för sig</option><option value="code"${d.group === "code" ? " selected" : ""}>En per AMA-kod (slår ihop objekten)</option><option value="all"${d.group === "all" ? " selected" : ""}>En gemensam (slår ihop objekten)</option></select></label>
+      <div class="phb-row"><button type="button" id="phbOcMake" class="primary"${d.pick.size ? "" : " disabled"}>Skapa bubblor</button><button type="button" id="phbOcCancel">Avbryt</button></div>`;
   } else {
     h += `<button type="button" id="phbOcNew" title="Markera först ett eller flera objekt i modellen i Trimble Connect">＋ Bubbla från markerade i TC</button><div class="phb-note">${(cur.ocards || []).length ? `${cur.ocards.length} objektbubbl${cur.ocards.length === 1 ? "a" : "or"} på bilden. ` : ""}Bubblor med valfria egenskaper (UDA) från modellen, egen text och AMA-koden från mängdavtagningen.</div><div id="phbOcMsg" class="phb-note"></div>`;
   }
@@ -225,7 +227,7 @@ function phbOcBind(api, side) {
   on("phbOcNew", "click", async () => {
     const msg = q("phbOcMsg"); if (msg) msg.textContent = "Läser markeringen …";
     try { const objs = await phbOcReadSelection(); if (!objs.length) { if (msg) msg.textContent = "Inget är markerat i Trimble Connect – markera objekt i modellen först."; return; }
-      cur.ocDraft = { objs, keys: phbOcKeys(objs), fields: phbOcDefaults().filter(f => f.startsWith("◆") || phbOcKeys(objs).includes(f)), text: "", group: objs.length > 1 && objs.length <= 15 ? "obj" : objs.length > 15 ? "code" : "obj" }; api.renderSide();
+      cur.ocDraft = { objs, keys: phbOcKeys(objs), fields: phbOcDefaults().filter(f => f.startsWith("◆") || phbOcKeys(objs).includes(f)), text: "", group: "obj", pick: new Set(objs.map((o, i) => i).slice(0, 40)) }; api.renderSide();
     } catch (e) { if (msg) msg.textContent = "Kunde inte läsa markeringen: " + ((e && e.message) || e); }
   });
   on("phbOcQty", "click", async () => {
@@ -234,7 +236,9 @@ function phbOcBind(api, side) {
     catch (e) { if (m) m.textContent = "Kunde inte läsa mängder: " + ((e && e.message) || e); b.disabled = false; }
   });
   const d = cur.ocDraft;
-  if (d) { bindFields(d.fields, d.keys, () => api.renderSide()); on("phbOcDText", "input", e => { d.text = e.target.value; }); on("phbOcDDec", "change", e => { d.dec = Number(e.target.value); }); on("phbOcDTSrc", "change", e => { d.titleSrc = e.target.value; }); on("phbOcDGroup", "change", e => { d.group = e.target.value; });
+  if (d) { bindFields(d.fields, d.keys, () => api.renderSide()); on("phbOcDText", "input", e => { d.text = e.target.value; }); on("phbOcDDec", "change", e => { d.dec = Number(e.target.value); }); side.querySelectorAll("[data-ocp]").forEach(c => c.addEventListener("change", () => { const i = Number(c.dataset.ocp); if (c.checked) d.pick.add(i); else d.pick.delete(i); const b = q("phbOcMake"); if (b) b.disabled = !d.pick.size; }));
+    on("phbOcPAll", "click", () => { d.pick = new Set(d.objs.map((o, i) => i).slice(0, 40)); api.renderSide(); }); on("phbOcPNone", "click", () => { d.pick = new Set(); api.renderSide(); });
+    on("phbOcDTSrc", "change", e => { d.titleSrc = e.target.value; }); on("phbOcDGroup", "change", e => { d.group = e.target.value; });
     on("phbOcCancel", "click", () => { cur.ocDraft = null; api.renderSide(); });
     on("phbOcMake", "click", () => { phbOcRemember(d.fields); const n = phbOcCreate(cur, d); cur.ocDraft = null; api.remeasure(); api.renderSide(); if (typeof modelToast === "function") modelToast(`${n} bubbl${n === 1 ? "a" : "or"} skapade`); }); }
   const oc = cur.sel && (cur.ocards || []).includes(cur.sel) ? cur.sel : null;
