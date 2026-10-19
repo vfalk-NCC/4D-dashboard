@@ -149,6 +149,23 @@ seed('plan_items.json', [
       if (await page.locator('#phbVwSel').count()) fail('Vyn ska vara borttagen');
       await page.click('#phbOcDel'); await page.waitForTimeout(100);
       const oc2 = await page.evaluate(() => document.getElementById('phbCv')._state().ocards.length); if (oc2 !== 0) fail('Borttagning: ' + oc2);
+      // Mängdtabeller per område (från mängdavtagningen och från markeringen)
+      await page.evaluate(() => {
+        qmf.builds = ['Hus A']; qmf.map.areas = { 'Område 1': 'Hus A' }; qmf.custom.push({ key: 'c1', ref: 'ESB.1', label: 'Betong platsgjuten', unit: 'm³', k: { 'Hus A': 10 }, p: {} });
+        const o = { modelId: 'm1', rid: 1, objectId: 'a1', flat: { Volume: '5' }, item: { area: 'Område 1' } }; qty.objs = [o, { modelId: 'm1', rid: 9, objectId: 'z9', flat: { Volume: '7' }, item: { area: 'Område 1' } }];
+        qty.kv = { vol: { valKey: 'Volume', factor: 1 }, form: { valKey: '', factor: 1 } }; qty.keys = new Map(); qmf.map.obj.vol = { [qmfObjKey(qty.objs[0])]: 'c1', [qmfObjKey(qty.objs[1])]: 'c1' }; window.__qtyRead = qtyRead; qtyRead = async () => {};
+      });
+      await page.selectOption('#phbQtSrc', 'qty'); await page.click('#phbQtNew'); await page.waitForSelector('#phbQtMake', { timeout: 5000 }); await page.click('#phbQtMake'); await page.waitForTimeout(200);
+      const qt = await page.evaluate(() => { const t = document.getElementById('phbCv')._state().tables; return { n: t.length, rows: t[0] && t[0].n, a: t[0] && t[0].area, cells: t[0] && t[0].cells.map(c => c.s).join('|') }; });
+      if (qt.n !== 1 || qt.rows !== 1 || qt.a !== 'Hus A' || !/12/.test(qt.cells)) fail('Mängdtabell (avtagning): ' + JSON.stringify(qt));
+      await page.selectOption('#phbQtSrc', 'sel'); await page.click('#phbQtNew'); await page.waitForSelector('#phbQtMake'); await page.click('#phbQtMake'); await page.waitForTimeout(200);
+      const qs = await page.evaluate(() => { const t = document.getElementById('phbCv')._state().tables[1]; return t && t.cells.map(c => c.s).join('|'); });
+      if (!qs || !/5/.test(qs) || /12/.test(qs)) fail('Mängdtabell (markering): ' + qs);
+      const [dl6] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]); await dl6.saveAs(process.env.PHB_OUT + '/foto4.pdf');
+      if (!fs.readFileSync(process.env.PHB_OUT + '/foto4.pdf', 'latin1').includes('lista-tabell2')) fail('PDF saknar mängdtabell');
+      const [dl7] = await Promise.all([page.waitForEvent('download'), page.click('#phbPng')]); await dl7.saveAs(process.env.PHB_OUT + '/foto4.png');
+      await page.click('#phbQtDel'); await page.waitForTimeout(100);
+      if ((await page.evaluate(() => document.getElementById('phbCv')._state().tables.length)) !== 1) fail('Borttagning av tabell');
       await page.evaluate(() => { window.__sel = []; });
       await page.selectOption('#phbScope', 'marked'); await page.waitForTimeout(500);
       const i2 = await page.textContent('.phb-info'); if (!/^0 bubblor/.test(i2)) fail('Bara markerade utan markering: ' + i2);

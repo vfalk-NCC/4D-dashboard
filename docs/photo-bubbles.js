@@ -279,7 +279,7 @@ async function phbBuild(blob, cam, scopeOverride) {
   const sc0 = bubbleCfg.scope; let acts, scope;
   try { if (scopeOverride && scopeOverride !== "auto") bubbleCfg.scope = scopeOverride; ({ acts, scope } = bubbleActs()); } finally { bubbleCfg.scope = sc0; }
   const anchors = await phbAnchors(acts);
-  const st = { cam, ocards: [], camC: null, bmp, s, W, H, k, at, sharp: 0.6, progMode: "entered", cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
+  const st = { cam, tables: [], ocards: [], camC: null, bmp, s, W, H, k, at, sharp: 0.6, progMode: "entered", cards: [], placed: false, note: "", scope, g: { bscale: 1, lines: true, lineW: 1, dot: 1 }, texts: [], nextId: 1,
     dateObj: { on: typeof ganttMode !== "undefined" && ganttMode === "time", iso: at, x: 20 * k, y: 20 * k, scale: 1 },
     list: { on: false, title: "Pågår just nu", max: 40, scale: 1, weeks: 2, x: W - 360 * k, y: 20 * k, cands: [], sel: new Set(), items: [] } };
   st.list.cands = phbCandidates(at, 2); phbActiveList(at).forEach(a => st.list.sel.add(phbKey(a)));
@@ -298,7 +298,7 @@ async function phbBuild(blob, cam, scopeOverride) {
   return st;
 }
 /* Mått om efter en ändring (skala, text, fält). Bubblan behåller sin övre vänstra hörn. */
-function phbRemeasure(st) { st.cards.forEach(c => phbCardMeasure(c, st)); if (typeof phbOcMeasureAll === "function") phbOcMeasureAll(st); st.texts.forEach(t => phbTextMeasure(t, st)); phbListMeasure(st); phbDateMeasure(st); }
+function phbRemeasure(st) { st.cards.forEach(c => phbCardMeasure(c, st)); if (typeof phbOcMeasureAll === "function") phbOcMeasureAll(st); if (typeof phbQtMeasureAll === "function") phbQtMeasureAll(st); st.texts.forEach(t => phbTextMeasure(t, st)); phbListMeasure(st); phbDateMeasure(st); }
 /* Närmaste punkt på kortets kant mot punkten – därifrån går linjen. */
 function phbLeaderStart(c) {
   const px = Math.max(c.x + 12, Math.min(c.x + c.W - 12, c.ax));
@@ -307,7 +307,7 @@ function phbLeaderStart(c) {
   return c.ax < c.x ? { x: c.x, y: c.ay } : c.ax > c.x + c.W ? { x: c.x + c.W, y: c.ay } : null;
 }
 /* Objekten i ritordning (överst sist) för träffyta och markering. */
-const phbObjects = st => [...st.cards.map(o => ({ type: "card", o })), ...(st.ocards || []).map(o => ({ type: "ocard", o })), ...(st.list.on ? [{ type: "list", o: st.list }] : []), ...st.texts.map(o => ({ type: "text", o })), ...(st.dateObj.on ? [{ type: "date", o: st.dateObj }] : [])];
+const phbObjects = st => [...st.cards.map(o => ({ type: "card", o })), ...(st.ocards || []).map(o => ({ type: "ocard", o })), ...(st.tables || []).map(o => ({ type: "qtable", o })), ...(st.list.on ? [{ type: "list", o: st.list }] : []), ...st.texts.map(o => ({ type: "text", o })), ...(st.dateObj.on ? [{ type: "date", o: st.dateObj }] : [])];
 const phbBox = it => ({ x: it.o.x, y: it.o.y, W: it.o.W, h: it.o.h });
 const phbCloseBox = (it, k) => { const b = phbBox(it); return { x: b.x + b.W - 2 * k, y: b.y + 2 * k, r: 11 * k }; };
 function phbRender(ctx, st) {
@@ -320,6 +320,7 @@ function phbRender(ctx, st) {
   });
   st.cards.forEach(c => phbDrawCard(ctx, c, k));
   if (typeof phbOcRender === "function") phbOcRender(ctx, st); // objektbubblor (photo-bubbles-obj.js)
+  if (typeof phbQtRender === "function") phbQtRender(ctx, st); // mängdtabeller (photo-bubbles-qt.js)
   if (st.list.on) phbDrawList(ctx, st);
   st.texts.forEach(t => phbDrawText(ctx, t));
   if (st.dateObj.on) phbDrawDate(ctx, st.dateObj);
@@ -415,6 +416,7 @@ async function phbPdf(st) {
   };
   st.cards.forEach((c, i) => { const b = phbPdfBubble(st, c, f); stamp("bubbla" + (i + 1), 9, b.x0, b.y0, b.x1, b.y1, b.stream, c.name.join(" ")); });
   (st.ocards || []).forEach((c, i) => { const b = phbOcPdfBubble(st, c, f); stamp("bubbla-obj" + (i + 1), 9, b.x0, b.y0, b.x1, b.y1, b.stream, c.title || "Objektbubbla"); });
+  (st.tables || []).forEach((t, i) => stamp("lista-tabell" + (i + 1), 10, t.x, t.y, t.x + t.W, t.y + t.h, phbQtPdf(t, f), "Mängdtabell " + (t.title || t.area)));
   if (st.list.on) { const L = st.list; stamp("lista", 10, L.x, L.y, L.x + L.W, L.y + L.h, phbPdfList(L, f), L.title || "Pågår just nu"); }
   st.texts.forEach((t, i) => stamp("text" + (i + 1), 10, t.x, t.y, t.x + t.W, t.y + t.h, phbPdfText(t, f), t.text));
   let ct = `q ${phbN(PW)} 0 0 ${phbN(PH)} 0 0 cm /Im0 Do Q\n`;
@@ -486,6 +488,7 @@ function phbPreview(st) {
   const removeObj = it => {
     if (!it) return;
     if (it.type === "card") { const i = cur.cards.indexOf(it.o); if (i < 0) return; cur.cards.splice(i, 1); removed.push({ c: it.o, i }); }
+    else if (it.type === "qtable") { const i = cur.tables.indexOf(it.o); if (i >= 0) cur.tables.splice(i, 1); }
     else if (it.type === "ocard") { const i = cur.ocards.indexOf(it.o); if (i >= 0) cur.ocards.splice(i, 1); }
     else if (it.type === "text") cur.texts.splice(cur.texts.indexOf(it.o), 1);
     else if (it.type === "list") cur.list.on = false; else if (it.type === "date") cur.dateObj.on = false;
@@ -519,10 +522,12 @@ function phbPreview(st) {
       <div class="phb-sec"><div class="phb-h">Pågår just nu</div>${chk("phbListOn", `Visa listan (${L.items.length} aktiviteter)`, L.on)}${L.on ? `<label class="phb-f"><span>Rubrik</span><input type="text" id="phbListTitle" value="${phbEsc(L.title)}" maxlength="60"></label>${phbListPick(L)}<label class="phb-f"><span>Högst antal rader</span><input type="number" id="phbListMax" min="1" max="60" value="${L.max}"></label>${rng("phbListScale", "Skala", Math.round(L.scale * 100), 40, 250, 5)}` : ""}</div>
       <div class="phb-sec"><div class="phb-h">Datumskylt</div>${chk("phbDateOn", "Visa datumskylten", D.on)}${D.on ? `<label class="phb-f"><span>Datum</span><input type="date" id="phbDateVal" value="${D.iso}"></label>${rng("phbDateScale", "Skala", Math.round(D.scale * 100), 40, 250, 5)}` : ""}</div>
       ${typeof phbOcSide === "function" ? phbOcSide(api) : ""}
+      ${typeof phbQtSide === "function" ? phbQtSide(api) : ""}
       ${typeof phbVwSide === "function" ? phbVwSide(api) : ""}
       <div class="phb-sec"><button type="button" id="phbAddText">＋ Text</button></div>`;
     if (it && it.type === "card") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald bubbla</div><label class="phb-f"><span>Rubrik <small>(tomt = aktivitetens namn)</small></span><textarea id="phbCText" rows="3">${phbEsc(o.text != null ? o.text : "")}</textarea></label>${rng("phbCScale", "Bubblans skala", Math.round(o.scale * 100), 40, 300, 5)}<div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbCCol" value="${phbCol(o)}"></label><button type="button" id="phbCAuto" title="Färg efter status"${o.colOver ? "" : " disabled"}>Auto</button></div>${chk("phbCDate", "Datum", o.show.date)}${chk("phbCArea", "Område", o.show.area)}${chk("phbCProg", "Framdrift", o.show.prog)}<button type="button" id="phbCDel" class="danger">Ta bort bubblan</button></div>`;
     else if (it && it.type === "ocard" && typeof phbOcSelSide === "function") h += phbOcSelSide(api, o);
+    else if (it && it.type === "qtable" && typeof phbQtSelSide === "function") h += phbQtSelSide(api, o);
     else if (it && it.type === "text") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald text</div><label class="phb-f"><span>Text</span><textarea id="phbTText" rows="3">${phbEsc(o.text)}</textarea></label>${rng("phbTSize", "Storlek", o.size, 8, 80, 1, " px")}<div class="phb-row"><label class="phb-f"><span>Textfärg</span><input type="color" id="phbTCol" value="${o.col}"></label>${chk("phbTBold", "Fet", o.bold)}</div><div class="phb-row">${chk("phbTBg", "Bakgrund", o.bg)}${o.bg ? `<input type="color" id="phbTBgCol" value="${o.bgCol}">` : ""}</div><button type="button" id="phbTDel" class="danger">Ta bort texten</button></div>`;
     const pk0 = side.querySelector("#phbPick"), keepSide = side.scrollTop, keepPick = pk0 ? pk0.scrollTop : 0;
     side.innerHTML = h; bindSide();
@@ -561,6 +566,7 @@ function phbPreview(st) {
     range("phbDateScale", v => { cur.dateObj.scale = v; remeasure(); });
     on("phbAddText", "click", () => { const t = { id: cur.nextId++, x: cur.W * 0.35, y: cur.H * 0.08, text: "Text", size: 22, col: "#111827", bg: true, bgCol: "#ffffff", bold: true }; phbTextMeasure(t, cur); cur.texts.push(t); cur.sel = t; draw(); renderSide(); const ta = q("phbTText"); if (ta) { ta.focus(); ta.select(); } });
     if (typeof phbOcBind === "function") phbOcBind(api, side);
+    if (typeof phbQtBind === "function") phbQtBind(api, side);
     if (typeof phbVwBind === "function") phbVwBind(api, side);
     const c = cur.sel && cur.cards.includes(cur.sel) ? cur.sel : null, t = cur.sel && cur.texts.includes(cur.sel) ? cur.sel : null;
     if (c) {
@@ -637,7 +643,7 @@ function phbPreview(st) {
   undoBtn.onclick = undoRemove;
   const close = () => { d.remove(); document.removeEventListener("keydown", keys, true); };
   d.querySelector("#phbClose").onclick = close; d.addEventListener("pointerdown", e => { if (e.target === d) close(); });
-  d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); n.ocards = cur.ocards || []; phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
+  d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); n.ocards = cur.ocards || []; n.tables = cur.tables || []; phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
   const dl = (blob, ext) => { const url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = `4D-foto-${stamp}.${ext}`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); };
   d.querySelector("#phbPng").onclick = () => { cur.ui = false; phbRender(ctx, cur); cv.toBlob(b => { cur.ui = true; draw(); dl(b, "png"); }, "image/png"); };
   d.querySelector("#phbPdf").onclick = async () => { try { dl(await phbPdf(cur), "pdf"); } catch (err) { console.warn("PDF", err); modelToast("Kunde inte skapa PDF: " + ((err && err.message) || err)); } };

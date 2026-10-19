@@ -261,6 +261,7 @@ function phbVwSnap(st) {
     g: { ...st.g }, progMode: st.progMode, sharp: st.sharp,
     list: { on: lst.on, title: lst.title, max: lst.max, scale: lst.scale, weeks: lst.weeks, fx: lst.x / W, fy: lst.y / H },
     dateObj: { on: dt.on, scale: dt.scale, fx: dt.x / W, fy: dt.y / H },
+    tables: (st.tables || []).map(t => ({ src: t.src, keys: t.keys, area: t.area, cols: t.cols, dec: t.dec, max: t.max, scale: t.scale, title: t.title, col: t.col, fx: t.x / W, fy: t.y / H })),
     texts: st.texts.map(t => { const c = { ...t, fx: t.x / W, fy: t.y / H }; delete c.id; delete c.x; delete c.y; return c; }),
     oc: (st.ocards || []).map(c => ({ fields: c.fields.slice(), text: c.text, title: c.title, dec: c.dec, titleSrc: c.titleSrc || "", scale: c.scale, colOver: c.colOver, fx: c.x / W, fy: c.y / H, fax: c.ax / W, fay: c.ay / H, free: !!c.free,
       objs: c.objs.slice(0, 60).map(o => ({ modelId: o.modelId, objectId: o.objectId, rid: o.rid, box: o.box, flat: o.flat })) }))
@@ -278,7 +279,8 @@ function phbVwApply(st, v) {
     if (q && q.x > -0.05 * W && q.x < 1.05 * W && q.y > -0.05 * H && q.y < 1.05 * H) { oc.ax = q.x; oc.ay = q.y; oc.free = false; }
     return oc;
   });
-  st.sel = st.ocards[0] || null; st.ocDraft = null;
+  st.tables = (v.tables || []).map(d => ({ ...d, id: st.nextId++, x: d.fx * W, y: d.fy * H }));
+  st.sel = st.ocards[0] || st.tables[0] || null; st.ocDraft = null; st.qtDraft = null;
 }
 function phbVwSide(api) {
   const esc = api.esc, vs = phbVwLoad(), sel = (api.cur.vwSel != null && vs[api.cur.vwSel]) ? api.cur.vwSel : -1;

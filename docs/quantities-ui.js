@@ -12,9 +12,9 @@ const xlPost = key => qmfAllPosts().find(p => p.key === key);
 const xlKindOf = p => (p ? qmfKindOfPost(p) : "");
 
 /* ---- Beräkning: koder × byggnader -------------------------------------------------------------------------------------------------------------- */
-function xlCompute() {
+function xlCompute(objsIn) {
   const cells = new Map(), posts = new Map(qmfAllPosts().map(p => [p.key, p])), kinds = xlKindsAll(), colSet = new Set(), unlinked = [], noValue = [];
-  qty.objs.forEach(o => {
+  (objsIn || qty.objs).forEach(o => {
     const b = qmf.map.areas[qmfAreaOf(o)] || XL_NOB; let any = false; const done = qtyDone(o);
     kinds.forEach(k => {
       const key = qmfEffPost(o, k); if (!key) return; const p = posts.get(key); if (!p || qmfKindOfPost(p) !== k) return;
