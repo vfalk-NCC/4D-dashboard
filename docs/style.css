@@ -2774,3 +2774,13 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .qmf-find .qmf-fpost { height: 26px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px; font-size: 12px; }
 
 .qty-rowflt { display: flex; align-items: center; gap: 8px; padding: 6px 4px; } .qty-rowflt input { flex: 1; min-width: 140px; height: 30px; }
+
+/* Matris kod × byggnad (som Excel-förteckningen) */
+.qmf-mx-w { overflow: auto; max-height: 440px; border: 1px solid #e2e8f0; border-radius: 10px; }
+.qmf-mxt { border-collapse: separate; border-spacing: 0; font-size: 12px; min-width: 100%; }
+.qmf-mxt th, .qmf-mxt td { padding: 4px 7px; border-bottom: 1px solid #eef2f7; white-space: nowrap; }
+.qmf-mxt thead th { position: sticky; top: 0; background: #f8fafc; z-index: 2; }
+.qmf-mxt th.mx-h { height: 110px; vertical-align: bottom; text-align: center; } .qmf-mxt th.mx-h span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); }
+.qmf-mxt td.mx-ref { position: sticky; left: 0; background: #fff; z-index: 1; } .qmf-mxt td.mx-spec { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.qmf-mxt td.mx-c.has { background: #bfe3f0; cursor: pointer; } .qmf-mxt td.mx-c.has:hover { outline: 2px solid #2563eb; outline-offset: -2px; } .qmf-mxt td.mx-c.has.done { background: #c6efce; }
+.qmf-mxt td.mx-t { background: #f1f5f9; }

@@ -156,6 +156,12 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     // Rullningen ska ligga kvar när listan ritas om (t.ex. efter Spara).
     { const sc = await page.evaluate(async () => { const el = document.scrollingElement; const h = document.getElementById('qmfBox').getBoundingClientRect().top + window.scrollY; window.scrollTo(0, h + 200); const y0 = Math.round(window.scrollY); qmfRender(); await new Promise(r => setTimeout(r, 200)); return { y0, y1: Math.round(window.scrollY) }; });
       if (sc.y0 > 0 && Math.abs(sc.y1 - sc.y0) > 2) fail('Rullningen ska ligga kvar vid omritning: ' + JSON.stringify(sc)); }
+    // Matris kod × byggnad: celler klickbara, rubriker markerar, HTML-export.
+    { const mx = await page.evaluate(() => { qmf.mx = 'tot'; qmfRender(); const t = document.querySelector('.qmf-mxt'); return { has: !!t, cells: document.querySelectorAll('.qmf-mxt td.mx-c.has').length, rows: document.querySelectorAll('.qmf-mxt tbody tr').length, html: /<table>/.test(qmfMatrixExportHtml()) && /Mängdavtagning/.test(qmfMatrixExportHtml()) }; });
+      if (!mx.has || mx.rows < 1) fail('Matrisen saknas: ' + JSON.stringify(mx));
+      if (mx.cells >= 1) { await page.evaluate(() => { window.__selRows = null; document.querySelector('.qmf-mxt td.mx-c.has').click(); }); await page.waitForTimeout(150); if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Klick på matriscell ska markera objekt'); }
+      await page.evaluate(() => { qmf.mx = 'pr'; qmfRender(); }); if (!(await page.evaluate(() => document.querySelector('[data-mxmode="pr"]').classList.contains('active')))) fail('Visa-läget ska kunna bytas');
+      if (!mx.html) fail('HTML-exporten ska innehålla tabellen'); await page.evaluate(() => { qmf.mx = 'tot'; qmfRender(); }); }
     // Sök/filtrera typ- och postkolumnerna.
     { const vis = () => page.evaluate(() => [...document.querySelectorAll('tr[data-tyrow]')].filter(r => r.style.display !== 'none').length), tot = await page.evaluate(() => document.querySelectorAll('tr[data-tyrow]').length);
       await page.fill('[data-flt="ty"]', 'wall'); const v1 = await vis(); if (!(v1 >= 1 && v1 < tot)) fail('Sök typ ska dölja övriga rader: ' + v1 + '/' + tot);
