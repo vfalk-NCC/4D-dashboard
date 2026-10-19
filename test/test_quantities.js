@@ -131,6 +131,20 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
       if (!(r.sel >= 1) || r.val !== r.key || (bar.n > 1 && r.cur !== 1)) fail('Nästa kod ska markera objekten och markera raden: ' + JSON.stringify(r));
       await page.evaluate(() => { window.__selRows = null; }); await page.click('#qmfPrev'); await page.waitForTimeout(200);
       if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Föregående kod ska markera objekt'); }
+    // Sök objekt i alla egenskaper: träffarna listas och kan läggas på en post (alla eller ett).
+    { const savedObj = await page.evaluate(() => JSON.stringify(qmf.map.obj)); await page.evaluate(() => { qmf.find = ''; qmfRender(); });
+      await page.fill('#qmfFind', 'wall'); await page.waitForTimeout(500);
+      const f1 = await page.evaluate(() => ({ n: document.querySelector('#qmfFindN').textContent, rows: document.querySelectorAll('#qmfFindRes tr[data-fk]').length, btn: !!document.querySelector('#qmfFindAssign') }));
+      if (!/matchar/.test(f1.n) || f1.rows < 1 || !f1.btn) fail('Sök i alla egenskaper: ' + JSON.stringify(f1));
+      await page.evaluate(() => { window.__selRows = null; document.querySelector('#qmfFindMark').click(); }); await page.waitForTimeout(150);
+      if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Markera träffarna i TC');
+      const as = await page.evaluate(() => { const hits = qmfFindHits(), P = qmfAllPosts().find(p => p.unit === 'm³'); qmfAssignObjs(hits, { post: P, v: P.key }); return { n: hits.length, ok: hits.every(o => qmfEffPost(o) === P.key), still: !!document.querySelector('#qmfFind') && document.querySelector('#qmfFind').value === 'wall' }; });
+      if (!as.n || !as.ok || !as.still) fail('Alla träffar ska läggas på posten och sökningen ligga kvar: ' + JSON.stringify(as));
+      const none = await page.evaluate(() => { qmf.find = 'finns-inte-xyz'; qmfFindRender(document.getElementById('qmfBox')); return /Inga objekt matchar/.test(document.querySelector('#qmfFindRes').textContent); });
+      if (!none) fail('Ingen träff ska ge ett meddelande'); await page.evaluate(sv => { qmf.find = ''; qmf.map.obj = JSON.parse(sv); qmfSave(); qmfRender(); }, savedObj); }
+    // Filtrera raderna efteråt: alla rader listas, sökrutan snävar in och summan följer.
+    { const r = await page.evaluate(async () => { const tb = document.querySelector('#qtyTable'), all = tb.querySelectorAll('tr[data-r]').length; const i = tb.querySelector('#qtyRowFlt'); i.value = 'zzzz-finns-inte'; i.dispatchEvent(new Event('input')); const none = [...tb.querySelectorAll('tr[data-r]')].every(t => t.style.display === 'none'); const tot0 = tb.querySelector('tfoot td:nth-last-child(2)').textContent; i.value = ''; i.dispatchEvent(new Event('input')); const back = [...tb.querySelectorAll('tr[data-r]')].every(t => t.style.display !== 'none'); return { all, none, tot0, back }; });
+      if (!(r.all >= 1) || !r.none || !r.back) fail('Filtrera raderna efteråt: ' + JSON.stringify(r)); }
     // Sök/filtrera typ- och postkolumnerna.
     { const vis = () => page.evaluate(() => [...document.querySelectorAll('tr[data-tyrow]')].filter(r => r.style.display !== 'none').length), tot = await page.evaluate(() => document.querySelectorAll('tr[data-tyrow]').length);
       await page.fill('[data-flt="ty"]', 'wall'); const v1 = await vis(); if (!(v1 >= 1 && v1 < tot)) fail('Sök typ ska dölja övriga rader: ' + v1 + '/' + tot);
