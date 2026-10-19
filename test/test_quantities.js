@@ -230,6 +230,15 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     if (!(await page.evaluate(() => window.__sel.length))) fail('Klick på rad ska markera i TC');
     if (errors.length) fail('Sidfel: ' + errors.join(' | '));
     console.log('OK: Mängdavtagning – klara objekt (Ganttens regel), volym ur Calculated Geometry Values med enhetskontroll, summering per typ/område, filter, CSV, markera i TC');
+    // Armering på schablon: betongvolym × ton/m³ (ton).
+    const rb = await page.evaluate(async () => {
+      qty.cfg.filter = ''; qty.cfg.exclude = ''; qty.cfg.kind = 'vol'; qtyPickDefaults(); await qtyUnitCheck(); qtyRender(); const vol = qtyPivot().total;
+      qty.cfg.kind = 'rebar'; qty.cfg.rebarT = 0.12; qtyPickDefaults(); await qtyUnitCheck(); qtyRender();
+      const out = { vol, ton: qtyPivot().total, unit: qtyUnitLabel(), field: !!document.querySelector('#qtyRebarT'), note: /schablon/i.test(qty.unitNote), btn: [...document.querySelectorAll('[data-qkind]')].some(b => /Armering \(schablon\)/.test(b.textContent)) };
+      const f = document.querySelector('#qtyRebarT'); f.value = '0.2'; f.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 200)); out.ton2 = qtyPivot().total;
+      qty.cfg.kind = 'vol'; qtyPickDefaults(); await qtyUnitCheck(); qtyRender(); return out;
+    });
+    if (!(rb.vol > 0) || Math.abs(rb.ton - rb.vol * 0.12) > 1e-6 || rb.unit !== 'ton' || !rb.field || !rb.note || !rb.btn || Math.abs(rb.ton2 - rb.vol * 0.2) > 1e-6) fail('Armering schablon: ' + JSON.stringify(rb));
     // Gantt-urvalet = det som ritas inom datumintervallet: objekt utanför intervallet räknas inte med.
     const rg = await page.evaluate(() => { const keep = ganttInRangeItems; qty.cfg.scope = 'gantt'; const a = qtyObjects().length; ganttInRangeItems = (ganttShownItems || []).slice(0, 1); const b = qtyObjects().length; ganttInRangeItems = []; const c = qtyObjects().length; ganttInRangeItems = keep; return { a, b, c }; });
     if (!(rg.a >= rg.b && rg.b <= 1 && rg.c === 0)) fail('Gantt-urval ska följa det som ritas inom intervallet: ' + JSON.stringify(rg));

@@ -4,10 +4,10 @@
    Inget sparas någonstans; resultatet kan exporteras som CSV (öppnas i Excel). */
 
 const QTY_KEY = "4ddash-qty";
-const qty = { cfg: { scope: "gantt", phase: "klar", date: "", from: "", formTop: false, kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", exclude: "", unit: "auto" }, objs: [], keys: new Map(), info: "", busy: false };
+const qty = { cfg: { scope: "gantt", phase: "klar", date: "", from: "", formTop: false, kind: "vol", valKeys: {}, rowKey: "", colKey: "", valKey: "", filter: "", exclude: "", unit: "auto", rebarT: 0.1 }, objs: [], keys: new Map(), info: "", busy: false };
 try { Object.assign(qty.cfg, JSON.parse(localStorage.getItem(QTY_KEY) || "{}")); } catch (e) { /* standard */ }
 /* Mängdslag: Betong (volym m³), Form (yta m²), Kantform/längd (m), Armering/vikt (kg). Varje slag minns sin egenskap. */
-const QTY_KINDS = { vol: ["Betong – volym (m³)", "m³", /calculated\s*geometry\s*values\s*\/\s*volume$/i, /volume|volym/i], form: ["Form – sidoyta (m², utan över-/underyta)", "m²", /calculated\s*geometry\s*values\s*\/\s*(total\s*)?surface\s*area$/i, /surface|side\s*area|form|area|yta/i], len: ["Längd (m)", "m", /calculated\s*geometry\s*values\s*\/\s*length$/i, /length|längd/i], area: ["Yta – en sida (m², väggyta/takyta)", "m²", /^$/, /^$/], cnt: ["Antal (st)", "st", /^$/, /^$/], kg: ["Armering/vikt (kg)", "kg", /calculated\s*geometry\s*values\s*\/\s*weight$/i, /weight|vikt|mass/i] };
+const QTY_KINDS = { vol: ["Betong – volym (m³)", "m³", /calculated\s*geometry\s*values\s*\/\s*volume$/i, /volume|volym/i], form: ["Form – sidoyta (m², utan över-/underyta)", "m²", /calculated\s*geometry\s*values\s*\/\s*(total\s*)?surface\s*area$/i, /surface|side\s*area|form|area|yta/i], len: ["Längd (m)", "m", /calculated\s*geometry\s*values\s*\/\s*length$/i, /length|längd/i], area: ["Yta – en sida (m², väggyta/takyta)", "m²", /^$/, /^$/], cnt: ["Antal (st)", "st", /^$/, /^$/], kg: ["Armering/vikt (kg)", "kg", /calculated\s*geometry\s*values\s*\/\s*weight$/i, /weight|vikt|mass/i], rebar: ["Armering – schablon (ton)", "ton", /^$/, /^$/] };
 const qtyKind = () => QTY_KINDS[qty.cfg.kind] ? qty.cfg.kind : "vol";
 const qtySave = () => { try { localStorage.setItem(QTY_KEY, JSON.stringify(qty.cfg)); } catch (e) { /* ingen lagring */ } };
 const qtyEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -105,6 +105,7 @@ function qtyPickDefaults() {
 /* Enheten i rådata: volym i TC:s egenskaper kan vara m³ eller mm³. Jämförs med objektens omslutande låda (i meter) om det går. */
 async function qtyUnitCheck() {
   await qtyUnitCheck0();
+  if (qtyKind() === "rebar") { await qtyVolFactor(); qty.unitNote = `Armering enligt schablon: betongvolymen (m³) × ${(Number(qty.cfg.rebarT) || 0).toLocaleString("sv-SE")} ton/m³ (= ${Math.round((Number(qty.cfg.rebarT) || 0) * 1000).toLocaleString("sv-SE")} kg/m³). Objekt utan volym räknas inte med. Detta är en uppskattning, inte armeringen i modellen.`; }
   if (qtyKind() === "area") { await qtyVolFactor(); await qtyLoadBoxes(); qty.unitNote = "Yta en sida = volym ÷ objektets minsta mått (tjockleken) – för väggar, plattor och element där ytan mängdas på en sida."; }
   if (qtyKind() === "form") { await qtyVolFactor(); await qtyLoadBoxes(); const n = qty.objs.filter(o => qtyFormDeduct(o) === null).length; qty.unitNote += `${qty.unitNote ? " " : ""}${qty.cfg.formTop ? "Hela ytan räknas (inklusive över- och underyta)." : "Över- och underyta är avdragna (formyta = sidoytor)."}${n && !qty.cfg.formTop ? ` ${n} objekt saknar volym eller höjd och räknas med hela ytan.` : ""}`; }
 }
@@ -144,6 +145,10 @@ function qtyValue(o) {
   if (qtyKind() === "area") { // en sidas yta = volym ÷ tjocklek (objektets minsta mått), t.ex. väggyta på en sandwichvägg
     const k = qtyVolKey(o), raw = k ? qtyNum(o.flat[k]) : null; if (raw === null || !(raw > 0)) return null;
     const dims = [o.bx, o.by, o.hz].filter(x => x > 0.001); return dims.length ? (raw / (qty.volFactor || 1)) / Math.min(...dims) : null;
+  }
+  if (qtyKind() === "rebar") { // Armering på schablon: betongvolym × ton per m³
+    const k = qtyVolKey(o), raw = k ? qtyNum(o.flat[k]) : null; if (raw === null || !(raw > 0)) return null;
+    return (raw / (qty.volFactor || 1)) * (Number(qty.cfg.rebarT) || 0);
   }
   if (qtyKind() === "cnt") return 1; // Antal: ett per objekt (t.ex. bergbultar, pålar)
   const raw = qty.cfg.valKey ? qtyNum(o.flat[qty.cfg.valKey]) : null; if (raw === null) return null;
@@ -203,7 +208,7 @@ function qtyRender0() {
   const keyOpts = (sel, withNone, acts) => `${withNone ? `<option value="">(ingen)</option>` : ""}${acts ? Object.keys(QTY_ACT_KEYS).map(k => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)}</option>`).join("") : ""}${[...qty.keys].map(([k, e]) => `<option value="${E(k)}"${sel === k ? " selected" : ""}>${E(k)} (${e.n})</option>`).join("")}`;
   const seg = (attr, cur, opts) => `<div class="gantt-seg qty-seg" role="group">${opts.map(([v, t, tip]) => `<button type="button" class="gantt-seg-btn${cur === v ? " active" : ""}" ${attr}="${v}"${tip ? ` title="${E(tip)}"` : ""}>${t}</button>`).join("")}</div>`;
   const ic = d => `<svg class="gp-svg" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
-  const kindOpts = Object.entries(QTY_KINDS).map(([k, v]) => [k, { vol: "Betong m³", form: "Form m²", area: "Yta m²", len: "Längd m", cnt: "Antal st", kg: "Vikt kg" }[k] || v[0], v[0]]);
+  const kindOpts = Object.entries(QTY_KINDS).map(([k, v]) => [k, { vol: "Betong m³", form: "Form m²", area: "Yta m²", len: "Längd m", cnt: "Antal st", kg: "Vikt kg", rebar: "Armering (schablon)" }[k] || v[0], v[0]]);
   host.innerHTML = `<div class="qty-hint">Mängder ur modellen för de objekt som <b>Ganttens regel</b> räknar som klara (eller alla), att jämföra mot mängdförteckningen. Läses ur TC:s egna egenskaper. Inget ändras eller sparas.</div>
     <div class="gantt-head qty-head">
       <div class="gantt-head-row">
@@ -217,7 +222,8 @@ function qtyRender0() {
       ${hasData ? `<div class="gantt-head-row gantt-head-sub">
         <span class="gantt-sub-label" title="Vad som ska summeras">Mängdslag</span>${seg("data-qkind", qtyKind(), kindOpts)}
         ${qtyKind() === "form" ? `<label class="gantt-pill" title="Av: bara sidoytorna (formyta). På: hela ytan, även över- och underyta som inte formas."><input type="checkbox" id="qtyFormTop"${C.formTop ? " checked" : ""} /> Med över-/underyta</label>` : ""}
-        ${qtyKind() === "cnt" || qtyKind() === "area" ? "" : `<label class="gantt-toolbar-field">Mängd <select id="qtyVal">${qtyNumKeys().map(k => `<option value="${E(k)}"${C.valKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>`}
+        ${qtyKind() === "rebar" ? `<label class="gantt-toolbar-field" title="Ton armering per m³ betong. T.ex. 0,10 = 100 kg/m³. Armeringen räknas som betongvolymen × schablonen.">Schablon <input type="number" id="qtyRebarT" step="0.01" min="0" value="${E(String(C.rebarT ?? 0.1))}" style="width:64px;" /> ton/m³</label>` : ""}
+        ${qtyKind() === "cnt" || qtyKind() === "area" || qtyKind() === "rebar" ? "" : `<label class="gantt-toolbar-field">Mängd <select id="qtyVal">${qtyNumKeys().map(k => `<option value="${E(k)}"${C.valKey === k ? " selected" : ""}>${E(k)}</option>`).join("")}</select></label>`}
         <label class="gantt-toolbar-field" title="Enheten på mängden i modellen. Auto jämför volymen med objektens mått.">Enhet <select id="qtyUnit">${[["auto", "Auto"], ["1", "som i modellen"], ["1000", "÷ 1 000"], ["1000000", "÷ 1 000 000 (mm² → m²)"], ["1000000000", "÷ 1 000 000 000 (mm³ → m³)"]].map(([v, t]) => `<option value="${v}"${String(C.unit) === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
       </div>
       <div class="gantt-head-row gantt-head-sub">
@@ -253,6 +259,7 @@ function qtyRender0() {
     const P = { all: ["", ""], concrete: ["Concrete, Betong", "Steel, Stål, Rebar, Armering, Pile, Påle"], steel: ["Steel, Stål, Pile, Påle, Rebar, Armering", ""] }[b.dataset.qpre];
     put("filter", P[0]); put("exclude", P[1]); qtyRender();
   });
+  if (q("#qtyRebarT")) q("#qtyRebarT").onchange = async e => { const v = Number(String(e.target.value).replace(",", ".")); put("rebarT", isFinite(v) && v >= 0 ? v : 0.1); await qtyUnitCheck(); qtyRender(); };
   q("#qtyUnit").onchange = async e => { put("unit", e.target.value); await qtyUnitCheck(); qtyRender(); };
   q("#qtyCsv").onclick = qtyExport;
   const P = qtyPivot(), u = qtyUnitLabel(), tb = q("#qtyTable");
