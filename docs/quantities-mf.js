@@ -8,7 +8,7 @@
 const QMF_KEY = "4ddash-qty-mf", QMF_MAP = "4ddash-qty-map";
 const QMF_CUSTOM = "4ddash-qty-custom";
 const qmf = { f: { ty: "", po: "", ar: "", by: "" },  posts: [], custom: [], builds: [], file: "", build: "", typeKey: "", map: { types: {}, areas: {}, obj: {}, mvO: {}, mvT: {} }, groupId: true, open: new Set(), msg: "" };
-try { const s = JSON.parse(localStorage.getItem(QMF_KEY) || "null"); if (s && Array.isArray(s.posts)) { qmf.posts = s.posts; qmf.builds = s.builds || []; qmf.file = s.file || ""; } } catch (e) { /* ingen sparad */ }
+try { const s = JSON.parse(localStorage.getItem(QMF_KEY) || "null"); if (s && Array.isArray(s.posts)) { qmf.posts = s.posts; qmf.builds = s.builds || []; qmf.file = s.file || ""; qmf.layout = s.layout || []; } } catch (e) { /* ingen sparad */ }
 try { const m = JSON.parse(localStorage.getItem(QMF_MAP) || "null"); if (m) { let ty = m.types || {}; if (Object.values(ty).some(v => typeof v === "string")) ty = { vol: ty }; /* äldre sparning: bara volym */ qmf.map = { types: ty, areas: m.areas || {}, obj: m.obj || {}, mvO: m.mvO || {}, mvT: m.mvT || {} }; qmf.groupId = m.groupId !== false; qmf.typeKey = m.typeKey || ""; qmf.build = m.build || ""; qmf.stamp = m.updated_at || ""; } } catch (e) { /* standard */ }
 try { const c = JSON.parse(localStorage.getItem(QMF_CUSTOM) || "null"); if (Array.isArray(c)) qmf.custom = c; } catch (e) { /* inga egna poster */ }
 /* Egna poster (Victor 2026-10-19: "skapa egna kategorier i mängdavtagningen om jag saknar en kod"): koder som inte finns i förteckningen.
@@ -17,7 +17,7 @@ try { const c = JSON.parse(localStorage.getItem(QMF_CUSTOM) || "null"); if (Arra
 const qmfAllPosts = () => qmf.posts.concat(qmf.custom);
 const qmfSaveCustom = () => { try { localStorage.setItem(QMF_CUSTOM, JSON.stringify(qmf.custom)); } catch (e) { /* ingen lagring */ } qmfSyncSoon("custom"); };
 const qmfSave = () => { try { localStorage.setItem(QMF_MAP, JSON.stringify({ types: qmf.map.types, areas: qmf.map.areas, obj: qmf.map.obj || {}, mvO: qmf.map.mvO || {}, mvT: qmf.map.mvT || {}, groupId: qmf.groupId, typeKey: qmf.typeKey, build: qmf.build, updated_at: qmf.stamp || "" })); } catch (e) { /* ingen lagring */ } qmfSyncSoon("map"); };
-const qmfSavePosts = () => { try { localStorage.setItem(QMF_KEY, JSON.stringify({ posts: qmf.posts, builds: qmf.builds, file: qmf.file })); } catch (e) { qmf.msg = "Förteckningen är för stor för att sparas i webbläsaren – den gäller bara tills sidan laddas om."; } qmfSyncSoon("posts"); };
+const qmfSavePosts = () => { try { localStorage.setItem(QMF_KEY, JSON.stringify({ posts: qmf.posts, builds: qmf.builds, file: qmf.file, layout: qmf.layout || [] })); } catch (e) { qmf.msg = "Förteckningen är för stor för att sparas i webbläsaren – den gäller bara tills sidan laddas om."; } qmfSyncSoon("posts"); };
 
 /* ---- Delning via 4D-data (Victor 2026-10-15: "varför skulle vi inte spara det?") ----------------------------------------------
    Kopplingarna (typ/objekt → post, område → byggnad) och mängdförteckningens poster sparas i projektets mapp i det privata datarepot
@@ -114,7 +114,7 @@ async function qmfReadXlsx(buf) {
 }
 /* ---- Mängdförteckningens poster ------------------------------------------------------------------- */
 function qmfParse(sheets) {
-  const posts = new Map(), builds = new Set(), num = v => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const posts = new Map(), builds = new Set(), layout = [], seenP = new Set(), num = v => (typeof v === "number" && Number.isFinite(v) ? v : null);
   sheets.forEach(sh => {
     const hi = sh.rows.findIndex(r => r && String(r[0] || "").trim() === "Ref"); if (hi < 0) return;
     const h = sh.rows[hi], cU = h.findIndex(c => String(c || "").trim() === "Enhet"); if (cU < 0) return;
@@ -127,24 +127,27 @@ function qmfParse(sheets) {
       const r = sh.rows[i]; if (!r) continue;
       const ref = String(r[0] || "").trim(), text = r.slice(1, cU).filter(x => x !== null && x !== undefined && String(x).trim() !== "").map(x => String(x).trim()).join(" | "), unit = String(r[cU] || "").trim();
       if (ref) { lastRef = ref; lastText = text; }
-      if (!unit || unit === "-" || unit === "Enhet") continue;
+      // Radordning och rubriker som i Excel (Victor 2026-10-19): rader utan mängder sparas som rubrik/textrad med indrag.
+      const first = r.slice(1, cU).findIndex(x => x !== null && x !== undefined && String(x).trim() !== ""), lvl = ref ? 0 : first < 0 ? 1 : 1 + first;
+      if (!unit || unit === "-" || unit === "Enhet") { if (ref || text) layout.push({ h: 1, ref, text, lvl }); continue; }
       const k = {}, pr = {}; let any = false;
       kc.forEach(([ci, b]) => { const v = num(r[ci]); if (v !== null) { k[b] = v; any = true; } });
       pc.forEach(([ci, b]) => { const v = num(r[ci]); if (v !== null) { pr[b] = v; any = true; } });
-      if (!any) continue;
       const label = ref ? text : (lastText ? `${lastText} › ${text}` : text), key = `${lastRef}|${label}|${unit}`;
+      if (!any) { if (ref || text) layout.push({ h: 1, ref, text, lvl }); continue; }
       const post = posts.get(key) || { key, ref: lastRef, label, unit, k: {}, p: {} };
       Object.entries(k).forEach(([b, v]) => { post.k[b] = (post.k[b] || 0) + v; }); Object.entries(pr).forEach(([b, v]) => { post.p[b] = (post.p[b] || 0) + v; });
       posts.set(key, post);
+      if (!seenP.has(key)) { seenP.add(key); layout.push({ p: key, lvl }); }
     }
   });
-  return { posts: [...posts.values()], builds: [...builds] };
+  return { posts: [...posts.values()], builds: [...builds], layout };
 }
 async function qmfLoadFile(file) {
   try {
     const sheets = await qmfReadXlsx(await file.arrayBuffer()), r = qmfParse(sheets);
     if (!r.posts.length) { qmf.msg = "Hittade inga poster i filen (letar efter en rad med 'Ref' och 'Enhet')."; qmfRender(); return; }
-    qmf.posts = r.posts; qmf.builds = r.builds; qmf.file = file.name; qmf.msg = `${r.posts.length} poster och ${r.builds.length} byggnader inlästa.`; qmfSavePosts(); qmfAutoMap(); qmfRender();
+    qmf.posts = r.posts; qmf.builds = r.builds; qmf.layout = r.layout; qmf.file = file.name; qmf.msg = `${r.posts.length} poster och ${r.builds.length} byggnader inlästa.`; qmfSavePosts(); qmfAutoMap(); qmfRender();
   } catch (e) { console.warn("Mängdförteckning", e); qmf.msg = "Kunde inte läsa filen: " + ((e && e.message) || e); qmfRender(); }
 }
 /* ---- Kopplingarna ----------------------------------------------------------------------------------- */
@@ -340,39 +343,55 @@ function qmfMatrix() {
   const posts = qmfPosts().filter(p => cells.has(p.key) || Object.values(p.k || {}).some(Boolean) || Object.values(p.p || {}).some(Boolean));
   return { cells, cols, posts };
 }
+/* Matrisens rader i Excel-ordning med rubriker (om filen lästs in med radordning), annars bara kodraderna. En rubrik visas bara om något under den visas. */
+function qmfMatrixRowList(M) {
+  const byKey = new Map(M.posts.map(p => [p.key, p]));
+  if (!qmf.layout || !qmf.layout.length) return { rows: M.posts.map(p => ({ p })), ordered: false };
+  const rows = []; qmf.layout.forEach(e => { if (e.h) rows.push({ h: e }); else if (byKey.has(e.p)) rows.push({ p: byKey.get(e.p), lvl: e.lvl }); });
+  M.posts.forEach(p => { if (!qmf.layout.some(e => e.p === p.key)) rows.push({ p }); }); // egna poster och nya sist
+  const keep = rows.map(r => !!r.p);
+  for (let i = rows.length - 1; i >= 0; i--) if (rows[i].h) { const lv = rows[i].h.lvl; for (let j = i + 1; j < rows.length; j++) { if (keep[j] && rows[j].p) { keep[i] = true; break; } if (rows[j].h && rows[j].h.lvl <= lv) break; } }
+  return { rows: rows.filter((r, i) => keep[i]), ordered: true };
+}
+const qmfMxFilter = (objs, mode) => (mode === "klar" ? objs.filter(qtyDone) : mode === "kvar" ? objs.filter(o => !qtyDone(o)) : objs);
 function qmfMatrixHtml() {
   const E = qtyEsc, M = qmfMatrix(), mode = qmf.mx || "tot", u = QTY_KINDS[qtyKind()][1];
   if (!M.posts.length) return "";
+  const hint0 = qmf.layout && qmf.layout.length ? "" : `<div class="hint">Läs in Excel-förteckningen igen (Välj fil ovan) för att få med rubrikerna och radordningen från Excel.</div>`;
   const val = (p, b) => { const c = (M.cells.get(p.key) || new Map()).get(b) || { tot: 0, klar: 0 }, pr = (p.p || {})[b] || 0, k = (p.k || {})[b] || 0;
     return mode === "klar" ? c.klar : mode === "pr" ? pr : mode === "kvar" ? Math.max(0, pr - c.klar) : mode === "k" ? k : c.tot; };
   const f = v => (v ? qtyFmt(v, Math.abs(v) < 10 ? 1 : 0) : "–");
-  const opts = [["tot", "Modell totalt"], ["klar", "Modell klar"], ["pr", "Prognos"], ["k", "Kontrakt"], ["kvar", "Kvar"]];
-  const rows = M.posts.map(p => {
-    const all = [...(M.cells.get(p.key) || new Map()).values()], totAll = all.reduce((s, c) => s + c.tot, 0);
+  const opts = [["tot", "Modell totalt"], ["klar", "Modell klar"], ["pr", "Prognos"], ["k", "Kontrakt"], ["kvar", "Kvar"]], names = Object.fromEntries(opts);
+  const RL = qmfMatrixRowList(M), nc = M.cols.length + 4;
+  const rows = RL.rows.map(row => { if (row.h) { const h = row.h; return `<tr class="mx-head${h.ref ? " top" : ""}"><td class="mx-ref"><b>${E(h.ref)}</b></td><td colspan="${nc - 1}" style="padding-left:${6 + Math.max(0, h.lvl - 1) * 10}px">${h.ref || h.lvl <= 1 ? `<b>${E(h.text)}</b>` : E(h.text)}</td></tr>`; }
+    const p = row.p, all = [...(M.cells.get(p.key) || new Map()).values()], totAll = all.reduce((s, c) => s + c.tot, 0);
     return `<tr><td class="mx-ref qmf-click" data-mp="${E(p.key)}" title="Markera alla objekt på koden i TC"><b>${E(p.ref)}</b></td><td class="mx-spec">${E(p.label.slice(0, 70))}</td><td class="mx-u">${E(p.unit)}</td>${M.cols.map(b => { const c = (M.cells.get(p.key) || new Map()).get(b), v = val(p, b), done = c && c.tot > 0 && c.klar >= c.tot * 0.999;
-      return `<td class="num mx-c${c ? " has qmf-click" : ""}${done ? " done" : ""}"${c ? ` data-mp="${E(p.key)}" data-mb="${E(b)}" title="${c.n} objekt – klicka för att markera i TC"` : ""}>${f(v)}</td>`; }).join("")}<td class="num mx-t"><b>${f(totAll)}</b></td></tr>`; }).join("");
+      const nm = c ? qmfMxFilter(c.objs, mode).length : 0;
+      return `<td class="num mx-c${c ? " has qmf-click" : ""}${done ? " done" : ""}"${c ? ` data-mp="${E(p.key)}" data-mb="${E(b)}" title="${nm} objekt räknas i läget ${E(names[mode] || mode)} – klicka för att markera just dem i TC"` : ""}>${f(v)}</td>`; }).join("")}<td class="num mx-t"><b>${f(totAll)}</b></td></tr>`; }).join("");
   return `<details class="qmf-map qmf-mx" open><summary>Matris – kod × byggnad <span class="hint">(${E(QTY_KINDS[qtyKind()][0])}) · klicka på en cell, en kod eller en byggnad för att markera objekten i TC</span></summary>
     <div class="qty-row"><span class="gantt-sub-label">Visa</span><div class="gantt-seg qty-seg" role="group">${opts.map(([v, t]) => `<button type="button" class="gantt-seg-btn${mode === v ? " active" : ""}" data-mxmode="${v}">${t}</button>`).join("")}</div></div>
-    <div class="qmf-mx-w"><table class="qty-table qmf-mxt"><thead><tr><th>Ref</th><th>Specifikation</th><th>Enhet</th>${M.cols.map(b => `<th class="mx-h qmf-click" data-mb="${E(b)}" title="Markera allt i ${E(b)} i TC"><span>${E(b)}</span></th>`).join("")}<th class="num mx-h"><span>Totalt i modell</span></th></tr></thead><tbody>${rows}</tbody></table></div><div class="qty-row"><button type="button" id="qmfMxHtml" class="gantt-toolbar-btn" title="Spara matrisen som en fristående HTML-sida (kan skickas eller skrivas ut)">Exportera matrisen (HTML)</button></div></details>`;
+    ${hint0}<div class="qmf-mx-w"><table class="qty-table qmf-mxt"><thead><tr><th>Ref</th><th>Specifikation</th><th>Enhet</th>${M.cols.map(b => `<th class="mx-h qmf-click" data-mb="${E(b)}" title="Markera allt i ${E(b)} i TC"><span>${E(b)}</span></th>`).join("")}<th class="num mx-h"><span>Totalt i modell</span></th></tr></thead><tbody>${rows}</tbody></table></div><div class="qty-row"><button type="button" id="qmfMxHtml" class="gantt-toolbar-btn" title="Spara matrisen som en fristående HTML-sida (kan skickas eller skrivas ut)">Exportera matrisen (HTML)</button></div></details>`;
 }
 /* Matrisen som en fristående HTML-sida (öppnas utan Trimble Connect, kan skickas eller skrivas ut). */
 function qmfMatrixExportHtml() {
   const E = qtyEsc, M = qmfMatrix(), mode = qmf.mx || "tot", u = QTY_KINDS[qtyKind()][1], f = v => (v ? qtyFmt(v, Math.abs(v) < 10 ? 1 : 0) : "–");
   const val = (p, b) => { const c = (M.cells.get(p.key) || new Map()).get(b) || { tot: 0, klar: 0 }, pr = (p.p || {})[b] || 0, k = (p.k || {})[b] || 0; return mode === "klar" ? c.klar : mode === "pr" ? pr : mode === "kvar" ? Math.max(0, pr - c.klar) : mode === "k" ? k : c.tot; };
   const names = { tot: "Modell totalt", klar: "Modell klar", pr: "Prognos", k: "Kontrakt", kvar: "Kvar" };
-  const rows = M.posts.map(p => { const all = [...(M.cells.get(p.key) || new Map()).values()];
+  const RL = qmfMatrixRowList(M), nc = M.cols.length + 4;
+  const rows = RL.rows.map(row => { if (row.h) return `<tr class="hd${row.h.ref ? " tp" : ""}"><td class="r">${E(row.h.ref)}</td><td colspan="${nc - 1}" style="padding-left:${8 + Math.max(0, row.h.lvl - 1) * 12}px">${row.h.ref || row.h.lvl <= 1 ? "<b>" + E(row.h.text) + "</b>" : E(row.h.text)}</td></tr>`; const p = row.p, all = [...(M.cells.get(p.key) || new Map()).values()];
     return `<tr><td class="r">${E(p.ref)}</td><td>${E(p.label)}</td><td>${E(p.unit)}</td>${M.cols.map(b => { const c = (M.cells.get(p.key) || new Map()).get(b), done = c && c.tot > 0 && c.klar >= c.tot * 0.999; return `<td class="n${c ? (done ? " d" : " h") : ""}">${f(val(p, b))}</td>`; }).join("")}<td class="n t">${f(all.reduce((s, c) => s + c.tot, 0))}</td></tr>`; }).join("");
   const today = typeof todayISO === "function" ? todayISO() : "";
   return `<!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mängdavtagning ${E(today)}</title><style>
   body{font:13px/1.4 Helvetica,Arial,sans-serif;margin:24px;color:#0f172a}h1{font-size:18px;margin:0 0 4px}p{color:#64748b;margin:0 0 14px}
   table{border-collapse:collapse}th,td{border:1px solid #cbd5e1;padding:4px 8px;white-space:nowrap}th{background:#f1f5f9;position:sticky;top:0}th.v{height:120px;vertical-align:bottom}th.v span{writing-mode:vertical-rl;transform:rotate(180deg);display:inline-block}
-  td.r{font-weight:700}td.n{text-align:right}td.h{background:#bfe3f0}td.d{background:#c6efce}td.t{background:#f1f5f9;font-weight:700}@media print{body{margin:8mm}th{position:static}}</style></head><body>
+  td.r{font-weight:700}td.n{text-align:right}td.h{background:#bfe3f0}td.d{background:#c6efce}td.t{background:#f1f5f9;font-weight:700}tr.hd td{background:#f8fafc}tr.tp td{background:#e2e8f0;font-weight:700}@media print{body{margin:8mm}th{position:static}}</style></head><body>
   <h1>Mängdavtagning – ${E(QTY_KINDS[qtyKind()][0])}</h1><p>${E(names[mode])} per kod och byggnad · ${E(u)} · ${E(today)}${qmf.file ? " · förteckning " + E(qmf.file) : ""}</p>
   <table><thead><tr><th>Ref</th><th>Specifikation</th><th>Enhet</th>${M.cols.map(b => `<th class="v"><span>${E(b)}</span></th>`).join("")}<th class="v"><span>Totalt i modell</span></th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
 }
 function qmfMatrixWire(host) {
   const xb = host.querySelector("#qmfMxHtml"); if (xb) xb.onclick = () => { const blob = new Blob([qmfMatrixExportHtml()], { type: "text/html;charset=utf-8" }), url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = `Mängdmatris ${typeof todayISO === "function" ? todayISO() : ""}.html`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); };
-  const M = qmfMatrix(), sel = (objs, what) => { if (!objs.length) { if (typeof modelToast === "function") modelToast("Inga objekt här"); return; } qtySelectRows(objs); if (typeof modelToast === "function") modelToast(`${objs.length} objekt markerade i TC – ${what}`); };
+  const M = qmfMatrix(), mode = qmf.mx || "tot", MN = { tot: "Modell totalt", klar: "Modell klar", pr: "Prognos", k: "Kontrakt", kvar: "Kvar" };
+  const sel = (objs0, what) => { const objs = qmfMxFilter(objs0, mode); if (!objs.length) { if (typeof modelToast === "function") modelToast(`Inga objekt räknas här i läget ${MN[mode]}`); return; } qtySelectRows(objs); if (typeof modelToast === "function") modelToast(`${objs.length} objekt markerade i TC – ${what} (${MN[mode]})`); };
   host.querySelectorAll("[data-mxmode]").forEach(b => b.onclick = () => { qmf.mx = b.dataset.mxmode; qmfRender(); });
   host.querySelectorAll(".qmf-mx td[data-mp], .qmf-mx th[data-mb]").forEach(el => el.addEventListener("click", () => {
     const p = el.dataset.mp, b = el.dataset.mb, post = p && qmfAllPosts().find(x => x.key === p);
@@ -494,7 +513,7 @@ function qmfRender0() {
     const q = s => host.querySelector(s);
     const fi = q("#qmfFile"); if (fi) fi.onchange = () => { if (fi.files && fi.files[0]) qmfLoadFile(fi.files[0]); };
     qmfCustomWire(host);
-    const cl = q("#qmfClear"); if (cl) cl.onclick = () => { qmf.posts = []; qmf.builds = []; qmf.file = ""; qmf.msg = ""; try { localStorage.removeItem(QMF_KEY); } catch (e) { /* */ } qmfRender(); };
+    const cl = q("#qmfClear"); if (cl) cl.onclick = () => { qmf.posts = []; qmf.layout = []; qmf.builds = []; qmf.file = ""; qmf.msg = ""; try { localStorage.removeItem(QMF_KEY); } catch (e) { /* */ } qmfRender(); };
     if (!hasMf || !hasObjs) return;
     { const fi2 = q("#qmfFind"); if (fi2) { let t = null; fi2.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { qmf.find = fi2.value; qmfFindRender(host); }, 250); }); fi2.addEventListener("keydown", e => e.stopPropagation()); qmfFindRender(host); } }
     if (q("#qmfGroupId")) q("#qmfGroupId").onchange = e => { qmf.groupId = e.target.checked; qmf.open.clear(); qmfSave(); qmfAutoMap(); qmfRender(); };

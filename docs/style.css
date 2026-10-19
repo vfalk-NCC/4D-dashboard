@@ -2784,3 +2784,6 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 .qmf-mxt td.mx-ref { position: sticky; left: 0; background: #fff; z-index: 1; } .qmf-mxt td.mx-spec { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 .qmf-mxt td.mx-c.has { background: #bfe3f0; cursor: pointer; } .qmf-mxt td.mx-c.has:hover { outline: 2px solid #2563eb; outline-offset: -2px; } .qmf-mxt td.mx-c.has.done { background: #c6efce; }
 .qmf-mxt td.mx-t { background: #f1f5f9; }
+
+.qmf-mxt tr.mx-head td { background: #f8fafc; } .qmf-mxt tr.mx-head.top td { background: #e2e8f0; }
+.qmf-mxt tr.mx-head td[colspan] { white-space: normal; }

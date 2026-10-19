@@ -161,6 +161,16 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
       if (!mx.has || mx.rows < 1) fail('Matrisen saknas: ' + JSON.stringify(mx));
       if (mx.cells >= 1) { await page.evaluate(() => { window.__selRows = null; document.querySelector('.qmf-mxt td.mx-c.has').click(); }); await page.waitForTimeout(150); if (!((await page.evaluate(() => window.__selRows)) >= 1)) fail('Klick på matriscell ska markera objekt'); }
       await page.evaluate(() => { qmf.mx = 'pr'; qmfRender(); }); if (!(await page.evaluate(() => document.querySelector('[data-mxmode="pr"]').classList.contains('active')))) fail('Visa-läget ska kunna bytas');
+      const ly = await page.evaluate(() => { qmf.mx = 'tot'; qmfRender(); const heads = document.querySelectorAll('.qmf-mxt tr.mx-head').length, ord = qmf.layout.filter(e => e.p).map(e => e.p).join('|') === qmf.posts.map(p => p.key).join('|'); const ex = qmfMatrixExportHtml(); return { n: qmf.layout.length, posts: qmf.posts.length, heads, ord, exh: /class="hd/.test(ex) || heads === 0, hasH: qmf.layout.some(e => e.h) }; });
+      if (!(ly.n > ly.posts) || !ly.hasH || !ly.ord || (ly.hasH && !(ly.heads >= 0))) fail('Radordning/rubriker från Excel: ' + JSON.stringify(ly));
+      // Läget styr markeringen: bara de objekt som räknas i läget markeras.
+      const md = await page.evaluate(async () => { const td = document.querySelector('.qmf-mxt td.mx-c.has'); if (!td) return { skip: true }; const M = qmfMatrix(), c = M.cells.get(td.dataset.mp).get(td.dataset.mb);
+        const calls = []; const o = window.qtySelectRows; window.qtySelectRows = async objs => { calls.push(objs.length); };
+        const out = { all: c.objs.length, done: c.objs.filter(qtyDone).length, undone: c.objs.filter(x => !qtyDone(x)).length };
+        qmf.mx = 'klar'; qmfRender(); document.querySelector(`.qmf-mxt td[data-mp="${CSS.escape(td.dataset.mp)}"][data-mb="${CSS.escape(td.dataset.mb)}"]`).click(); await new Promise(r => setTimeout(r, 100)); out.klarSel = calls.length ? calls[calls.length - 1] : 0; calls.length = 0;
+        qmf.mx = 'kvar'; qmfRender(); document.querySelector(`.qmf-mxt td[data-mp="${CSS.escape(td.dataset.mp)}"][data-mb="${CSS.escape(td.dataset.mb)}"]`).click(); await new Promise(r => setTimeout(r, 100)); out.kvarSel = calls.length ? calls[calls.length - 1] : 0;
+        window.qtySelectRows = o; qmf.mx = 'tot'; qmfRender(); return out; });
+      if (!md.skip && ((md.done === 0 ? md.klarSel !== 0 : md.klarSel !== md.done) || (md.undone === 0 ? md.kvarSel !== 0 : md.kvarSel !== md.undone))) fail('Läget ska styra vilka objekt som markeras: ' + JSON.stringify(md));
       if (!mx.html) fail('HTML-exporten ska innehålla tabellen'); await page.evaluate(() => { qmf.mx = 'tot'; qmfRender(); }); }
     // Sök/filtrera typ- och postkolumnerna.
     { const vis = () => page.evaluate(() => [...document.querySelectorAll('tr[data-tyrow]')].filter(r => r.style.display !== 'none').length), tot = await page.evaluate(() => document.querySelectorAll('tr[data-tyrow]').length);
