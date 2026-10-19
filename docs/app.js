@@ -3669,6 +3669,7 @@ function ganttScaleHex(t) {
 }
 let ganttStrict = false, ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
 const ganttMarkerIso = () => todayISO(); // "Idag"-linjen står kvar; datumet för tidslinjen är dragstrecket (se renderGanttScrub)
+let ganttInRangeItems = null; // det som faktiskt ritas i Gantt (inom visat datumintervall) – mängdavtagningen utgår från det
 let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
 /* Läget för en aktivitet vid ett datum (samma regler som 4D-planering, Victor 2026-10-02/13): pågående kräver minst 1 % framdrift –
    har startdatumet passerat utan det är aktiviteten försenad; efter planerat slut utan att vara klar är den också försenad. */
@@ -4378,6 +4379,7 @@ function renderGantt(list, target) {
   // slås objekten i samma aktivitet ihop till en stapel, som på tavlan. Filtrera ner urvalet för att se enskilda objekt igen.
   const ganttMergedN = visible.length > GANTT_MAX_ROWS ? visible.length : 0;
   const skippedRange = withDates.length - visible.length;
+  if (!target) ganttInRangeItems = visible;
   if (ganttMergedN) visible = mergeActivityGroups(visible);
   const skippedNoDate = list.length - withDates.length;
 

@@ -46,7 +46,7 @@ const qtyDone = o => {
 };
 const qtyActive = o => qty.cfg.scope === "sel" || (qty.cfg.phase !== "klar" && qty.cfg.phase !== "period") || qtyDone(o);
 function qtyObjects() {
-  const base = qty.cfg.scope === "all" ? items : (typeof ganttShownItems !== "undefined" ? ganttShownItems : items).flatMap(it => it.members || [it]);
+  const base = qty.cfg.scope === "all" ? items : (typeof ganttInRangeItems !== "undefined" && ganttInRangeItems ? ganttInRangeItems : typeof ganttShownItems !== "undefined" ? ganttShownItems : items).flatMap(it => it.members || [it]); // inom Ganttens visade datumintervall
   const seen = new Set(), out = [];
   base.forEach(m => {
     if (!m.modelId || !m.objectId) return;

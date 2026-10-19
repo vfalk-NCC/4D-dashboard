@@ -230,6 +230,9 @@ const P = { S1: [6, 'Foundation Slab:Concrete - Cast-in-Place - 1200'], S2: [4, 
     if (!(await page.evaluate(() => window.__sel.length))) fail('Klick på rad ska markera i TC');
     if (errors.length) fail('Sidfel: ' + errors.join(' | '));
     console.log('OK: Mängdavtagning – klara objekt (Ganttens regel), volym ur Calculated Geometry Values med enhetskontroll, summering per typ/område, filter, CSV, markera i TC');
+    // Gantt-urvalet = det som ritas inom datumintervallet: objekt utanför intervallet räknas inte med.
+    const rg = await page.evaluate(() => { const keep = ganttInRangeItems; qty.cfg.scope = 'gantt'; const a = qtyObjects().length; ganttInRangeItems = (ganttShownItems || []).slice(0, 1); const b = qtyObjects().length; ganttInRangeItems = []; const c = qtyObjects().length; ganttInRangeItems = keep; return { a, b, c }; });
+    if (!(rg.a >= rg.b && rg.b <= 1 && rg.c === 0)) fail('Gantt-urval ska följa det som ritas inom intervallet: ' + JSON.stringify(rg));
     console.log('ALLA TESTER OK');
   } catch (e) { console.log('FEL: ' + e.message); process.exitCode = 1; }
   await browser.close(); server.close();
