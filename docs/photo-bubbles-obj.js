@@ -284,8 +284,8 @@ function phbVwSnap(st) {
     dateObj: { on: dt.on, scale: dt.scale, fx: dt.x / W, fy: dt.y / H },
     tables: (st.tables || []).map(t => ({ src: t.src, keys: t.keys, area: t.area, cols: t.cols, dec: t.dec, max: t.max, scale: t.scale, title: t.title, col: t.col, fx: t.x / W, fy: t.y / H })),
     texts: st.texts.map(t => { const c = { ...t, fx: t.x / W, fy: t.y / H }; delete c.id; delete c.x; delete c.y; return c; }),
-    oc: (st.ocards || []).map(c => ({ fields: c.fields.slice(), text: c.text, title: c.title, dec: c.dec, titleSrc: c.titleSrc || "", scale: c.scale, colOver: c.colOver, fx: c.x / W, fy: c.y / H, fax: c.ax / W, fay: c.ay / H, free: !!c.free,
-      objs: c.objs.slice(0, 60).map(o => ({ modelId: o.modelId, objectId: o.objectId, rid: o.rid, box: o.box, flat: o.flat })) }))
+    oc: (st.ocards || []).map(c => { phbOcEnsureCam(st, c.objs); const q = phbOcAnchor(st, c.objs); return ({ ofx: q && isFinite(c.ax) ? (c.ax - q.x) / W : undefined, ofy: q && isFinite(c.ay) ? (c.ay - q.y) / H : undefined, fields: c.fields.slice(), text: c.text, title: c.title, dec: c.dec, titleSrc: c.titleSrc || "", scale: c.scale, colOver: c.colOver, fx: c.x / W, fy: c.y / H, fax: c.ax / W, fay: c.ay / H, free: !!c.free,
+      objs: c.objs.slice(0, 60).map(o => ({ modelId: o.modelId, objectId: o.objectId, rid: o.rid, box: o.box, flat: o.flat })) }); })
   };
 }
 function phbVwApply(st, v) {
@@ -296,8 +296,9 @@ function phbVwApply(st, v) {
   st.texts = (v.texts || []).map(t => { const c = { ...t, id: st.nextId++, x: t.fx * W, y: t.fy * H }; delete c.fx; delete c.fy; if (typeof phbTextMeasure === "function") phbTextMeasure(c, st); return c; });
   st.ocards = (v.oc || []).map(d => {
     const oc = { id: st.nextId++, objs: d.objs, fields: d.fields.slice(), text: d.text || "", title: d.title || "", dec: d.dec == null ? 2 : d.dec, titleSrc: d.titleSrc || "", scale: d.scale || 1, colOver: d.colOver || null, x: d.fx * W, y: d.fy * H, ax: d.fax * W, ay: d.fay * H, free: !!d.free };
+    // Insättningspunkten behåller sitt läge: standardläget i bilden plus din justering (så den hoppar inte när vyn läses in).
     phbOcEnsureCam(st, oc.objs); const q = phbOcAnchor(st, oc.objs);
-    if (q && q.x > -0.05 * W && q.x < 1.05 * W && q.y > -0.05 * H && q.y < 1.05 * H) { oc.ax = q.x; oc.ay = q.y; oc.free = false; }
+    if (q && d.ofx !== undefined && d.ofy !== undefined) { const ax = q.x + d.ofx * W, ay = q.y + d.ofy * H; if (ax > -0.05 * W && ax < 1.05 * W && ay > -0.05 * H && ay < 1.05 * H) { oc.ax = ax; oc.ay = ay; oc.free = !!d.free; } }
     return oc;
   });
   st.tables = (v.tables || []).map(d => ({ ...d, id: st.nextId++, x: d.fx * W, y: d.fy * H }));

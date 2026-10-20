@@ -152,6 +152,7 @@ seed('plan_items.json', [
       const [dl5] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]); await dl5.saveAs(process.env.PHB_OUT + '/foto3.pdf');
       if (!fs.readFileSync(process.env.PHB_OUT + '/foto3.pdf', 'latin1').includes('bubbla-obj')) fail('PDF saknar objektbubbla');
       const ln = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return isFinite(c.ax) && isFinite(c.ay); }); if (!ln) fail('Objektbubblan ska ha en linje/punkt');
+      await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; c.ax += 37; c.ay -= 21; window.__anc = [c.ax, c.ay]; });
       await page.fill('#phbVwName', 'Testvy'); await page.click('#phbVwSave'); await page.waitForSelector('#phbVwSel');
       const un = await page.evaluate(() => [phbOcNum('12,3456', 'Qto / NetVolume (m3)', 1), phbOcNum('2500000', 'Area (mm2)', 2), phbOcNum('5', 'Namn', 0)]);
       if (un[0] !== '12,3 m³' || !/^2,50 m²$/.test(un[1].replace(/\s/g, ' ')) || un[2] !== '5') fail('Enheter/decimaler: ' + JSON.stringify(un));
@@ -164,6 +165,8 @@ seed('plan_items.json', [
       await page.evaluate(() => localStorage.removeItem('4ddash-phb-oc-preset'));
       await page.click('#phbOcDel'); await page.waitForTimeout(100);
       await page.click('#phbVwUse'); await page.waitForTimeout(200);
+      const anc = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return [c.ax, c.ay, window.__anc[0], window.__anc[1]]; });
+      if (Math.abs(anc[0] - anc[2]) > 1 || Math.abs(anc[1] - anc[3]) > 1) fail('Insättningspunkten ska ligga kvar när en vy läses in: ' + JSON.stringify(anc));
       const vw = await page.evaluate(() => { const s = document.getElementById('phbCv')._state(); return { n: s.ocards.length, t: (s.ocards[0] || {}).text }; });
       if (vw.n !== 1 || vw.t !== 'Egen text här') fail('Sparad vy: ' + JSON.stringify(vw));
       await page.selectOption('#phbOcTSrc', 'area'); await page.click('#phbOcQty'); await page.waitForTimeout(500);
