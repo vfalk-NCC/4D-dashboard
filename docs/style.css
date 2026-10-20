@@ -2842,3 +2842,20 @@ section.panel.gantt-fullscreen .gantt-fs-bar { max-width: calc(100% - 20px); }
 /* Bildredigeraren: bildytan tar resten av bredden (inte bildens egen storlek) och bilden zoomas med pixelbredd från JS. */
 .phb-img { flex: 1 1 0; min-width: 0; max-height: 78vh; }
 .phb-img canvas { flex: none; max-width: none; max-height: none; margin: auto; }
+/* Fråga AI */
+.askai-box { width: min(760px, 100%); }
+.askai-h { display: flex; align-items: center; justify-content: space-between; }
+.askai-x { border: 0 !important; background: none !important; font-size: 16px; cursor: pointer; }
+.askai-sec { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; }
+.askai-sec label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.askai-sec label.askai-c { flex-direction: row; align-items: center; gap: 6px; }
+.askai-sec textarea, .askai-sec select { font: inherit; font-size: 12px; padding: 6px 8px; border: 1px solid var(--border, #d1d5db); border-radius: 6px; background: var(--card, #fff); color: inherit; }
+.askai-tw { overflow: auto; max-height: 38vh; }
+.askai-tw table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.askai-tw th, .askai-tw td { border-bottom: 1px solid var(--border, #e5e7eb); padding: 4px 6px; text-align: left; vertical-align: top; }
+.askai-tw tr.bad { opacity: .6; }
+.askai-chip { display: inline-block; border-radius: 999px; padding: 0 7px; font-weight: 700; font-size: 11px; border: 1px solid var(--border, #d1d5db); }
+.askai-chip.late { color: #dc2626; } .askai-chip.early { color: #16a34a; }
+.askai-warn { color: #b45309; font-size: 11px; }
+.askai-con { font-size: 12px; }
+@media print { .askai { display: none !important; } }
