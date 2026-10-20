@@ -40,7 +40,7 @@
   /* Text i menyraden: titeln före " – " är namnet, resten en liten förklaring. */
   const DESC = {
     ganttFsTime: ["Tidslinjedragare", "av/på – 3D följer med"], ganttOpen3d: ["3D-editorn", "öppna lägesplanen i eget fönster"], ganttPhotoBtn: ["Foto med bubblor", "ta bild av 3D-vyn med aktiviteterna"],
-    ganttViewsBtn: ["Vyer", "spara och hämta hur schemat ser ut"], dpOpenBtn: ["Dagsplan UE", "importera, justera och exportera till HTML"],
+    ganttAskAi: ["Fråga AI", "skapa HTML till Claude och läs in omplaneringen"], ganttViewsBtn: ["Vyer", "spara och hämta hur schemat ser ut"], dpOpenBtn: ["Dagsplan UE", "importera, justera och exportera till HTML"],
     ganttLoadModelsBtn: ["Modeller", "läs in modellerna aktiviteterna är kopplade till"], ganttPpExportBtn: ["Till Powerproject", "exportera aktiviteter (MS Project-XML)"],
     ganttPrintBtn: ["Skriv ut", "skriv ut eller spara som PDF"], ganttFullBtn: ["Helskärm", "visa schemat i helskärm (Esc stänger)"],
     ganttTimeAuto: ["Hela spannet", "anpassa tidsaxeln automatiskt"], ganttScaleBtn: ["Färgskala efter datum", "tidig → sen start mellan två färger"], ganttStrictBtn: ["Följ datum", "färg strikt efter start och slut, inte framdrift"]
@@ -72,7 +72,7 @@
   const tmb = $("ganttTimeMenuBtn"); if (tmb) label(tmb, "Färger och visning", "färger, opacitet, kommande, pulsera, markera pågående");
   const d3 = make("time", "Tid och färg", svg(ICONS.time), [...timeBtns, wrap]);
   // 4. Verktyg
-  const toolBtns = ["ganttFsTime", "ganttOpen3d", "ganttPhotoBtn", "ganttViewsBtn", "ganttRefreshBtn", "dpOpenBtn"].map($).filter(Boolean);
+  const toolBtns = ["ganttFsTime", "ganttOpen3d", "ganttPhotoBtn", "ganttAskAi", "ganttViewsBtn", "ganttRefreshBtn", "dpOpenBtn"].map($).filter(Boolean);
   toolBtns.forEach(b => { if (b.id === "ganttRefreshBtn") { b.classList.add("gdd-keeptext"); } else label(b); });
   const d4 = make("tools", "Verktyg", svg(ICONS.tools), toolBtns);
 

@@ -84,6 +84,10 @@ seed('plan_items.json', [
   await page.evaluate(() => document.getElementById('ganttAskAi').click()); await page.waitForSelector('#askRead');
   await page.fill('#askAns', 'Bara text'); await page.click('#askRead');
   if (!/Hittade ingen ändringslista/.test(await page.textContent('#askMsg'))) fail('Meddelande saknas för svar utan lista');
+  // Tidslinjen startar på idag + 4 veckor, och Fråga AI ligger i Verktyg-menyn
+  const tr = await page.evaluate(() => ({ f: ganttTimeFrom, t: ganttTimeTo, today: todayISO(), inTools: !!document.querySelector('.gdd[data-dd="tools"] #ganttAskAi') }));
+  if (tr.f !== tr.today || tr.t !== new Date(Date.parse(tr.today) + 28 * 864e5).toISOString().slice(0, 10)) fail('Tidslinjen ska starta idag + 28 dagar: ' + JSON.stringify(tr));
+  if (!tr.inTools) fail('Fråga AI ska ligga i Verktyg-menyn');
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK'); await browser.close(); server.close();
 })().catch(e => { console.error('FEL:', e.message); process.exit(1); });

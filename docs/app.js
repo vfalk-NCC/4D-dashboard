@@ -4250,6 +4250,11 @@ function initGanttTime() {
   ti.onchange = () => { ganttTimeTo = ti.value || ""; rangeChanged(); };
   auto.onclick = () => { ganttTimeFrom = ""; ganttTimeTo = ""; fi.value = ""; ti.value = ""; rangeChanged(); updateGanttTimeUi(); };
   try { const sv = JSON.parse(localStorage.getItem("4ddash-gantt-time-range") || "null"); if (Array.isArray(sv)) { ganttTimeFrom = sv[0] || ""; ganttTimeTo = sv[1] || ""; } } catch (e) {}
+  /* Tidslinjen startar på idag + 4 veckor (Victor 2026-10-20) – kan stängas av i menyn Tid och färg. */
+  { const st = document.getElementById("ganttTimeStartToday"); let on = true; try { on = localStorage.getItem("4ddash-gantt-start-today") !== "0"; } catch (e) {}
+    const todayRange = () => { ganttTimeFrom = todayISO(); ganttTimeTo = addDaysIso(ganttTimeFrom, 28); };
+    if (on) todayRange();
+    if (st) { st.checked = on; st.onchange = () => { try { localStorage.setItem("4ddash-gantt-start-today", st.checked ? "1" : "0"); } catch (e) {} if (st.checked) { todayRange(); fi.value = ganttTimeFrom; ti.value = ganttTimeTo; rangeChanged(); setGanttAsOf(ganttTimeFrom, { now: true }); } }; } }
   fut.onchange = () => { ganttTimeFuture = fut.checked; try { localStorage.setItem("4ddash-gantt-time-future", ganttTimeFuture ? "1" : "0"); } catch (e) {} if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); };
   try { ganttTimeFuture = localStorage.getItem("4ddash-gantt-time-future") === "1"; } catch (e) {}
   { const bc = document.getElementById("ganttTimeByCon"); try { ganttByContractor = localStorage.getItem("4ddash-gantt-time-bycontractor") === "1"; } catch (e) {}
