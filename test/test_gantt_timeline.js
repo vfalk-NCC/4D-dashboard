@@ -120,6 +120,16 @@ seed('plan_items.json', [
   if (!(await page.locator('.tl-root .g-asof').count())) fail('Datumstrecket ska visas i tidsläget');
   await page.evaluate(() => { ganttMode = 'off'; ganttAsOf = null; ganttZoomPxPerDay = 18; renderGantt(getFilteredItems()); });
   if ((await page.evaluate(() => TL.last.ppd)) !== 18) fail('Zoom ska gälla');
+  // snabbknappar för period: 4 v, 6 v, 3 mån, 6 mån, 12 mån, Allt
+  const labs = await page.evaluate(() => [...document.querySelectorAll('.gantt-range-row .gantt-chip')].map(b => b.textContent.trim()));
+  if (JSON.stringify(labs) !== JSON.stringify(['4 v', '6 v', '3 mån', '6 mån', '12 mån', 'Allt'])) fail('Periodknappar: ' + JSON.stringify(labs));
+  for (const w of [4, 6, 13, 26, 52]) {
+    await page.evaluate(w2 => document.querySelector(`[data-gantt-weeks="${w2}"]`).click(), w); await page.waitForTimeout(150);
+    const r = await page.evaluate(w2 => ({ a: ganttRangeStart, b: ganttRangeEnd, e: ganttWeeksRange(w2), on: document.querySelector(`[data-gantt-weeks="${w2}"]`).classList.contains('active'), days: TL.last ? TL.last.tot : 0 }), w);
+    if (r.a !== r.e[0] || r.b !== r.e[1] || !r.on || r.days < w * 7 - 1) fail('Period ' + w + ' v: ' + JSON.stringify(r));
+  }
+  await page.click('#ganttRangeReset'); await page.waitForTimeout(150);
+  if ((await page.evaluate(() => ganttRangeStart || ganttRangeEnd))) fail('Allt ska nollställa perioden');
   // klassiska staplar
   await page.click('[data-tl="classic"]'); await page.waitForTimeout(300);
   if ((await page.locator('.tl-root .g-bar').count()) !== 0 || (await page.locator('.gantt-bar').count()) < 1) fail('Klassiska staplar ska kunna väljas');
