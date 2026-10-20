@@ -830,7 +830,7 @@ function openSavedPop(btn) {
     const list = savedFiltersGet(), n = filtersCount();
     q(".sf-hint").textContent = n ? `Nuvarande filter: ${savedFilterSummary(filters)}.` : "Inget filter är på just nu – bocka i områden, aktiviteter eller entreprenörer först.";
     q(".sf-save").disabled = !n;
-    q(".sf-list").innerHTML = list.map((f, i) => `<div class="ggp-row sf-row" data-i="${i}" title="Använd filtret"><span class="sf-n"><b>${escapeHtml(f.name)}</b><span class="hint"> · ${escapeHtml(savedFilterSummary(f))}</span></span><button type="button" class="sf-del" title="Ta bort det sparade filtret" aria-label="Ta bort">✕</button></div>`).join("") || `<div class="hint">Inga sparade filter ännu.</div>`;
+    q(".sf-list").innerHTML = list.map((f, i) => `<div class="ggp-row sf-row" data-i="${i}" title="Använd filtret"><span class="sf-n"><b>${escapeHtml(f.name)}</b><span class="hint"> · ${escapeHtml(savedFilterSummary(f))}</span></span><button type="button" class="sf-upd" title="Uppdatera det sparade filtret med det du filtrerat på nu"${n ? "" : " disabled"} aria-label="Uppdatera">↻ Uppdatera</button><button type="button" class="sf-del" title="Ta bort det sparade filtret" aria-label="Ta bort">✕</button></div>`).join("") || `<div class="hint">Inga sparade filter ännu.</div>`;
   };
   const apply = f => { filters.area = (f.area || []).slice(); filters.activity = (f.activity || []).slice(); filters.contractor = (f.contractor || []).slice(); renderAreaFilter(); renderActivityFilter(); renderContractorFilter(); renderAll(); modelToast(`Filtret "${f.name}" används`); };
   q(".sf-save").onclick = () => {
@@ -843,6 +843,12 @@ function openSavedPop(btn) {
   name.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") q(".sf-save").click(); else if (e.key === "Escape") closeSavedPop(); };
   q(".sf-list").onclick = e => {
     const row = e.target.closest(".sf-row"); if (!row) return; const list = savedFiltersGet(), f = list[Number(row.dataset.i)]; if (!f) return;
+    if (e.target.closest(".sf-upd")) {
+      if (!filtersCount()) return;
+      if (!confirm(`Uppdatera det sparade filtret "${f.name}" med det du filtrerat på nu (${savedFilterSummary(filters)})?\n\nDet gamla urvalet ersätts.`)) return;
+      list[Number(row.dataset.i)] = { ...f, area: (filters.area || []).slice(), activity: (filters.activity || []).slice(), contractor: (filters.contractor || []).slice(), at: new Date().toISOString() };
+      savedFiltersPut(list); fill(); modelToast(`Filtret "${f.name}" uppdaterat`); return;
+    }
     if (e.target.closest(".sf-del")) { if (confirm(`Ta bort det sparade filtret "${f.name}"?`)) { list.splice(Number(row.dataset.i), 1); savedFiltersPut(list); fill(); } return; }
     apply(f); closeSavedPop();
   };
