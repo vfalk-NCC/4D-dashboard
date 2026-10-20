@@ -10,6 +10,15 @@ const PHB_OC_PH = { forsenad: "Försenad", pagaende: "Pågår", klar: "Klar", pl
 const phbOcLabel = key => { const s = PHB_OC_SPECIAL.find(x => x[0] === key); return s ? s[1] : String(key).split(" / ").slice(-1)[0]; };
 const phbOcDefaults = () => { try { const a = JSON.parse(localStorage.getItem(PHB_OC_KEY) || "null"); if (Array.isArray(a) && a.length) return a; } catch (e) { /* standard */ } return ["◆ AMA-kod", "◆ Aktivitet", "◆ Framdrift"]; };
 const phbOcRemember = fields => { try { localStorage.setItem(PHB_OC_KEY, JSON.stringify(fields)); } catch (e) { /* */ } };
+/* Förval (Victor 2026-10-20): "Spara som förval" sparar hela bubblans inställning – fält, decimaler, rubrikkälla, skala, färg, egen text och bubbelläge –
+   och nästa bubblor från markeringen i TC får den direkt. */
+const PHB_OC_PRESET = "4ddash-phb-oc-preset";
+function phbOcPreset() { try { const p = JSON.parse(localStorage.getItem(PHB_OC_PRESET) || "null"); return p && Array.isArray(p.fields) ? p : null; } catch (e) { return null; } }
+function phbOcSavePreset(src) {
+  const p = { fields: (src.fields || []).slice(), dec: src.dec == null ? 2 : src.dec, titleSrc: src.titleSrc || "", scale: src.scale || 1, colOver: src.colOver || null, text: src.text || "", group: src.group || "obj" };
+  try { localStorage.setItem(PHB_OC_PRESET, JSON.stringify(p)); phbOcRemember(p.fields); } catch (e) { /* ingen lagring */ }
+  return p;
+}
 
 /* ---- Läsa markeringen i TC ---------------------------------------------------------------------------------------------------------------------- */
 async function phbOcReadSelection() {
@@ -169,7 +178,7 @@ function phbOcGroups(draft) {
 function phbOcCreate(st, draft) {
   let n = 0;
   phbOcGroups(draft).forEach(g => {
-    const oc = { id: (st.nextId = (st.nextId || 1) + 1), objs: g, fields: draft.fields.slice(), text: draft.text || "", title: "", dec: draft.dec == null ? 2 : draft.dec, titleSrc: draft.titleSrc || "", scale: 1, colOver: null, x: 0, y: 0, ax: NaN, ay: NaN };
+    const oc = { id: (st.nextId = (st.nextId || 1) + 1), objs: g, fields: draft.fields.slice(), text: draft.text || "", title: "", dec: draft.dec == null ? 2 : draft.dec, titleSrc: draft.titleSrc || "", scale: draft.scale || 1, colOver: draft.colOver || null, x: 0, y: 0, ax: NaN, ay: NaN };
     phbOcEnsureCam(st, g); phbOcMeasure(oc, st); const q = phbOcAnchor(st, g), k = st.k;
     if (q && q.x > -0.05 * st.W && q.x < 1.05 * st.W && q.y > -0.05 * st.H && q.y < 1.05 * st.H) { oc.ax = q.x; oc.ay = q.y; oc.x = oc.ax - oc.W / 2; oc.y = oc.ay - oc.h - 56 * oc.kk; }
     else { oc.x = st.W - oc.W - 20 * k; oc.y = 20 * k + (st.ocards.length + n) * (oc.h + 8 * k); }
@@ -198,7 +207,8 @@ function phbOcSide(api) {
       <div class="phb-f"><span>Objekt – ${d.pick.size} av ${d.objs.length} valda (en bubbla per valt objekt, högst 40)</span><div class="phb-row"><button type="button" id="phbOcPAll">Alla</button><button type="button" id="phbOcPNone">Inga</button></div>
         <div class="phb-ocf" style="max-height:160px;overflow:auto">${d.objs.map((o, i) => `<label class="phb-c"><input type="checkbox" data-ocp="${i}"${d.pick.has(i) ? " checked" : ""}> ${esc(phbOcName(o))}${o.objectId ? ` <small>${esc(String(o.objectId).slice(-8))}</small>` : ""}</label>`).join("")}</div></div>
       <label class="phb-f"><span>Bubblor</span><select id="phbOcDGroup"><option value="obj"${d.group === "obj" ? " selected" : ""}>En per objekt – varje för sig</option><option value="code"${d.group === "code" ? " selected" : ""}>En per AMA-kod (slår ihop objekten)</option><option value="all"${d.group === "all" ? " selected" : ""}>En gemensam (slår ihop objekten)</option></select></label>
-      <div class="phb-row"><button type="button" id="phbOcMake" class="primary"${d.pick.size ? "" : " disabled"}>Skapa bubblor</button><button type="button" id="phbOcCancel">Avbryt</button></div>`;
+      ${d.preset ? `<div class="phb-note">Ditt förval används (fält, decimaler, rubrik, skala, färg och egen text).</div>` : ""}
+      <div class="phb-row"><button type="button" id="phbOcMake" class="primary"${d.pick.size ? "" : " disabled"}>Skapa bubblor</button><button type="button" id="phbOcDSavePre" title="Spara fälten, decimalerna, rubrikkällan, texten och bubbelläget som förval för nya bubblor">Spara som förval</button><button type="button" id="phbOcCancel">Avbryt</button></div>`;
   } else {
     h += `<button type="button" id="phbOcNew" title="Markera först ett eller flera objekt i modellen i Trimble Connect">＋ Bubbla från markerade i TC</button><div class="phb-note">${(cur.ocards || []).length ? `${cur.ocards.length} objektbubbl${cur.ocards.length === 1 ? "a" : "or"} på bilden. ` : ""}Bubblor med valfria egenskaper (UDA) från modellen, egen text och AMA-koden från mängdavtagningen.</div><div id="phbOcMsg" class="phb-note"></div>`;
   }
@@ -216,7 +226,7 @@ function phbOcSelSide(api, oc) {
     <label class="phb-f"><span>Egen text</span><textarea id="phbOcText" rows="3">${esc(oc.text || "")}</textarea></label>
     ${api.rng("phbOcScale", "Bubblans skala", Math.round(oc.scale * 100), 40, 300, 5)}
     <div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbOcCol" value="${phbOcCol(oc)}"></label><button type="button" id="phbOcAuto" title="Färg efter aktivitetens status"${oc.colOver ? "" : " disabled"}>Auto</button></div>
-    <div class="phb-row"><button type="button" id="phbOcSaveDef" title="Använd de här fälten som förval nästa gång">Spara fälten som förval</button></div>
+    <div class="phb-row"><button type="button" id="phbOcSaveDef" title="Spara den här bubblans fält, decimaler, rubrikkälla, skala, färg och egna text som förval för nya bubblor från markeringen">Spara som förval</button></div>
     <div class="phb-note">${oc.objs.length} objekt · dra bubblan eller dess punkt för att flytta.</div>
     <button type="button" id="phbOcDel" class="danger">Ta bort bubblan</button></div>`;
 }
@@ -232,7 +242,8 @@ function phbOcBind(api, side) {
   on("phbOcNew", "click", async () => {
     const msg = q("phbOcMsg"); if (msg) msg.textContent = "Läser markeringen …";
     try { const objs = await phbOcReadSelection(); if (!objs.length) { if (msg) msg.textContent = "Inget är markerat i Trimble Connect – markera objekt i modellen först."; return; }
-      cur.ocDraft = { objs, keys: phbOcKeys(objs), fields: phbOcDefaults().filter(f => f.startsWith("◆") || phbOcKeys(objs).includes(f)), text: "", group: "obj", pick: new Set(objs.map((o, i) => i).slice(0, 40)) }; api.renderSide();
+      const pre = phbOcPreset(), ks = phbOcKeys(objs);
+      cur.ocDraft = { objs, keys: ks, fields: (pre ? pre.fields : phbOcDefaults()).filter(f => f.startsWith("◆") || ks.includes(f)), text: pre ? pre.text : "", group: pre ? pre.group : "obj", dec: pre ? pre.dec : 2, titleSrc: pre ? pre.titleSrc : "", scale: pre ? pre.scale : 1, colOver: pre ? pre.colOver : null, preset: !!pre, pick: new Set(objs.map((o, i) => i).slice(0, 40)) }; api.renderSide();
     } catch (e) { if (msg) msg.textContent = "Kunde inte läsa markeringen: " + ((e && e.message) || e); }
   });
   on("phbOcQty", "click", async () => {
@@ -244,6 +255,7 @@ function phbOcBind(api, side) {
   if (d) { bindFields(d.fields, d.keys, () => api.renderSide()); on("phbOcDText", "input", e => { d.text = e.target.value; }); on("phbOcDDec", "change", e => { d.dec = Number(e.target.value); }); side.querySelectorAll("[data-ocp]").forEach(c => c.addEventListener("change", () => { const i = Number(c.dataset.ocp); if (c.checked) d.pick.add(i); else d.pick.delete(i); const b = q("phbOcMake"); if (b) b.disabled = !d.pick.size; }));
     on("phbOcPAll", "click", () => { d.pick = new Set(d.objs.map((o, i) => i).slice(0, 40)); api.renderSide(); }); on("phbOcPNone", "click", () => { d.pick = new Set(); api.renderSide(); });
     on("phbOcDTSrc", "change", e => { d.titleSrc = e.target.value; }); on("phbOcDGroup", "change", e => { d.group = e.target.value; });
+    on("phbOcDSavePre", "click", () => { phbOcSavePreset(d); d.preset = true; if (typeof modelToast === "function") modelToast("Sparat som förval – nya bubblor får samma inställning"); api.renderSide(); });
     on("phbOcCancel", "click", () => { cur.ocDraft = null; api.renderSide(); });
     on("phbOcMake", "click", () => { phbOcRemember(d.fields); const n = phbOcCreate(cur, d); cur.ocDraft = null; api.remeasure(); api.renderSide(); if (typeof modelToast === "function") modelToast(`${n} bubbl${n === 1 ? "a" : "or"} skapade`); }); }
   const oc = cur.sel && (cur.ocards || []).includes(cur.sel) ? cur.sel : null;
@@ -255,7 +267,7 @@ function phbOcBind(api, side) {
     on("phbOcScale", "input", e => { oc.scale = Number(e.target.value) / 100; const l = q("phbOcScaleV"); if (l) l.textContent = e.target.value + "%"; api.remeasure(); });
     on("phbOcCol", "input", e => { oc.colOver = e.target.value; const a = q("phbOcAuto"); if (a) a.disabled = false; api.draw(); });
     on("phbOcAuto", "click", () => { oc.colOver = null; api.draw(); api.renderSide(); });
-    on("phbOcSaveDef", "click", () => { phbOcRemember(oc.fields); if (typeof modelToast === "function") modelToast("Fälten sparade som förval"); });
+    on("phbOcSaveDef", "click", () => { phbOcSavePreset(oc); if (typeof modelToast === "function") modelToast("Sparat som förval – nya bubblor från markeringen får samma inställning"); });
     on("phbOcDel", "click", () => api.removeObj({ type: "ocard", o: oc }));
   }
 }

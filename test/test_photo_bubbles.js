@@ -155,6 +155,13 @@ seed('plan_items.json', [
       await page.fill('#phbVwName', 'Testvy'); await page.click('#phbVwSave'); await page.waitForSelector('#phbVwSel');
       const un = await page.evaluate(() => [phbOcNum('12,3456', 'Qto / NetVolume (m3)', 1), phbOcNum('2500000', 'Area (mm2)', 2), phbOcNum('5', 'Namn', 0)]);
       if (un[0] !== '12,3 m³' || !/^2,50 m²$/.test(un[1].replace(/\s/g, ' ')) || un[2] !== '5') fail('Enheter/decimaler: ' + JSON.stringify(un));
+      // Förval: spara bubblans inställning och få den på nästa bubblor från markeringen
+      await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.ocards[0]; c.dec = 3; c.scale = 1.4; c.colOver = '#112233'; c.titleSrc = 'area'; c.text = 'Förvalstext'; c.fields = ['◆ Antal objekt']; st.sel = c; });
+      await page.evaluate(() => { phbOcSavePreset(document.getElementById('phbCv')._state().ocards[0]); });
+      await page.click('#phbOcNew'); await page.waitForSelector('#phbOcMake'); await page.click('#phbOcMake'); await page.waitForTimeout(250);
+      const nb = await page.evaluate(() => { const l = document.getElementById('phbCv')._state().ocards, c = l[l.length - 1]; return { dec: c.dec, scale: c.scale, col: c.colOver, src: c.titleSrc, text: c.text, f: c.fields }; });
+      if (nb.dec !== 3 || nb.scale !== 1.4 || nb.col !== '#112233' || nb.src !== 'area' || nb.text !== 'Förvalstext' || JSON.stringify(nb.f) !== '["◆ Antal objekt"]') fail('Förvalet ska gälla nya bubblor: ' + JSON.stringify(nb));
+      await page.evaluate(() => localStorage.removeItem('4ddash-phb-oc-preset'));
       await page.click('#phbOcDel'); await page.waitForTimeout(100);
       await page.click('#phbVwUse'); await page.waitForTimeout(200);
       const vw = await page.evaluate(() => { const s = document.getElementById('phbCv')._state(); return { n: s.ocards.length, t: (s.ocards[0] || {}).text }; });

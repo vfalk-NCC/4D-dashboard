@@ -2795,9 +2795,9 @@ async function writePlan(plan) {
   if (plan.items.size) {
     try {
       await ghWriteJSON(settings.githubToken, tablePath("plan_item_baseline_history"),
-        arr => [...arr, ...[...plan.items].map(([id, d]) => ({
+        arr => histAppendMerged(arr, [...plan.items].map(([id, d]) => ({
           id: ghNewId(), plan_item_id: id, project_id: projectId, start_date: d.startDate, end_date: d.endDate, recorded_at: now
-        }))],
+        }))),
         "Logga baseline-historik (omplanering i Gantt/tavla)");
       await fetchBaselineHistory();
     } catch (e) {
