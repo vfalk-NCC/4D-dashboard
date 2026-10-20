@@ -64,6 +64,11 @@ seed('plan_items.json', [
   let s = await ST();
   if (s.rows !== 4 || s.bars !== 4) fail('En rad per aktivitet (Platta A+B slås ihop): ' + JSON.stringify(s));
   if (s.temp !== 1) fail('Temporär ska vara streckad: ' + JSON.stringify(s));
+  // Ljusa statusfärger: stapeln ska ändå synas (kant) – t.ex. Planerad inställd på nästan vit
+  await page.evaluate(() => { STATUS_COLORS.planerad = '#ffffff'; renderGantt(getFilteredItems()); });
+  const bw = await page.evaluate(() => { const c = getComputedStyle(document.querySelector('.tl-root .g-bar.planerad')); return c.borderTopWidth + '|' + c.borderTopColor; });
+  if (!/^1px\|rgba\(15, 23, 42/.test(bw)) fail('Vita staplar ska ha kant: ' + bw);
+  await page.evaluate(() => { STATUS_COLORS.planerad = '#94a3b8'; renderGantt(getFilteredItems()); });
   // klick på stapel: detaljer, pilar
   await page.click('.tl-root .g-bar[data-ref="i1"]'); await page.waitForSelector('#tlPop:not([hidden])');
   if (!(await page.locator('#tlInfo .gi-head h3').textContent()).includes('Fundament')) fail('Detaljpanelen ska visa vald aktivitet');

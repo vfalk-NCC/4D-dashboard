@@ -3056,3 +3056,7 @@ section.panel.gantt-fullscreen #ganttChart.tl .ginfo { position: static; flex: 0
 .tl-root .g-bar.temp { outline: 2px dashed #0f172a; outline-offset: -2px; background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.35) 0 4px, transparent 4px 9px); }
 .tl-root .g-sh { margin-left: auto; font-size: 10.5px; font-weight: 700; padding: 0 6px; border-radius: 9px; border: 1px solid var(--tl-line); flex: none; }
 .tl-root .g-sh.late { color: var(--tl-bad); border-color: var(--tl-bad); } .tl-root .g-sh.early { color: var(--tl-ok); border-color: var(--tl-ok); }
+/* Ljusa statusfärger (t.ex. "Planerad" nästan vit) ska synas: alla staplar får en tunn mörk kant. */
+.tl-root .g-bar { border: 1px solid rgba(15,23,42,.38); box-sizing: border-box; }
+.tl-root .g-bar.ms { border-width: 1.5px; }
+.tl-root .g-pc { text-shadow: 0 0 3px rgba(0,0,0,.9), 0 0 1px #000; }
