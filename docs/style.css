@@ -3086,3 +3086,30 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .gantt-print .tl-root .g-bar { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
 .sf-status-pop .ggp-row { display: flex; align-items: center; gap: 8px; } .sf-status-pop .sf-dot { width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(15,23,42,.35); flex: none; } .sf-status-pop .ggp-row small { margin-left: auto; }
+
+/* Montageordning (assembly-player.js) */
+.asm-panel { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 3300; width: min(520px, calc(100vw - 20px)); background: #fff; color: #1f2328; border: 1px solid #d0d7de; border-radius: 12px; box-shadow: 0 10px 34px rgba(0,0,0,.28); padding: 10px 12px; font-size: 13px; }
+.asm-panel.hidden { display: none; }
+.asm-top { display: flex; justify-content: space-between; align-items: center; }
+.asm-step { color: #57606a; }
+.asm-x { width: auto; border: 0; background: none; font-size: 16px; cursor: pointer; padding: 2px 6px; }
+.asm-title { font-size: 17px; font-weight: 700; margin: 4px 0 2px; }
+.asm-meta { color: #57606a; font-size: 12px; margin-bottom: 6px; }
+.asm-warn { background: #fff8c5; border: 1px solid #d4a72c; border-radius: 6px; padding: 3px 8px; font-size: 12px; margin-bottom: 6px; }
+.asm-range { width: 100%; margin: 4px 0 8px; }
+.asm-btns { display: flex; gap: 6px; justify-content: center; margin-bottom: 8px; }
+.asm-btns button { width: auto; min-width: 44px; height: 38px; font-size: 16px; border: 1px solid #d0d7de; border-radius: 8px; background: #f6f8fa; cursor: pointer; }
+.asm-btns .asm-play { background: #f59e0b; border-color: #d97706; color: #fff; min-width: 64px; }
+.asm-opts { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: 12px; }
+.asm-opts label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.asm-opts input { width: auto; }
+.asm-lt { width: auto; margin-left: auto; font-size: 12px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; padding: 2px 8px; cursor: pointer; }
+.asm-list { max-height: 210px; overflow: auto; margin-top: 8px; border-top: 1px solid #eaeef2; }
+.asm-row { display: flex; gap: 8px; padding: 4px 6px; cursor: pointer; border-radius: 6px; align-items: baseline; }
+.asm-row b { min-width: 26px; color: #8c959f; }
+.asm-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asm-row small { color: #8c959f; }
+.asm-row.done { color: #8c959f; }
+.asm-row.cur { background: #fff1d6; font-weight: 700; }
+.asm-row:hover { background: #f3f4f6; }
+body.has-multibar .asm-panel { bottom: 74px; }

@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=20261020170103" />
+<link rel="stylesheet" href="style.css?v=20261020192108" />
 <script>
 /* Självläkning mot webbläsarens cache (Trimble Connect visar ibland en gammal index.html): jämför den inbyggda versionen med version.txt
    (hämtas alltid färsk) och laddar om en enda gång om de skiljer sig. */
@@ -162,6 +162,7 @@
           </div>
           <span class="gfs-sep"></span>
           <span class="gfs-grp">
+          <button type="button" id="ganttAssemblyBtn" class="gantt-toolbar-btn gb-ico"  title="Montageordning – stega genom aktiviteterna i byggordning, ett steg i taget, med 3D-modellen" aria-label="Montageordning" aria-pressed="false"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15V9h4v6M8 15V5h4v10M12 15V8h4v7M3 15h14"/></svg></button>
           <button type="button" id="ganttLoadModelsBtn" class="gantt-toolbar-btn gb-ico"  title="Modeller – läs in alla modeller som aktiviteterna är kopplade till" aria-label="Modeller"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5 16.5 6v8L10 17.5 3.5 14V6z"/><path d="M10 7v5m0 0-2-2m2 2 2-2"/></svg></button>
           <button type="button" id="ganttPpExportBtn" class="gantt-toolbar-btn gb-ico"  title="Till Powerproject – exportera aktiviteter (Microsoft Project-XML)" aria-label="Till Powerproject"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 5H4.5v11h11V13"/><path d="M10 11 16.5 4.5M12 4h4.5v4.5"/></svg></button>
           <button type="button" id="ganttPrintBtn" class="gantt-toolbar-btn gb-ico"  title="Skriv ut – skriv ut Gantt-schemat eller spara det som PDF, med rubrik, förklaring och tidshuvud på varje sida" aria-label="Skriv ut"><svg class="gp-svg" viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 7V3h8v4M6 13H3.5V8h13v5H14"/><rect x="6" y="11" width="8" height="6" rx="1"/></svg></button>
@@ -472,28 +473,29 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=20261020170103"></script>
-  <script src="hist-merge.js?v=20261020170103"></script>
-  <script src="app.js?v=20261020170103"></script>
-  <script src="resource-curve.js?v=20261020170103"></script>
-  <script src="pp-export.js?v=20261020170103"></script>
-  <script src="bubbles.js?v=20261020170103"></script>
-  <script src="gantt-views.js?v=20261020170103"></script>
-  <script src="photo-bubbles.js?v=20261020170103"></script>
-  <script src="photo-bubbles-obj.js?v=20261020170103"></script>
-  <script src="photo-bubbles-qt.js?v=20261020170103"></script>
-  <script src="ask-ai.js?v=20261020170103"></script>
-  <script src="gantt-timeline.js?v=20261020170103"></script>
-  <script src="theme.js?v=20261020170103"></script>
-  <script src="status-filter.js?v=20261020170103"></script>
-  <script src="video-gfx.js?v=20261020170103"></script>
-  <script src="video-editor.js?v=20261020170103"></script>
-  <script src="quantities.js?v=20261020170103"></script>
-  <script src="quantities-mf.js?v=20261020170103"></script>
-  <script src="quantities-ui.js?v=20261020170103"></script>
-  <script src="planning-link.js?v=20261020170103"></script>
-  <script src="dayplan.js?v=20261020170103"></script>
-  <script src="toolbar-dd.js?v=20261020170103"></script>
-  <script src="console.js?v=20261020170103"></script>
+  <script src="ui-dialog.js?v=20261020192108"></script>
+  <script src="hist-merge.js?v=20261020192108"></script>
+  <script src="app.js?v=20261020192108"></script>
+  <script src="resource-curve.js?v=20261020192108"></script>
+  <script src="pp-export.js?v=20261020192108"></script>
+  <script src="bubbles.js?v=20261020192108"></script>
+  <script src="gantt-views.js?v=20261020192108"></script>
+  <script src="photo-bubbles.js?v=20261020192108"></script>
+  <script src="photo-bubbles-obj.js?v=20261020192108"></script>
+  <script src="photo-bubbles-qt.js?v=20261020192108"></script>
+  <script src="ask-ai.js?v=20261020192108"></script>
+  <script src="gantt-timeline.js?v=20261020192108"></script>
+  <script src="theme.js?v=20261020192108"></script>
+  <script src="assembly-player.js?v=20261020192108"></script>
+  <script src="status-filter.js?v=20261020192108"></script>
+  <script src="video-gfx.js?v=20261020192108"></script>
+  <script src="video-editor.js?v=20261020192108"></script>
+  <script src="quantities.js?v=20261020192108"></script>
+  <script src="quantities-mf.js?v=20261020192108"></script>
+  <script src="quantities-ui.js?v=20261020192108"></script>
+  <script src="planning-link.js?v=20261020192108"></script>
+  <script src="dayplan.js?v=20261020192108"></script>
+  <script src="toolbar-dd.js?v=20261020192108"></script>
+  <script src="console.js?v=20261020192108"></script>
 </body>
 </html>
