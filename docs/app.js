@@ -1428,6 +1428,7 @@ function applyGanttModelSel(pulse) {
     if (ids.some(id => ganttModelSel.has(String(id)))) els.push(n);
   });
   chart.querySelectorAll(".gantt-bar[data-item-id]").forEach(b => { if (ganttModelSel.has(b.dataset.itemId)) els.push(b); });
+  chart.querySelectorAll(".g-bar[data-members]").forEach(b => { if (b.dataset.members.split(",").some(id => ganttModelSel.has(id))) els.push(b); }); // tidslinjen: en stapel per aktivitet
   els.forEach(x => { x.classList.add("model-sel"); if (pulse) { x.classList.remove("model-sel-pulse"); void x.offsetWidth; x.classList.add("model-sel-pulse"); } });
   if (pulse && els[0]) els[0].scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
   return els.length;
@@ -3769,7 +3770,7 @@ function initGanttMulti() {
   const chart = document.getElementById("ganttChart"); if (!chart || chart.dataset.multi) return; chart.dataset.multi = "1";
   chart.addEventListener("click", e => {
     if (!(e.ctrlKey || e.metaKey)) return;
-    const n = e.target.closest(".pnote[data-item-id], .gantt-bar[data-item-id], .gantt-label[data-item-id]");
+    const n = e.target.closest(".pnote[data-item-id], .gantt-bar[data-item-id], .gantt-label[data-item-id], .g-bar[data-item-id], .g-lab[data-item-id]");
     if (!n) return;
     e.preventDefault(); e.stopPropagation();
     const id = n.dataset.itemId;
@@ -4353,6 +4354,8 @@ function renderGantt(list, target) {
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
   if (ganttView === "board") { renderGanttBoard(list, target); if (!target) applyGanttModelSel(false); return; }
+  // Tidslinjen (gantt-timeline.js) ersätter de gamla staplarna på skärmen; utskriften (target) och "Klassiska staplar" använder den gamla vyn.
+  if (!target && typeof tlRender === "function" && typeof ganttClassic !== "undefined" && !ganttClassic && tlRender(list, el)) return;
   const withDates = list.filter(it => it.startDate && it.endDate);
 
   if (withDates.length === 0) {

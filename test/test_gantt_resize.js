@@ -123,6 +123,8 @@ async function run() {
     status: 200, contentType: 'application/json', body: JSON.stringify({ current_weather: {}, daily: {} })
   }));
 
+  // Testar de klassiska staplarna (Visning → Ny tidslinje av); den nya tidslinjen testas i test_gantt_timeline.js.
+  await page.addInitScript(() => localStorage.setItem('4ddash-gantt-classic', '1'));
   await page.addInitScript(() => {
     window.localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 'fake-token-for-test' }));
     window.localStorage.setItem('4ddash-unlocked', '1');
