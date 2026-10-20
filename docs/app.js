@@ -80,7 +80,8 @@ let settings = {
 let filters = {
   area: [],
   activity: [],  // flera aktiviteter (aktivitetens namn, t.ex. "Grundplintar linje I-H"); tom = alla
-  contractor: []   // flera entreprenörer (Victor 2026-10-08); tom = alla
+  contractor: [],   // flera entreprenörer (Victor 2026-10-08); tom = alla
+  status: []   // flera statusar (Victor 2026-10-20): planerad, pågående, försenad, klar …; tom = alla
 };
 
 // Svenska visningsnamn och färger per statusvärde - samma som i
@@ -584,8 +585,8 @@ function onFilterChange() {
 }
 
 function onResetFilters() {
-  filters = { area: [], activity: [], contractor: [] };
-  renderAreaFilter(); renderActivityFilter(); renderContractorFilter();
+  filters = { area: [], activity: [], contractor: [], status: [] };
+  renderAreaFilter(); renderActivityFilter(); renderContractorFilter(); if (typeof renderStatusFilter === "function") renderStatusFilter();
   renderAll();
 }
 
@@ -593,8 +594,8 @@ function onResetFilters() {
 const FILTER_NONE = "__utan__";
 const filterHit = (want, v) => !want || (want === FILTER_NONE ? !v : v === want);
 function getFilteredItems() {
-  const cs = filters.contractor || [], as = filters.area || [];
-  return items.filter(it => (!as.length || as.some(w => filterHit(w, it.area))) && ((filters.activity || []).length ? filters.activity.some(w => filterHit(w, it.objectName)) : true) && (!cs.length || cs.some(w => filterHit(w, it.contractor))));
+  const cs = filters.contractor || [], as = filters.area || [], ss = filters.status || [];
+  return items.filter(it => (!ss.length || ss.includes(it.status)) && (!as.length || as.some(w => filterHit(w, it.area))) && ((filters.activity || []).length ? filters.activity.some(w => filterHit(w, it.objectName)) : true) && (!cs.length || cs.some(w => filterHit(w, it.contractor))));
 }
 
 // Fyller filtrets tre <select>-fält med de värden som faktiskt finns i
@@ -812,8 +813,8 @@ function closeActivityPop() {
 const savedFiltersKey = () => `4ddash-saved-filters:${typeof projectId !== "undefined" && projectId ? projectId : "_"}`;
 function savedFiltersGet() { try { const v = JSON.parse(localStorage.getItem(savedFiltersKey()) || "[]"); return Array.isArray(v) ? v.filter(x => x && x.name) : []; } catch (e) { return []; } }
 function savedFiltersPut(list) { try { localStorage.setItem(savedFiltersKey(), JSON.stringify(list.slice(0, 40))); } catch (e) { modelToast("Kunde inte spara (webbläsarens lagring är avstängd)"); } }
-const filtersCount = () => (filters.area || []).length + (filters.activity || []).length + (filters.contractor || []).length;
-function savedFilterSummary(f) { const n = (a, w) => (a && a.length ? `${a.length} ${w}` : ""); return [n(f.area, "områden"), n(f.activity, "aktiviteter"), n(f.contractor, "entreprenörer")].filter(Boolean).join(" · ") || "inga filter"; }
+const filtersCount = () => (filters.area || []).length + (filters.activity || []).length + (filters.contractor || []).length + (filters.status || []).length;
+function savedFilterSummary(f) { const n = (a, w) => (a && a.length ? `${a.length} ${w}` : ""); return [n(f.area, "områden"), n(f.activity, "aktiviteter"), n(f.contractor, "entreprenörer"), n(f.status, "statusar")].filter(Boolean).join(" · ") || "inga filter"; }
 function initSavedFilters() {
   const b = document.getElementById("filterSavedBtn"); if (!b) return;
   b.onclick = e => { e.stopPropagation(); if (document.getElementById("savedFilterPop")) closeSavedPop(); else openSavedPop(b); };
@@ -832,11 +833,11 @@ function openSavedPop(btn) {
     q(".sf-save").disabled = !n;
     q(".sf-list").innerHTML = list.map((f, i) => `<div class="ggp-row sf-row" data-i="${i}" title="Använd filtret"><span class="sf-n"><b>${escapeHtml(f.name)}</b><span class="hint"> · ${escapeHtml(savedFilterSummary(f))}</span></span><button type="button" class="sf-upd" title="Uppdatera det sparade filtret med det du filtrerat på nu"${n ? "" : " disabled"} aria-label="Uppdatera">↻ Uppdatera</button><button type="button" class="sf-del" title="Ta bort det sparade filtret" aria-label="Ta bort">✕</button></div>`).join("") || `<div class="hint">Inga sparade filter ännu.</div>`;
   };
-  const apply = f => { filters.area = (f.area || []).slice(); filters.activity = (f.activity || []).slice(); filters.contractor = (f.contractor || []).slice(); renderAreaFilter(); renderActivityFilter(); renderContractorFilter(); renderAll(); modelToast(`Filtret "${f.name}" används`); };
+  const apply = f => { filters.area = (f.area || []).slice(); filters.activity = (f.activity || []).slice(); filters.contractor = (f.contractor || []).slice(); filters.status = (f.status || []).slice(); if (typeof renderStatusFilter === "function") renderStatusFilter(); renderAreaFilter(); renderActivityFilter(); renderContractorFilter(); renderAll(); modelToast(`Filtret "${f.name}" används`); };
   q(".sf-save").onclick = () => {
     const nm = name.value.trim() || `Filter ${savedFiltersGet().length + 1}`, list = savedFiltersGet(), i = list.findIndex(x => x.name.toLowerCase() === nm.toLowerCase());
     if (i >= 0 && !confirm(`Det finns redan ett filter som heter "${list[i].name}". Ersätta det med det du filtrerat på nu?`)) return;
-    const f = { name: nm, area: (filters.area || []).slice(), activity: (filters.activity || []).slice(), contractor: (filters.contractor || []).slice(), at: new Date().toISOString() };
+    const f = { name: nm, area: (filters.area || []).slice(), activity: (filters.activity || []).slice(), contractor: (filters.contractor || []).slice(), status: (filters.status || []).slice(), at: new Date().toISOString() };
     if (i >= 0) list[i] = f; else list.push(f);
     savedFiltersPut(list); name.value = ""; fill(); modelToast(`Filtret "${nm}" sparat`);
   };
@@ -846,7 +847,7 @@ function openSavedPop(btn) {
     if (e.target.closest(".sf-upd")) {
       if (!filtersCount()) return;
       if (!confirm(`Uppdatera det sparade filtret "${f.name}" med det du filtrerat på nu (${savedFilterSummary(filters)})?\n\nDet gamla urvalet ersätts.`)) return;
-      list[Number(row.dataset.i)] = { ...f, area: (filters.area || []).slice(), activity: (filters.activity || []).slice(), contractor: (filters.contractor || []).slice(), at: new Date().toISOString() };
+      list[Number(row.dataset.i)] = { ...f, area: (filters.area || []).slice(), activity: (filters.activity || []).slice(), contractor: (filters.contractor || []).slice(), status: (filters.status || []).slice(), at: new Date().toISOString() };
       savedFiltersPut(list); fill(); modelToast(`Filtret "${f.name}" uppdaterat`); return;
     }
     if (e.target.closest(".sf-del")) { if (confirm(`Ta bort det sparade filtret "${f.name}"?`)) { list.splice(Number(row.dataset.i), 1); savedFiltersPut(list); fill(); } return; }
@@ -1042,7 +1043,7 @@ async function setPlanSource(src) {
   try { localStorage.setItem(planSourceKey(), src); } catch (e) {}
   renderPlanSourceUi();
   // Filtren och ångra-stacken hör till den förra planeringen.
-  filters = { area: [], activity: [], contractor: [] };
+  filters = { area: [], activity: [], contractor: [], status: [] };
   renderAreaFilter(); renderActivityFilter(); renderContractorFilter();
   if (typeof scheduleUndo !== "undefined") { scheduleUndo.length = 0; scheduleRedo.length = 0; updateUndoButtons(); }
   ganttBoardScrolled = false;
@@ -6521,6 +6522,7 @@ function printGantt(opts) {
   const filterParts = []
     .concat((filters.activity || []).length ? [`Aktivitet: ${filters.activity.map(v => v === FILTER_NONE ? NO_ACTIVITY_LABEL : v).join(", ")}`] : [])
     .concat((filters.area || []).length ? [`Område: ${filters.area.map(v => v === FILTER_NONE ? NO_AREA_LABEL : v).join(", ")}`] : [])
+    .concat((filters.status || []).length ? [`Status: ${filters.status.map(v => STATUS_LABELS[v] || v).join(", ")}`] : [])
     .concat((filters.contractor || []).length ? [`Entreprenör: ${filters.contractor.map(v => v === FILTER_NONE ? NO_CONTRACTOR_LABEL : v).join(", ")}`] : []);
   const legend = STATUS_ORDER.map(s => `<span class="gp-leg"><i style="background:${STATUS_COLORS[s]}"></i>${escapeHtml(STATUS_LABELS[s])}</span>`).join("")
     + (ganttView === "bars" && ganttShowActual ? `<span class="gp-leg"><i class="gp-leg-actual"></i>Verkligt</span>` : "")

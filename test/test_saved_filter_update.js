@@ -71,6 +71,28 @@ seed('plan_items.json', [
   await page.click('.sf-upd'); await page.waitForTimeout(200);
   const sv = await page.evaluate(() => savedFiltersGet());
   if (sv.length !== 1 || sv[0].name !== 'Mitt filter' || JSON.stringify(sv[0].area) !== JSON.stringify([areas[1]])) fail('Filtret ska ha uppdaterats: ' + JSON.stringify(sv));
+  // Statusfilter: bocka i status, listan följer, sparas i sparade filter och rensas
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { filters.area = []; renderAreaFilter(); renderAll(); });
+  const all = await page.evaluate(() => getFilteredItems().length);
+  await page.evaluate(() => document.getElementById('filterStatusBtn').click()); await page.waitForSelector('#statusFilterPop input[data-v]');
+  const opts = await page.locator('#statusFilterPop input[data-v]').count(); if (opts !== 6) fail('Sex statusar: ' + opts);
+  await page.check('#statusFilterPop input[data-v="pagaende"]'); await page.waitForTimeout(150);
+  const shown = await page.evaluate(() => ({ n: getFilteredItems().length, ok: getFilteredItems().every(i => i.status === 'pagaende'), lab: document.getElementById('filterStatusBtn').textContent }));
+  if (!shown.ok || shown.n === 0 || shown.n > all || !/Pågående/.test(shown.lab)) fail('Statusfiltret ska visa bara pågående: ' + JSON.stringify(shown));
+  await page.check('#statusFilterPop input[data-v="forsenad"]'); await page.waitForTimeout(100);
+  if (!(await page.evaluate(() => getFilteredItems().every(i => ['pagaende', 'forsenad'].includes(i.status))))) fail('Två statusar');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => document.getElementById('filterSavedBtn').click()); await page.waitForSelector('.sf-name');
+  await page.fill('.sf-name', 'Status'); await page.click('.sf-save'); await page.waitForTimeout(150);
+  const sv2 = await page.evaluate(() => savedFiltersGet().find(f => f.name === 'Status')); if (!sv2 || JSON.stringify(sv2.status) !== JSON.stringify(['pagaende', 'forsenad'])) fail('Status ska sparas i sparade filter: ' + JSON.stringify(sv2));
+  await page.keyboard.press('Escape');
+  await page.click('#btnResetFilters'); await page.waitForTimeout(150);
+  if ((await page.evaluate(() => filters.status.length)) !== 0 || (await page.evaluate(() => getFilteredItems().length)) !== all) fail('Rensa filter ska nollställa status');
+  await page.evaluate(() => document.getElementById('filterSavedBtn').click()); await page.waitForSelector('.sf-row');
+  await page.click('.sf-row >> text=Status'); await page.waitForTimeout(200);
+  if (!(await page.evaluate(() => filters.status.length === 2))) fail('Sparat filter ska återställa status');
+  await page.evaluate(() => { filters.status = []; filters.area = []; renderAll(); });
   // utan aktivt filter är Uppdatera avstängd
   await page.evaluate(() => { filters.area = []; filters.activity = []; filters.contractor = []; });
   await page.keyboard.press('Escape'); await page.evaluate(() => document.getElementById('filterSavedBtn').click()); await page.waitForSelector('.sf-upd');

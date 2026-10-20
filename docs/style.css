@@ -3084,3 +3084,5 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .gantt-print .tl-root .g-head { position: static; }
 .gantt-print .tl-root .tl-gantt { max-width: 100%; }
 .gantt-print .tl-root .g-bar { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+.sf-status-pop .ggp-row { display: flex; align-items: center; gap: 8px; } .sf-status-pop .sf-dot { width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(15,23,42,.35); flex: none; } .sf-status-pop .ggp-row small { margin-left: auto; }
