@@ -143,6 +143,12 @@ seed('plan_items.json', [
       await page.click('#phbOcMake'); await page.waitForTimeout(300);
       const oc = await page.evaluate(() => { const s = document.getElementById('phbCv')._state(); return { n: (s.ocards || []).length, text: (s.ocards[0] || {}).text, objs: ((s.ocards[0] || {}).objs || []).length }; });
       if (oc.n !== 1 || oc.text !== 'Egen text här' || oc.objs !== 2) fail('Objektbubbla: ' + JSON.stringify(oc));
+      const dim = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return { h: c.h / c.kk, w: c.W / c.kk, tx: c.tx.length, rows: c.rows.length, tl: c.tl.length }; });
+      // 'Egen text' finns här, så testa luftighet med en bubbla utan egen text
+      await page.evaluate(() => { const st = document.getElementById('phbCv')._state(); st.ocards[0].text = ''; phbOcMeasure(st.ocards[0], st); });
+      const dim2 = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return { h: c.h / c.kk, w: c.W / c.kk, tx: c.tx.length, rows: c.rows.length, tl: c.tl.length }; });
+      if (dim2.tx !== 0 || dim2.h > 8 + dim2.tl * 18 + 3 + dim2.rows * 15.5 + 9 + 0.01 || dim2.w >= 269.9 && dim2.rows < 2 && dim2.tl === 1) fail('Bubblan ska inte ha tom yta: ' + JSON.stringify([dim, dim2]));
+      await page.evaluate(() => { const st = document.getElementById('phbCv')._state(); st.ocards[0].text = 'Egen text här'; phbOcMeasure(st.ocards[0], st); });
       const [dl5] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]); await dl5.saveAs(process.env.PHB_OUT + '/foto3.pdf');
       if (!fs.readFileSync(process.env.PHB_OUT + '/foto3.pdf', 'latin1').includes('bubbla-obj')) fail('PDF saknar objektbubbla');
       const ln = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return isFinite(c.ax) && isFinite(c.ay); }); if (!ln) fail('Objektbubblan ska ha en linje/punkt');

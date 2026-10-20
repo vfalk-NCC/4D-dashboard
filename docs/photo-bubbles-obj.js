@@ -92,14 +92,19 @@ const phbOcCol = oc => oc.colOver || oc.autoCol || "#2563eb";
 
 /* ---- Mått och ritning ------------------------------------------------------------------------------------------------------------------------ */
 function phbOcMeasure(oc, st) {
-  const ctx = phbMeasure(), kk = st.k * st.g.bscale * oc.scale, W = 270 * kk; oc.kk = kk; oc.W = W; oc.autoCol = phbOcAutoColor(st, oc);
+  const ctx = phbMeasure(), kk = st.k * st.g.bscale * oc.scale, WMAX = 270 * kk, PAD = 14 * kk + 16 * kk; oc.kk = kk; oc.autoCol = phbOcAutoColor(st, oc);
   ctx.font = `700 ${15 * kk}px ${PHB_FAM}`;
-  oc.tl = phbWrap(ctx, oc.title != null && oc.title !== "" ? oc.title : phbOcTitleFromGantt(oc) || (oc.objs.length === 1 ? phbOcName(oc.objs[0]) : `${oc.objs.length} objekt`), W - 30 * kk, 2);
+  oc.tl = phbWrap(ctx, oc.title != null && oc.title !== "" ? oc.title : phbOcTitleFromGantt(oc) || (oc.objs.length === 1 ? phbOcName(oc.objs[0]) : `${oc.objs.length} objekt`), WMAX - PAD, 2);
+  let need = Math.max(0, ...oc.tl.map(l => ctx.measureText(l).width));
   ctx.font = `${11.5 * kk}px ${PHB_FAM}`; const rows = [];
   oc.fields.forEach(key => phbOcVal(st, oc, key).forEach((v, i) => rows.push({ lab: i === 0 ? phbOcLabel(key) : "", v })));
-  oc.rows = rows.slice(0, 16).map(r => { const lw = r.lab ? ctx.measureText(r.lab + ": ").width : 0; let t = String(r.v); const maxW = W - 30 * kk - lw; while (t.length > 1 && ctx.measureText(t).width > maxW) t = t.slice(0, -1); return { lab: r.lab ? r.lab + ":" : "", lw, v: t.length < String(r.v).length ? t.replace(/\s+$/, "") + "…" : t }; });
-  oc.tx = String(oc.text || "").split("\n").flatMap(l => (l.trim() ? phbWrap(ctx, l, W - 30 * kk, 3) : [""])).slice(0, 8);
-  oc.h = (8 + oc.tl.length * 18 + (oc.rows.length ? 3 : 0) + oc.rows.length * 15.5 + (oc.tx.length ? 5 + oc.tx.length * 15 : 0) + 11) * kk;
+  oc.rows = rows.slice(0, 16).map(r => { const lw = r.lab ? ctx.measureText(r.lab + ": ").width : 0; let t = String(r.v); const maxW = WMAX - PAD - lw; while (t.length > 1 && ctx.measureText(t).width > maxW) t = t.slice(0, -1); const v = t.length < String(r.v).length ? t.replace(/\s+$/, "") + "…" : t; need = Math.max(need, lw + ctx.measureText(v).width); return { lab: r.lab ? r.lab + ":" : "", lw, v }; });
+  ctx.font = `italic ${11.5 * kk}px ${PHB_FAM}`;
+  oc.tx = String(oc.text || "").trim() ? String(oc.text).split("\n").flatMap(l => (l.trim() ? phbWrap(ctx, l, WMAX - PAD, 3) : [""])).slice(0, 8) : [];
+  while (oc.tx.length && oc.tx[oc.tx.length - 1] === "") oc.tx.pop();
+  oc.tx.forEach(l => { need = Math.max(need, ctx.measureText(l).width); });
+  oc.W = Math.max(130 * kk, Math.min(WMAX, need + PAD)); // bredden följer innehållet – ingen tom yta åt höger
+  oc.h = (8 + oc.tl.length * 18 + (oc.rows.length ? 3 : 0) + oc.rows.length * 15.5 + (oc.tx.length ? 5 + oc.tx.length * 15 : 0) + 9) * kk;
 }
 function phbOcMeasureAll(st) { (st.ocards || []).forEach(oc => phbOcMeasure(oc, st)); }
 function phbOcDraw(ctx, c) {
