@@ -41,7 +41,7 @@
   const DESC = {
     ganttFsTime: ["Tidslinjedragare", "av/på – 3D följer med"], ganttOpen3d: ["3D-editorn", "öppna lägesplanen i eget fönster"], ganttPhotoBtn: ["Foto med bubblor", "ta bild av 3D-vyn med aktiviteterna"],
     ganttAskAi: ["Fråga AI", "skapa HTML till Claude och läs in omplaneringen"], ganttViewsBtn: ["Vyer", "spara och hämta hur schemat ser ut"], dpOpenBtn: ["Dagsplan UE", "importera, justera och exportera till HTML"],
-    ganttAssemblyBtn: ["Montageordning", "stega genom aktiviteterna i byggordning med 3D-modellen"], ganttLoadModelsBtn: ["Modeller", "läs in modellerna aktiviteterna är kopplade till"], ganttPpExportBtn: ["Till Powerproject", "exportera aktiviteter (MS Project-XML)"],
+    ganttAutoCoupleBtn: ["Auto-koppla", "koppla aktiviteter till 3D-objekt från koder i namnen"], ganttAssemblyBtn: ["Montageordning", "stega genom aktiviteterna i byggordning med 3D-modellen"], ganttLoadModelsBtn: ["Modeller", "läs in modellerna aktiviteterna är kopplade till"], ganttPpExportBtn: ["Till Powerproject", "exportera aktiviteter (MS Project-XML)"],
     ganttPrintBtn: ["Skriv ut", "skriv ut eller spara som PDF"], ganttFullBtn: ["Helskärm", "visa schemat i helskärm (Esc stänger)"],
     ganttTimeAuto: ["Hela spannet", "anpassa tidsaxeln automatiskt"], ganttScaleBtn: ["Färgskala efter datum", "tidig → sen start mellan två färger"], ganttStrictBtn: ["Följ datum", "färg strikt efter start och slut, inte framdrift"]
   };
@@ -62,7 +62,7 @@
   if (seg) { seg.querySelectorAll("button").forEach(b => label(b)); }
   const d1 = make("mode", "3D-läge", "", [seg]);
   // 2. Modeller och utdata
-  const outBtns = ["ganttAssemblyBtn", "ganttLoadModelsBtn", "ganttPpExportBtn", "ganttPrintBtn", "ganttFullBtn"].map($).filter(Boolean);
+  const outBtns = ["ganttAutoCoupleBtn", "ganttAssemblyBtn", "ganttLoadModelsBtn", "ganttPpExportBtn", "ganttPrintBtn", "ganttFullBtn"].map($).filter(Boolean);
   outBtns.forEach(b => label(b));
   const d2 = make("out", "Modeller", svg(ICONS.out), outBtns);
   // 3. Tid och färg (färg- och visningsmenyn ligger öppen inne i rullgardinen)
