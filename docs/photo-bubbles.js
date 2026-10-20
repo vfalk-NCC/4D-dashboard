@@ -496,7 +496,20 @@ function phbPreview(st) {
   };
   const undoRemove = () => { const r = removed.pop(); if (!r) return; cur.cards.splice(Math.min(r.i, cur.cards.length), 0, r.c); cur.sel = r.c; draw(); renderSide(); };
   const selItem = () => phbObjects(cur).find(i => i.o === cur.sel);
-  const api = { get cur() { return cur; }, set cur(v) { cur = v; }, draw, remeasure, renderSide: () => renderSide(), removeObj, esc: phbEsc, rng: (...a) => rng(...a), chk: (...a) => chk(...a) };
+  /* Flyttar TC-kameran till en sparad vy, väntar tills den står där, tar ett nytt foto och bygger om redigeringsläget på det (bubblor och tabeller läggs sedan på av vyn). */
+  const retake = async cam => {
+    const V = API && API.viewer; if (!cam || !V || typeof vidSetCam !== "function" || typeof vidSnapshot !== "function") return false;
+    const hadBubbles = typeof bubbleCfg !== "undefined" && bubbleCfg.on; info.textContent = "Flyttar modellen till vyns kamera och tar nytt foto …";
+    try {
+      if (hadBubbles) { await bubblesClear(); await new Promise(r => setTimeout(r, 250)); }
+      await vidSetCam(cam, true); await new Promise(r => setTimeout(r, 350));
+      let now = null; try { now = await V.getCamera(); } catch (e) { /* okänd kamera */ }
+      const blob = await vidSnapshot(); phbLast = { blob, cam: now || cam };
+      const n = await phbBuild(blob, now || cam, d.querySelector("#phbScope").value);
+      cur = n; removed = []; cv.width = n.W; cv.height = n.H; window.dispatchEvent(new Event("resize")); draw(); return true;
+    } finally { if (hadBubbles) bubblesSchedule(true); }
+  };
+  const api = { get cur() { return cur; }, set cur(v) { cur = v; }, draw, remeasure, retake, renderSide: () => renderSide(), removeObj, esc: phbEsc, rng: (...a) => rng(...a), chk: (...a) => chk(...a) };
   /* Sidopanelen: allmänt överst, sedan det som är valt. */
   const rng = (id, lbl, v, min, max, step, unit = "%") => `<label class="phb-f"><span>${lbl} <b id="${id}V">${v}${unit}</b></span><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${v}"></label>`;
   const chk = (id, lbl, on) => `<label class="phb-c"><input type="checkbox" id="${id}"${on ? " checked" : ""}> ${lbl}</label>`;

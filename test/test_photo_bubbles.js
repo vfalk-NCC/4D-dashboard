@@ -37,7 +37,7 @@ seed('plan_items.json', [
         getCamera: () => Promise.resolve(window.__cam || { position: { x: 0, y: -40, z: 20 }, target: { x: 0, y: 0, z: 0 }, fov: 60 }),
         getObjectBoundingBoxes: (m, rids) => Promise.resolve(rids.map(id => ({ id, boundingBox: { min: { x: -20 + id * 10, y: -2, z: 0 }, max: { x: -15 + id * 10, y: 2, z: 3 } } }))),
         getSnapshot: () => { const c = document.createElement('canvas'); c.width = 1200; c.height = 700; const x = c.getContext('2d'); x.fillStyle = '#e9edf0'; x.fillRect(0, 0, 1200, 700); x.fillStyle = '#6fbf73'; x.fillRect(300, 350, 600, 200); return Promise.resolve(c.toDataURL('image/png')); },
-        setSelection: () => Promise.resolve(), setCamera: () => Promise.resolve() },
+        setSelection: () => Promise.resolve(), setCamera: c => { window.__cam = c; window.__setCams = (window.__setCams || 0) + 1; return Promise.resolve(); } },
       markup: { removeMarkups: () => Promise.resolve() }
     }) };` }));
   await page.route('https://api.github.com/repos/vfalk-NCC/4D-data/contents/**', r => {
@@ -164,7 +164,10 @@ seed('plan_items.json', [
       if (nb.dec !== 3 || nb.scale !== 1.4 || nb.col !== '#112233' || nb.src !== 'area' || nb.text !== 'Förvalstext' || JSON.stringify(nb.f) !== '["◆ Antal objekt"]') fail('Förvalet ska gälla nya bubblor: ' + JSON.stringify(nb));
       await page.evaluate(() => localStorage.removeItem('4ddash-phb-oc-preset'));
       await page.click('#phbOcDel'); await page.waitForTimeout(100);
-      await page.click('#phbVwUse'); await page.waitForTimeout(200);
+      // TC-kameran ändras efter att vyn sparats – "Använd" ska flytta tillbaka den och ta nytt foto
+      await page.evaluate(() => { window.__camSaved = JSON.parse(localStorage.getItem('4ddash-phb-views')).slice(-1)[0].data.cam; window.__cam = { position: { x: 5, y: 5, z: 30 }, target: { x: 0, y: 0, z: 0 }, fov: 60 }; window.__setCams = 0; });
+      await page.click('#phbVwUse'); await page.waitForFunction(() => window.__setCams > 0, null, { timeout: 8000 }); await page.waitForTimeout(900);
+      const camBack = await page.evaluate(() => JSON.stringify(window.__cam) === JSON.stringify(window.__camSaved)); if (!camBack) fail('Kameran ska flyttas tillbaka till den sparade vyn: ' + JSON.stringify(await page.evaluate(() => [window.__cam, window.__camSaved])));
       const anc = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return [c.ax, c.ay, window.__anc[0], window.__anc[1]]; });
       if (Math.abs(anc[0] - anc[2]) > 1 || Math.abs(anc[1] - anc[3]) > 1) fail('Insättningspunkten ska ligga kvar när en vy läses in: ' + JSON.stringify(anc));
       const vw = await page.evaluate(() => { const s = document.getElementById('phbCv')._state(); return { n: s.ocards.length, t: (s.ocards[0] || {}).text }; });

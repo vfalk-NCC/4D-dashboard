@@ -279,6 +279,7 @@ const phbVwStore = a => { try { localStorage.setItem(PHB_VW_KEY, JSON.stringify(
 function phbVwSnap(st) {
   const W = st.W, H = st.H, lst = st.list, dt = st.dateObj;
   return {
+    cam: st.cam ? JSON.parse(JSON.stringify(st.cam)) : null, // TC-kameran när fotot togs – vyn flyttar modellen dit först
     g: { ...st.g }, progMode: st.progMode, sharp: st.sharp,
     list: { on: lst.on, title: lst.title, max: lst.max, scale: lst.scale, weeks: lst.weeks, fx: lst.x / W, fy: lst.y / H },
     dateObj: { on: dt.on, scale: dt.scale, fx: dt.x / W, fy: dt.y / H },
@@ -318,7 +319,13 @@ function phbVwBind(api, side) {
   on("phbVwSave", () => { const nm = (q("phbVwName").value || "").trim(); if (!nm) { say("Skriv ett namn först."); return; }
     const vs = phbVwLoad(), i = vs.findIndex(v => v.name === nm), rec = { name: nm, data: phbVwSnap(cur) }; if (i >= 0) vs[i] = rec; else vs.push(rec);
     if (!phbVwStore(vs)) { say("Kunde inte spara – webbläsarens lagring är full eller avstängd."); return; } cur.vwSel = i >= 0 ? i : vs.length - 1; api.renderSide(); if (typeof modelToast === "function") modelToast(`Vyn "${nm}" sparad`); });
-  on("phbVwUse", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value), v = vs[i]; if (!v) return; phbVwApply(cur, v.data); cur.vwSel = i; api.remeasure(); api.renderSide(); if (typeof modelToast === "function") modelToast(`Vyn "${v.name}" inläst`); });
+  on("phbVwUse", async () => {
+    const vs = phbVwLoad(), i = Number(q("phbVwSel").value), v = vs[i]; if (!v) return;
+    let moved = false;
+    if (v.data.cam && typeof api.retake === "function") { try { moved = await api.retake(v.data.cam); } catch (e) { console.warn("Vyn: kameran", e); } }
+    const st = api.cur; phbVwApply(st, v.data); st.vwSel = i; api.remeasure(); api.renderSide();
+    if (typeof modelToast === "function") modelToast(`Vyn "${v.name}" inläst${moved ? " – modellen flyttades till vyns kamera och ett nytt foto togs" : v.data.cam ? " – kameran kunde inte flyttas, vyn lades på det nuvarande fotot" : " – den saknar kamera (spara om den så följer modellen med)"}`);
+  });
   on("phbVwUpd", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i]) return; vs[i].data = phbVwSnap(cur); if (!phbVwStore(vs)) { say("Kunde inte spara."); return; } if (typeof modelToast === "function") modelToast(`Vyn "${vs[i].name}" uppdaterad`); });
   on("phbVwDel", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i] || !confirm(`Ta bort vyn "${vs[i].name}"?`)) return; vs.splice(i, 1); phbVwStore(vs); cur.vwSel = null; api.renderSide(); });
 }
