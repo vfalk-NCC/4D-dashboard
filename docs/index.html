@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="sv">
 <head>
+  <script>try{var __t=localStorage.getItem('4ddash-theme');if(__t==='dark'||(__t==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.setAttribute('data-theme','dark');}catch(e){}</script>
 <meta charset="UTF-8" />
 <title>4D-dashboard</title>
 <!-- Hemskärmsapp (Victor 2026-10-08): lagd på iPadens hemskärm öppnas dashboarden utan webbläsarens fält –
@@ -12,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#0f2f73" />
 <link rel="apple-touch-icon" href="icon-180.png" />
-<link rel="stylesheet" href="style.css?v=20261020151101" />
+<link rel="stylesheet" href="style.css?v=20261020160734" />
 <script>
 /* Självläkning mot webbläsarens cache (Trimble Connect visar ibland en gammal index.html): jämför den inbyggda versionen med version.txt
    (hämtas alltid färsk) och laddar om en enda gång om de skiljer sig. */
@@ -84,6 +85,7 @@
         <button id="btnExportPdf" title="Exportera/skriv ut dashboarden som PDF">PDF ⤓</button>
         <button id="btnCollapseAll" title="Minimera/expandera alla block">⊟</button>
         <button id="btnRefresh" title="Hämta senaste data">↻</button>
+        <button id="btnTheme" title="Tema: ljust / mörkt / följ systemet">☀</button>
         <button id="btnSettings" title="Inställningar (GitHub-token, väder)">⚙</button>
       </div>
     </header>
@@ -465,25 +467,26 @@
   </div>
 
   <script src="github-storage.js"></script>
-  <script src="ui-dialog.js?v=20261020151101"></script>
-  <script src="app.js?v=20261020151101"></script>
-  <script src="resource-curve.js?v=20261020151101"></script>
-  <script src="pp-export.js?v=20261020151101"></script>
-  <script src="bubbles.js?v=20261020151101"></script>
-  <script src="gantt-views.js?v=20261020151101"></script>
-  <script src="photo-bubbles.js?v=20261020151101"></script>
-  <script src="photo-bubbles-obj.js?v=20261020151101"></script>
-  <script src="photo-bubbles-qt.js?v=20261020151101"></script>
-  <script src="ask-ai.js?v=20261020151101"></script>
-  <script src="gantt-timeline.js?v=20261020151101"></script>
-  <script src="video-gfx.js?v=20261020151101"></script>
-  <script src="video-editor.js?v=20261020151101"></script>
-  <script src="quantities.js?v=20261020151101"></script>
-  <script src="quantities-mf.js?v=20261020151101"></script>
-  <script src="quantities-ui.js?v=20261020151101"></script>
-  <script src="planning-link.js?v=20261020151101"></script>
-  <script src="dayplan.js?v=20261020151101"></script>
-  <script src="toolbar-dd.js?v=20261020151101"></script>
-  <script src="console.js?v=20261020151101"></script>
+  <script src="ui-dialog.js?v=20261020160734"></script>
+  <script src="app.js?v=20261020160734"></script>
+  <script src="resource-curve.js?v=20261020160734"></script>
+  <script src="pp-export.js?v=20261020160734"></script>
+  <script src="bubbles.js?v=20261020160734"></script>
+  <script src="gantt-views.js?v=20261020160734"></script>
+  <script src="photo-bubbles.js?v=20261020160734"></script>
+  <script src="photo-bubbles-obj.js?v=20261020160734"></script>
+  <script src="photo-bubbles-qt.js?v=20261020160734"></script>
+  <script src="ask-ai.js?v=20261020160734"></script>
+  <script src="gantt-timeline.js?v=20261020160734"></script>
+  <script src="theme.js?v=20261020160734"></script>
+  <script src="video-gfx.js?v=20261020160734"></script>
+  <script src="video-editor.js?v=20261020160734"></script>
+  <script src="quantities.js?v=20261020160734"></script>
+  <script src="quantities-mf.js?v=20261020160734"></script>
+  <script src="quantities-ui.js?v=20261020160734"></script>
+  <script src="planning-link.js?v=20261020160734"></script>
+  <script src="dayplan.js?v=20261020160734"></script>
+  <script src="toolbar-dd.js?v=20261020160734"></script>
+  <script src="console.js?v=20261020160734"></script>
 </body>
 </html>

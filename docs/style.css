@@ -3060,3 +3060,9 @@ section.panel.gantt-fullscreen #ganttChart.tl .ginfo { position: static; flex: 0
 .tl-root .g-bar { border: 1px solid rgba(15,23,42,.38); box-sizing: border-box; }
 .tl-root .g-bar.ms { border-width: 1.5px; }
 .tl-root .g-pc { text-shadow: 0 0 3px rgba(0,0,0,.9), 0 0 1px #000; }
+
+/* ---- Mörkt tema: vänd hela sidan och vänd tillbaka det som har egna färger (bilder, lappar, staplar, färgrutor). ---- */
+html[data-theme="dark"] { filter: invert(1) hue-rotate(180deg); background: #fff; }
+html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="color"], .no-invert, .pnote, .gantt-bar, .g-bar, .gantt-legend-dot, .gtm-sw, .gs-swatch, .phb-img canvas) { filter: invert(1) hue-rotate(180deg); }
+@media print { html[data-theme="dark"], html[data-theme="dark"] * { filter: none !important; } }
+#btnTheme { font-size: 14px; }
