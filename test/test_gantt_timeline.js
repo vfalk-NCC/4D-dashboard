@@ -69,6 +69,13 @@ seed('plan_items.json', [
   const bw = await page.evaluate(() => { const c = getComputedStyle(document.querySelector('.tl-root .g-bar.planerad')); return c.borderTopWidth + '|' + c.borderTopColor; });
   if (!/^1px\|rgba\(15, 23, 42/.test(bw)) fail('Vita staplar ska ha kant: ' + bw);
   await page.evaluate(() => { STATUS_COLORS.planerad = '#94a3b8'; renderGantt(getFilteredItems()); });
+  // Datumetikett som följer musen
+  await page.locator('.tl-root .g-bar[data-ref="i1"]').scrollIntoViewIfNeeded();
+  const gb = await page.locator('.tl-root .g-bar[data-ref="i1"]').boundingBox();
+  await page.mouse.move(gb.x + gb.width / 2, gb.y + gb.height / 2); await page.waitForTimeout(150);
+  const hv = await page.evaluate(() => { const h = document.getElementById('tlHover'); return { hidden: h.hidden, t: h.textContent }; });
+  if (hv.hidden || !/(måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag) \d+ [a-z]{3} \d{4}/i.test(hv.t) || !/v\d+/.test(hv.t)) fail('Datumetiketten ska visa dag, datum, år och vecka: ' + JSON.stringify(hv));
+  await page.mouse.move(5, 5); await page.waitForTimeout(100);
   // klick på stapel: detaljer, pilar
   await page.click('.tl-root .g-bar[data-ref="i1"]'); await page.waitForSelector('#tlPop:not([hidden])');
   if (!(await page.locator('#tlInfo .gi-head h3').textContent()).includes('Fundament')) fail('Detaljpanelen ska visa vald aktivitet');
@@ -130,6 +137,13 @@ seed('plan_items.json', [
   }
   await page.click('#ganttRangeReset'); await page.waitForTimeout(150);
   if ((await page.evaluate(() => ganttRangeStart || ganttRangeEnd))) fail('Allt ska nollställa perioden');
+  // Utskrift: samma tidslinje-layout (inte de gamla staplarna)
+  await page.evaluate(() => { window.__pr = null; window.print = () => { const r = document.getElementById('ganttPrint'); window.__pr = r ? { tl: r.querySelectorAll('.tl-root .g-row[data-row]').length, old: r.querySelectorAll('.gantt-bar').length, bars: r.querySelectorAll('.tl-root .g-bar').length, tools: r.querySelectorAll('.tl-tools, .gmap, .ginfo').length, html: r.innerHTML.length } : null; }; TL.sel = 'i1'; printGantt({ paper: 'a4', orient: 'landscape', expandAll: true }); });
+  await page.waitForTimeout(600);
+  const pr = await page.evaluate(() => window.__pr);
+  if (!pr || pr.tl < 4 || pr.old !== 0 || pr.bars < 4 || pr.tools !== 0) fail('Utskriften ska använda den nya tidslinjen: ' + JSON.stringify(pr));
+  if ((await page.evaluate(() => TL.sel)) !== 'i1') fail('Skärmens val ska finnas kvar efter utskrift');
+  await page.evaluate(() => { document.getElementById('ganttPrint')?.remove(); document.body.classList.remove('printing-gantt'); });
   // klassiska staplar
   await page.click('[data-tl="classic"]'); await page.waitForTimeout(300);
   if ((await page.locator('.tl-root .g-bar').count()) !== 0 || (await page.locator('.gantt-bar').count()) < 1) fail('Klassiska staplar ska kunna väljas');

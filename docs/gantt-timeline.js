@@ -69,14 +69,18 @@ function tlPace(r, T) {
 const tlPhase = (r, T) => (typeof ganttMode !== "undefined" && ganttMode === "time" && ganttAsOf && typeof ganttPhaseAt === "function") ? ganttPhaseAt(r.it, ganttAsOf) : r.status;
 
 /* ---- Rendering ----------------------------------------------------------------------------------------------------------------------------------------- */
-function tlRender(list, el) {
+function tlRender(list, el, opts = {}) {
   if (!el) return false;
+  const PRINT = !!opts.print, keep = PRINT ? { ...TL } : null;
+  try { return tlRenderIn(list, el, PRINT); } finally { if (keep) Object.assign(TL, keep); }
+}
+function tlRenderIn(list, el, PRINT) {
   const old = tlQ(el, ".tl-wrap"), sl = old ? old.scrollLeft : 0, st = old ? old.scrollTop : 0;
-  TL.el = el; TL.list = list; tlWire(el);
+  if (!PRINT) { TL.el = el; TL.list = list; tlWire(el); } else { TL.sel = null; TL.chain = null; TL.m = []; TL.hl = []; }
   const withDates = list.filter(it => it.startDate && it.endDate);
-  el.className = "gantt-chart tl";
-  if (typeof ganttScrubInfo !== "undefined") ganttScrubInfo = null;
-  if (!withDates.length) { el.innerHTML = `<div class="hint">${isBackendConfigured() ? "Inga objekt med både start- och slutdatum att visa ännu." : emptyMessage()}</div>`; if (typeof ganttInRangeItems !== "undefined") ganttInRangeItems = []; return true; }
+  el.className = "gantt-chart tl" + (PRINT ? " tl-print" : "");
+  if (!PRINT && typeof ganttScrubInfo !== "undefined") ganttScrubInfo = null;
+  if (!withDates.length) { el.innerHTML = `<div class="hint">${isBackendConfigured() ? "Inga objekt med både start- och slutdatum att visa ännu." : emptyMessage()}</div>`; if (!PRINT && typeof ganttInRangeItems !== "undefined") ganttInRangeItems = []; return true; }
   let acts = mergeActivityGroups(withDates);
   let a0, a1;
   const hasRange = !!(ganttRangeStart && ganttRangeEnd);
@@ -89,7 +93,7 @@ function tlRender(list, el) {
   const T = tlDay(tlToday());
   let rows = allRows.filter(r => r.s <= a1 && r.e >= a0);
   const skipped = allRows.length - rows.length;
-  if (typeof ganttInRangeItems !== "undefined") ganttInRangeItems = rows.flatMap(r => r.members);
+  if (!PRINT && typeof ganttInRangeItems !== "undefined") ganttInRangeItems = rows.flatMap(r => r.members);
   if (chainSet) {
     // Kedjan visas över filtren (hela vägen), med datumspannet för kedjans aktiviteter.
     rows = allRows.filter(r => chainSet[r.key]);
@@ -102,9 +106,9 @@ function tlRender(list, el) {
   if (!rows.length) { el.innerHTML = `<div class="tl-root">${tlTools(false)}<div class="hint">${TL.behind ? "Inga aktiviteter ligger efter plan." : `Inga objekt inom ${tlIso(a0)} – ${tlIso(a1)}.`}</div></div>`; return true; }
   const LIM = 2500;
   if (rows.length > LIM) { el.innerHTML = `<div class="tl-root">${tlTools(false)}<div class="hint">Det är ${rows.length} aktiviteter, för många för en läsbar tidslinje. Välj område, entreprenör eller period.</div></div>`; return true; }
-  const tot = a1 - a0 + 1, LW = window.innerWidth <= 760 ? 140 : 230, avail = Math.max(320, el.clientWidth - LW - 18);
+  const tot = a1 - a0 + 1, LW = PRINT ? 170 : (window.innerWidth <= 760 ? 140 : 230), avail = Math.max(320, el.clientWidth - LW - 18);
   const ppd = ganttZoomPxPerDay === null ? Math.max(1, avail / tot) : ganttZoomPxPerDay, tw = Math.ceil(tot * ppd), X = d => (d - a0) * ppd;
-  const HEAD = 44, RH = 26, GH = 24;
+  const HEAD = 44, RH = PRINT ? 20 : 26, GH = PRINT ? 20 : 24;
   // Grupper (Gruppera efter i verktygsraden)
   let groups;
   if (!ganttGroupBy) groups = [{ name: null, rows }];
@@ -154,7 +158,7 @@ function tlRender(list, el) {
   else if (sc && vis[sc.key] !== undefined) { sc.preds.forEach(p => { if (TL.by[p.ref]) dep += arrow(TL.by[p.ref], sc); }); allRows.forEach(r => { if (r.preds.some(p => p.ref === sc.key)) dep += arrow(sc, r); }); }
   const svg = `<svg class="g-dep" width="${tw}" height="${totalH}" aria-hidden="true"><defs><marker id="tlao" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 L7 3.5 L0 7z" class="ah"/></marker><marker id="tlab" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 L7 3.5 L0 7z" class="ah bad"/></marker></defs>${dep}</svg>`;
   let wkd = a0; while (new Date(wkd * 864e5).getUTCDay() !== 6) wkd++;
-  const showT = T >= a0 && T <= a1, asOfOn = typeof ganttMode !== "undefined" && ganttMode === "time" && ganttAsOf, A = asOfOn ? tlDay(ganttAsOf) : null;
+  const showT = T >= a0 && T <= a1, asOfOn = !PRINT && typeof ganttMode !== "undefined" && ganttMode === "time" && ganttAsOf, A = asOfOn ? tlDay(ganttAsOf) : null;
   const lines = `<div class="g-lines" style="width:${tw}px">` +
     (ppd >= 5 ? `<div class="g-wkend" style="left:${X(wkd)}px;width:${Math.max(0, tw - X(wkd))}px;background-image:repeating-linear-gradient(90deg,color-mix(in srgb,var(--tl-fg) 6%,transparent) 0 ${2 * ppd}px,transparent ${2 * ppd}px ${7 * ppd}px)"></div>` : "") +
     (ppd >= 14 ? `<div class="g-wkend" style="left:0;width:${tw}px;background-image:repeating-linear-gradient(90deg,var(--tl-line) 0 1px,transparent 1px ${ppd}px)"></div>` : "") +
@@ -170,11 +174,12 @@ function tlRender(list, el) {
   }
   let wnl = ""; if (ppd * 7 >= 24) for (let mw = mon; mw <= a1; mw += 7) wnl += `<span class="wn" style="left:${X(mw)}px">v${tlIsoWeek(mw)}</span>`;
   let dnl = ""; if (ppd >= 14) for (let dd = a0; dd <= a1; dd++) { const dw = new Date(dd * 864e5).getUTCDay(); dnl += `<span class="dn${dw === 0 || dw === 6 ? " we" : ""}" style="left:${X(dd)}px">${new Date(dd * 864e5).getUTCDate()}</span>`; }
-  const head = `<div class="g-row g-head"><div class="g-lab" style="background:var(--tl-bg)">Aktivitet (${rows.length})</div><div class="g-track" style="height:${HEAD}px">${ticks.map(t => `<span style="left:${X(t[0])}px">${t[1]}</span>`).join("")}${wnl}${dnl}${showT ? `<span class="tl" style="left:${X(T)}px">idag</span>` : ""}${A !== null && A >= a0 && A <= a1 ? `<span class="asof-h" data-asof="1" title="Dra för att byta datum" style="left:${X(A) + Math.max(0, ppd / 2 - 1)}px">${tlEsc(ganttAsOf)}</span>` : ""}</div></div>`;
+  const head = `<div class="g-row g-head"><div class="g-lab" style="background:var(--tl-bg)">Aktivitet (${rows.length})</div><div class="g-track" style="height:${HEAD}px">${ticks.map(t => `<span style="left:${X(t[0])}px">${t[1]}</span>`).join("")}${wnl}${dnl}${showT ? `<span class="tl" style="left:${X(T)}px">idag</span>` : ""}<span class="g-hover" id="tlHover" hidden></span>${A !== null && A >= a0 && A <= a1 ? `<span class="asof-h" data-asof="1" title="Dra för att byta datum" style="left:${X(A) + Math.max(0, ppd / 2 - 1)}px">${tlEsc(ganttAsOf)}</span>` : ""}</div></div>`;
   const note = skipped > 0 && !chainSet ? `<div class="hint">${skipped} aktiviteter utanför det valda datumintervallet visas inte.</div>` : "";
-  el.innerHTML = `<div class="tl-root">${tlTools(true)}<div class="gmode" id="tlMode"></div>${note}<div class="gmap" id="tlMap" title="Översikt: klicka eller dra för att flytta"></div>
+  el.innerHTML = `<div class="tl-root">${PRINT ? "" : tlTools(true) + '<div class="gmode" id="tlMode"></div>' + note + '<div class="gmap" id="tlMap" title="Översikt: klicka eller dra för att flytta"></div>'}
     <div class="tl-wrap"><div class="tl-gantt${wk ? " wk" : ""}" id="tlGantt" style="--lw:${LW}px;--tw:${tw}px;--wk:${wk}px;--wko:${wko}px;width:calc(${LW}px + ${tw}px)">${head}${body}<div class="g-over" style="left:${LW}px;top:0;height:${totalH}px;width:${tw}px">${lines}${svg}${meas}<div class="g-cross" id="tlCross"></div></div></div></div>
-    <div class="ginfo" id="tlInfo"></div></div>`;
+    ${PRINT ? "" : '<div class="ginfo" id="tlInfo"></div>'}</div>`;
+  if (PRINT) return true;
   TL.last = { a0, a1, tot, tw, ppd, LW, T, hasRange };
   const wrap = tlQ(el, ".tl-wrap"); wrap.scrollLeft = sl; wrap.scrollTop = st;
   wrap.addEventListener("scroll", () => { if (!TL.raf) TL.raf = requestAnimationFrame(() => { TL.raf = 0; tlUpdateVp(); }); });
@@ -381,15 +386,23 @@ function tlWire(el) {
     const act = t.closest("[data-act]"); if (act) tlAct(e);
   });
   el.addEventListener("mousemove", e => {
-    if (!tlOn()) return; const c = document.getElementById("tlCross"), tip = document.getElementById("tlTip"), L = TL.last, d = tlDayAt(e);
-    if (d === null || !c) { if (c) c.style.display = "none"; if (tip) tip.hidden = true; return; }
+    if (!tlOn()) return; const c = document.getElementById("tlCross"), tip = document.getElementById("tlTip"), hv = document.getElementById("tlHover"), L = TL.last, d = tlDayAt(e);
+    if (d === null || !c) { if (c) c.style.display = "none"; if (tip) tip.hidden = true; if (hv) hv.hidden = true; return; }
     c.style.display = "block"; c.style.left = ((d - L.a0) * L.ppd) + "px"; c.style.width = Math.max(1, L.ppd) + "px";
-    let txt = tlFmtDay(d) + " · v" + tlIsoWeek(d); const dt = d - L.T; txt += dt === 0 ? " · idag" : " · " + tlSg(dt) + " d från idag";
+    // Datumetikett i den fasta datumlisten: veckodag, datum, år, vecka och avstånd från idag
+    if (hv) {
+      const t = new Date(d * 864e5), dt = d - L.T, wd = ["söndag", "måndag", "tisdag", "onsdag", "torsdag", "fredag", "lördag"][t.getUTCDay()], we = t.getUTCDay() === 0 || t.getUTCDay() === 6;
+      hv.innerHTML = `<b>${wd} ${t.getUTCDate()} ${TL_MN[t.getUTCMonth()]} ${t.getUTCFullYear()}</b><small>v${tlIsoWeek(d)} · ${dt === 0 ? "idag" : tlSg(dt) + " d från idag"}</small>`;
+      hv.classList.toggle("we", we); hv.hidden = false;
+      const w = tlWrap(), half = hv.offsetWidth / 2 + 4, mid = (d - L.a0 + 0.5) * L.ppd, lo = (w ? w.scrollLeft : 0) + half, hi = (w ? w.scrollLeft + w.clientWidth - L.LW : L.tw) - half;
+      hv.style.left = Math.max(lo, Math.min(hi, mid)) + "px";
+    }
     const rw = e.target.closest("[data-row]"), r = rw && TL.by[rw.getAttribute("data-row")];
-    if (r) { txt += " · " + tlShort(r.name, 28); txt += d >= r.s && d <= r.e ? ` dag ${d - r.s + 1} av ${r.e - r.s + 1}` : d < r.s ? ` startar om ${r.s - d} d` : ` slutade för ${d - r.e} d sedan`; }
-    tip.textContent = txt; tip.hidden = false; tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, e.clientX + 14)) + "px"; tip.style.top = (e.clientY + 18) + "px";
+    if (!r) { tip.hidden = true; return; }
+    tip.textContent = tlShort(r.name, 34) + (d >= r.s && d <= r.e ? ` · dag ${d - r.s + 1} av ${r.e - r.s + 1}` : d < r.s ? ` · startar om ${r.s - d} d` : ` · slutade för ${d - r.e} d sedan`);
+    tip.hidden = false; tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, e.clientX + 14)) + "px"; tip.style.top = (e.clientY + 18) + "px";
   });
-  el.addEventListener("mouseleave", () => { const c = document.getElementById("tlCross"), tip = document.getElementById("tlTip"); if (c) c.style.display = "none"; if (tip) tip.hidden = true; TL.active = false; });
+  el.addEventListener("mouseleave", () => { const c = document.getElementById("tlCross"), tip = document.getElementById("tlTip"), hv = document.getElementById("tlHover"); if (c) c.style.display = "none"; if (tip) tip.hidden = true; if (hv) hv.hidden = true; TL.active = false; });
   el.addEventListener("mouseenter", () => { TL.active = true; });
   el.addEventListener("contextmenu", e => { if (!tlOn()) return; const gh = e.target.closest("[data-grp]"); if (gh && typeof openGanttGroupMenu === "function") { e.preventDefault(); openGanttGroupMenu(e, gh.getAttribute("data-grp")); } });
   let down = false;

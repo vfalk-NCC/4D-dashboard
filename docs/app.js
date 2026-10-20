@@ -4355,7 +4355,7 @@ function renderGantt(list, target) {
   if (!target) syncBaselinePicker();
   if (ganttView === "board") { renderGanttBoard(list, target); if (!target) applyGanttModelSel(false); return; }
   // Tidslinjen (gantt-timeline.js) ersätter de gamla staplarna på skärmen; utskriften (target) och "Klassiska staplar" använder den gamla vyn.
-  if (!target && typeof tlRender === "function" && typeof ganttClassic !== "undefined" && !ganttClassic && tlRender(list, el)) return;
+  if (typeof tlRender === "function" && typeof ganttClassic !== "undefined" && !ganttClassic && tlRender(list, el, { print: !!target })) return;
   const withDates = list.filter(it => it.startDate && it.endDate);
 
   if (withDates.length === 0) {
@@ -6566,9 +6566,9 @@ function printGantt(opts) {
       else renderGantt(list, chart);
       chart.classList.add("gp-chart");
       ganttPrintApplyGrid(chart, sec);
-      total += chart.querySelectorAll(".pnote, .gantt-row:not(.gantt-ruler-row):not(.gantt-subrow)").length;
+      total += chart.querySelectorAll(".pnote, .gantt-row:not(.gantt-ruler-row):not(.gantt-subrow), .tl-root .g-row[data-row]").length;
       ganttPrintTableize(chart);
-      if (!chart.querySelector(".pnote, .gantt-bar")) box.classList.add("gp-empty");
+      if (!chart.querySelector(".pnote, .gantt-bar, .g-bar")) box.classList.add("gp-empty");
     });
     if (!total) { root.remove(); alert("Inga aktiviteter inom perioden att skriva ut."); return; }
   } finally {

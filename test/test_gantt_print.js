@@ -57,6 +57,8 @@ seed('plan_items.json', items);
     return e ? r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: Buffer.from(e.content).toString('base64'), sha: e.sha }) }) : r.fulfill({ status: 404, body: '{}' });
   });
   await page.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
+  // Testar utskriften av de klassiska staplarna; den nya tidslinjens utskrift testas i test_gantt_timeline.js.
+  await page.addInitScript(() => localStorage.setItem('4ddash-gantt-classic', '1'));
   await page.addInitScript(() => {
     localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' }));
     localStorage.setItem('4ddash-unlocked', '1');

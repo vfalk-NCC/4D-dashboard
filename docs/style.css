@@ -3066,3 +3066,21 @@ html[data-theme="dark"] { filter: invert(1) hue-rotate(180deg); background: #fff
 html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="color"], .no-invert, .pnote, .gantt-bar, .g-bar, .gantt-legend-dot, .gtm-sw, .gs-swatch, .phb-img canvas) { filter: invert(1) hue-rotate(180deg); }
 @media print { html[data-theme="dark"], html[data-theme="dark"] * { filter: none !important; } }
 #btnTheme { font-size: 14px; }
+
+/* Datumetikett som följer musen i den fasta datumlisten */
+.tl-root .g-head span.g-hover { position: absolute; top: 3px; transform: translateX(-50%); z-index: 9; pointer-events: none; display: flex; flex-direction: column; align-items: center; line-height: 1.15;
+  background: #1d5f8f; color: #fff; padding: 3px 12px 4px; border-radius: 8px; box-shadow: 0 3px 12px rgba(0,0,0,.35); white-space: nowrap; font-size: 13px; }
+.tl-root .g-head span.g-hover[hidden] { display: none; }
+.tl-root .g-head span.g-hover b { font-weight: 700; text-transform: capitalize; letter-spacing: .01em; }
+.tl-root .g-head span.g-hover small { font-size: 10.5px; opacity: .88; font-family: var(--tl-f-mono); }
+.tl-root .g-head span.g-hover.we { background: #b3261e; }
+.tl-root .g-head span.g-hover::after { content: ""; position: absolute; left: 50%; bottom: -5px; margin-left: -5px; border: 5px solid transparent; border-bottom: 0; border-top-color: inherit; border-top-color: #1d5f8f; }
+.tl-root .g-head span.g-hover.we::after { border-top-color: #b3261e; }
+
+/* Utskrift av tidslinjen (Staplar): samma layout som på skärmen, men kompakt, utan verktyg och detaljpanel, och med hela schemat synligt. */
+.gantt-print .tl-root .tl-wrap { max-height: none !important; overflow: visible !important; border: 1px solid #cbd5e1; margin-top: 0; }
+.gantt-print .tl-root .g-row { break-inside: avoid; font-size: 10.5px; }
+.gantt-print .tl-root .g-lab { font-size: 10.5px; }
+.gantt-print .tl-root .g-head { position: static; }
+.gantt-print .tl-root .tl-gantt { max-width: 100%; }
+.gantt-print .tl-root .g-bar { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
