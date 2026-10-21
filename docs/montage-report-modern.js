@@ -66,13 +66,16 @@ function msModernRuntime(D) {
       let t = bi * 36 * 3; faces.forEach(([nm, q]) => [0, 1, 2, 0, 2, 3].forEach(vi => { const v = q[vi]; for (let a = 0; a < 3; a++) { P[t + a] = b[a] + v[a] * d[a]; Nn[t + a] = nm[a]; } t += 3; }));
       let l = bi * 24 * 3; edges.forEach(e => { for (let a = 0; a < 3; a++) { LP[l + a] = b[a] + e[a] * d[a]; LP[l + 3 + a] = b[a] + e[a + 3] * d[a]; } l += 6; }); });
     const ctr = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2], rad = Math.max(1, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2);
-    const G = [], gz = lo[2], gs = Math.max(1, Math.pow(10, Math.round(Math.log10(rad / 4)))), gx0 = Math.floor((lo[0] - rad) / gs) * gs, gy0 = Math.floor((lo[1] - rad) / gs) * gs, gx1 = hi[0] + rad, gy1 = hi[1] + rad;
+    const G = [], gz = lo[2], gs = Math.max(1, Math.pow(10, Math.round(Math.log10(rad / 4)))), gx0 = Math.floor((lo[0] - rad * 0.6) / gs) * gs, gy0 = Math.floor((lo[1] - rad * 0.6) / gs) * gs, gx1 = hi[0] + rad * 0.6, gy1 = hi[1] + rad * 0.6;
     for (let x = gx0; x <= gx1; x += gs) G.push(x, gy0, gz, x, gy1, gz); for (let y = gy0; y <= gy1; y += gs) G.push(gx0, y, gz, gx1, y, gz);
     const mk = (t, src) => { const sh = gl.createShader(t); gl.shaderSource(sh, src); gl.compileShader(sh); return sh; }, prog = (v, f) => { const p = gl.createProgram(); gl.attachShader(p, mk(gl.VERTEX_SHADER, v)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, f)); gl.linkProgram(p); return p; };
-    const p1 = prog("attribute vec3 p;attribute vec3 n;attribute vec4 c;uniform mat4 m;varying vec3 vn;varying vec4 vc;void main(){gl_Position=m*vec4(p,1.);vn=n;vc=c;}", "precision mediump float;varying vec3 vn;varying vec4 vc;uniform float pass;void main(){if(vc.a<.01)discard;if(pass<.5&&vc.a<.99)discard;if(pass>.5&&vc.a>=.99)discard;float d=max(dot(normalize(vn),normalize(vec3(.45,-.55,.75))),0.);float l=.5+.5*d+.12*abs(vn.x);gl_FragColor=vec4(vc.rgb*l,vc.a);}");
+    const p1 = prog("attribute vec3 p;attribute vec3 n;attribute vec4 c;uniform mat4 m;varying vec3 vn;varying vec4 vc;void main(){gl_Position=m*vec4(p,1.);vn=n;vc=c;}", "precision mediump float;varying vec3 vn;varying vec4 vc;uniform float pass;void main(){if(vc.a<.01)discard;if(pass<.5&&vc.a<.99)discard;if(pass>.5&&vc.a>=.99)discard;vec3 n=normalize(vn);float k=max(dot(n,normalize(vec3(.5,-.6,.65))),0.),f=max(dot(n,normalize(vec3(-.6,.4,.2))),0.);float h=.5+.5*n.z;vec3 amb=mix(vec3(.46,.48,.55),vec3(.78,.82,.92),h);vec3 l=amb*.62+vec3(1.,.97,.9)*k*.62+vec3(.55,.62,.8)*f*.18;l*=1.0+.06*n.z;vec3 o=vc.rgb*l;o=mix(o,vec3(dot(o,vec3(.3,.6,.1))),-.08);gl_FragColor=vec4(clamp(o,0.,1.),vc.a);}");
     const p2 = prog("attribute vec3 p;attribute vec4 c;uniform mat4 m;varying vec4 vc;void main(){gl_Position=m*vec4(p,1.);vc=c;}", "precision mediump float;varying vec4 vc;void main(){if(vc.a<.01)discard;gl_FragColor=vc;}");
+    const p3 = prog("attribute vec2 p;varying float y;void main(){gl_Position=vec4(p,.999,1.);y=p.y*.5+.5;}", "precision mediump float;varying float y;uniform vec3 a;uniform vec3 b;void main(){gl_FragColor=vec4(mix(a,b,smoothstep(0.,1.,y)),1.);}");
+    const bBG = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, bBG); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, -1, 1, 1, -1, 1]), gl.STATIC_DRAW);
+    const bGR = gl.createBuffer(), bGRC = gl.createBuffer();
     const buf = (arr, dyn) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, arr, dyn ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW); return b; };
-    const bP = buf(P), bN = buf(Nn), bC = buf(C, 1), bLP = buf(LP), bLC = buf(LC, 1), bG = buf(new Float32Array(G)), bGC = buf(new Float32Array(G.length / 3 * 4).fill(0.6)), U = (p, n) => gl.getUniformLocation(p, n);
+    const bP = buf(P), bN = buf(Nn), bC = buf(C, 1), bLP = buf(LP), bLC = buf(LC, 1), bG = buf(new Float32Array(G)), bGC = buf(new Float32Array(G.length / 3 * 4).fill(0.5).map((v, i) => i % 4 === 3 ? 0.28 : 0.45)), U = (p, n) => gl.getUniformLocation(p, n);
     const bind = (b, p, n, sz) => { const l = gl.getAttribLocation(p, n); if (l < 0) return; gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, sz, gl.FLOAT, false, 0, 0); };
     const mul = (a, b) => { const o = new Array(16); for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { let t = 0; for (let k = 0; k < 4; k++) t += a[i + k * 4] * b[k + j * 4]; o[i + j * 4] = t; } return o; };
     const persp = (f, a, n, fa) => { const t = 1 / Math.tan(f / 2), nf = 1 / (n - fa); return [t / a, 0, 0, 0, 0, t, 0, 0, 0, 0, (fa + n) * nf, -1, 0, 0, 2 * fa * n * nf, 0]; };
@@ -82,16 +85,22 @@ function msModernRuntime(D) {
     const eye = () => [cam.t[0] + cam.dist * Math.cos(cam.el) * Math.cos(cam.az), cam.t[1] + cam.dist * Math.cos(cam.el) * Math.sin(cam.az), cam.t[2] + cam.dist * Math.sin(cam.el)];
     const draw = () => {
       const dpr = Math.min(2, window.devicePixelRatio || 1), w = Math.max(10, Math.round(box.clientWidth * dpr)), h = Math.max(10, Math.round(box.clientHeight * dpr)); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-      gl.viewport(0, 0, w, h); const dk = document.documentElement.classList.contains("dark"), bg = dk ? [0.06, 0.08, 0.13] : [0.94, 0.95, 0.98]; gl.clearColor(bg[0], bg[1], bg[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.viewport(0, 0, w, h); const dk = document.documentElement.classList.contains("dark"); gl.clearColor(0.9, 0.92, 0.96, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.disable(gl.DEPTH_TEST); gl.useProgram(p3); gl.uniform3fv(U(p3, "a"), dk ? [0.1, 0.13, 0.22] : [0.93, 0.95, 0.99]); gl.uniform3fv(U(p3, "b"), dk ? [0.03, 0.04, 0.08] : [0.74, 0.8, 0.9]); bind(bBG, p3, "p", 2); gl.drawArrays(gl.TRIANGLES, 0, 6); gl.enable(gl.DEPTH_TEST);
       const M = mul(persp(0.8, w / h, Math.max(0.05, cam.dist / 200), cam.dist * 60), look(eye(), cam.t));
-      gl.useProgram(p2); gl.uniformMatrix4fv(U(p2, "m"), false, M); bind(bG, p2, "p", 3); bind(bGC, p2, "c", 4); gl.drawArrays(gl.LINES, 0, G.length / 3);
+      gl.useProgram(p2); gl.uniformMatrix4fv(U(p2, "m"), false, M);
+      { const gq = [], gc = [], z = gz - rad * 0.003, quad = (x0, y0, x1, y1, c) => { [[x0, y0], [x1, y0], [x1, y1], [x0, y0], [x1, y1], [x0, y1]].forEach(q => { gq.push(q[0], q[1], z); gc.push(...c); }); };
+        for (let k = 5; k >= 1; k--) { const e = rad * 0.09 * k; quad(lo[0] - e * 0.4, lo[1] - e * 0.4, hi[0] + e, hi[1] + e, [0, 0.02, 0.08, dk ? 0.14 : 0.07]); }
+        gl.disable(gl.DEPTH_TEST); gl.bindBuffer(gl.ARRAY_BUFFER, bGR); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(gq), gl.DYNAMIC_DRAW); gl.bindBuffer(gl.ARRAY_BUFFER, bGRC); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(gc), gl.DYNAMIC_DRAW);
+        bind(bGR, p2, "p", 3); bind(bGRC, p2, "c", 4); gl.drawArrays(gl.TRIANGLES, 0, gq.length / 3); gl.enable(gl.DEPTH_TEST); }
+      bind(bG, p2, "p", 3); bind(bGC, p2, "c", 4); gl.drawArrays(gl.LINES, 0, G.length / 3);
       if (showEdges) { bind(bLP, p2, "p", 3); bind(bLC, p2, "c", 4); gl.drawArrays(gl.LINES, 0, N3 * 24); }
       gl.useProgram(p1); gl.uniformMatrix4fv(U(p1, "m"), false, M); bind(bP, p1, "p", 3); bind(bN, p1, "n", 3); bind(bC, p1, "c", 4);
       gl.depthMask(true); gl.uniform1f(U(p1, "pass"), 0); gl.drawArrays(gl.TRIANGLES, 0, N3 * 36); gl.depthMask(false); gl.uniform1f(U(p1, "pass"), 1); gl.drawArrays(gl.TRIANGLES, 0, N3 * 36); gl.depthMask(true);
     };
     const ask = () => { dirty = true; if (!raf) raf = requestAnimationFrame(frame); };
     const frame = () => { raf = 0; if (want) { const k = 0.16; cam.t = cam.t.map((v, a) => v + (want.t[a] - v) * k); cam.dist += (want.dist - cam.dist) * k; if (Math.hypot(want.t[0] - cam.t[0], want.t[1] - cam.t[1], want.t[2] - cam.t[2]) < rad * 0.002 && Math.abs(want.dist - cam.dist) < rad * 0.002) want = null; dirty = true; } if (dirty) { dirty = false; draw(); } if (want) ask(); };
-    const CL = { done: [0.55, 0.62, 0.72, 1], act: [0.96, 0.62, 0.06, 1], todo: [0.55, 0.75, 0.98, 0.13], ok: [0.06, 0.72, 0.52, 1], bad: [0.9, 0.28, 0.28, 1], sel: [0.31, 0.27, 0.9, 1], edge: [0.1, 0.13, 0.2, 0.85] };
+    const CL = { done: [0.62, 0.69, 0.79, 1], act: [0.96, 0.62, 0.06, 1], todo: [0.55, 0.75, 0.98, 0.13], ok: [0.06, 0.72, 0.52, 1], bad: [0.9, 0.28, 0.28, 1], sel: [0.31, 0.27, 0.9, 1], edge: [0.08, 0.1, 0.18, 0.45] };
     const focusOn = list => { if (!list.length) return; const a = [1e9, 1e9, 1e9], b = [-1e9, -1e9, -1e9]; list.forEach(o => { for (let q = 0; q < 3; q++) { a[q] = Math.min(a[q], o.b[q]); b[q] = Math.max(b[q], o.b[q + 3]); } }); want = { t: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], dist: Math.max(rad * 0.7, Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) * 2.4 + rad * 0.4) }; ask(); };
     const update = () => {
       const d = st.d, cur = st.sel >= 0 ? st.sel : curIdx(d);
@@ -99,7 +108,7 @@ function msModernRuntime(D) {
         const x = S[o.i], p = ph(x, d); let c = null;
         if (p === "done") c = CL.done; else if (p === "act") { const r = Math.max(1, Math.ceil(pct(x, d) / 100 * o.n)); c = o.k < r ? CL.act : (faint ? CL.todo : null); } else c = faint ? CL.todo : null;
         if (state.m[o.key]) c = CL.ok; if (state.c[o.key] && c) c = CL.bad; if (st.obj === o.key) c = CL.sel;
-        const col = c || [0, 0, 0, 0], ec = c ? (c[3] < 0.5 ? [0.3, 0.4, 0.6, 0.35] : (o.i === cur ? [0.05, 0.1, 0.4, 1] : CL.edge)) : [0, 0, 0, 0];
+        const tn = 0.94 + 0.12 * Math.abs((Math.sin(bi * 12.9898) * 43758.5453) % 1), col = c ? (c[3] > 0.5 ? [Math.min(1, c[0] * tn), Math.min(1, c[1] * tn), Math.min(1, c[2] * tn), c[3]] : c) : [0, 0, 0, 0], ec = c ? (c[3] < 0.5 ? [0.3, 0.4, 0.6, 0.35] : (o.i === cur ? [0.05, 0.1, 0.4, 1] : CL.edge)) : [0, 0, 0, 0];
         for (let v = 0; v < 36; v++) C.set(col, (bi * 36 + v) * 4); for (let v = 0; v < 24; v++) LC.set(ec, (bi * 24 + v) * 4);
       });
       gl.bindBuffer(gl.ARRAY_BUFFER, bC); gl.bufferSubData(gl.ARRAY_BUFFER, 0, C); gl.bindBuffer(gl.ARRAY_BUFFER, bLC); gl.bufferSubData(gl.ARRAY_BUFFER, 0, LC);
