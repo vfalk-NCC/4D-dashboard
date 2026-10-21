@@ -253,7 +253,25 @@ seed('plan_item_activities.json', []);
     if ((await p3.evaluate(() => window.__v3.state().cam.az)) === az0) fail('dra roterar 3D-vyn');
     await (await p3.$('#ruler')).scrollIntoViewIfNeeded(); const rb3 = await (await p3.$('#ruler')).boundingBox(); await p3.mouse.move(rb3.x + 300, rb3.y + 30); await p3.mouse.down(); await p3.mouse.move(rb3.x + rb3.width - 40, rb3.y + 30, { steps: 6 }); await p3.mouse.up(); await p3.waitForTimeout(300);
     const b2 = await px(); if (b2.sum === a.sum) fail('tidslinjen ändrar vad som syns i 3D');
-    await p3.click('#ctl1'); await p3.click('#ctl2'); if ((await p3.isVisible('#tlp')) || (await p3.isVisible('#tw'))) fail('tidplan och steg kan fällas ihop'); await p3.click('#ctl1'); await p3.click('#ctl2'); if (!(await p3.isVisible('#tlp')) || !(await p3.isVisible('#tw'))) fail('tidplan och steg kan fällas ut');
+    await p3.click('#ctl1'); if (await p3.isVisible('#tlp')) fail('tidplanen kan fällas ihop'); await p3.click('#ctl1'); if (!(await p3.isVisible('#tlp'))) fail('tidplanen kan fällas ut');
+    await p3.click('#dwb'); if (await p3.isVisible('#drawer')) fail('menyn med steg och objekt kan döljas'); await p3.click('#dwb'); if (!(await p3.isVisible('#drawer'))) fail('menyn kan visas igen');
+    // läge: Steg för steg hoppar sekvens för sekvens, Tidplan följer datumet
+    await p3.click('[data-md="step"]'); { const s0 = await p3.evaluate(() => ({ m: __rep.st.mode, si: __rep.st.si, max: document.getElementById('scr').max })); if (s0.m !== 'step' || s0.max !== '1') fail('steg-läge: ' + JSON.stringify(s0));
+      await p3.click('#bk'); await p3.click('#fw'); const s1 = await p3.evaluate(() => ({ si: __rep.st.si, d: __rep.st.d, bars: [...document.querySelectorAll('[data-b]')].map(b => b.className.split(' ')[1]) })); if (s1.si !== 1 || s1.bars.join() !== 'done,act') fail('nästa steg i steg-läget: ' + JSON.stringify(s1));
+      await p3.fill('#scr', '0'); await p3.dispatchEvent('#scr', 'input'); const s2 = await p3.evaluate(() => ({ si: __rep.st.si, bars: [...document.querySelectorAll('[data-b]')].map(b => b.className.split(' ')[1]) })); if (s2.si !== 0 || s2.bars.join() !== 'act,todo') fail('skjutreglaget hoppar mellan steg: ' + JSON.stringify(s2)); }
+    await p3.click('[data-md="time"]'); if ((await p3.evaluate(() => __rep.st.mode)) !== 'time') fail('tillbaka till tidplanens framdrift');
+    // klick på ganttstapel markerar aktiviteten, Ctrl+klick flera, Esc rensar
+    await p3.click('[data-b="0"]'); if ((await p3.evaluate(() => [...__rep.st.pick].join())) !== '0' || !(await p3.isVisible('#clr'))) fail('klick på stapel markerar aktiviteten');
+    await p3.click('[data-b="1"]', { modifiers: ['Control'] }); if ((await p3.evaluate(() => [...__rep.st.pick].sort().join())) !== '0,1' || (await p3.$$('.bar.pick')).length !== 2) fail('Ctrl+klick markerar flera');
+    await p3.keyboard.press('Escape'); if ((await p3.evaluate(() => __rep.st.pick.size)) !== 0) fail('Esc rensar markeringen');
+    // klick på objekt i 3D-vyn visar infokort inne i modellvyn
+    { const cb2 = await (await p3.$('#cv3')).boundingBox(); let hit = null;
+      for (let gy = 0.1; gy < 0.9 && !hit; gy += 0.05) for (let gx = 0.1; gx < 0.9 && !hit; gx += 0.05) { const x = cb2.x + cb2.width * gx, y = cb2.y + cb2.height * gy; if (await p3.evaluate(([x, y]) => !!window.__v3.pickAt(x, y), [x, y])) hit = { x, y }; }
+      if (!hit) fail('något objekt går att träffa i 3D-vyn'); await p3.mouse.click(hit.x, hit.y); await p3.waitForTimeout(200);
+      const oi = await p3.textContent('#oinf'); if (!(await p3.isVisible('#oinf')) || !oi.includes('Kategori') || !oi.includes('Monterad')) fail('infokort vid klick på objekt: ' + oi.slice(0, 120)); await p3.click('#oix'); if (await p3.isVisible('#oinf')) fail('infokortet kan stängas'); }
+    // helskärm
+    await p3.click('#fs'); await p3.waitForTimeout(300); if (!(await p3.evaluate(() => !!document.fullscreenElement || document.getElementById('vwrap').classList.contains('fsx')))) fail('helskärm'); await p3.click('#fs'); await p3.waitForTimeout(300);
+
     // objektlistan: bocka monterad, kommentar, filter
     await p3.click('.tab[data-t="objs"]'); await p3.click('[data-of="all"]'); const rowsN = (await p3.$$('#tw tr.or')).length; if (rowsN !== 5) fail('objektlistan har 5 rader: ' + rowsN);
     const txt = await p3.textContent('#tw'); if (!txt.includes('D-G2') || !txt.includes('M-G3') || !txt.includes('3600') || !txt.includes('5610') || !txt.includes('4,418') || !txt.includes('Elementmärkning') || /Montageordning|Volym|Objekt\b.*Typ/.test(txt.slice(0, 300))) fail('objektlistan visar nya kolumner: ' + txt.slice(0, 300));
