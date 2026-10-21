@@ -286,6 +286,22 @@ seed('plan_item_activities.json', []);
       await p3.click('#v3g'); await p3.click('#v3ss'); await p3.click('#v3sf'); await p3.click('#v3sm'); await p3.click('#v3g'); await p3.click('#v3ss'); await p3.click('#v3sf'); await p3.click('#v3sm');
       const sf = await p3.textContent('#tw'); if (!sf.includes('FLÄKTHUS 1') || !sf.includes('Fas / område')) fail('Location_phase finns som kolumn: ' + sf.slice(0, 160));
       const ft = await p3.textContent('footer'); if (!ft.includes('Victor Falk NCC') || !ft.includes('4D-dashboard')) fail('sidfot med avsändare: ' + ft); }
+    // Ctrl+klick väljer flera objekt i 3D-vyn och klarmarkerar dem; pågående kan stängas av
+    { await p3.evaluate(() => { __rep.st.pick.clear(); __rep.st.obj = ''; }); await p3.fill('#scr', await p3.evaluate(() => document.getElementById('scr').max)); await p3.dispatchEvent('#scr', 'input'); await p3.waitForTimeout(300);
+      const cb3 = await (await p3.$('#cv3')).boundingBox(), pts = [], keys = new Set();
+      for (let gy = 0.05; gy < 0.9 && pts.length < 2; gy += 0.02) for (let gx = 0.05; gx < 0.95 && pts.length < 2; gx += 0.02) { const x = cb3.x + cb3.width * gx, y = cb3.y + cb3.height * gy, kk = await p3.evaluate(([x, y]) => window.__v3.pickAt(x, y), [x, y]); if (kk && !keys.has(kk)) { keys.add(kk); pts.push({ x, y }); } }
+      if (pts.length < 2) fail('två olika objekt går att träffa');
+      await p3.mouse.click(pts[0].x, pts[0].y); await p3.keyboard.down('Control'); await p3.mouse.click(pts[1].x, pts[1].y); await p3.keyboard.up('Control'); await p3.waitForTimeout(200);
+      if ((await p3.evaluate(() => __rep.st.multi.size)) !== 2 || !(await p3.textContent('#oinf')).includes('2 objekt valda')) fail('Ctrl+klick väljer flera objekt: ' + (await p3.textContent('#oinf')).slice(0, 80));
+      const m0 = await p3.evaluate(() => Object.keys(__rep.state().m).length); await p3.click('[data-bulk="m1"]'); await p3.waitForTimeout(150);
+      const m1 = await p3.evaluate(() => Object.keys(__rep.state().m).length); if (m1 < m0 + 1) fail('klarmarkera alla valda: ' + m0 + ' -> ' + m1);
+      await p3.click('[data-bulk="m0"]'); if ((await p3.evaluate(() => Object.keys(__rep.state().m).length)) !== m0 - 0 && (await p3.evaluate(() => Object.keys(__rep.state().m).length)) > m0) fail('ta bort klarmarkering på alla valda');
+      await p3.click('#oix'); if ((await p3.evaluate(() => __rep.st.multi.size)) !== 0) fail('rensa val');
+      const orange = () => p3.evaluate(() => { const cv = document.getElementById('cv3'), c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height; const g = c.getContext('2d'); g.drawImage(cv, 0, 0); const d = g.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 190 && d[i + 1] > 90 && d[i + 1] < 190 && d[i + 2] < 90) n++; return n; });
+      const o1 = await orange(); await p3.click('#v3sa'); await p3.waitForTimeout(250); const o2 = await orange(); await p3.click('#v3sa'); await p3.waitForTimeout(250);
+      if (!(o1 > 200 && o2 < o1 * 0.2)) fail('pågående kan stängas av (färgade pixlar ' + o1 + ' -> ' + o2 + ')');
+      await p3.evaluate(() => { const i = document.getElementById('v3ac'); i.value = '#00aa00'; i.dispatchEvent(new Event('input', { bubbles: true })); }); await p3.waitForTimeout(250);
+      if ((await orange()) > o1 * 0.2) fail('färg på pågående kan väljas'); }
     // helskärm
     await p3.click('#fs'); await p3.waitForTimeout(300); if (!(await p3.evaluate(() => !!document.fullscreenElement || document.getElementById('vwrap').classList.contains('fsx')))) fail('helskärm'); await p3.click('#fs'); await p3.waitForTimeout(300);
 
