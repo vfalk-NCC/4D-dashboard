@@ -137,12 +137,14 @@ async function msApply() {
     const V = API && API.viewer; if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") return;
     const views = msViews(ms.cur); await msGroups(V, views);
     const cur = views[ms.i]; if (!cur) return;
+    const anyObj = views.some(x => x.g.length); if (ms.noObjs !== !anyObj) { ms.noObjs = !anyObj; msPaintSoon(); }
+    if (!anyObj) { ms.shown = null; return; } // inget steg har objekt i modellen: rör inte modellen
     const done = msMerge(views.filter(x => x.i < ms.i).map(x => x.g)), now = cur.g, fut = ms.future ? msMerge(views.filter(x => x.i > ms.i).map(x => x.g)) : [], vis = msMerge([done, now, fut]);
     const sig = JSON.stringify([ms.cur.id, ms.i, ms.future, ms.follow, vis.map(g => g.modelId + g.rids.length)]); if (ms.shown === sig) return;
     const ents = vis.map(g => ({ modelId: g.modelId, entityIds: g.rids }));
-    if (!ents.length && !done.length && !now.length) { await V.setObjectState(undefined, { visible: "reset" }); await V.setObjectState(undefined, { color: "reset" }); }
-    else {
-      try { await V.isolateEntities(ents); } catch (e1) { await V.setObjectState(undefined, { visible: false }); if (ents.length) await V.setObjectState({ modelObjectIds: msMo(vis) }, { visible: true }); }
+    {  // allt som inte hör till klara steg, aktuellt steg (eller kommande vid "svagt") släcks undan – även när det aktuella steget saknar objekt
+      if (!ents.length) await V.setObjectState(undefined, { visible: false });
+      else { try { await V.isolateEntities(ents); } catch (e1) { await V.setObjectState(undefined, { visible: false }); await V.setObjectState({ modelObjectIds: msMo(vis) }, { visible: true }); } }
       try { await V.setObjectState(undefined, { color: "reset" }); } catch (e) { /* */ }
       if (done.length) await V.setObjectState({ modelObjectIds: msMo(done) }, { color: msColor.done });
       if (fut.length) await V.setObjectState({ modelObjectIds: msMo(fut) }, { color: msColor.fut });
@@ -205,7 +207,8 @@ function msPaint() {
     <div class="ms-camrow"><b>Kameravy för bilder:</b> ${s.cam ? `<span class="ok">sparad ✓</span>` : `<span class="hint">ingen – kameran zoomar till varje stegs objekt, så bilderna blir olika</span>`}<button type="button" data-a="saveSeqCam" title="Ställ in vyn i TC först, tryck sedan här">Spara aktuell vy i TC</button><button type="button" data-a="goSeqCam"${s.cam ? "" : " disabled"}>Gå till vyn</button>${s.cam ? `<button type="button" data-a="clearSeqCam">Rensa</button><label><input type="checkbox" data-sq="camAll"${s.camAll !== false ? " checked" : ""}> Samma vy för alla steg</label>` : ""}</div>`;
   const cmp = s.type === "compose", lay = cmp ? msComposeLayout(s) : null;
   const left = ms.mode === "gantt" ? (cmp ? msComposeGanttHtml(s, lay) : msGanttHtml(s, views)) : ms.mode === "send" ? msSendHtml(s, views) : (cmp ? msPartsHtml(s, lay) : msStepsHtml(s, views));
-  const cur = views[ms.i], player = n ? `<div class="ms-player"><button type="button" data-a="first" aria-label="Första">⏮</button><button type="button" data-a="prev" aria-label="Föregående">◀</button><button type="button" class="ms-play" data-a="play" aria-label="Spela">${ms.play ? "⏸" : "▶"}</button><button type="button" data-a="next" aria-label="Nästa">▶︎</button><button type="button" data-a="last" aria-label="Sista">⏭</button>
+  const warn = !ms.live ? "" : (typeof modelCtl !== "undefined" && !modelCtl.on) ? `<div class="ms-warn3d">3D-styrningen är av – modellen i Trimble Connect ändras inte. <button type="button" data-a="mgOn">Slå på 3D-styrning</button></div>` : ms.noObjs ? `<div class="ms-warn3d">Inget steg har objekt i modellen, så inget kan visas eller släckas. Markera objekt i TC och tryck <b>Sätt från markering</b> på varje steg (eller koppla stegen till aktiviteter).</div>` : "";
+  const cur = views[ms.i], player = n ? `${warn}<div class="ms-player"><button type="button" data-a="first" aria-label="Första">⏮</button><button type="button" data-a="prev" aria-label="Föregående">◀</button><button type="button" class="ms-play" data-a="play" aria-label="Spela">${ms.play ? "⏸" : "▶"}</button><button type="button" data-a="next" aria-label="Nästa">▶︎</button><button type="button" data-a="last" aria-label="Sista">⏭</button>
     <input type="range" class="ms-range" min="1" max="${n}" value="${ms.i + 1}" aria-label="Steg"><span class="ms-cur"><b>${ms.i + 1}/${n}</b> ${msEsc(cur ? msLab(cur) : "")}<small>${cur ? msEsc(cur.s) + " → " + msEsc(cur.e) : ""}</small></span>
     <label title="Visa/färga stegen i 3D-modellen"><input type="checkbox" data-o="live"${ms.live ? " checked" : ""}> 3D</label><label><input type="checkbox" data-o="follow"${ms.follow ? " checked" : ""}> Följ kameran</label><label><input type="checkbox" data-o="future"${ms.future ? " checked" : ""}> Kommande svagt</label><button type="button" data-a="reset3d" title="Visa hela modellen igen">Visa allt</button></div>` : "";
   el.innerHTML = `<div class="ms-root">${top}${meta}${tabs}<div class="ms-main"><div class="ms-left">${left}</div><div class="ms-right">${cmp ? msPartEditorHtml(s, lay) : msEditorHtml(s, views)}</div></div>${player}</div>`;
@@ -427,6 +430,7 @@ function msWire() {
     else if (k === "saveSeqCam") { try { s.cam = await API.viewer.getCamera(); if (s.camAll === undefined) s.camAll = true; ms.shown = null; msTouch(); ms.msg = "Kameravyn är sparad – alla steg tas nu från samma vy (spara sekvensen)"; msPaint(); } catch (err) { modelToast("Kunde inte läsa kameran i TC"); } }
     else if (k === "goSeqCam") { try { await API.viewer.setCamera(s.cam); } catch (err) { modelToast("Kunde inte flytta kameran"); } }
     else if (k === "clearSeqCam") { s.cam = null; ms.shown = null; msTouch(); msPaint(); }
+    else if (k === "mgOn") { if (typeof modelGuardSet === "function") { await modelGuardSet(true); ms.shown = null; msPaint(); msApply(); } }
     else if (k === "logoDel") { ms.logo.src = ""; msLogoSave(); msPaint(); }
     else if (k === "exHtml") msExport("html"); else if (k === "exXml") msExport("xml"); else if (k === "exTxt") msExport("txt");
   };

@@ -191,6 +191,16 @@ seed('plan_item_activities.json', []);
     await p2.click('#fl [data-f="done"]'); const nDone = (await p2.$$('#tb .tr')).length; await p2.click('#fl [data-f="all"]'); const nAll = (await p2.$$('#tb .tr')).length; if (!(nDone > 0 && nDone < nAll)) fail('filtret Klara visar bara klara steg: ' + nDone + '/' + nAll);
     await p2.click('#pl'); await p2.waitForTimeout(900); await p2.click('#pl'); if ((await p2.textContent('#dt')) === d1) fail('spela upp flyttar datum');
     if (e2.length) fail('JS-fel i tidslinjerapporten: ' + e2.join(' | ')); if (process.env.SHOT) await p2.screenshot({ path: '/tmp/tl_report.png', fullPage: true }); await p2.close(); }
+  // Allt annat släcks undan, även när aktuellt steg saknar objekt; varning när 3D-styrningen är av eller inga objekt finns
+  { await page.evaluate(() => { ms.mode = 'steps'; ms.cur = msNewSeq('Släck', msStepsFromFilter()); ms.cur.steps.forEach(x => { x.kind = 'free'; x.start = ''; x.dur = 2; x.cam = null; x.objs = []; }); ms.cur.steps[1].objs = [{ modelId: 'M1', objectId: 'G1' }]; ms.live = true; ms.follow = false; ms.i = 0; ms.shown = null; ms.noObjs = false; window.__calls = []; window.__iso = []; modelCtl.on = true; msPaint(); });
+    await page.evaluate(() => msGo(1)); await page.waitForTimeout(500);
+    if (!(await page.evaluate(() => (window.__iso || []).some(e => e.some(m => m.entityIds.includes('G1')))))) fail('steg med objekt isolerar dem');
+    await page.evaluate(() => { window.__calls = []; window.__iso = []; msGo(0); }); await page.waitForTimeout(500);
+    const hid = await page.evaluate(() => (window.__calls || []).some(c => c.b && c.b.visible === false)), iso0 = await page.evaluate(() => (window.__iso || []).length);
+    if (!hid || iso0) fail('steg utan objekt släcker allt annat (inte visa allt): ' + JSON.stringify(await page.evaluate(() => window.__calls)));
+    await page.evaluate(() => { modelCtl.on = false; msPaint(); }); if (!(await page.$('.ms-warn3d [data-a="mgOn"]'))) fail('varning när 3D-styrningen är av');
+    await page.evaluate(() => { modelCtl.on = true; ms.cur.steps.forEach(x => { x.objs = []; }); ms.shown = null; ms.noObjs = false; msApply(); }); await page.waitForTimeout(400);
+    await page.evaluate(() => msPaint()); if (!(await page.evaluate(() => /Inget steg har objekt/.test(document.querySelector('.ms-warn3d') ? document.querySelector('.ms-warn3d').innerText : '')))) fail('varning när inga steg har objekt'); }
   // Ladda om: sparade sekvenser finns kvar, öppna och ta bort
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
   await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-cards .ms-card');
