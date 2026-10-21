@@ -82,11 +82,11 @@ seed('plan_items.json', [
       await dl.saveAs(process.env.PHB_OUT + '/foto.pdf');
       const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('#phbPng')]);
       await dl2.saveAs(process.env.PHB_OUT + '/foto.png');
-      // Punkten (ankaret) är låst till objektet och kan inte dras bort från det.
+      // Punkten (ankaret) går att flytta för hand (Victor 2026-10-21: "låt mig flytta insättningspunkten").
       { const g = await page.evaluate(() => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.cards[st.cards.length - 1], r = cv.getBoundingClientRect(); return { ax: c.ax, ay: c.ay, x: r.left + c.ax * r.width / st.W, y: r.top + c.ay * r.height / st.H, f: r.width / st.W }; });
         await page.mouse.move(g.x, g.y); await page.mouse.down(); await page.mouse.move(g.x + 40, g.y + 25, { steps: 4 }); await page.mouse.up();
         const g2 = await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.cards[st.cards.length - 1]; return { ax: c.ax, ay: c.ay, x: c.x, y: c.y }; });
-        if (Math.abs(g2.ax - g.ax) > 0.5 || Math.abs(g2.ay - g.ay) > 0.5) fail('Punkten är låst till objektet och ska inte kunna flyttas: ' + JSON.stringify({ g, g2 })); }
+        if (Math.abs(g2.ax - g.ax - 40 / g.f) > 2 || Math.abs(g2.ay - g.ay - 25 / g.f) > 2) fail('Punkten ska gå att flytta för hand: ' + JSON.stringify({ g, g2 })); }
       // Ta bort en bubbla: ✕ vid hovring, högerklick, Delete och Ångra.
       const where = async i => page.evaluate(i => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.cards[i], r = cv.getBoundingClientRect(); return { x: r.left + (c.x + c.W / 2) * r.width / st.W, y: r.top + (c.y + c.h / 2) * r.height / st.H, cx: r.left + (c.x + c.W - 2 * st.k) * r.width / st.W, cy: r.top + (c.y + 2 * st.k) * r.height / st.H }; }, i);
       let w = await where(0); await page.mouse.move(w.x, w.y); await page.waitForTimeout(100); await page.mouse.click(w.cx, w.cy);
@@ -194,7 +194,21 @@ seed('plan_items.json', [
       await page.click('#phbVwUse'); await page.waitForFunction(() => window.__setCams > 0, null, { timeout: 8000 }); await page.waitForTimeout(900);
       const camBack = await page.evaluate(() => JSON.stringify(window.__cam) === JSON.stringify(window.__camSaved)); if (!camBack) fail('Kameran ska flyttas tillbaka till den sparade vyn: ' + JSON.stringify(await page.evaluate(() => [window.__cam, window.__camSaved])));
       const anc = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return [c.ax, c.ay, window.__anc[0], window.__anc[1]]; });
-      if (Math.abs(anc[0] - anc[2]) > 1 || Math.abs(anc[1] - anc[3]) > 1) fail('Insättningspunkten är låst till objektet och ska ligga i objektets läge när en vy läses in: ' + JSON.stringify(anc));
+      if (Math.abs(anc[0] - anc[2]) > 1 || Math.abs(anc[1] - anc[3]) > 1) fail('Oflyttad insättningspunkt ska ligga i objektets läge när en vy läses in: ' + JSON.stringify(anc));
+      // Flytta punkten för hand, spara vyn och läs in den: punkten behåller sitt läge; dubbelklick återställer.
+      { const g = await page.evaluate(() => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.ocards[0], r = cv.getBoundingClientRect(); return { ax: c.ax, ay: c.ay, x: r.left + c.ax * r.width / st.W, y: r.top + c.ay * r.height / st.H, f: r.width / st.W }; });
+        await page.mouse.move(g.x, g.y); await page.mouse.down(); await page.mouse.move(g.x + 30, g.y + 20, { steps: 4 }); await page.mouse.up();
+        const m1 = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return { ax: c.ax, ay: c.ay, free: c.free }; });
+        if (!m1.free || Math.abs(m1.ax - g.ax - 30 / g.f) > 2) fail('objektbubblans punkt går att flytta: ' + JSON.stringify({ g, m1 }));
+        await page.fill('#phbVwName', 'Flyttad'); await page.click('#phbVwSave'); await page.waitForTimeout(300);
+        await page.selectOption('#phbVwSel', { label: 'Flyttad' }); await page.click('#phbVwUse'); await page.waitForTimeout(1200);
+        const m2 = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return { ax: c.ax, ay: c.ay }; });
+        if (Math.abs(m2.ax - m1.ax) > 2 || Math.abs(m2.ay - m1.ay) > 2) fail('flyttad punkt behåller sitt läge efter inläsning: ' + JSON.stringify({ m1, m2 }));
+        const g3 = await page.evaluate(() => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.ocards[0], r = cv.getBoundingClientRect(); return { x: r.left + c.ax * r.width / st.W, y: r.top + c.ay * r.height / st.H }; });
+        await page.mouse.dblclick(g3.x, g3.y); await page.waitForTimeout(200);
+        const m3 = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return { ax: c.ax, ay: c.ay, free: c.free }; });
+        if (m3.free || Math.abs(m3.ax - g.ax) > 2 || Math.abs(m3.ay - g.ay) > 2) fail('dubbelklick återställer punkten: ' + JSON.stringify({ g, m3 }));
+        await page.selectOption('#phbVwSel', { label: 'Flyttad' }); await page.click('#phbVwDel'); await page.waitForTimeout(200); }
       const vw = await page.evaluate(() => { const s = document.getElementById('phbCv')._state(); return { n: s.ocards.length, t: (s.ocards[0] || {}).text }; });
       if (vw.n !== 1 || vw.t !== 'Egen text här') fail('Sparad vy: ' + JSON.stringify(vw));
       await page.selectOption('#phbOcTSrc', 'area'); await page.click('#phbOcQty'); await page.waitForTimeout(500);

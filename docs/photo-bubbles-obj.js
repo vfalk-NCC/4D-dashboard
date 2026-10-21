@@ -224,7 +224,7 @@ function phbOcSide(api) {
     h += `<button type="button" id="phbOcNew" title="Markera först ett eller flera objekt i modellen i Trimble Connect">＋ Bubbla från markerade i TC</button><div class="phb-note">${(cur.ocards || []).length ? `${cur.ocards.length} objektbubbl${cur.ocards.length === 1 ? "a" : "or"} på bilden. ` : ""}Bubblor med valfria egenskaper (UDA) från modellen, egen text och AMA-koden från mängdavtagningen.</div><div id="phbOcMsg" class="phb-note"></div>`;
   }
   h += `<div class="phb-row"><button type="button" id="phbOcQty" title="Läser mängderna och AMA-koderna från mängdavtagningen – samma som Läs in i mängdavtagningen, utan att lämna fotot">Läs in mängder</button></div><div id="phbOcQtyMsg" class="phb-note">${typeof qty !== "undefined" && qty.objs && qty.objs.length ? `${qty.objs.length} objekt inlästa.` : "Mängder är inte inlästa – fälten ◆ Mängd och ◆ AMA-kod behöver dem."}</div>`;
-  if (cur.ocards && cur.ocards.some(c => c.free)) h += `<div class="phb-note">Bubblor med lös punkt: dra punkten på objektet i bilden.</div>`;
+  if (cur.ocards && cur.ocards.some(c => c.free && !c.manual)) h += `<div class="phb-note">Bubblor med lös punkt: dra punkten på objektet i bilden.</div>`;
   return h + `</div>`;
 }
 function phbOcSelSide(api, oc) {
@@ -311,8 +311,8 @@ function phbVwApply(st, v) {
     const oc = { id: st.nextId++, objs: d.objs, fields: d.fields.slice(), text: d.text || "", title: d.title || "", sum: d.sum !== false, dec: d.dec == null ? 2 : d.dec, titleSrc: d.titleSrc || "", scale: d.scale || 1, colOver: d.colOver || null, x: d.fx * W, y: d.fy * H, ax: d.fax * W, ay: d.fay * H, free: !!d.free };
     // Insättningspunkten behåller sitt läge: standardläget i bilden plus din justering (så den hoppar inte när vyn läses in).
     phbOcEnsureCam(st, oc.objs); const q = phbOcAnchor(st, oc.objs);
-    // Punkten är låst till objektet (Victor 2026-10-21): ingen justering lagras eller läses in för bubblor med känt läge.
-    if (q && (!d.free || (d.ofx !== undefined && d.ofy !== undefined))) { const ax = !d.free ? q.x : q.x + d.ofx * W, ay = !d.free ? q.y : q.y + d.ofy * H; if (ax > -0.05 * W && ax < 1.05 * W && ay > -0.05 * H && ay < 1.05 * H) { oc.ax = ax; oc.ay = ay; oc.free = !!d.free; } }
+    // Punkten följer objektet tills den flyttas för hand; då lagras justeringen (ofx/ofy) och läses in igen.
+    if (q && (!d.free || (d.ofx !== undefined && d.ofy !== undefined))) { const ax = !d.free ? q.x : q.x + d.ofx * W, ay = !d.free ? q.y : q.y + d.ofy * H; if (ax > -0.05 * W && ax < 1.05 * W && ay > -0.05 * H && ay < 1.05 * H) { oc.ax = ax; oc.ay = ay; oc.free = !!d.free; oc.manual = !!d.free; } }
     return oc;
   });
   st.tables = (v.tables || []).map(d => ({ ...d, id: st.nextId++, x: d.fx * W, y: d.fy * H }));

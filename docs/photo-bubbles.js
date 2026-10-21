@@ -341,7 +341,7 @@ async function phbBuild(blob, cam, scopeOverride) {
 }
 /* Mått om efter en ändring (skala, text, fält). Bubblan behåller sin övre vänstra hörn. */
 function phbRemeasure(st) { st.cards.forEach(c => phbCardMeasure(c, st)); if (typeof phbOcMeasureAll === "function") phbOcMeasureAll(st); if (typeof phbQtMeasureAll === "function") phbQtMeasureAll(st); st.texts.forEach(t => phbTextMeasure(t, st)); phbListMeasure(st); phbDateMeasure(st); }
-/* Insättningspunkten är låst till objektet när den kommer från objektets läge i bilden; bara bubblor utan känt läge ("fri") går att flytta för hand. */
+/* Insättningspunkten följer objektets läge i bilden tills man flyttar den för hand (då blir den "fri" och behåller sitt läge; dubbelklick på punkten återställer). */
 const phbDotFree = c => !!c.free;
 /* Närmaste punkt på kortets kant mot punkten – därifrån går linjen. */
 function phbLeaderStart(c) {
@@ -684,7 +684,6 @@ function phbPreview(st) {
     if (e.button === 2) return; const p = pos(e), hv = phbObjects(cur).find(i => i.o === cur.hover);
     if (hv && onClose(p, hv)) { removeObj(hv); e.preventDefault(); return; }
     const dot = hitDot(p);
-    if (dot && !hit(p) && !phbDotFree(dot)) { const was0 = cur.sel; cur.sel = dot; draw(); if (was0 !== dot) renderSide(); e.preventDefault(); return; } // punkten är låst till objektet – kan inte flyttas (Victor 2026-10-21)
     if (dot && !hit(p)) { const was0 = cur.sel; cur.sel = dot; drag = { dot: true, o: dot, dx: p.x - dot.ax, dy: p.y - dot.ay }; cv.setPointerCapture(e.pointerId); cv.style.cursor = "move"; draw(); if (was0 !== dot) renderSide(); e.preventDefault(); return; }
     const it = hit(p); if (!it) { if (cur.sel) { cur.sel = null; draw(); renderSide(); } return; }
     const was = cur.sel; cur.sel = it.o; drag = { o: it.o, dx: p.x - it.o.x, dy: p.y - it.o.y };
@@ -693,10 +692,11 @@ function phbPreview(st) {
   });
   cv.addEventListener("pointermove", e => {
     const p = pos(e);
-    if (!drag) { const it = hit(p), o = it ? it.o : null; if (o !== cur.hover) { cur.hover = o; draw(); } const dt = !it && hitDot(p); cv.style.cursor = it ? (onClose(p, it) ? "pointer" : "grab") : dt ? (phbDotFree(dt) ? "move" : "default") : ""; return; }
-    if (drag.dot) { drag.o.ax = Math.max(0, Math.min(cur.W, p.x - drag.dx)); drag.o.ay = Math.max(0, Math.min(cur.H, p.y - drag.dy)); draw(); return; }
+    if (!drag) { const it = hit(p), o = it ? it.o : null; if (o !== cur.hover) { cur.hover = o; draw(); } const dt = !it && hitDot(p); cv.style.cursor = it ? (onClose(p, it) ? "pointer" : "grab") : dt ? "move" : ""; return; }
+    if (drag.dot) { drag.o.ax = Math.max(0, Math.min(cur.W, p.x - drag.dx)); drag.o.ay = Math.max(0, Math.min(cur.H, p.y - drag.dy)); if (!drag.o.free) { drag.o.free = true; drag.o.manual = true; } draw(); return; }
     drag.o.x = Math.max(0, Math.min(cur.W - drag.o.W, p.x - drag.dx)); drag.o.y = Math.max(0, Math.min(cur.H - drag.o.h, p.y - drag.dy)); draw();
   });
+  cv.addEventListener("dblclick", e => { const p = pos(e), dot = hitDot(p); if (!dot || hit(p) || !dot.manual || !dot.objs || typeof phbOcAnchor !== "function") return; phbOcEnsureCam(cur, dot.objs); const q = phbOcAnchor(cur, dot.objs); if (!q) return; dot.ax = q.x; dot.ay = q.y; dot.free = false; dot.manual = false; draw(); modelToast("Punkten är tillbaka på objektet"); });
   cv.addEventListener("pointerleave", () => { if (!drag && cur.hover) { cur.hover = null; draw(); } });
   const up = () => { drag = null; cv.style.cursor = ""; }; cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
   cv.addEventListener("contextmenu", e => { e.preventDefault(); removeObj(hit(pos(e))); });
