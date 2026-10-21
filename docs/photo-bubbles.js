@@ -29,7 +29,7 @@ function phbCamCandidates(cam) {
   const ortho = phbCamIsOrtho(cam), vhs = ortho ? phbOrthoHeights(cam) : [];
   const pos0 = phbV3(cam.position || cam.eye || cam.pos);
   if (!phbOkVec(pos0)) return out;
-  const up = phbV3(cam.up || cam.upVector) || { x: 0, y: 0, z: 1 };
+  const up = phbV3(cam.up || cam.upVector || cam.upDirection) || { x: 0, y: 0, z: 1 };
   let fov = Number(cam.fov ?? cam.fovY ?? cam.fieldOfView ?? cam.verticalFov ?? 60); if (!(fov > 0)) fov = 60; if (fov < 3.2) fov = fov * 180 / Math.PI;
   const fovs = [fov]; // (vågrät vinkel provas också, se phbScore)
   const tgt = phbV3(cam.target || cam.lookAt || cam.look_at || cam.center), dir = phbV3(cam.direction || cam.dir || cam.forward);
@@ -79,7 +79,15 @@ function phbPickCamera(cam, pts, W, H) {
   return best && Math.floor(bs) >= Math.max(1, Math.ceil(pts.length * 0.6)) ? best : null;
 }
 
-/* Aktiviteternas lägen i modellen (meter): överkant mitt på objektens samlade box. */
+/* Punkten ska ligga PÅ ett objekt, inte i luften mellan flera eller ovanför utstickande delar (Victor 2026-10-21): objektet med störst volym väljs. */
+let phbAnchorMode = "top"; // "top" = överkant, "mid" = mitt i objektet (valbart i bildredigeraren)
+function phbTopOnObject(boxes, lo, hi) {
+  const cx = (lo.x + hi.x) / 2, cy = (lo.y + hi.y) / 2, vol = b => Math.max(1e-9, (b.max.x - b.min.x) * (b.max.y - b.min.y) * (b.max.z - b.min.z));
+  let best = boxes[0], bv = -1, bd = Infinity; // huvuddelen: störst volym (armeringsjärn och dubbar sticker annars ut gruppens box), därefter närmast mitten
+  boxes.forEach(b => { const v = vol(b), d = Math.hypot((b.min.x + b.max.x) / 2 - cx, (b.min.y + b.max.y) / 2 - cy); if (v > bv * 1.02 || (v >= bv * 0.98 && d < bd)) { bv = Math.max(bv, v); bd = d; best = b; } });
+  return { x: (best.min.x + best.max.x) / 2, y: (best.min.y + best.max.y) / 2, z: phbAnchorMode === "mid" ? (best.min.z + best.max.z) / 2 : best.max.z };
+}
+/* Aktiviteternas lägen i modellen (meter): överkant mitt på det objekt som ligger mest centralt i gruppen. */
 async function phbAnchors(acts) {
   const V = API && API.viewer; const out = [];
   if (!V || typeof V.getObjectBoundingBoxes !== "function") return out;
@@ -97,7 +105,7 @@ async function phbAnchors(acts) {
     const bs = (a.members || [a]).map(m => boxOf.get(`${m.modelId}|${m.objectId}`)).filter(Boolean); if (!bs.length) return;
     const lo = { x: Infinity, y: Infinity, z: Infinity }, hi = { x: -Infinity, y: -Infinity, z: -Infinity };
     bs.forEach(b => ["x", "y", "z"].forEach(k => { lo[k] = Math.min(lo[k], b.min[k]); hi[k] = Math.max(hi[k], b.max[k]); }));
-    out.push({ a, P: { x: (lo.x + hi.x) / 2, y: (lo.y + hi.y) / 2, z: hi.z } });
+    out.push({ a, P: phbTopOnObject(bs, lo, hi) });
   });
   return out;
 }
@@ -502,7 +510,7 @@ function phbPreview(st) {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").replace(/^(\d{8})(\d{4})$/, "$1-$2");
   d.innerHTML = `<div class="phb-box"><div class="phb-main"><div class="phb-img"><canvas id="phbCv" width="${st.W}" height="${st.H}"></canvas></div><aside class="phb-side" id="phbSide"></aside></div>
     <div class="phb-bar"><span class="phb-info" id="phbInfo"></span>
-    <label class="phb-sel" title="Om punkterna hamnar fel: prova Parallell (ortogonal vy i Trimble Connect)">Vy <select id="phbProj"><option value="auto">Auto</option><option value="persp">Perspektiv</option><option value="ortho">Parallell</option></select></label><button type="button" id="phbCamCopy" title="Kopiera kamerans data (för felsökning av punkternas läge)">Kameradata</button>
+    <label class="phb-sel" title="Om punkterna hamnar fel: prova Parallell (ortogonal vy i Trimble Connect)">Vy <select id="phbProj"><option value="auto">Auto</option><option value="persp">Perspektiv</option><option value="ortho">Parallell</option></select></label><label class="phb-sel" title="Var på objektet punkten ska sitta">Punkt <select id="phbAnch"><option value="top">Överkant</option><option value="mid">Mitt i objektet</option></select></label><button type="button" id="phbCamCopy" title="Kopiera kamerans data (för felsökning av punkternas läge)">Kameradata</button>
     <label class="phb-sel">Visa <select id="phbScope"><option value="auto">Markerade, annars pågående</option><option value="marked">Bara markerade</option><option value="active">Pågående</option><option value="all">Alla i schemat</option></select></label>
     <span class="phb-zoom" title="Zooma i förhandsvisningen (mushjul, Ctrl +/−). Panorera: mellanklick-dra, Mellanslag-dra eller rullningslisterna"><button type="button" id="phbZm" aria-label="Zooma ut">−</button><button type="button" id="phbZv" aria-label="Anpassa till fönstret">100 %</button><button type="button" id="phbZp" aria-label="Zooma in">+</button></span><button type="button" id="phbUndo" class="hidden" title="Ta tillbaka den senast borttagna bubblan (Ctrl+Z)">↶ Ångra borttagning</button><button type="button" id="phbPdf" class="primary" title="Foto + bubblor, lista och texter som flyttbara stämplar i egna lager – flytta dem i PDF-läsaren">Spara PDF</button><button type="button" id="phbPng">Spara PNG</button><button type="button" id="phbClose">Stäng</button></div></div>`;
   (document.fullscreenElement || document.body).appendChild(d);
@@ -690,12 +698,14 @@ function phbPreview(st) {
   const close = () => { d.remove(); document.removeEventListener("keydown", keys, true); };
   d.querySelector("#phbClose").onclick = close; d.addEventListener("pointerdown", e => { if (e.target === d) close(); });
   d.querySelector("#phbCamCopy").onclick = async () => { const t = JSON.stringify(phbLast && phbLast.cam, null, 1); try { await navigator.clipboard.writeText(t); modelToast("Kameradata kopierad"); } catch (e) { prompt("Kopiera kameradata", t); } };
-  { const ps = d.querySelector("#phbProj"); ps.value = phbProj; ps.onchange = async () => {
-      phbProj = ps.value;
+  { const ps = d.querySelector("#phbProj"), an = d.querySelector("#phbAnch"); ps.value = phbProj; an.value = phbAnchorMode;
+    const rebuild = async what => {
       try { const n = await phbBuild(phbLast.blob, phbLast.cam, d.querySelector("#phbScope").value); n.ocards = cur.ocards || []; n.tables = cur.tables || []; n.camC = n.camC || null;
         n.ocards.forEach(c => { if (!c.free && typeof phbOcAnchor === "function") { phbOcEnsureCam(n, c.objs); const q = phbOcAnchor(n, c.objs); if (q) { c.ax = q.x; c.ay = q.y; } } });
-        phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); modelToast(phbProj === "auto" ? "Vy: auto" : phbProj === "ortho" ? "Vy: parallell – punkterna är räknade om" : "Vy: perspektiv – punkterna är räknade om");
-      } catch (err) { modelToast("Kunde inte byta vy: " + ((err && err.message) || err)); } }; }
+        phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); modelToast(what);
+      } catch (err) { modelToast("Kunde inte räkna om punkterna: " + ((err && err.message) || err)); } };
+    ps.onchange = () => { phbProj = ps.value; rebuild(phbProj === "auto" ? "Vy: auto" : phbProj === "ortho" ? "Vy: parallell – punkterna är räknade om" : "Vy: perspektiv – punkterna är räknade om"); };
+    an.onchange = () => { phbAnchorMode = an.value; rebuild(phbAnchorMode === "mid" ? "Punkterna ligger mitt i objekten" : "Punkterna ligger på objektens överkant"); }; }
   d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); n.ocards = cur.ocards || []; n.tables = cur.tables || []; phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
   const dl = (blob, ext) => { const url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = `4D-foto-${stamp}.${ext}`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); };
   d.querySelector("#phbPng").onclick = () => { cur.ui = false; phbRender(ctx, cur); cv.toBlob(b => { cur.ui = true; draw(); dl(b, "png"); }, "image/png"); };

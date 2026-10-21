@@ -169,7 +169,7 @@ function phbOcAnchor(st, objs) {
   const bs = objs.map(o => o.box).filter(Boolean); if (!bs.length || !st.camC) return null;
   const lo = { x: Infinity, y: Infinity, z: Infinity }, hi = { x: -Infinity, y: -Infinity, z: -Infinity };
   bs.forEach(b => ["x", "y", "z"].forEach(k => { lo[k] = Math.min(lo[k], b.min[k]); hi[k] = Math.max(hi[k], b.max[k]); }));
-  return phbProject(st.camC, { x: (lo.x + hi.x) / 2, y: (lo.y + hi.y) / 2, z: hi.z }, st.W, st.H);
+  return phbProject(st.camC, phbTopOnObject(bs, lo, hi), st.W, st.H);
 }
 /* Kameran tas ur fotots kamera även när inga aktiviteter fanns att räkna ut den med. */
 function phbOcEnsureCam(st, objs) {

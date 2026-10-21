@@ -170,6 +170,17 @@ seed('plan_items.json', [
           const au = phbPickCamera({ position: cam.position, target: cam.target, up: cam.up, projectionType: 'orthographic' }, pts, W, H);
           return { ortho: !!(c && c.ortho), dx: q && q.x - W / 2, cx: q0 && q0.x, persp: !!(pe && !pe.ortho), auto: !!(au && au.ortho && au.vh > 0) }; });
         if (!r.ortho || Math.abs(r.dx - 250) > 2 || Math.abs(r.cx - 1000) > 1 || !r.persp || !r.auto) fail('Parallellprojektion: ' + JSON.stringify(r)); }
+      { const r = await page.evaluate(() => { const bx = (x, w, h = 3) => ({ min: { x, y: 0, z: 0 }, max: { x: x + w, y: 2, z: h } }), objs = [{ box: bx(0, 2) }, { box: bx(10, 4) }, { box: bx(14, 0.2, 8) }];
+          const cam = phbPickCamera({ position: { x: 7, y: -40, z: 20 }, lookAt: { x: 7, y: 1, z: 1 }, upDirection: { x: 0, y: 0, z: 1 }, projectionType: 'perspective', fieldOfView: 60 }, [{ x: 7, y: 1, z: 3 }, { x: 11, y: 1, z: 3 }, { x: 1, y: 1, z: 3 }], 2000, 1000);
+          const st = { camC: cam, W: 2000, H: 1000 }; const q = phbOcAnchor(st, objs), qB = phbProject(cam, { x: 12, y: 1, z: 3 }, 2000, 1000);
+          return { q, qB, one: phbOcAnchor(st, [objs[0]]), oneExp: phbProject(cam, { x: 1, y: 1, z: 3 }, 2000, 1000) }; });
+        if (!r.q || Math.abs(r.q.x - r.qB.x) > 0.5 || Math.abs(r.q.y - r.qB.y) > 0.5 || Math.abs(r.one.x - r.oneExp.x) > 0.5) fail('Punkten ska ligga på huvudobjektet (störst volym): ' + JSON.stringify(r)); }
+      { const r = await page.evaluate(() => { // Trimble Connects verkliga kameraformat (Victor 2026-10-21)
+          const cam = { position: { x: 169133.54881845822, y: 7456772.143193085, z: 480.1904816832895 }, lookAt: { x: 169132.6587369766, y: 7456771.8760279175, z: 479.82118812867105 }, upDirection: { x: -0.353703678780377, y: -0.10616702454128912, z: 0.9293127947667983 }, quaternion: { x: -0.66, y: 0.49, z: 0.33, w: -0.45 }, pitch: 1.1925476014359826, yaw: 1.8623981617542575, projectionType: 'perspective', fieldOfView: 60, orthoSize: 1 };
+          const f = { x: cam.lookAt.x - cam.position.x, y: cam.lookAt.y - cam.position.y, z: cam.lookAt.z - cam.position.z }, L = Math.hypot(f.x, f.y, f.z), P = { x: cam.position.x + f.x / L * 20, y: cam.position.y + f.y / L * 20, z: cam.position.z + f.z / L * 20 };
+          const pts = [P, { x: P.x + 3, y: P.y - 4, z: P.z }, { x: P.x - 2, y: P.y + 5, z: P.z - 1 }], c = phbPickCamera(cam, pts, 1800, 960), q = c && phbProject(c, P, 1800, 960);
+          return { ok: !!c, ortho: !!(c && c.ortho), why: c && c.why, x: q && q.x, y: q && q.y }; });
+        if (!r.ok || r.ortho || r.why !== 'mål' || Math.abs(r.x - 900) > 0.5 || Math.abs(r.y - 480) > 0.5) fail('Verkligt TC-kameraformat: ' + JSON.stringify(r)); }
       await page.evaluate(() => localStorage.removeItem('4ddash-phb-oc-preset'));
       await page.click('#phbOcDel'); await page.waitForTimeout(100);
       // TC-kameran ändras efter att vyn sparats – "Använd" ska flytta tillbaka den och ta nytt foto
