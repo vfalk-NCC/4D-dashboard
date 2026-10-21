@@ -98,7 +98,7 @@ seed('plan_item_activities.json', []);
   const [dl1] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exXml"]')]);
   const xml = fs.readFileSync(await dl1.path(), 'utf8'); if (!/<Project/.test(xml) || !xml.includes('Stål SF1') || xml.includes('Platta SF1')) fail('XML med bara flyttade: ' + xml.slice(0, 200));
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exHtml"]')]);
-  const html = fs.readFileSync(await dl2.path(), 'utf8'); if (!html.includes('Vägg SF1') || !html.includes('förslag')) fail('HTML-förslag');
+  const html = fs.readFileSync(await dl2.path(), 'utf8'); if (!html.includes('Vägg SF1') || !html.includes('montageordning')) fail('HTML-rapport');
   // 3D: stega i sekvensen
   await page.evaluate(() => { ms.mode = 'steps'; ms.live = true; ms.i = 0; ms.shown = null; window.__iso = []; msPaint(); });
   await page.click('[data-a="next"]'); await page.waitForTimeout(500);
@@ -133,6 +133,7 @@ seed('plan_item_activities.json', []);
   await page.click('[data-a="save"]'); await page.waitForTimeout(500);
   if (!seqs().some(x => x.type === 'compose' && x.parts.length === 2)) fail('sammansättningen sparad');
   if (process.env.SHOT) await (await page.$('.ms-root')).screenshot({ path: '/tmp/ms_compose.png' });
+  if (process.env.SHOT) { const h = await page.evaluate(() => { const v = msViews(ms.cur), imgs = {}; v.forEach((x, i) => { const c = document.createElement('canvas'); c.width = 480; c.height = 270; const g = c.getContext('2d'); g.fillStyle = `hsl(${i * 16} 40% 80%)`; g.fillRect(0, 0, 480, 270); g.fillStyle = `hsl(${i * 16} 60% 40%)`; for (let k = 0; k <= i; k++) g.fillRect(20 + (k % 11) * 40, 220 - Math.floor(k / 11) * 70, 32, 50); g.fillStyle = '#000'; g.font = '20px sans-serif'; g.fillText('Steg ' + (i + 1), 12, 28); imgs[x.st.id] = c.toDataURL('image/jpeg', 0.6); }); ms.cur.steps.slice(0, 3).forEach((st, k) => { st.note = 'Anteckning: kontrollera mått och lyftplan innan montage.'; }); return msHtmlDoc(ms.cur, msViews(ms.cur), imgs); }); fs.writeFileSync('/tmp/report_sample.html', h); }
   // spelaren går igenom båda delarna
   await page.evaluate(() => { ms.mode = 'steps'; ms.i = 10; ms.shown = null; window.__iso = []; msPaint(); });
   await page.click('[data-a="next"]'); await page.waitForTimeout(300);
