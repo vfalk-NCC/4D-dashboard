@@ -60,8 +60,9 @@ seed('plan_item_activities.json', []);
   const seqs = () => { const e = store.get(`projects/${PID}/plan_assembly_sequences.json`); return e ? JSON.parse(e.content) : []; };
   await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-root .ms-intro'); await page.waitForTimeout(300);
   // Mall -> 11 steg, spara
-  await page.click('[data-a="newTpl"]'); await page.waitForSelector('.ms-row');
+  await page.selectOption('#msTpl', { label: 'Transportband (11 steg)' }); await page.waitForSelector('.ms-row');
   if ((await page.$$('.ms-row')).length !== 11) fail('mallen har 11 steg');
+  await page.fill('[data-f="name"]', 'Transportband 1'); await page.dispatchEvent('[data-f="name"]', 'change'); await page.waitForTimeout(100);
   await page.click('[data-a="save"]'); await page.waitForTimeout(500);
   if (seqs().length !== 1 || seqs()[0].steps.length !== 11 || seqs()[0].name !== 'Transportband 1') fail('sparad i 4D-data: ' + JSON.stringify(seqs()).slice(0, 200));
   // Beräknade datum: steg 4 startar dagen efter steg 3
@@ -102,13 +103,52 @@ seed('plan_item_activities.json', []);
   await page.evaluate(() => { ms.mode = 'steps'; ms.live = true; ms.i = 0; ms.shown = null; window.__iso = []; msPaint(); });
   await page.click('[data-a="next"]'); await page.waitForTimeout(500);
   const iso1 = await page.evaluate(() => window.__iso || []); if (!iso1.length || ![].concat(...iso1.map(e => e.flatMap(m => m.entityIds))).includes('G1')) fail('3D isolerar stegets objekt: ' + JSON.stringify(iso1));
+  // Sammansättning: två transportband efter varandra
+  await page.selectOption('#msTpl', { label: 'Transportband (11 steg)' }); await page.waitForSelector('.ms-row');
+  await page.fill('[data-f="name"]', 'Transportband 2'); await page.dispatchEvent('[data-f="name"]', 'change'); await page.waitForTimeout(100);
+  await page.click('[data-a="save"]'); await page.waitForTimeout(400);
+  await page.click('[data-a="newCompose"]'); await page.waitForSelector('[data-a="addPart"]');
+  await page.fill('[data-f="name"]', 'Sovringsverket band'); await page.dispatchEvent('[data-f="name"]', 'change'); await page.waitForTimeout(100);
+  const addPart = async nm => { await page.click('[data-a="addPart"]'); await page.waitForSelector('[data-pickseq]'); await page.click(`[data-pickseq] >> text=${nm}`); await page.waitForTimeout(200); };
+  await addPart('Transportband 1'); await addPart('Transportband 2');
+  if ((await page.$$('.ms-row[data-part]')).length !== 2) fail('två delar i sammansättningen');
+  // del 2 startar efter steg 4 i del 1, glapp 1
+  await page.selectOption('[data-pf="after"]', { index: 1 }); await page.waitForTimeout(150);
+  await page.selectOption('[data-pf="afterStep"]', '3'); await page.waitForTimeout(150);
+  await page.fill('[data-pf="lag"]', '1'); await page.dispatchEvent('[data-pf="lag"]', 'change'); await page.waitForTimeout(200);
+  const lay = await page.evaluate(() => { const l = msComposeLayout(ms.cur); return { n: l.views.length, p2: l.parts[1].s, p1step4: l.parts[0].views[3].e, p1s: l.parts[0].s, names: l.views.slice(10, 13).map(v => msLab(v)) }; });
+  if (lay.n !== 22) fail('22 steg totalt: ' + lay.n);
+  const next = d => iso(new Date(new Date(d + 'T00:00:00Z').getTime() + 2 * 864e5));
+  if (lay.p2 !== next(lay.p1step4)) fail('del 2 startar efter steg 4 + 1 dag glapp: ' + JSON.stringify(lay));
+  if (!/Transportband 2 › /.test(lay.names[1] + lay.names[2])) fail('steg märks med delens namn: ' + JSON.stringify(lay.names));
+  await page.click('[data-mode="gantt"]'); await page.waitForSelector('.ms-bar2.sum');
+  if ((await page.$$('.ms-bar2.sum')).length !== 2) fail('två sammanfattningsstaplar');
+  if ((await page.$$('.ms-bar2.ro')).length !== 22) fail('22 stegstaplar (skrivskyddade)');
+  await page.click('[data-tg="0"]'); await page.waitForTimeout(150);
+  if ((await page.$$('.ms-bar2.ro')).length !== 11) fail('fälla ihop del 1 döljer dess steg');
+  // dra sammanfattningsstapel 2 -> eget startdatum
+  const sb = await (await page.$('[data-sum="1"]')).boundingBox();
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + 6); await page.mouse.down(); await page.mouse.move(sb.x + sb.width / 2 + 16 * 5, sb.y + 6, { steps: 4 }); await page.mouse.up(); await page.waitForTimeout(250);
+  const own = await page.evaluate(() => ms.cur.parts[1].start); if (!own) fail('dragen ger eget startdatum');
+  await page.click('[data-a="save"]'); await page.waitForTimeout(500);
+  if (!seqs().some(x => x.type === 'compose' && x.parts.length === 2)) fail('sammansättningen sparad');
+  if (process.env.SHOT) await (await page.$('.ms-root')).screenshot({ path: '/tmp/ms_compose.png' });
+  // spelaren går igenom båda delarna
+  await page.evaluate(() => { ms.mode = 'steps'; ms.i = 10; ms.shown = null; window.__iso = []; msPaint(); });
+  await page.click('[data-a="next"]'); await page.waitForTimeout(300);
+  if (!(await page.evaluate(() => document.querySelector('.ms-cur').innerText)).includes('Transportband 2 ›')) fail('spelaren går vidare till del 2');
+  // XML med sammanfattningsrader per del
+  await page.evaluate(() => { ms.mode = 'send'; msPaint(); });
+  await page.evaluate(() => { document.getElementById('msAllXml').checked = true; document.getElementById('msAllXml').dispatchEvent(new Event('change', { bubbles: true })); }); await page.waitForTimeout(200);
+  const [dlx] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exXml"]')]);
+  const x2 = fs.readFileSync(await dlx.path(), 'utf8'); if (!x2.includes('Transportband 1') || !x2.includes('Transportband 2') || !x2.includes('Sovringsverket band')) fail('XML har delarna som sammanfattningar');
   // Ladda om: sparade sekvenser finns kvar, öppna och ta bort
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
   await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-cards .ms-card');
-  if ((await page.$$('.ms-card')).length !== 2) fail('två sparade efter omladdning');
+  if ((await page.$$('.ms-card')).length !== 4) fail('fyra sparade efter omladdning: ' + (await page.$$('.ms-card')).length);
   await page.click('.ms-card >> text=Transportband 1'); await page.waitForSelector('.ms-row');
   await page.click('[data-a="del"]'); await page.waitForTimeout(600);
-  if (seqs().length !== 1) fail('borttagen sekvens');
+  if (seqs().length !== 3) fail('borttagen sekvens: ' + seqs().length);
   const real = errors.filter(e => !/allow-same-origin/.test(e)); if (real.length) fail('JS-fel: ' + real.join(' | '));
   console.log('OK test_montage'); await browser.close(); server.close();
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });
