@@ -15,7 +15,7 @@ const phbOcRemember = fields => { try { localStorage.setItem(PHB_OC_KEY, JSON.st
 const PHB_OC_PRESET = "4ddash-phb-oc-preset";
 function phbOcPreset() { try { const p = JSON.parse(localStorage.getItem(PHB_OC_PRESET) || "null"); return p && Array.isArray(p.fields) ? p : null; } catch (e) { return null; } }
 function phbOcSavePreset(src) {
-  const p = { fields: (src.fields || []).slice(), dec: src.dec == null ? 2 : src.dec, titleSrc: src.titleSrc || "", title: src.title || "", scale: src.scale || 1, colOver: src.colOver || null, text: src.text || "", group: src.group || "obj" };
+  const p = { fields: (src.fields || []).slice(), dec: src.dec == null ? 2 : src.dec, titleSrc: src.titleSrc || "", title: src.title || "", sum: src.sum !== false, scale: src.scale || 1, colOver: src.colOver || null, text: src.text || "", group: src.group || "obj" };
   try { localStorage.setItem(PHB_OC_PRESET, JSON.stringify(p)); phbOcRemember(p.fields); } catch (e) { /* ingen lagring */ }
   return p;
 }
@@ -82,6 +82,15 @@ function phbOcVal(st, oc, key) {
     const byKey = new Map(qty.objs.map(o => [`${o.modelId}|${o.objectId || o.rid}`, o])), sums = new Map();
     objs.forEach(o => { const q = byKey.get(`${o.modelId}|${o.objectId || o.rid}`); if (!q) return; phbOcCodes(q).forEach(p => { const v = qtyValue(q, qmfKindOfPost(p)); if (v !== null) { const e = sums.get(p.key) || { p, v: 0 }; e.v += v; sums.set(p.key, e); } }); });
     const l = [...sums.values()].map(e => `${e.v.toLocaleString("sv-SE", { minimumFractionDigits: oc.dec == null ? 2 : oc.dec, maximumFractionDigits: oc.dec == null ? 2 : oc.dec })} ${e.p.unit} (${e.p.ref})`); return l.length ? l : ["–"];
+  }
+  // Gemensam bubbla för flera objekt: mängder (volym, yta, längd, vikt) summeras över objekten (Victor 2026-10-21).
+  const un = n > 1 && oc.sum !== false ? phbOcUnit(key) : null;
+  if (un) {
+    const nums = objs.map(o => (o.flat || {})[key]).filter(v => v !== undefined && v !== null && v !== "").map(v => ({ v, n: qtyNum(v) }));
+    if (nums.length && nums.every(x => x.n !== null && /^[-+]?[\d\s.,]+(e[-+]?\d+)?$/i.test(String(x.v).trim()))) {
+      const tot = nums.reduce((a, x) => a + x.n * un.f, 0), d = oc.dec == null ? 2 : oc.dec;
+      return [`Σ ${tot.toLocaleString("sv-SE", { minimumFractionDigits: d, maximumFractionDigits: d })} ${un.u} (${nums.length} ${nums.length === 1 ? "objekt" : "objekt"}${nums.length < n ? " av " + n : ""})`];
+    }
   }
   const vals = phbOcUniq(objs.map(o => (o.flat || {})[key])); if (!vals.length) return ["–"];
   return vals.length <= 3 ? [vals.map(x => phbOcNum(x, key, oc.dec)).join(" / ")] : [`${vals.length} olika värden`];
@@ -178,7 +187,7 @@ function phbOcGroups(draft) {
 function phbOcCreate(st, draft) {
   let n = 0;
   phbOcGroups(draft).forEach(g => {
-    const oc = { id: (st.nextId = (st.nextId || 1) + 1), objs: g, fields: draft.fields.slice(), text: draft.text || "", title: draft.title || "", dec: draft.dec == null ? 2 : draft.dec, titleSrc: draft.titleSrc || "", scale: draft.scale || 1, colOver: draft.colOver || null, x: 0, y: 0, ax: NaN, ay: NaN };
+    const oc = { id: (st.nextId = (st.nextId || 1) + 1), objs: g, fields: draft.fields.slice(), text: draft.text || "", title: draft.title || "", sum: draft.sum !== false, dec: draft.dec == null ? 2 : draft.dec, titleSrc: draft.titleSrc || "", scale: draft.scale || 1, colOver: draft.colOver || null, x: 0, y: 0, ax: NaN, ay: NaN };
     phbOcEnsureCam(st, g); phbOcMeasure(oc, st); const q = phbOcAnchor(st, g), k = st.k;
     if (q && q.x > -0.05 * st.W && q.x < 1.05 * st.W && q.y > -0.05 * st.H && q.y < 1.05 * st.H) { oc.ax = q.x; oc.ay = q.y; oc.x = oc.ax - oc.W / 2; oc.y = oc.ay - oc.h - 56 * oc.kk; }
     else { oc.x = st.W - oc.W - 20 * k; oc.y = 20 * k + (st.ocards.length + n) * (oc.h + 8 * k); }
@@ -203,6 +212,7 @@ function phbOcSide(api) {
     h += `<div class="phb-note">${d.objs.length} markerade objekt · ${d.keys.length} egenskaper. Välj vad bubblan ska visa.</div>${phbOcFieldsHtml(d.keys, d.fields, esc, "d")}
       <label class="phb-f"><span>Rubrik hämtas från</span><select id="phbOcDTSrc">${PHB_OC_TSRC.map(([v, l]) => `<option value="${v}"${(d.titleSrc || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
       <label class="phb-f"><span>Rubrik <small>(eget namn, ersätter ovan)</small></span><input type="text" id="phbOcDTitle" value="${esc(d.title || "")}" placeholder="t.ex. Spännarmering"></label>
+      <label class="phb-c" title="Volym, yta, längd och vikt läggs ihop över alla objekten i en gemensam bubbla"><input type="checkbox" id="phbOcDSum"${d.sum !== false ? " checked" : ""}> Summera mängder (volym, yta, längd, vikt) för flera objekt</label>
       <label class="phb-f"><span>Decimaler på tal</span><select id="phbOcDDec">${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${(d.dec == null ? 2 : d.dec) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
       <label class="phb-f"><span>Egen text <small>(valfritt)</small></span><textarea id="phbOcDText" rows="2">${esc(d.text || "")}</textarea></label>
       <div class="phb-f"><span>Objekt – ${d.pick.size} av ${d.objs.length} valda (en bubbla per valt objekt, högst 40)</span><div class="phb-row"><button type="button" id="phbOcPAll">Alla</button><button type="button" id="phbOcPNone">Inga</button></div>
@@ -223,6 +233,7 @@ function phbOcSelSide(api, oc) {
     <label class="phb-f"><span>Rubrik hämtas från</span><select id="phbOcTSrc">${PHB_OC_TSRC.map(([v, l]) => `<option value="${v}"${(oc.titleSrc || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
     <label class="phb-f"><span>Rubrik <small>(egen text ersätter)</small></span><input type="text" id="phbOcTitle" value="${esc(oc.title || "")}" placeholder="${esc(oc.tl ? oc.tl.join(" ") : "")}"></label>
     ${phbOcFieldsHtml(phbOcKeys(oc.objs), oc.fields, esc, "c")}
+    <label class="phb-c" title="Volym, yta, längd och vikt läggs ihop över alla objekten i bubblan"><input type="checkbox" id="phbOcSum"${oc.sum !== false ? " checked" : ""}> Summera mängder för flera objekt</label>
     <label class="phb-f"><span>Decimaler på tal</span><select id="phbOcDec">${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${(oc.dec == null ? 2 : oc.dec) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
     <label class="phb-f"><span>Egen text</span><textarea id="phbOcText" rows="3">${esc(oc.text || "")}</textarea></label>
     ${api.rng("phbOcScale", "Bubblans skala", Math.round(oc.scale * 100), 40, 300, 5)}
@@ -244,7 +255,7 @@ function phbOcBind(api, side) {
     const msg = q("phbOcMsg"); if (msg) msg.textContent = "Läser markeringen …";
     try { const objs = await phbOcReadSelection(); if (!objs.length) { if (msg) msg.textContent = "Inget är markerat i Trimble Connect – markera objekt i modellen först."; return; }
       const pre = phbOcPreset(), ks = phbOcKeys(objs);
-      cur.ocDraft = { objs, keys: ks, fields: (pre ? pre.fields : phbOcDefaults()).filter(f => f.startsWith("◆") || ks.includes(f)), text: pre ? pre.text : "", title: pre && pre.title ? pre.title : "", group: pre ? pre.group : "obj", dec: pre ? pre.dec : 2, titleSrc: pre ? pre.titleSrc : "", scale: pre ? pre.scale : 1, colOver: pre ? pre.colOver : null, preset: !!pre, pick: new Set(objs.map((o, i) => i).slice(0, 40)) }; api.renderSide();
+      cur.ocDraft = { objs, keys: ks, fields: (pre ? pre.fields : phbOcDefaults()).filter(f => f.startsWith("◆") || ks.includes(f)), text: pre ? pre.text : "", title: pre && pre.title ? pre.title : "", sum: !pre || pre.sum !== false, group: pre ? pre.group : "obj", dec: pre ? pre.dec : 2, titleSrc: pre ? pre.titleSrc : "", scale: pre ? pre.scale : 1, colOver: pre ? pre.colOver : null, preset: !!pre, pick: new Set(objs.map((o, i) => i).slice(0, 40)) }; api.renderSide();
     } catch (e) { if (msg) msg.textContent = "Kunde inte läsa markeringen: " + ((e && e.message) || e); }
   });
   on("phbOcQty", "click", async () => {
@@ -253,7 +264,7 @@ function phbOcBind(api, side) {
     catch (e) { if (m) m.textContent = "Kunde inte läsa mängder: " + ((e && e.message) || e); b.disabled = false; }
   });
   const d = cur.ocDraft;
-  if (d) { bindFields(d.fields, d.keys, () => api.renderSide()); on("phbOcDText", "input", e => { d.text = e.target.value; }); on("phbOcDDec", "change", e => { d.dec = Number(e.target.value); }); side.querySelectorAll("[data-ocp]").forEach(c => c.addEventListener("change", () => { const i = Number(c.dataset.ocp); if (c.checked) d.pick.add(i); else d.pick.delete(i); const b = q("phbOcMake"); if (b) b.disabled = !d.pick.size; }));
+  if (d) { bindFields(d.fields, d.keys, () => api.renderSide()); on("phbOcDText", "input", e => { d.text = e.target.value; }); on("phbOcDDec", "change", e => { d.dec = Number(e.target.value); }); on("phbOcDSum", "change", e => { d.sum = e.target.checked; }); side.querySelectorAll("[data-ocp]").forEach(c => c.addEventListener("change", () => { const i = Number(c.dataset.ocp); if (c.checked) d.pick.add(i); else d.pick.delete(i); const b = q("phbOcMake"); if (b) b.disabled = !d.pick.size; }));
     on("phbOcPAll", "click", () => { d.pick = new Set(d.objs.map((o, i) => i).slice(0, 40)); api.renderSide(); }); on("phbOcPNone", "click", () => { d.pick = new Set(); api.renderSide(); });
     on("phbOcDTSrc", "change", e => { d.titleSrc = e.target.value; }); on("phbOcDTitle", "input", e => { d.title = e.target.value; }); on("phbOcDGroup", "change", e => { d.group = e.target.value; });
     on("phbOcDSavePre", "click", () => { phbOcSavePreset(d); d.preset = true; if (typeof modelToast === "function") modelToast("Sparat som förval – nya bubblor får samma inställning"); api.renderSide(); });
@@ -262,7 +273,7 @@ function phbOcBind(api, side) {
   const oc = cur.sel && (cur.ocards || []).includes(cur.sel) ? cur.sel : null;
   if (oc) {
     bindFields(oc.fields, phbOcKeys(oc.objs), () => { api.remeasure(); api.renderSide(); });
-    on("phbOcDec", "change", e => { oc.dec = Number(e.target.value); api.remeasure(); });
+    on("phbOcDec", "change", e => { oc.dec = Number(e.target.value); api.remeasure(); }); on("phbOcSum", "change", e => { oc.sum = e.target.checked; api.remeasure(); });
     on("phbOcTSrc", "change", e => { oc.titleSrc = e.target.value; api.remeasure(); api.renderSide(); });
     on("phbOcTitle", "input", e => { oc.title = e.target.value; api.remeasure(); }); on("phbOcText", "input", e => { oc.text = e.target.value; api.remeasure(); });
     on("phbOcScale", "input", e => { oc.scale = Number(e.target.value) / 100; const l = q("phbOcScaleV"); if (l) l.textContent = e.target.value + "%"; api.remeasure(); });
@@ -286,7 +297,7 @@ function phbVwSnap(st) {
     dateObj: { on: dt.on, scale: dt.scale, fx: dt.x / W, fy: dt.y / H },
     tables: (st.tables || []).map(t => ({ src: t.src, keys: t.keys, area: t.area, cols: t.cols, dec: t.dec, max: t.max, scale: t.scale, title: t.title, col: t.col, fx: t.x / W, fy: t.y / H })),
     texts: st.texts.map(t => { const c = { ...t, fx: t.x / W, fy: t.y / H }; delete c.id; delete c.x; delete c.y; return c; }),
-    oc: (st.ocards || []).map(c => { phbOcEnsureCam(st, c.objs); const q = phbOcAnchor(st, c.objs); return ({ ofx: q && isFinite(c.ax) ? (c.ax - q.x) / W : undefined, ofy: q && isFinite(c.ay) ? (c.ay - q.y) / H : undefined, fields: c.fields.slice(), text: c.text, title: c.title, dec: c.dec, titleSrc: c.titleSrc || "", scale: c.scale, colOver: c.colOver, fx: c.x / W, fy: c.y / H, fax: c.ax / W, fay: c.ay / H, free: !!c.free,
+    oc: (st.ocards || []).map(c => { phbOcEnsureCam(st, c.objs); const q = phbOcAnchor(st, c.objs); return ({ ofx: q && isFinite(c.ax) ? (c.ax - q.x) / W : undefined, ofy: q && isFinite(c.ay) ? (c.ay - q.y) / H : undefined, fields: c.fields.slice(), sum: c.sum !== false, text: c.text, title: c.title, dec: c.dec, titleSrc: c.titleSrc || "", scale: c.scale, colOver: c.colOver, fx: c.x / W, fy: c.y / H, fax: c.ax / W, fay: c.ay / H, free: !!c.free,
       objs: c.objs.slice(0, 60).map(o => ({ modelId: o.modelId, objectId: o.objectId, rid: o.rid, box: o.box, flat: o.flat })) }); })
   };
 }
@@ -297,7 +308,7 @@ function phbVwApply(st, v) {
   if (v.dateObj) Object.assign(st.dateObj, { on: v.dateObj.on, scale: v.dateObj.scale, x: v.dateObj.fx * W, y: v.dateObj.fy * H });
   st.texts = (v.texts || []).map(t => { const c = { ...t, id: st.nextId++, x: t.fx * W, y: t.fy * H }; delete c.fx; delete c.fy; if (typeof phbTextMeasure === "function") phbTextMeasure(c, st); return c; });
   st.ocards = (v.oc || []).map(d => {
-    const oc = { id: st.nextId++, objs: d.objs, fields: d.fields.slice(), text: d.text || "", title: d.title || "", dec: d.dec == null ? 2 : d.dec, titleSrc: d.titleSrc || "", scale: d.scale || 1, colOver: d.colOver || null, x: d.fx * W, y: d.fy * H, ax: d.fax * W, ay: d.fay * H, free: !!d.free };
+    const oc = { id: st.nextId++, objs: d.objs, fields: d.fields.slice(), text: d.text || "", title: d.title || "", sum: d.sum !== false, dec: d.dec == null ? 2 : d.dec, titleSrc: d.titleSrc || "", scale: d.scale || 1, colOver: d.colOver || null, x: d.fx * W, y: d.fy * H, ax: d.fax * W, ay: d.fay * H, free: !!d.free };
     // Insättningspunkten behåller sitt läge: standardläget i bilden plus din justering (så den hoppar inte när vyn läses in).
     phbOcEnsureCam(st, oc.objs); const q = phbOcAnchor(st, oc.objs);
     // Punkten är låst till objektet (Victor 2026-10-21): ingen justering lagras eller läses in för bubblor med känt läge.

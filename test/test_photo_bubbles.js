@@ -162,6 +162,8 @@ seed('plan_items.json', [
       await page.click('#phbOcNew'); await page.waitForSelector('#phbOcMake'); await page.click('#phbOcMake'); await page.waitForTimeout(250);
       const nb = await page.evaluate(() => { const l = document.getElementById('phbCv')._state().ocards, c = l[l.length - 1]; return { dec: c.dec, scale: c.scale, col: c.colOver, src: c.titleSrc, text: c.text, title: c.title, f: c.fields }; });
       if (nb.dec !== 3 || nb.scale !== 1.4 || nb.col !== '#112233' || nb.src !== 'area' || nb.text !== 'Förvalstext' || nb.title !== 'Spännarmering' || JSON.stringify(nb.f) !== '["◆ Antal objekt"]') fail('Förvalet ska gälla nya bubblor: ' + JSON.stringify(nb));
+      { const sm = await page.evaluate(() => { const K = 'Qto / NetVolume (m3)', mk = v => ({ flat: { [K]: v } }), objs = [mk('1,5'), mk('2,5'), mk('3'), mk('4')]; return [phbOcVal({}, { objs, dec: 2 }, K)[0], phbOcVal({}, { objs, dec: 2, sum: false }, K)[0], phbOcVal({}, { objs: [objs[0]], dec: 2 }, K)[0], phbOcVal({}, { objs: [objs[0], mk('x')], dec: 1 }, K)[0]]; });
+        if (!/^Σ 11,00 m³ \(4 objekt\)$/.test(sm[0])) fail('Summerad volym för 4 objekt: ' + JSON.stringify(sm)); if (/Σ/.test(sm[1]) || /Σ/.test(sm[2]) || /Σ/.test(sm[3])) fail('Ingen summering när av, för ett objekt eller icke-numeriskt: ' + JSON.stringify(sm)); }
       await page.evaluate(() => localStorage.removeItem('4ddash-phb-oc-preset'));
       await page.click('#phbOcDel'); await page.waitForTimeout(100);
       // TC-kameran ändras efter att vyn sparats – "Använd" ska flytta tillbaka den och ta nytt foto
