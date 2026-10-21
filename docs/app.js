@@ -3831,6 +3831,7 @@ let ganttPhaseNow = new Map(), ganttTimeBusy = false, ganttTimePending = false, 
 const hexToRgbaObj = (hex, op) => ({ r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16), a: Math.round(Math.max(0, Math.min(1, op)) * 255) });
 function ganttTimeColorOf(t) {
   if (t.phase === "tempon") return "reset";
+  if (ganttNoColor) return "reset"; // Ingen färgning: allt behåller originalfärgerna, tidslinjen styr bara vad som syns (Victor 2026-10-21)
   if (t.phase === "klar" && ganttDoneOrig && !t.doneColor && t.doneOpacity === null) return "reset"; // klart i modellens originalfärg (Victor 2026-10-16)
   if (ganttScale.on && !(t.phase === "klar" && (t.doneColor || t.doneOpacity !== null))) { // egen färg efter slut ligger överst
     const hx = ganttScaleHex(t); if (hx) return hexToRgbaObj(hx, (t.phase === "klar" ? ganttDoneOp : (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase])) / 100);
@@ -3840,7 +3841,7 @@ function ganttTimeColorOf(t) {
   return hexToRgbaObj(STATUS_COLORS[t.phase] || STATUS_COLORS.pagaende, (ganttOp[t.phase] === undefined ? 100 : ganttOp[t.phase]) / 100);
 }
 /* Pågående i entreprenörens färg (Victor 2026-10-15): samma färger som entreprenörsraden och tavlan (egen vald färg, annars paletten), så man ser vem som är var. */
-let ganttByContractor = false, ganttDoneOrig = false;
+let ganttByContractor = false, ganttDoneOrig = false, ganttNoColor = false;
 function ganttContractorHex(name) {
   const key = name || NO_CONTRACTOR_LABEL, own = ganttCustomColors.get(`contractor:${key}`);
   return own || softColor("contractor", key).bd;
@@ -3907,7 +3908,7 @@ function openPulseCfg(anchor) {
   q(".pp-close").onclick = () => pop.remove();
 }
 function ganttPulseSync() {
-  const want = ganttPulse && ganttMode === "time" && ganttAsOf && ganttPulseGroups.length;
+  const want = ganttPulse && !ganttNoColor && ganttMode === "time" && ganttAsOf && ganttPulseGroups.length;
   if (!want) { if (ganttPulseTimer) ganttPulseStop(false); return; }
   if (ganttPulseTimer) return;
   const t0 = performance.now();
@@ -4023,7 +4024,7 @@ async function applyGanttIsolate(force) {
     if (typeof API.viewer.setObjectState === "function") {
       if (ganttAsOf && ganttTime3d) {
         await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {});
-        for (const g of phaseGroups) if (g.phase && STATUS_COLORS[g.phase]) await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: STATUS_COLORS[g.phase] });
+        for (const g of phaseGroups) if (!ganttNoColor && g.phase && STATUS_COLORS[g.phase]) await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: STATUS_COLORS[g.phase] });
         ganttColored = true;
       } else if (ganttColored) { await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {}); ganttColored = false; }
     }
@@ -4268,6 +4269,8 @@ function initGanttTime() {
   try { ganttTimeFuture = localStorage.getItem("4ddash-gantt-time-future") === "1"; } catch (e) {}
   { const bc = document.getElementById("ganttTimeByCon"); try { ganttByContractor = localStorage.getItem("4ddash-gantt-time-bycontractor") === "1"; } catch (e) {}
     if (bc) { bc.checked = ganttByContractor; bc.onchange = () => { ganttByContractor = bc.checked; try { localStorage.setItem("4ddash-gantt-time-bycontractor", ganttByContractor ? "1" : "0"); } catch (e) {} ganttTimeReset(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); }; } }
+  { const nc = document.getElementById("ganttTimeNoColor"); try { ganttNoColor = localStorage.getItem("4ddash-gantt-nocolor") === "1"; } catch (e) {}
+    if (nc) { nc.checked = ganttNoColor; nc.onchange = () => { ganttNoColor = nc.checked; try { localStorage.setItem("4ddash-gantt-nocolor", ganttNoColor ? "1" : "0"); } catch (e) {} ganttTimeReset(); if (ganttNoColor && API && API.viewer && typeof API.viewer.setObjectState === "function") API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {}); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); }; } }
   { const dc = document.getElementById("ganttTimeDoneOrig"); try { ganttDoneOrig = localStorage.getItem("4ddash-gantt-done-orig") === "1"; } catch (e) {}
     const paintDo = () => { const op = document.getElementById("ganttTimeDoneOp"); if (op) { op.disabled = ganttDoneOrig; op.title = ganttDoneOrig ? "Av – klart visas i originalfärg" : ""; } };
     if (dc) { dc.checked = ganttDoneOrig; paintDo(); dc.onchange = () => { ganttDoneOrig = dc.checked; paintDo(); try { localStorage.setItem("4ddash-gantt-done-orig", ganttDoneOrig ? "1" : "0"); } catch (e) {} ganttTimeReset(); if (ganttIsolate && ganttTime3d) scheduleGanttIsolate(); else if (typeof setGanttAsOf === "function" && ganttAsOf) setGanttAsOf(ganttAsOf, { now: true }); }; } }

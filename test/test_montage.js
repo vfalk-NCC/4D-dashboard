@@ -143,6 +143,28 @@ seed('plan_item_activities.json', []);
   await page.evaluate(() => { document.getElementById('msAllXml').checked = true; document.getElementById('msAllXml').dispatchEvent(new Event('change', { bubbles: true })); }); await page.waitForTimeout(200);
   const [dlx] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exXml"]')]);
   const x2 = fs.readFileSync(await dlx.path(), 'utf8'); if (!x2.includes('Transportband 1') || !x2.includes('Transportband 2') || !x2.includes('Sovringsverket band')) fail('XML har delarna som sammanfattningar');
+  // Logotyp, avsändare, timmar och mängd (avancerat)
+  if (!(await page.evaluate(async () => { const c = document.createElement('canvas'); c.width = 1400; c.height = 800; const g = c.getContext('2d'); for (let i = 0; i < 400; i++) { g.fillStyle = `hsl(${i * 7} 70% 50%)`; g.fillRect((i * 37) % 1400, (i * 91) % 800, 60, 40); } const src = c.toDataURL('image/png'); const hi = await msShrink(src, 'high'), mi = await msShrink(src, 'mid'), mn = await msShrink(src, 'min'); return hi.length > mi.length && mi.length > mn.length; }))) fail('lägre bildkvalitet ger mindre filer');
+  const png = path.join(require('os').tmpdir(), 'logo_test.png'); fs.writeFileSync(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+  await page.evaluate(() => { ms.mode = 'steps'; ms.i = 0; ms.cur = msNewSeq('Rapport', msStepsFromFilter()); msPaint(); });
+  await page.click('.ms-adv summary'); await page.fill('[data-sf="hours"]', '120'); await page.dispatchEvent('[data-sf="hours"]', 'change'); await page.waitForTimeout(150);
+  await page.fill('[data-sf="qty"]', '45'); await page.dispatchEvent('[data-sf="qty"]', 'change'); await page.fill('[data-sf="unit"]', 'm³'); await page.dispatchEvent('[data-sf="unit"]', 'change'); await page.waitForTimeout(150);
+  if (!(await page.evaluate(() => ms.cur.steps[0].hours === 120 && ms.cur.steps[0].qty === 45 && ms.cur.steps[0].unit === 'm³'))) fail('timmar och mängd sparas på steget');
+  // Samma kameravy för alla steg
+  await page.evaluate(() => { window.__cams = []; API.viewer.getCamera = () => Promise.resolve({ position: { x: 1, y: 2, z: 3 }, id: 'cam1' }); API.viewer.setCamera = c => { window.__cams.push(c); return Promise.resolve(); }; ms.live = true; ms.follow = true; });
+  await page.click('[data-a="saveSeqCam"]'); await page.waitForTimeout(200);
+  if (!(await page.evaluate(() => !!ms.cur.cam && ms.cur.camAll === true))) fail('sekvensens kameravy sparas');
+  await page.evaluate(() => { ms.shown = null; msGo(0); }); await page.waitForTimeout(300); await page.evaluate(() => { msGo(1); }); await page.waitForTimeout(400);
+  const cams = await page.evaluate(() => window.__cams); if (cams.length < 2 || cams.some(c => c.id !== 'cam1')) fail('alla steg använder samma kameravy: ' + JSON.stringify(cams));
+  await page.evaluate(() => { ms.mode = 'send'; msPaint(); });
+  await page.setInputFiles('#msLogoFile', png); await page.waitForSelector('.ms-logoimg'); await page.fill('[data-lg="company"]', 'NCC Sverige'); await page.dispatchEvent('[data-lg="company"]', 'change');
+  const [dl3] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exHtml"]')]);
+  const h3 = fs.readFileSync(await dl3.path(), 'utf8'); if (!h3.includes('data:image/png;base64') || !h3.includes('NCC Sverige') || !h3.includes('\\u0034') && !/"h":120/.test(h3)) fail('rapporten har logga, avsändare och timmar');
+  if (!/"q":45,"u":"m³"/.test(h3)) fail('mängd i rapporten');
+  // Ingen färgning i tidsläget
+  const nc = await page.evaluate(() => { ganttNoColor = true; const a = ganttTimeColorOf({ phase: 'pagaende' }), b = ganttTimeColorOf({ phase: 'forsenad' }); ganttNoColor = false; const c = ganttTimeColorOf({ phase: 'pagaende' }); return [a, b, typeof c]; });
+  if (nc[0] !== 'reset' || nc[1] !== 'reset' || nc[2] !== 'object') fail('Ingen färgning ger originalfärger: ' + JSON.stringify(nc));
+  if (!(await page.$('#ganttTimeNoColor'))) fail('rutan Ingen färgning finns i menyn');
   // Ladda om: sparade sekvenser finns kvar, öppna och ta bort
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
   await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-cards .ms-card');

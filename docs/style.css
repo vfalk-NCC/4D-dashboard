@@ -3125,3 +3125,29 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .ms-tbl { width: 100%; border-collapse: collapse; font-size: 12px; } .ms-tbl th, .ms-tbl td { border-bottom: 1px solid #eef0f3; padding: 4px 6px; text-align: left; } .ms-tbl small { display: block; color: #8c959f; }
 @media (max-width: 800px) { .ms-main { grid-template-columns: 1fr; } .ms-glabels { width: 120px; min-width: 120px; } }
 .ms-bar2.sum { background: #475569; cursor: grab; } .ms-bar2.ro { cursor: default; pointer-events: none; opacity: .85; } .ms-gl.sum { background: #f1f5f9; font-weight: 700; } .ms-gl.sub { padding-left: 22px; color: #57606a; } .ms-gl u { text-decoration: none; cursor: pointer; padding: 0 4px; }
+.ms-adv { font-size: 11px; color: #8c959f; } .ms-adv summary { cursor: pointer; } .ms-advb { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0; } .ms-advb label { width: auto; } .ms-advb input { width: 80px; }
+
+/* Färger och visning – snyggare meny utan sidled-scroll (Victor 2026-10-21) */
+.gdd-menu { overflow-x: hidden; box-sizing: border-box; }
+.gantt-time-menu { box-sizing: border-box; max-width: 100%; overflow-x: hidden; padding: 12px 10px; }
+.gantt-time-menu .gtm-title { display: flex; align-items: center; gap: 8px; margin: 2px 2px 8px; font-size: 11px; letter-spacing: .09em; color: #64748b; }
+.gantt-time-menu .gtm-title::after { content: ""; flex: 1; border-top: 1px solid #e2e8f0; }
+.gantt-time-menu .gtm-grid { grid-template-columns: minmax(64px, auto) 34px minmax(0, 1fr); gap: 9px 12px; padding: 10px 12px; margin-bottom: 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; }
+.gantt-time-menu .gtm-grid input[type="range"], .gantt-time-menu .gtm-doneop input[type="range"] { width: 100%; min-width: 0; accent-color: #2563eb; }
+.gantt-time-menu .gtm-grid input[type="color"] { width: 34px; height: 26px; border-radius: 8px; cursor: pointer; }
+.gantt-time-menu .gtm-doneop { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.gantt-time-menu .gtm-doneop input { flex: 1; }
+.gantt-time-menu .gtm-h { text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
+.gantt-time-menu .gtm-opts { margin: 0; gap: 2px; }
+.gantt-time-menu .gtm-opt { padding: 8px 10px; border-radius: 10px; transition: background .12s; }
+.gantt-time-menu .gtm-opt:has(input:checked) { background: #eff6ff; }
+.gantt-time-menu .gtm-opt:has(input:checked) .gtm-t { font-weight: 600; color: #1e3a8a; }
+.gantt-time-menu .gtm-t { white-space: normal; line-height: 1.25; }
+.gantt-fs-bar .gdd-menu .gantt-time-menu { padding: 10px 6px 6px; }
+.ms-logo .ms-logoimg { max-height: 40px; max-width: 160px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px 8px; } .ms-logo .ms-advb { align-items: center; } .ms-logo .ms-advb input[type=file] { width: 200px; }
+.gantt-fs-bar .gdd-menu .gantt-time-menu .gtm-gear, .gantt-time-menu .gtm-gear { width: 26px; min-width: 26px; max-width: 26px; flex: none; justify-content: center; padding: 0; }
+.gantt-time-menu .gtm-opt-split { display: flex; align-items: center; }
+.gantt-fs-bar .gdd-menu .gantt-time-menu .gtm-gear { width: 26px !important; min-width: 26px !important; max-width: 26px !important; height: 26px !important; min-height: 26px !important; padding: 0 !important; justify-content: center !important; }
+.gantt-time-menu .gtm-opt-split { padding: 0; }
+.gantt-time-menu .gtm-opt-split .gtm-opt-in { padding: 8px 10px; border-radius: 10px; }
+.ms-camrow { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; margin: 4px 0 2px; } .ms-camrow button { width: auto; font: inherit; font-size: 12px; padding: 3px 9px; border: 1px solid #d0d7de; border-radius: 8px; background: #f6f8fa; cursor: pointer; } .ms-camrow button:disabled { opacity: .45; cursor: default; } .ms-camrow .ok { color: #1a7f37; }

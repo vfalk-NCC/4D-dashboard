@@ -4,7 +4,9 @@
    (plan_assembly_sequences) så att teamet ser samma. Läget "Gantt" är en egen ganttvy för sekvensen, och "Skicka" gör en HTML-fil
    och en Microsoft Project-XML med förslagen till den som gör Powerproject-tidplanen. */
 const MS_TABLE = "plan_assembly_sequences";
-const ms = { seqs: [], loaded: false, loading: false, cur: null, dirty: false, mode: "steps", i: 0, play: false, timer: null, live: true, follow: true, future: false, px: 16, busy: false, pending: false, shown: null, el: null, img: null, msg: "", drag: null };
+const msLogoLoad = () => { try { return JSON.parse(localStorage.getItem("4ddash-montage-logo") || "null") || { src: "", company: "" }; } catch (e) { return { src: "", company: "" }; } };
+const msLogoSave = () => { try { localStorage.setItem("4ddash-montage-logo", JSON.stringify(ms.logo)); } catch (e) { ms.msg = "Kunde inte spara loggan i webbläsaren (för stor?)"; } };
+const ms = { logo: msLogoLoad(), seqs: [], loaded: false, loading: false, cur: null, dirty: false, mode: "steps", i: 0, play: false, timer: null, live: true, follow: true, future: false, px: 16, busy: false, pending: false, shown: null, el: null, img: null, msg: "", drag: null };
 const msEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const msAdd = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const msDiff = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 864e5);
@@ -18,7 +20,8 @@ const msActKey = a => a.activityKey || String(a.id);
 function msActMap() { const m = new Map(); msActs().forEach(a => m.set(msActKey(a), a)); return m; }
 
 /* ---- Sekvenser: skapa --------------------------------------------------------------------------------------------------------------------- */
-const msStepFree = (name, dur, deps = [], note = "") => ({ id: msId(), kind: "free", name, note, start: "", dur, deps, objs: [], cam: null, pS: "", pE: "" });
+const msStepFree = (name, dur, deps = [], note = "") => ({ id: msId(), kind: "free", name, note, start: "", dur, deps, objs: [], cam: null, pS: "", pE: "", hours: "", qty: "", unit: "" });
+const msActHours = a => { let b = 0; (a ? (a.members || [a]) : []).forEach(m => { const h = Number.isFinite(m.estimatedHours) ? m.estimatedHours : (m.resources || []).reduce((t, r) => t + (Number(r.hours) || 0), 0); if (h > b) b = h; }); return b || null; };
 function msNewSeq(name, steps = [], extra = {}) { const t = new Date().toISOString(); return { id: msId(), name, area: "", desc: "", start: msToday(), steps, created_at: t, updated_at: t, ...extra }; }
 function msStepsFromFilter() {
   const list = typeof ganttShownItems !== "undefined" && ganttShownItems.length ? ganttShownItems : getFilteredItems(), seen = new Set(), out = [];
@@ -51,7 +54,7 @@ function msViewsSeq(seq) {
     });
     if (!ch) break;
   }
-  v.forEach(x => { x.changed = !!x.act && (x.s !== x.ppS || x.e !== x.ppE); x.isNew = x.st.kind === "free"; x.shift = x.changed ? msDiff(x.ppE, x.e) : 0; });
+  v.forEach(x => { x.hours = x.st.hours !== "" && x.st.hours != null ? Number(x.st.hours) : msActHours(x.act); x.qty = x.st.qty !== "" && x.st.qty != null ? Number(x.st.qty) : null; x.changed = !!x.act && (x.s !== x.ppS || x.e !== x.ppE); x.isNew = x.st.kind === "free"; x.shift = x.changed ? msDiff(x.ppE, x.e) : 0; });
   return v;
 }
 
@@ -145,10 +148,15 @@ async function msApply() {
       if (fut.length) await V.setObjectState({ modelObjectIds: msMo(fut) }, { color: msColor.fut });
       if (now.length) await V.setObjectState({ modelObjectIds: msMo(now) }, { color: msColor.cur });
     }
-    if (ms.follow && typeof V.setCamera === "function") { try { if (cur.st.cam) await V.setCamera(cur.st.cam); else if (now.length) await V.setCamera({ modelObjectIds: msMo(now) }); } catch (e) { console.warn("Montageordning: kamera", e); } }
+    if (ms.follow && typeof V.setCamera === "function") { try { const cam = msCamOf(cur); if (cam) await V.setCamera(cam); else if (now.length) await V.setCamera({ modelObjectIds: msMo(now) }); } catch (e) { console.warn("Montageordning: kamera", e); } }
     ms.shown = sig; ms.touched3d = true;
   } catch (e) { console.warn("Montageordning", e); if (typeof modelToast === "function") modelToast("Kunde inte uppdatera 3D: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
   finally { ms.busy = false; if (ms.pending) { ms.pending = false; msApply(); } }
+}
+/* Kameravy för ett steg: sekvensens standardvy (om "samma för alla steg" är på) går först, sedan stegets egen, sedan delens sekvens. Så blir alla bilder tagna likadant. */
+function msCamOf(x) {
+  const top = ms.cur; if (top && top.cam && top.camAll !== false) return top.cam; if (x.st.cam) return x.st.cam;
+  const ps = x.part && x.part.seq; if (ps && ps.cam) return ps.cam; return (top && top.cam) || null;
 }
 async function msRestoreModel() {
   ms.shown = null; const V = API && API.viewer;
@@ -193,7 +201,8 @@ function msPaint() {
   const views = msViews(s), n = views.length;
   if (ms.i >= n) ms.i = Math.max(0, n - 1);
   const tabs = `<div class="ms-tabs">${[["steps", "Steg"], ["gantt", "Gantt"], ["send", "Skicka"]].map(([k, t]) => `<button type="button" data-mode="${k}" class="${ms.mode === k ? "on" : ""}">${t}</button>`).join("")}</div>`;
-  const meta = `<div class="ms-meta"><label>Namn <input data-f="name" value="${msEsc(s.name)}"></label><label>Område/anläggning <input data-f="area" value="${msEsc(s.area)}" placeholder="t.ex. Band 1"></label><label>Startdatum <input type="date" data-f="start" value="${msEsc(s.start)}"></label><label class="ms-grow">Beskrivning <input data-f="desc" value="${msEsc(s.desc)}"></label></div>`;
+  const meta = `<div class="ms-meta"><label>Namn <input data-f="name" value="${msEsc(s.name)}"></label><label>Område/anläggning <input data-f="area" value="${msEsc(s.area)}" placeholder="t.ex. Band 1"></label><label>Startdatum <input type="date" data-f="start" value="${msEsc(s.start)}"></label><label class="ms-grow">Beskrivning <input data-f="desc" value="${msEsc(s.desc)}"></label></div>
+    <div class="ms-camrow"><b>Kameravy för bilder:</b> ${s.cam ? `<span class="ok">sparad ✓</span>` : `<span class="hint">ingen – kameran zoomar till varje stegs objekt, så bilderna blir olika</span>`}<button type="button" data-a="saveSeqCam" title="Ställ in vyn i TC först, tryck sedan här">Spara aktuell vy i TC</button><button type="button" data-a="goSeqCam"${s.cam ? "" : " disabled"}>Gå till vyn</button>${s.cam ? `<button type="button" data-a="clearSeqCam">Rensa</button><label><input type="checkbox" data-sq="camAll"${s.camAll !== false ? " checked" : ""}> Samma vy för alla steg</label>` : ""}</div>`;
   const cmp = s.type === "compose", lay = cmp ? msComposeLayout(s) : null;
   const left = ms.mode === "gantt" ? (cmp ? msComposeGanttHtml(s, lay) : msGanttHtml(s, views)) : ms.mode === "send" ? msSendHtml(s, views) : (cmp ? msPartsHtml(s, lay) : msStepsHtml(s, views));
   const cur = views[ms.i], player = n ? `<div class="ms-player"><button type="button" data-a="first" aria-label="Första">⏮</button><button type="button" data-a="prev" aria-label="Föregående">◀</button><button type="button" class="ms-play" data-a="play" aria-label="Spela">${ms.play ? "⏸" : "▶"}</button><button type="button" data-a="next" aria-label="Nästa">▶︎</button><button type="button" data-a="last" aria-label="Sista">⏭</button>
@@ -237,6 +246,7 @@ function msEditorHtml(s, views) {
     ${st.kind === "act" ? `<div class="ms-info">${x.missing ? `<b class="bad">Aktiviteten finns inte längre i tidplanen.</b>` : `Tidplan: ${msEsc(x.ppS)} → ${msEsc(x.ppE)}`}<br><label>Förslag start <input type="date" data-sf="pS" value="${msEsc(st.pS)}"></label> <label>slut <input type="date" data-sf="pE" value="${msEsc(st.pE)}"></label> <button type="button" data-a="clearProp">Rensa förslag</button></div>`
       : `<div class="ms-info"><label>Start <input type="date" data-sf="start" value="${msEsc(st.start)}" title="Tomt = efter föregående steg (eller sekvensens start)"></label> <label>Längd (dagar) <input type="number" min="1" data-sf="dur" value="${st.dur || 1}" style="width:64px"></label>${st.deps.length && !st.start ? `<small class="hint">Startar dagen efter föregående: ${msEsc(x.s)}</small>` : ""}</div>`}
     <label>Anteckning <textarea data-sf="note" rows="3">${msEsc(st.note)}</textarea></label>
+    <details class="ms-adv"${st.hours !== "" && st.hours != null || st.qty !== "" && st.qty != null ? " open" : ""}><summary>Avancerat</summary><div class="ms-advb"><label>Timmar <input type="number" min="0" step="any" data-sf="hours" value="${msEsc(st.hours)}" placeholder="${x.act && msActHours(x.act) ? msActHours(x.act) + " (tidplan)" : ""}"></label><label>Mängd <input type="number" min="0" step="any" data-sf="qty" value="${msEsc(st.qty)}"></label><label>Enhet <input data-sf="unit" value="${msEsc(st.unit)}" placeholder="m³, m², st …" style="width:80px"></label></div><small class="hint">Visas diskret i rapporten och i CSV-filen.</small></details>
     <label>Väntar på <select data-sf="deps" multiple size="${Math.min(6, Math.max(2, others.length))}">${others.map(o => `<option value="${msEsc(o.st.id)}"${st.deps.includes(o.st.id) ? " selected" : ""}>${o.i + 1}. ${msEsc(o.st.name)}</option>`).join("")}</select></label>
     <div class="ms-ob"><b>3D:</b> ${(x.t || msTargets(st, msActMap())).length} objekt <button type="button" data-a="setObjs" title="Markera objekt i TC först">Sätt från markering</button><button type="button" data-a="showObjs">Visa</button>${st.objs.length ? `<button type="button" data-a="clearObjs">Rensa egna</button>` : ""}<br><button type="button" data-a="saveCam">Spara kameravy</button>${st.cam ? `<button type="button" data-a="clearCam">Ta bort kameravy</button><small class="hint">kameravy sparad</small>` : `<small class="hint">ingen – zoomar till objekten</small>`}</div>
     <div class="ms-del"><button type="button" data-a="delStep">Ta bort steget</button></div>`;
@@ -248,7 +258,8 @@ function msSendHtml(s, views) {
   const ch = views.filter(x => x.isNew || x.changed), nNew = views.filter(x => x.isNew).length, nMov = views.filter(x => x.changed).length;
   return `<p class="hint">Samlar dina förslag mot tidplanen: nya steg, flyttade aktiviteter och anteckningar. Skicka HTML-filen (läsbar, kan skrivas ut som PDF) och/eller XML-filen som kan importeras i Powerproject (Importera från Microsoft Project® XML).</p>
     <div class="ms-kpis"><div><b>${views.length}</b>steg</div><div><b>${nNew}</b>nya steg</div><div><b>${nMov}</b>flyttade mot tidplanen</div><div><b>${views.filter(x => x.st.note).length}</b>anteckningar</div></div>
-    <div class="ms-bar"><label><input type="checkbox" id="msImg"> 3D-bild per steg i HTML-filen (tar en stund)</label><label><input type="checkbox" id="msAllXml"> Alla steg i XML (annars bara nya och flyttade)</label></div>
+    <details class="ms-adv ms-logo"${ms.logo.src || ms.logo.company ? " open" : ""}><summary>Logotyp och avsändare i rapporten</summary><div class="ms-advb"><label>Logotyp <input type="file" id="msLogoFile" accept="image/png,image/jpeg,image/svg+xml,image/webp"></label>${ms.logo.src ? `<img class="ms-logoimg" src="${msEsc(ms.logo.src)}" alt="Logotyp"><button type="button" data-a="logoDel">Ta bort</button>` : ""}<label>Företag / avsändare <input data-lg="company" value="${msEsc(ms.logo.company)}" placeholder="t.ex. NCC Sverige" style="width:180px"></label></div><small class="hint">Loggan sparas i den här webbläsaren och visas i rapportens sidhuvud (på en ljus bricka, så den syns oavsett färg).</small></details>
+    <div class="ms-bar"><label><input type="checkbox" id="msImg"> 3D-bild per steg i HTML-filen (tar en stund)</label><label title="Lägre kvalitet ger mycket mindre fil">Bildkvalitet <select id="msImgQ"><option value="high"${ms.imgQ === "high" ? " selected" : ""}>Hög (stor fil)</option><option value="mid"${!ms.imgQ || ms.imgQ === "mid" ? " selected" : ""}>Medel</option><option value="low"${ms.imgQ === "low" ? " selected" : ""}>Låg</option><option value="min"${ms.imgQ === "min" ? " selected" : ""}>Minsta fil</option></select></label><label><input type="checkbox" id="msAllXml"> Alla steg i XML (annars bara nya och flyttade)</label></div>
     <div class="ms-bar"><button type="button" class="primary" data-a="exHtml">Ladda ner HTML</button><button type="button" data-a="exXml">Ladda ner MS Project-XML (${ms.allXml ? views.length : ch.length} aktiviteter)</button><button type="button" data-a="exTxt">Kopiera som text</button><span id="msExMsg" class="hint"></span></div>
     <table class="ms-tbl"><tr><th>#</th><th>Steg</th><th>Tidplan</th><th>Förslag</th><th>Skillnad</th></tr>${views.map(x => `<tr><td>${x.i + 1}</td><td>${msEsc(msLab(x))}${x.st.note ? `<small>📝 ${msEsc(x.st.note)}</small>` : ""}</td><td>${x.act ? msEsc(x.ppS) + " → " + msEsc(x.ppE) : "–"}</td><td>${msEsc(x.s)} → ${msEsc(x.e)}</td><td>${x.isNew ? "nytt steg" : x.changed ? (x.shift > 0 ? "+" : "") + x.shift + " d" : ""}</td></tr>`).join("")}</table>`;
 }
@@ -264,15 +275,20 @@ function msXml(s, views, all) {
   const list = use.map(x => ({ startDate: x.s, endDate: x.e, objectName: x.st.name, activity: "", area: x.part ? s.name + "/" + x.partName : s.name + " (förslag)", members: [{ id: x.st.id, dependsOn: x.st.deps.filter(d => ids.has(d)), depLags: {} }] }));
   return list.length ? buildMspXml(list, { project: s.name + " – förslag", resources: false }) : null;
 }
+const MS_IMGQ = { high: [1600, 0.88], mid: [1000, 0.7], low: [720, 0.55], min: [480, 0.4] };
+function msShrink(src, q) {
+  const [maxW, quality] = MS_IMGQ[q] || MS_IMGQ.mid;
+  return new Promise(res => { const im = new Image(); im.onload = () => { const k = Math.min(1, maxW / im.width), c = document.createElement("canvas"); c.width = Math.max(1, Math.round(im.width * k)); c.height = Math.max(1, Math.round(im.height * k)); const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height); res(c.toDataURL("image/jpeg", quality)); }; im.onerror = () => res(src); im.src = src; });
+}
 async function msSnapshots(views, note) {
-  const V = API && API.viewer, out = {}; if (!V || typeof V.getSnapshot !== "function") return out; const keep = ms.i;
-  for (const x of views) { ms.i = x.i; ms.shown = null; ms.touched3d = true; note(`3D-bild ${x.i + 1} av ${views.length} …`); await msApply(); await new Promise(r => setTimeout(r, 700)); try { const sn = await V.getSnapshot(); out[x.st.id] = typeof sn === "string" ? sn : (sn && (sn.data || sn.dataUrl)) || ""; } catch (e) { console.warn(e); } }
-  ms.i = keep; ms.shown = null; msApply(); return out;
+  const V = API && API.viewer, out = {}; if (!V || typeof V.getSnapshot !== "function") return out; const keep = ms.i, keepFollow = ms.follow; ms.follow = true;
+  for (const x of views) { ms.i = x.i; ms.shown = null; ms.touched3d = true; note(`3D-bild ${x.i + 1} av ${views.length} …`); await msApply(); await new Promise(r => setTimeout(r, 700)); try { const sn = await V.getSnapshot(); const raw = typeof sn === "string" ? sn : (sn && (sn.data || sn.dataUrl)) || ""; out[x.st.id] = raw ? await msShrink(raw, ms.imgQ || "mid") : ""; } catch (e) { console.warn(e); } }
+  ms.follow = keepFollow; ms.i = keep; ms.shown = null; msApply(); return out;
 }
 async function msExport(kind) {
   const s = ms.cur, views = msViews(s), msg = t => { const e = document.getElementById("msExMsg"); if (e) e.textContent = t; };
   if (!views.length) { msg("Inga steg att skicka."); return; }
-  if (kind === "html") { const wantImg = document.getElementById("msImg") && document.getElementById("msImg").checked; let imgs = null; if (wantImg) { if (!ms.live) { ms.live = true; } imgs = await msSnapshots(views, msg); } msDownload(`montageordning_${msSafe(s.name)}_${msToday()}.html`, msHtmlDoc(s, views, imgs)); msg("HTML-filen är skapad."); }
+  if (kind === "html") { const wantImg = document.getElementById("msImg") && document.getElementById("msImg").checked; let imgs = null; if (wantImg) { if (!ms.live) { ms.live = true; } ms.imgQ = (document.getElementById("msImgQ") || {}).value || "mid"; imgs = await msSnapshots(views, msg); } const html = msHtmlDoc(s, views, imgs); msDownload(`montageordning_${msSafe(s.name)}_${msToday()}.html`, html); msg(`HTML-filen är skapad (${html.length > 1048576 ? (html.length / 1048576).toFixed(1) + " MB" : Math.round(html.length / 1024) + " kB"}).`); }
   else if (kind === "xml") { const r = msXml(s, views, !!(document.getElementById("msAllXml") || {}).checked); if (!r) { msg("Inget nytt eller flyttat att exportera."); return; } msDownload(`montageordning_${msSafe(s.name)}_${msToday()}.xml`, r.xml, "application/xml"); msg(`XML med ${r.tasks} aktiviteter (${r.links} kopplingar${r.droppedLinks ? ", " + r.droppedLinks + " utanför exporten utelämnade" : ""}).`); }
   else { const t = msText(s, views); try { await navigator.clipboard.writeText(t); msg("Kopierad."); } catch (e) { msDownload(`montageordning_${msSafe(s.name)}.txt`, t, "text/plain;charset=utf-8"); msg("Kunde inte kopiera – hämtade en textfil i stället."); } }
 }
@@ -341,6 +357,19 @@ function msSumDown(e, bar) {
   const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); if (moved && dd) { pr.p.start = msAdd(pr.start, dd); pr.p.after = ""; msTouch(); } ms.i = pr.first || 0; msPaint(); msApply(); };
   window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
 }
+function msLoadLogo(file) {
+  if (!file) return;
+  if (file.type === "image/svg+xml") { const r = new FileReader(); r.onload = () => { ms.logo.src = String(r.result); msLogoSave(); msPaint(); }; r.readAsDataURL(file); return; }
+  const url = URL.createObjectURL(file), img = new Image();
+  img.onload = () => {
+    const k = Math.min(1, 420 / img.width, 140 / img.height), c = document.createElement("canvas"); c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+    let out = c.toDataURL("image/png"); if (out.length > 150000) { const g = document.createElement("canvas"); g.width = c.width; g.height = c.height; const x = g.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, g.width, g.height); x.drawImage(c, 0, 0); out = g.toDataURL("image/jpeg", 0.85); }
+    ms.logo.src = out; msLogoSave(); msPaint();
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); ms.msg = "Kunde inte läsa bilden"; msPaint(); };
+  img.src = url;
+}
 function msWire() {
   const el = ms.el; if (!el) return; const root = el.querySelector(".ms-root"); if (!root) return;
   root.onclick = async e => {
@@ -379,6 +408,10 @@ function msWire() {
     else if (k === "first") msGo(0); else if (k === "last") msGo((msLen() || 1) - 1); else if (k === "prev") msGo(ms.i - 1); else if (k === "next") msGo(ms.i + 1);
     else if (k === "play") { msPlay(!ms.play); msPaint(); }
     else if (k === "reset3d") { ms.touched3d = true; ms.live = false; await msRestoreModel(); msPaint(); }
+    else if (k === "saveSeqCam") { try { s.cam = await API.viewer.getCamera(); if (s.camAll === undefined) s.camAll = true; ms.shown = null; msTouch(); ms.msg = "Kameravyn är sparad – alla steg tas nu från samma vy (spara sekvensen)"; msPaint(); } catch (err) { modelToast("Kunde inte läsa kameran i TC"); } }
+    else if (k === "goSeqCam") { try { await API.viewer.setCamera(s.cam); } catch (err) { modelToast("Kunde inte flytta kameran"); } }
+    else if (k === "clearSeqCam") { s.cam = null; ms.shown = null; msTouch(); msPaint(); }
+    else if (k === "logoDel") { ms.logo.src = ""; msLogoSave(); msPaint(); }
     else if (k === "exHtml") msExport("html"); else if (k === "exXml") msExport("xml"); else if (k === "exTxt") msExport("txt");
   };
   const tpl = root.querySelector("#msTpl"); if (tpl) tpl.onchange = () => { if (tpl.value !== "") msNew("tpl:" + tpl.value); };
@@ -389,8 +422,12 @@ function msWire() {
     if (!s) return;
     if (t.dataset.pf && s) { const pr = s.parts[msPartIdx(s, msComposeLayout(s))]; if (!pr) return; const f = t.dataset.pf; pr[f] === undefined && (pr[f] = ""); pr[f] = f === "afterStep" || f === "lag" ? Number(t.value) || (f === "afterStep" ? 0 : 0) : t.value; if (f === "afterStep") pr.afterStep = Number(t.value); if (f === "after") { pr.afterStep = -1; if (t.value) pr.start = ""; } if (f === "start" && t.value) pr.after = ""; msTouch(); msPaintSoon(); return; }
     if (t.dataset.f) { s[t.dataset.f] = t.value; msTouch(); if (t.dataset.f === "start") msPaintSoon(); return; }
-    if (t.dataset.sf) { const st = s.steps[ms.i]; if (!st) return; if (t.dataset.sf === "deps") st.deps = [...t.selectedOptions].map(o => o.value); else if (t.dataset.sf === "dur") st.dur = Math.max(1, Math.round(Number(t.value)) || 1); else st[t.dataset.sf] = t.value; msTouch(); msPaintSoon(); return; }
+    if (t.dataset.sf) { const st = s.steps[ms.i]; if (!st) return; if (t.dataset.sf === "deps") st.deps = [...t.selectedOptions].map(o => o.value); else if (t.dataset.sf === "hours" || t.dataset.sf === "qty") st[t.dataset.sf] = t.value === "" ? "" : Math.max(0, Number(t.value)); else if (t.dataset.sf === "dur") st.dur = Math.max(1, Math.round(Number(t.value)) || 1); else st[t.dataset.sf] = t.value; msTouch(); msPaintSoon(); return; }
+    if (t.dataset.sq && s) { s[t.dataset.sq] = t.checked; ms.shown = null; msTouch(); msApply(); return; }
+    if (t.id === "msImgQ") { ms.imgQ = t.value; }
     if (t.id === "msAllXml") { ms.allXml = t.checked; msPaintSoon(); }
+    if (t.id === "msLogoFile") { msLoadLogo(t.files && t.files[0]); }
+    if (t.dataset.lg) { ms.logo[t.dataset.lg] = t.value; msLogoSave(); }
   };
   root.oninput = e => { const t = e.target; if (t.classList.contains("ms-range")) { msGo(Number(t.value) - 1); const r = ms.el.querySelector(".ms-range"); if (r) r.focus(); } else if (t.id === "msPx") { ms.px = Number(t.value); msPaint(); const r = ms.el.querySelector("#msPx"); if (r) r.focus(); } };
   // dra rader i listan
