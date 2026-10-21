@@ -3172,3 +3172,7 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .ms-bar2.msel { outline: 2px dashed #4f46e5; outline-offset: 2px; } .ms-bar2.ing { box-shadow: 0 0 0 2px var(--gc); } .ms-gl.msel { background: #eef0ff; } .ms-gl.grp { border-left: 5px solid var(--gc); padding-left: 3px; }
 .ms-gband { position: absolute; border: 1.5px solid var(--gc); background: var(--gb); border-radius: 10px; pointer-events: none; } .ms-gtag { position: absolute; z-index: 4; font-style: normal; font-size: 10px; font-weight: 700; line-height: 1; color: #fff; background: var(--gc); padding: 2px 7px; border-radius: 99px; white-space: nowrap; pointer-events: none; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
 .ms-grpe { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border-left: 4px solid var(--gc); background: #f6f8fa; border-radius: 8px; padding: 6px 8px; font-size: 12px; } .ms-grpe input[type=color] { width: 30px; height: 24px; padding: 0; } .ms-grpe input:not([type=color]) { width: 130px; }
+
+/* Temporära steg (mobilkranar m.m.): streckad stapel */
+.ms-bar2.tmp { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.35) 0 5px, transparent 5px 10px); outline: 1.5px dashed rgba(15,23,42,.55); outline-offset: -2px; }
+.ms-tmpl { display: flex; gap: 6px; align-items: center; font-weight: 600; margin: 6px 0; }

@@ -213,6 +213,12 @@ seed('plan_item_activities.json', []);
   { await page.evaluate(() => { ms.mode = 'steps'; ms.cur = msNewSeq('Släck', msStepsFromFilter()); ms.cur.steps.forEach(x => { x.kind = 'free'; x.start = ''; x.dur = 2; x.cam = null; x.objs = []; }); ms.cur.steps[1].objs = [{ modelId: 'M1', objectId: 'G1' }]; ms.live = true; ms.follow = false; ms.i = 0; ms.shown = null; ms.noObjs = false; window.__calls = []; window.__iso = []; modelCtl.on = true; msPaint(); });
     await page.evaluate(() => msGo(1)); await page.waitForTimeout(500);
     if (!(await page.evaluate(() => (window.__iso || []).some(e => e.some(m => m.entityIds.includes('G1')))))) fail('steg med objekt isolerar dem');
+    // temporärt steg (mobilkran): syns medan det pågår men inte som klart efteråt
+    await page.evaluate(() => { ms.cur.steps[1].temp = true; ms.shown = null; window.__iso = []; msGo(2); }); await page.waitForTimeout(500);
+    if ((await page.evaluate(() => (window.__iso || []).some(e => e.some(m => m.entityIds.includes('G1')))))) fail('temporärt steg visas inte som klart');
+    await page.evaluate(() => { window.__iso = []; ms.shown = null; msGo(1); }); await page.waitForTimeout(500);
+    if (!(await page.evaluate(() => (window.__iso || []).some(e => e.some(m => m.entityIds.includes('G1')))))) fail('temporärt steg visas medan det pågår');
+    await page.evaluate(() => { ms.cur.steps[1].temp = false; ms.shown = null; });
     await page.evaluate(() => { window.__calls = []; window.__iso = []; msGo(0); }); await page.waitForTimeout(500);
     const hid = await page.evaluate(() => (window.__calls || []).some(c => c.b && c.b.visible === false)), iso0 = await page.evaluate(() => (window.__iso || []).length);
     if (!hid || iso0) fail('steg utan objekt släcker allt annat (inte visa allt): ' + JSON.stringify(await page.evaluate(() => window.__calls)));

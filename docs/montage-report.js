@@ -11,6 +11,6 @@ function msReportData(s, views, imgs, info) {
   const by = (info && info.byStep) || {}, gm = typeof msGrpMap === "function" ? msGrpMap(s) : new Map();
   return {
     has3d: !!(info && info.has3d), cols: (info && info.cols) || [], title: s.name, logo: (typeof ms !== "undefined" && ms.logo && ms.logo.src) || "", company: (typeof ms !== "undefined" && ms.logo && ms.logo.company) || "", author: (typeof ms !== "undefined" && ms.logo && ms.logo.author) || "Victor Falk NCC", area: s.area || "", desc: s.desc || "", generated: new Date().toISOString().slice(0, 10), parts: parts.filter(Boolean), hasImg: !!(imgs && Object.keys(imgs).length),
-    steps: views.map((x, i) => ({ n: x.st.name, p: x.part ? x.partName : "", s: x.s, e: x.e, note: x.st.note || "", deps: deps[i], img: (imgs && imgs[x.st.id]) || "", h: x.hours || 0, q: x.qty || 0, u: x.st.unit || "", obj: by[x.st.id] || [], gn: (gm.get(x.st.grp) || {}).name || "", gc: (gm.get(x.st.grp) || {}).color || "" }))
+    steps: views.map((x, i) => ({ n: x.st.name, p: x.part ? x.partName : "", t: x.st.temp ? 1 : 0, s: x.s, e: x.e, note: x.st.note || "", deps: deps[i], img: (imgs && imgs[x.st.id]) || "", h: x.hours || 0, q: x.qty || 0, u: x.st.unit || "", obj: by[x.st.id] || [], gn: (gm.get(x.st.grp) || {}).name || "", gc: (gm.get(x.st.grp) || {}).color || "" }))
   };
 }
