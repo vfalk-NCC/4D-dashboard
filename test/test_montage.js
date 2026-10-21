@@ -181,6 +181,16 @@ seed('plan_item_activities.json', []);
   const nc = await page.evaluate(() => { ganttNoColor = true; const a = ganttTimeColorOf({ phase: 'pagaende' }), b = ganttTimeColorOf({ phase: 'forsenad' }); ganttNoColor = false; const c = ganttTimeColorOf({ phase: 'pagaende' }); return [a, b, typeof c]; });
   if (nc[0] !== 'reset' || nc[1] !== 'reset' || nc[2] !== 'object') fail('Ingen färgning ger originalfärger: ' + JSON.stringify(nc));
   if (!(await page.$('#ganttTimeNoColor'))) fail('rutan Ingen färgning finns i menyn');
+  // Alternativ HTML-rapport: tidslinje med datum (dra i tidslinjen)
+  { const h = await page.evaluate(() => { const v = msViews(ms.cur); return msHtmlDoc(ms.cur, v, null, 'timeline'); });
+    if (!/tidslinje/.test(h) || /Monteringsanvisning|Läs igenom hela anvisningen/.test(h)) fail('tidslinjerapporten har egen stil');
+    const p2 = await browser.newPage({ viewport: { width: 1300, height: 900 } }); const e2 = []; p2.on('pageerror', e => e2.push(e.message)); await p2.setContent(h); await p2.waitForSelector('#tl'); await p2.waitForTimeout(300);
+    const d0 = await p2.textContent('#dt'); const b = await (await p2.$('#tl')).boundingBox();
+    await p2.mouse.move(b.x + 4, b.y + 30); await p2.mouse.down(); await p2.mouse.move(b.x + b.width * 0.6, b.y + 30, { steps: 6 }); await p2.mouse.up(); await p2.waitForTimeout(200);
+    const d1 = await p2.textContent('#dt'), c1 = await p2.textContent('#ct'); if (d0 === d1 || !/Dag \d+ av \d+/.test(c1) || !/klara/.test(c1)) fail('att dra i tidslinjen ändrar datum och läge: ' + d0 + ' → ' + d1 + ' | ' + c1);
+    await p2.click('#fl [data-f="done"]'); const nDone = (await p2.$$('#tb .tr')).length; await p2.click('#fl [data-f="all"]'); const nAll = (await p2.$$('#tb .tr')).length; if (!(nDone > 0 && nDone < nAll)) fail('filtret Klara visar bara klara steg: ' + nDone + '/' + nAll);
+    await p2.click('#pl'); await p2.waitForTimeout(900); await p2.click('#pl'); if ((await p2.textContent('#dt')) === d1) fail('spela upp flyttar datum');
+    if (e2.length) fail('JS-fel i tidslinjerapporten: ' + e2.join(' | ')); if (process.env.SHOT) await p2.screenshot({ path: '/tmp/tl_report.png', fullPage: true }); await p2.close(); }
   // Ladda om: sparade sekvenser finns kvar, öppna och ta bort
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
   await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-cards .ms-card');
