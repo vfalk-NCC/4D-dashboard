@@ -78,7 +78,7 @@ seed('plan_item_activities.json', []);
   // dra en stapel (steg 2) 3 dagar framåt => eget startdatum
   const b = await (await page.$('[data-bar="1"]')).boundingBox();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down(); await page.mouse.move(b.x + b.width / 2 + 16 * 3, b.y + b.height / 2, { steps: 4 }); await page.mouse.up(); await page.waitForTimeout(300);
-  const st2 = await page.evaluate(() => ({ start: ms.cur.steps[1].start, dirty: ms.dirty })); if (!st2.start || !st2.dirty) fail('stapeln flyttas: ' + JSON.stringify(st2));
+  const st2 = await page.evaluate(() => ({ start: ms.cur.steps[1].start, lag: Object.values(ms.cur.steps[1].depLags || {})[0], dirty: ms.dirty })); if (st2.start !== '' || !(st2.lag > 0) || !st2.dirty) fail('stapeln flyttas (ändrar glappet mot föregångaren): ' + JSON.stringify(st2));
   // Ny tom sekvens (tom gantt)
   await page.click('[data-a="newEmpty"]'); await page.waitForTimeout(300);
   if (!(await page.evaluate(() => !!document.querySelector('.ms-g') && /Tom ganttvy/.test(document.querySelector('.ms-left').innerText)))) fail('tom ganttvy');
@@ -201,6 +201,24 @@ seed('plan_item_activities.json', []);
     await page.evaluate(() => { modelCtl.on = false; msPaint(); }); if (!(await page.$('.ms-warn3d [data-a="mgOn"]'))) fail('varning när 3D-styrningen är av');
     await page.evaluate(() => { modelCtl.on = true; ms.cur.steps.forEach(x => { x.objs = []; }); ms.shown = null; ms.noObjs = false; msApply(); }); await page.waitForTimeout(400);
     await page.evaluate(() => msPaint()); if (!(await page.evaluate(() => /Inget steg har objekt/.test(document.querySelector('.ms-warn3d') ? document.querySelector('.ms-warn3d').innerText : '')))) fail('varning när inga steg har objekt'); }
+  // Glapp och följa med: B väntar på A + 2 dagars glapp; flyttas A följer B med; drag av B ändrar glappet
+  { const r = await page.evaluate(() => { const A = msStepFree('A', 3, []), B = msStepFree('B', 2, [A.id]); A.start = msToday(); B.depLags = { [A.id]: 2 }; ms.cur = msNewSeq('Glapp', [A, B]); ms.cur.start = msToday();
+      const v0 = msViews(ms.cur), gap = msDiff(v0[0].e, v0[1].s); A.start = msAdd(A.start, 4); const v1 = msViews(ms.cur), moved = msDiff(v0[1].s, v1[1].s);
+      ms.mode = 'gantt'; msPaint(); const vB = msViews(ms.cur)[1]; msBarCommit(vB, 'm', 2); const v2 = msViews(ms.cur); return { gap, moved, lag: B.depLags[A.id], start: B.start, gap2: msDiff(v2[0].e, v2[1].s) }; });
+    if (r.gap !== 3 || r.moved !== 4 || r.lag !== 4 || r.start !== '' || r.gap2 !== 5) fail('Glapp/följa med: ' + JSON.stringify(r)); }
+  // Färg och opacitet för kommande, via pilen
+  { await page.evaluate(() => { ms.mode = 'steps'; ms.cur = msNewSeq('Färg', msStepsFromFilter()); ms.i = 0; msPaint(); });
+    await page.click('[data-a="colPop"]'); await page.waitForSelector('.ms-colpop');
+    await page.fill('[data-op="fut"]', '50'); await page.dispatchEvent('[data-op="fut"]', 'input'); await page.waitForTimeout(100);
+    await page.evaluate(() => { const c = document.querySelector('[data-col="fut"]'); c.value = '#ff0000'; c.dispatchEvent(new Event('input', { bubbles: true })); }); await page.waitForTimeout(100);
+    const c = await page.evaluate(() => ({ a: msRgba('fut').a, r: msRgba('fut').r, ls: JSON.parse(localStorage.getItem('4ddash-montage-cols')).fut })); if (c.a !== 128 || c.r !== 255 || c.ls.o !== 50) fail('Färg/opacitet för kommande: ' + JSON.stringify(c));
+    await page.evaluate(() => { ms.cols.fut = { c: '#93c5fd', o: 16 }; msColsSave(); ms.colPop = false; msPaint(); }); }
+  // Montagebild: objekten tänds nedifrån och upp
+  { const r = await page.evaluate(async () => { const z = { G1: 4, G2: 1, G3: 3, G4: 2 }; API.viewer.getObjectBoundingBoxes = (m, rids) => Promise.resolve(rids.map(id => ({ id, boundingBox: { min: { x: 0, y: 0, z: z[id] }, max: { x: 1, y: 1, z: z[id] + 1 } } })));
+      const s0 = msNewSeq('Prefab', [msStepFree('Klump', 3, [])]); s0.steps[0].objs = ['G1', 'G2', 'G3', 'G4'].map(o => ({ modelId: 'M1', objectId: o })); ms.cur = s0; ms.mode = 'steps'; ms.i = 0; ms.live = true; ms.follow = false; ms.cols.buildUp = true; ms.orderCache.clear(); modelCtl.on = true;
+      const ids = () => { const l = window.__iso[window.__iso.length - 1]; return l ? l.flatMap(m => m.entityIds).join() : ''; };
+      window.__iso = []; ms.shown = null; ms.baseShown = null; ms.sub = 0.5; await msApply(); const half = ids(); ms.sub = 0.25; await msApply(); const quarter = ids(); ms.sub = 1; await msApply(); const full = ids(); ms.cols.buildUp = false; return { half, quarter, full }; });
+    if (r.half !== 'G2,G4' || r.quarter !== 'G2' || r.full.split(',').length !== 4) fail('Tänd nedifrån och upp (lägsta först): ' + JSON.stringify(r)); }
   // Ladda om: sparade sekvenser finns kvar, öppna och ta bort
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
   await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-cards .ms-card');

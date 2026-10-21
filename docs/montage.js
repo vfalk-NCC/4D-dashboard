@@ -4,15 +4,19 @@
    (plan_assembly_sequences) så att teamet ser samma. Läget "Gantt" är en egen ganttvy för sekvensen, och "Skicka" gör en HTML-fil
    och en Microsoft Project-XML med förslagen till den som gör Powerproject-tidplanen. */
 const MS_TABLE = "plan_assembly_sequences";
+/* Färg och opacitet för klara, aktuellt och kommande steg (väljs i pilen vid "Kommande svagt") samt "tänd nedifrån och upp". Sparas i webbläsaren. */
+const MS_COLS_DEF = { done: { c: "#969eaa", o: 59 }, cur: { c: "#f59e0b", o: 100 }, fut: { c: "#93c5fd", o: 16 } };
+function msColsLoad() { let o = {}; try { o = JSON.parse(localStorage.getItem("4ddash-montage-cols") || "{}"); } catch (e) { /* */ } const r = {}; Object.keys(MS_COLS_DEF).forEach(k => { r[k] = { ...MS_COLS_DEF[k], ...(o[k] || {}) }; }); r.buildUp = o.buildUp === true; r.buildSec = Number(o.buildSec) > 0 ? Number(o.buildSec) : 3; return r; }
+const msColsSave = () => { try { localStorage.setItem("4ddash-montage-cols", JSON.stringify(ms.cols)); } catch (e) { /* */ } };
+const msRgba = k => { const c = ms.cols[k], h = String(c.c || "#888888").replace("#", ""); return { r: parseInt(h.slice(0, 2), 16) || 0, g: parseInt(h.slice(2, 4), 16) || 0, b: parseInt(h.slice(4, 6), 16) || 0, a: Math.round(Math.max(0, Math.min(100, Number(c.o))) / 100 * 255) }; };
 const msLogoLoad = () => { try { return JSON.parse(localStorage.getItem("4ddash-montage-logo") || "null") || { src: "", company: "" }; } catch (e) { return { src: "", company: "" }; } };
 const msLogoSave = () => { try { localStorage.setItem("4ddash-montage-logo", JSON.stringify(ms.logo)); } catch (e) { ms.msg = "Kunde inte spara loggan i webbläsaren (för stor?)"; } };
-const ms = { multi: new Set(), lastCk: null, logo: msLogoLoad(), seqs: [], loaded: false, loading: false, cur: null, dirty: false, mode: "steps", i: 0, play: false, timer: null, live: true, follow: true, future: false, px: 16, busy: false, pending: false, shown: null, el: null, img: null, msg: "", drag: null };
+const ms = { cols: msColsLoad(), colPop: false, sub: 1, anim: null, orderCache: new Map(), baseShown: null, multi: new Set(), lastCk: null, logo: msLogoLoad(), seqs: [], loaded: false, loading: false, cur: null, dirty: false, mode: "steps", i: 0, play: false, timer: null, live: true, follow: true, future: false, px: 16, busy: false, pending: false, shown: null, el: null, img: null, msg: "", drag: null };
 const msEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const msAdd = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const msDiff = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 864e5);
 const msToday = () => (typeof todayISO === "function" ? todayISO() : new Date().toISOString().slice(0, 10));
 const msId = () => (typeof ghNewId === "function" ? ghNewId() : "m" + Math.random().toString(36).slice(2, 10));
-const msColor = { done: { r: 150, g: 158, b: 170, a: 150 }, cur: { r: 245, g: 158, b: 11, a: 255 }, fut: { r: 147, g: 197, b: 253, a: 40 } };
 
 /* ---- Aktiviteter i tidplanen ----------------------------------------------------------------------------------------------------------------- */
 function msActs() { return mergeActivityGroups(items.filter(x => x.startDate && x.endDate)); }
@@ -20,7 +24,7 @@ const msActKey = a => a.activityKey || String(a.id);
 function msActMap() { const m = new Map(); msActs().forEach(a => m.set(msActKey(a), a)); return m; }
 
 /* ---- Sekvenser: skapa --------------------------------------------------------------------------------------------------------------------- */
-const msStepFree = (name, dur, deps = [], note = "") => ({ id: msId(), kind: "free", name, note, start: "", dur, deps, objs: [], cam: null, pS: "", pE: "", hours: "", qty: "", unit: "" });
+const msStepFree = (name, dur, deps = [], note = "") => ({ id: msId(), kind: "free", name, note, start: "", dur, deps, objs: [], cam: null, pS: "", pE: "", hours: "", qty: "", unit: "", depLags: {} });
 const msActHours = a => { let b = 0; (a ? (a.members || [a]) : []).forEach(m => { const h = Number.isFinite(m.estimatedHours) ? m.estimatedHours : (m.resources || []).reduce((t, r) => t + (Number(r.hours) || 0), 0); if (h > b) b = h; }); return b || null; };
 function msNewSeq(name, steps = [], extra = {}) { const t = new Date().toISOString(); return { id: msId(), name, area: "", desc: "", start: msToday(), steps, created_at: t, updated_at: t, ...extra }; }
 function msStepsFromFilter() {
@@ -44,13 +48,16 @@ function msViewsSeq(seq) {
     const s = st.start || seq.start || msToday(); return [s, msAdd(s, Math.max(1, Number(st.dur) || 1) - 1)];
   };
   v.forEach(x => { [x.s, x.e] = base(x); });
-  for (let pass = 0; pass < 60; pass++) { // fria steg med beroenden startar tidigast dagen efter föregångaren
+  const lagOf = (st, d) => Number((st.depLags || {})[d]) || 0; // glapp i dagar efter föregångaren (+ väntetid, − överlapp)
+  for (let pass = 0; pass < 60; pass++) { // steg med beroenden startar tidigast dagen efter föregångaren plus glappet – de följer med när föregångaren flyttas
     let ch = false;
     v.forEach(x => {
-      if (x.act || !x.st.deps.length) return;
-      let need = x.st.start || seq.start || msToday();
-      x.st.deps.forEach(d => { const p = view.get(d); if (p && p.e) { const n = msAdd(p.e, 1); if (n > need) need = n; } });
-      if (need !== x.s) { const dur = Math.max(1, Number(x.st.dur) || 1); x.s = need; x.e = msAdd(need, dur - 1); ch = true; }
+      if (!x.st.deps.length) return; let need = null;
+      x.st.deps.forEach(d => { const p = view.get(d); if (p && p.e) { const n = msAdd(p.e, 1 + lagOf(x.st, d)); if (need === null || n > need) need = n; } });
+      if (need === null) return;
+      if (x.act) { if (need > x.s) { const dur = msDiff(x.s, x.e); x.s = need; x.e = msAdd(need, dur); ch = true; } return; } // PP-steg skjuts bara framåt
+      const floor = x.st.start || seq.start || msToday(), s2 = need > floor ? need : floor;
+      if (s2 !== x.s) { x.s = s2; x.e = msAdd(s2, Math.max(1, Number(x.st.dur) || 1) - 1); ch = true; }
     });
     if (!ch) break;
   }
@@ -139,21 +146,45 @@ async function msApply() {
     const cur = views[ms.i]; if (!cur) return;
     const anyObj = views.some(x => x.g.length); if (ms.noObjs !== !anyObj) { ms.noObjs = !anyObj; msPaintSoon(); }
     if (!anyObj) { ms.shown = null; return; } // inget steg har objekt i modellen: rör inte modellen
-    const done = msMerge(views.filter(x => x.i < ms.i).map(x => x.g)), now = cur.g, fut = ms.future ? msMerge(views.filter(x => x.i > ms.i).map(x => x.g)) : [], vis = msMerge([done, now, fut]);
-    const sig = JSON.stringify([ms.cur.id, ms.i, ms.future, ms.follow, vis.map(g => g.modelId + g.rids.length)]); if (ms.shown === sig) return;
-    const ents = vis.map(g => ({ modelId: g.modelId, entityIds: g.rids }));
-    {  // allt som inte hör till klara steg, aktuellt steg (eller kommande vid "svagt") släcks undan – även när det aktuella steget saknar objekt
-      if (!ents.length) await V.setObjectState(undefined, { visible: false });
-      else { try { await V.isolateEntities(ents); } catch (e1) { await V.setObjectState(undefined, { visible: false }); await V.setObjectState({ modelObjectIds: msMo(vis) }, { visible: true }); } }
+    const done = msMerge(views.filter(x => x.i < ms.i).map(x => x.g)), now = cur.g, fut = ms.future ? msMerge(views.filter(x => x.i > ms.i).map(x => x.g)) : [];
+    const nNow = now.reduce((a, g) => a + g.rids.length, 0); if (ms.nNow !== nNow) { ms.nNow = nNow; msPaintSoon(); }
+    const build = ms.cols.buildUp && nNow > 1; let nowVis = now, k = nNow;
+    if (build) { const ord = await msOrder(V, cur); k = Math.max(0, Math.min(ord.length, Math.ceil(ms.sub * ord.length - 1e-9))); nowVis = msGroupsOf(ord.slice(0, k)); }
+    const vis = msMerge([done, nowVis, fut]), base = JSON.stringify([ms.cur.id, ms.i, ms.future, ms.follow, ms.cols, vis.length ? 1 : 0, done.length, fut.length, nNow]), sig = base + "|" + k + "|" + build;
+    if (ms.shown === sig) return;
+    const ents = vis.map(g => ({ modelId: g.modelId, entityIds: g.rids })), same = ms.baseShown === base && build;
+    // allt som inte hör till klara steg, aktuellt steg (eller kommande vid "svagt") släcks undan – även när det aktuella steget saknar objekt
+    if (!ents.length) await V.setObjectState(undefined, { visible: false });
+    else { try { await V.isolateEntities(ents); } catch (e1) { await V.setObjectState(undefined, { visible: false }); await V.setObjectState({ modelObjectIds: msMo(vis) }, { visible: true }); } }
+    if (!same) { // färger sätts bara när steget byts (vid delvis tändning räcker det att visa fler objekt)
       try { await V.setObjectState(undefined, { color: "reset" }); } catch (e) { /* */ }
-      if (done.length) await V.setObjectState({ modelObjectIds: msMo(done) }, { color: msColor.done });
-      if (fut.length) await V.setObjectState({ modelObjectIds: msMo(fut) }, { color: msColor.fut });
-      if (now.length) await V.setObjectState({ modelObjectIds: msMo(now) }, { color: msColor.cur });
+      if (done.length) await V.setObjectState({ modelObjectIds: msMo(done) }, { color: msRgba("done") });
+      if (fut.length) await V.setObjectState({ modelObjectIds: msMo(fut) }, { color: msRgba("fut") });
+      if (now.length) await V.setObjectState({ modelObjectIds: msMo(now) }, { color: msRgba("cur") });
     }
-    if (ms.follow && typeof V.setCamera === "function") { try { const cam = msCamOf(cur); if (cam) await V.setCamera(cam); else if (now.length) await V.setCamera({ modelObjectIds: msMo(now) }); } catch (e) { console.warn("Montageordning: kamera", e); } }
-    ms.shown = sig; ms.touched3d = true;
+    if (!same && ms.follow && typeof V.setCamera === "function") { try { const cam = msCamOf(cur); if (cam) await V.setCamera(cam); else if (now.length) await V.setCamera({ modelObjectIds: msMo(now) }); } catch (e) { console.warn("Montageordning: kamera", e); } }
+    ms.shown = sig; ms.baseShown = base; ms.touched3d = true;
   } catch (e) { console.warn("Montageordning", e); if (typeof modelToast === "function") modelToast("Kunde inte uppdatera 3D: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); }
   finally { ms.busy = false; if (ms.pending) { ms.pending = false; msApply(); } }
+}
+/* Stegets objekt i den ordning de monteras: nedifrån och upp (mitten av objektets höjd), därefter längs x och y. */
+async function msOrder(V, cur) {
+  const key = cur.st.id + "|" + cur.g.map(g => g.modelId + ":" + g.rids.length).join(","); if (ms.orderCache.has(key)) return ms.orderCache.get(key);
+  const out = [];
+  for (const g of cur.g) {
+    let boxes = []; try { if (typeof V.getObjectBoundingBoxes === "function") boxes = (await V.getObjectBoundingBoxes(g.modelId, g.rids)) || []; } catch (e) { /* utan höjd: behåll ordningen */ }
+    const by = new Map(boxes.map(b => [b.id, b.boundingBox]));
+    g.rids.forEach((rid, n) => { const b = by.get(rid); out.push({ modelId: g.modelId, rid, n, z: b ? (b.min.z + b.max.z) / 2 : 0, x: b ? (b.min.x + b.max.x) / 2 : 0, y: b ? (b.min.y + b.max.y) / 2 : 0 }); });
+  }
+  out.sort((a, b) => a.z - b.z || a.x - b.x || a.y - b.y || a.n - b.n); ms.orderCache.set(key, out); return out;
+}
+const msGroupsOf = list => { const by = new Map(); list.forEach(o => (by.get(o.modelId) || by.set(o.modelId, []).get(o.modelId)).push(o.rid)); return [...by].map(([modelId, rids]) => ({ modelId, rids })); };
+/* Montagebilden: när ett steg tas fram tänds dess objekt gradvis nedifrån och upp (ms.sub går från 0 till 1). */
+function msAnimate() {
+  clearInterval(ms.anim); ms.anim = null;
+  if (!ms.cols.buildUp) { ms.sub = 1; return; }
+  ms.sub = 0; const t0 = performance.now(), dur = Math.max(500, ms.cols.buildSec * 1000);
+  ms.anim = setInterval(() => { const f = Math.min(1, (performance.now() - t0) / dur); ms.sub = f; msApply(); const r = document.querySelector(".ms-sub"); if (r) r.value = Math.round(f * 100); if (f >= 1) { clearInterval(ms.anim); ms.anim = null; } }, 140);
 }
 /* Kameravy för ett steg: sekvensens standardvy (om "samma för alla steg" är på) går först, sedan stegets egen, sedan delens sekvens. Så blir alla bilder tagna likadant. */
 function msCamOf(x) {
@@ -166,10 +197,12 @@ async function msRestoreModel() {
 }
 function msLeave() { if (!ms.view) return; ms.view = ""; msPlay(false); document.removeEventListener("keydown", msKey, true); msRestoreModel(); }
 const msLen = () => (ms.cur ? msViews(ms.cur).length : 0);
-function msPlay(on) { ms.play = on; clearInterval(ms.timer); ms.timer = null; if (on && ms.cur) { if (ms.i >= msLen() - 1) ms.i = 0; ms.timer = setInterval(() => { if (!ms.busy) msGo(ms.i + 1); }, 2500); } }
-function msGo(i) {
-  if (!ms.cur || !msLen()) return; const n = msLen();
-  ms.i = Math.max(0, Math.min(n - 1, i)); ms.touched3d = ms.live; if (ms.play && ms.i >= n - 1) msPlay(false); msPaint(); msApply();
+function msPlay(on) { ms.play = on; clearInterval(ms.timer); ms.timer = null; if (on && ms.cur) { if (ms.i >= msLen() - 1) ms.i = 0; ms.timer = setInterval(() => { if (!ms.busy) msGo(ms.i + 1); }, Math.max(2500, ms.cols.buildUp ? ms.cols.buildSec * 1000 + 900 : 0)); } }
+function msGo(i, instant) {
+  if (!ms.cur || !msLen()) return; const n = msLen(), was = ms.i;
+  ms.i = Math.max(0, Math.min(n - 1, i)); ms.touched3d = ms.live; if (ms.play && ms.i >= n - 1) msPlay(false);
+  if (instant || ms.i === was) { if (ms.i !== was) { clearInterval(ms.anim); ms.sub = 1; } } else msAnimate();
+  msPaint(); msApply();
 }
 function msKey(e) {
   if (ms.view !== "montage" || !ms.cur) return; const t = e.target;
@@ -210,12 +243,22 @@ function msPaint() {
   const warn = !ms.live ? "" : (typeof modelCtl !== "undefined" && !modelCtl.on) ? `<div class="ms-warn3d">3D-styrningen är av – modellen i Trimble Connect ändras inte. <button type="button" data-a="mgOn">Slå på 3D-styrning</button></div>` : ms.noObjs ? `<div class="ms-warn3d">Inget steg har objekt i modellen, så inget kan visas eller släckas. Markera objekt i TC och tryck <b>Sätt från markering</b> på varje steg (eller koppla stegen till aktiviteter).</div>` : "";
   const cur = views[ms.i], player = n ? `${warn}<div class="ms-player"><button type="button" data-a="first" aria-label="Första">⏮</button><button type="button" data-a="prev" aria-label="Föregående">◀</button><button type="button" class="ms-play" data-a="play" aria-label="Spela">${ms.play ? "⏸" : "▶"}</button><button type="button" data-a="next" aria-label="Nästa">▶︎</button><button type="button" data-a="last" aria-label="Sista">⏭</button>
     <input type="range" class="ms-range" min="1" max="${n}" value="${ms.i + 1}" aria-label="Steg"><span class="ms-cur"><b>${ms.i + 1}/${n}</b> ${msEsc(cur ? msLab(cur) : "")}<small>${cur ? msEsc(cur.s) + " → " + msEsc(cur.e) : ""}</small></span>
-    <label title="Visa/färga stegen i 3D-modellen"><input type="checkbox" data-o="live"${ms.live ? " checked" : ""}> 3D</label><label><input type="checkbox" data-o="follow"${ms.follow ? " checked" : ""}> Följ kameran</label><label><input type="checkbox" data-o="future"${ms.future ? " checked" : ""}> Kommande svagt</label><button type="button" data-a="reset3d" title="Visa hela modellen igen">Visa allt</button></div>` : "";
+    <label title="Visa/färga stegen i 3D-modellen"><input type="checkbox" data-o="live"${ms.live ? " checked" : ""}> 3D</label><label><input type="checkbox" data-o="follow"${ms.follow ? " checked" : ""}> Följ kameran</label><label><input type="checkbox" data-o="future"${ms.future ? " checked" : ""}> Kommande svagt</label><button type="button" class="ms-caret" data-a="colPop" aria-label="Färg och opacitet" aria-expanded="${ms.colPop}" title="Färg, opacitet och tändning nedifrån och upp">▾</button>${msBuildSliderHtml(views)}<button type="button" data-a="reset3d" title="Visa hela modellen igen">Visa allt</button></div>` : "";
   el.innerHTML = `<div class="ms-root">${top}${meta}${tabs}<div class="ms-main"><div class="ms-left">${left}</div><div class="ms-right">${cmp ? msPartEditorHtml(s, lay) : msEditorHtml(s, views)}</div></div>${player}</div>`;
   const l = el.querySelector(".ms-left"); if (l) l.scrollTop = scroll; const g = el.querySelector(".ms-gscroll"); if (g) g.scrollLeft = sx;
   msWire();
 }
 
+function msBuildSliderHtml(views) {
+  const nObj = ms.nNow || 0;
+  return (ms.cols.buildUp && nObj > 1 ? `<label class="ms-subl" title="Dra för att tända stegets objekt nedifrån och upp">Montage <input type="range" class="ms-sub" min="0" max="100" value="${Math.round(ms.sub * 100)}"> <small>${nObj} obj.</small></label>` : "") + (ms.colPop ? msColPopHtml() : "");
+}
+function msColPopHtml() {
+  const row = (k, t) => `<div class="ms-cr"><span>${t}</span><input type="color" data-col="${k}" value="${msEsc(ms.cols[k].c)}" aria-label="Färg ${t}"><input type="range" data-op="${k}" min="0" max="100" step="1" value="${ms.cols[k].o}" aria-label="Opacitet ${t}"><b data-opv="${k}">${ms.cols[k].o} %</b></div>`;
+  return `<div class="ms-colpop" role="dialog" aria-label="Färg och opacitet"><div class="ms-ch">Färg och opacitet i modellen</div>${row("done", "Klara")}${row("cur", "Aktuellt steg")}${row("fut", "Kommande")}
+    <div class="ms-ch">Montagebild</div><label class="ms-bu" title="Stegets objekt tänds ett i taget nedifrån och upp, som en naturlig montagebild (t.ex. 50 prefabobjekt)"><input type="checkbox" data-bu="on"${ms.cols.buildUp ? " checked" : ""}> Tänd nedifrån och upp</label>
+    <label class="ms-bu">Tid per steg <select data-bu="sec">${[1, 2, 3, 5, 8, 12].map(v => `<option value="${v}"${Number(ms.cols.buildSec) === v ? " selected" : ""}>${v} s</option>`).join("")}</select></label><button type="button" data-a="colReset">Återställ</button></div>`;
+}
 function msStepsHtml(s, views) {
   const rows = views.map(x => `<div class="ms-row${x.i === ms.i ? " cur" : ""}${x.missing ? " miss" : ""}" draggable="true" data-i="${x.i}"><span class="ms-h" title="Dra för att flytta">⋮⋮</span><input type="checkbox" class="ms-ck" data-ck="${x.i}"${ms.multi.has(x.st.id) ? " checked" : ""} aria-label="Markera steg ${x.i + 1}" title="Markera (Skift-klick markerar ett intervall)"><b>${x.i + 1}</b>
     <span class="ms-nm">${msEsc(x.st.name)}<small>${x.st.kind === "act" ? (x.missing ? "aktiviteten finns inte längre" : "tidplan: " + msEsc(x.ppS.slice(5)) + "–" + msEsc(x.ppE.slice(5)) + (x.changed ? ` · förslag ${msEsc(x.s.slice(5))}–${msEsc(x.e.slice(5))}` : "")) : "fritt steg · " + msEsc(x.s.slice(5)) + "–" + msEsc(x.e.slice(5))}${x.st.objs.length ? " · " + x.st.objs.length + " obj." : ""}${x.st.cam ? " · 📷" : ""}${x.st.note ? " · 📝" : ""}</small></span>
@@ -256,6 +299,7 @@ function msEditorHtml(s, views) {
     <label>Anteckning <textarea data-sf="note" rows="3">${msEsc(st.note)}</textarea></label>
     <details class="ms-adv"${st.hours !== "" && st.hours != null || st.qty !== "" && st.qty != null ? " open" : ""}><summary>Avancerat</summary><div class="ms-advb"><label>Timmar <input type="number" min="0" step="any" data-sf="hours" value="${msEsc(st.hours)}" placeholder="${x.act && msActHours(x.act) ? msActHours(x.act) + " (tidplan)" : ""}"></label><label>Mängd <input type="number" min="0" step="any" data-sf="qty" value="${msEsc(st.qty)}"></label><label>Enhet <input data-sf="unit" value="${msEsc(st.unit)}" placeholder="m³, m², st …" style="width:80px"></label></div><small class="hint">Visas diskret i rapporten och i CSV-filen.</small></details>
     <label>Väntar på <select data-sf="deps" multiple size="${Math.min(6, Math.max(2, others.length))}">${others.map(o => `<option value="${msEsc(o.st.id)}"${st.deps.includes(o.st.id) ? " selected" : ""}>${o.i + 1}. ${msEsc(o.st.name)}</option>`).join("")}</select></label>
+    ${st.deps.length ? `<div class="ms-lags">${st.deps.map(d => { const o = views.find(v => v.st.id === d); return o ? `<label>Glapp efter ${o.i + 1} <input type="number" data-lag="${msEsc(d)}" value="${Number((st.depLags || {})[d]) || 0}" style="width:62px"> d</label>` : ""; }).join("")}<small class="hint">+ = väntetid, − = överlapp. Steget följer med när det föregående flyttas.</small></div>` : ""}
     <div class="ms-ob"><b>3D:</b> ${(x.t || msTargets(st, msActMap())).length} objekt <button type="button" data-a="setObjs" title="Markera objekt i TC först">Sätt från markering</button><button type="button" data-a="showObjs">Visa</button>${st.objs.length ? `<button type="button" data-a="clearObjs">Rensa egna</button>` : ""}<br><button type="button" data-a="saveCam">Spara kameravy</button>${st.cam ? `<button type="button" data-a="clearCam">Ta bort kameravy</button><br><button type="button" data-a="camEmptySteps" title="Kopierar vyn till alla steg som saknar kameravy">Samma vy på steg utan vy</button><button type="button" data-a="camAllSteps" title="Kopierar vyn till alla steg">Samma vy på alla steg</button><small class="hint">kameravy sparad</small>` : `<small class="hint">ingen – zoomar till objekten</small>`}</div>
     <div class="ms-del"><button type="button" data-a="delStep">Ta bort steget</button></div>`;
 }
@@ -280,7 +324,7 @@ function msHtmlDoc(s, views, imgs, style) {
 }
 function msXml(s, views, all) {
   const use = views.filter(x => all || x.isNew || x.changed), ids = new Set(use.map(x => x.st.id));
-  const list = use.map(x => ({ startDate: x.s, endDate: x.e, objectName: x.st.name, activity: "", area: x.part ? s.name + "/" + x.partName : s.name + " (förslag)", members: [{ id: x.st.id, dependsOn: x.st.deps.filter(d => ids.has(d)), depLags: {} }] }));
+  const list = use.map(x => ({ startDate: x.s, endDate: x.e, objectName: x.st.name, activity: "", area: x.part ? s.name + "/" + x.partName : s.name + " (förslag)", members: [{ id: x.st.id, dependsOn: x.st.deps.filter(d => ids.has(d)), depLags: x.st.depLags || {} }] }));
   return list.length ? buildMspXml(list, { project: s.name + " – förslag", resources: false }) : null;
 }
 const MS_IMGQ = { high: [1600, 0.88], mid: [1000, 0.7], low: [720, 0.55], min: [480, 0.4] };
@@ -381,6 +425,7 @@ function msLoadLogo(file) {
 function msWire() {
   const el = ms.el; if (!el) return; const root = el.querySelector(".ms-root"); if (!root) return;
   root.onclick = async e => {
+    if (ms.colPop && !e.target.closest(".ms-colpop") && !e.target.closest('[data-a="colPop"]')) { ms.colPop = false; msPaint(); }
     const ck = e.target.closest("[data-ck]");
     if (ck) { const i = Number(ck.dataset.ck), v = msViews(ms.cur); if (e.shiftKey && ms.lastCk !== null) { const [a, b] = [Math.min(i, ms.lastCk), Math.max(i, ms.lastCk)]; for (let k = a; k <= b; k++) ms.multi[ck.checked ? "add" : "delete"](v[k].st.id); } else ms.multi[ck.checked ? "add" : "delete"](v[i].st.id); ms.lastCk = i; msPaint(); return; }
     const psel = e.target.closest("[data-psel]"); const tg = e.target.closest("[data-tg]");
@@ -403,7 +448,7 @@ function msWire() {
     if (k === "openPart") { const pr = msComposeLayout(s).parts[msPartIdx(s, msComposeLayout(s))]; if (pr && pr.seq) { ms.mode = "steps"; await msOpenSeq(pr.seq.id); } return; }
     if (k === "newEmpty") msNew("empty"); else if (k === "newTpl") msNew("tpl"); else if (k === "newFilter") msNew("filter");
     else if (k === "save") msSave(false); else if (k === "saveAs") msSave(true); else if (k === "del") msDelete();
-    else if (k === "dup") { const c = JSON.parse(JSON.stringify(s)); c.id = msId(); c.name = s.name + " (kopia)"; c.steps.forEach(x => { x.id = msId(); }); const map = new Map(s.steps.map((x, i) => [x.id, c.steps[i].id])); c.steps.forEach((x, i) => { x.deps = s.steps[i].deps.map(d => map.get(d)).filter(Boolean); }); if (c.parts) { const pm = new Map(c.parts.map(p => [p.id, msId()])); c.parts.forEach(p => { p.after = pm.get(p.after) || ""; p.id = pm.get(p.id) || p.id; }); } ms.cur = c; ms.dirty = true; ms.msg = "Kopia – tryck Spara"; msPaint(); }
+    else if (k === "dup") { const c = JSON.parse(JSON.stringify(s)); c.id = msId(); c.name = s.name + " (kopia)"; c.steps.forEach(x => { x.id = msId(); }); const map = new Map(s.steps.map((x, i) => [x.id, c.steps[i].id])); c.steps.forEach((x, i) => { x.deps = s.steps[i].deps.map(d => map.get(d)).filter(Boolean); const dl = s.steps[i].depLags || {}; x.depLags = {}; Object.keys(dl).forEach(k => { const nk = map.get(k); if (nk) x.depLags[nk] = dl[k]; }); }); if (c.parts) { const pm = new Map(c.parts.map(p => [p.id, msId()])); c.parts.forEach(p => { p.after = pm.get(p.after) || ""; p.id = pm.get(p.id) || p.id; }); } ms.cur = c; ms.dirty = true; ms.msg = "Kopia – tryck Spara"; msPaint(); }
     else if (k === "addFree") { const prev = s.steps[ms.i]; const n = msStepFree("Nytt steg", 3, []); const at = s.steps.length ? ms.i + 1 : 0; if (prev && ms.mode === "gantt") { const v = msViews(s)[ms.i]; n.start = v ? msAdd(v.e, 1) : ""; } s.steps.splice(at, 0, n); ms.i = at; msTouch(); msPaint(); msApply(); }
     else if (k === "addAct") { const p = document.getElementById("msPick"); p.classList.toggle("hidden"); if (!p.classList.contains("hidden")) { p.innerHTML = msPickHtml(); const q = document.getElementById("msPickQ"); q.focus(); q.oninput = () => { const t = q.value.toLowerCase(); p.querySelectorAll("[data-pick]").forEach(d => { d.style.display = !t || d.dataset.t.includes(t) ? "" : "none"; }); }; } }
     else if (k === "addSel") { const V = API && API.viewer; if (!V) return; try { const sel = (await V.getSelection()) || [], objs = []; for (const m of sel) { const rids = m.objectRuntimeIds || []; if (!rids.length) continue; const ids = await V.convertToObjectIds(m.modelId, rids); ids.forEach(id => { if (id) objs.push({ modelId: m.modelId, objectId: String(id) }); }); } if (!objs.length) { modelToast("Markera objekt i modellen först"); return; } const n = msStepFree("Nytt steg", 3, []); n.objs = objs; s.steps.splice(ms.i + 1, 0, n); ms.i = Math.min(s.steps.length - 1, ms.i + 1); msTouch(); msPaint(); msApply(); } catch (err) { console.warn(err); modelToast("Kunde inte läsa markeringen"); } }
@@ -430,6 +475,8 @@ function msWire() {
     else if (k === "saveSeqCam") { try { s.cam = await API.viewer.getCamera(); if (s.camAll === undefined) s.camAll = true; ms.shown = null; msTouch(); ms.msg = "Kameravyn är sparad – alla steg tas nu från samma vy (spara sekvensen)"; msPaint(); } catch (err) { modelToast("Kunde inte läsa kameran i TC"); } }
     else if (k === "goSeqCam") { try { await API.viewer.setCamera(s.cam); } catch (err) { modelToast("Kunde inte flytta kameran"); } }
     else if (k === "clearSeqCam") { s.cam = null; ms.shown = null; msTouch(); msPaint(); }
+    else if (k === "colPop") { ms.colPop = !ms.colPop; msPaint(); }
+    else if (k === "colReset") { const bu = ms.cols.buildUp, bs = ms.cols.buildSec; localStorage.removeItem("4ddash-montage-cols"); ms.cols = msColsLoad(); ms.cols.buildUp = bu; ms.cols.buildSec = bs; msColsSave(); ms.shown = null; msPaint(); msApply(); }
     else if (k === "mgOn") { if (typeof modelGuardSet === "function") { await modelGuardSet(true); ms.shown = null; msPaint(); msApply(); } }
     else if (k === "logoDel") { ms.logo.src = ""; msLogoSave(); msPaint(); }
     else if (k === "exHtml") msExport("html"); else if (k === "exXml") msExport("xml"); else if (k === "exTxt") msExport("txt");
@@ -442,7 +489,9 @@ function msWire() {
     if (!s) return;
     if (t.dataset.pf && s) { const pr = s.parts[msPartIdx(s, msComposeLayout(s))]; if (!pr) return; const f = t.dataset.pf; pr[f] === undefined && (pr[f] = ""); pr[f] = f === "afterStep" || f === "lag" ? Number(t.value) || (f === "afterStep" ? 0 : 0) : t.value; if (f === "afterStep") pr.afterStep = Number(t.value); if (f === "after") { pr.afterStep = -1; if (t.value) pr.start = ""; } if (f === "start" && t.value) pr.after = ""; msTouch(); msPaintSoon(); return; }
     if (t.dataset.f) { s[t.dataset.f] = t.value; msTouch(); if (t.dataset.f === "start") msPaintSoon(); return; }
+    if (t.dataset.lag && s) { const st0 = s.steps[ms.i]; if (st0) { st0.depLags = st0.depLags || {}; st0.depLags[t.dataset.lag] = Math.round(Number(t.value)) || 0; msTouch(); msPaintSoon(); } return; }
     if (t.dataset.sf) { const st = s.steps[ms.i]; if (!st) return; if (t.dataset.sf === "deps") st.deps = [...t.selectedOptions].map(o => o.value); else if (t.dataset.sf === "hours" || t.dataset.sf === "qty") st[t.dataset.sf] = t.value === "" ? "" : Math.max(0, Number(t.value)); else if (t.dataset.sf === "dur") st.dur = Math.max(1, Math.round(Number(t.value)) || 1); else st[t.dataset.sf] = t.value; msTouch(); msPaintSoon(); return; }
+    if (t.dataset.bu) { if (t.dataset.bu === "on") { ms.cols.buildUp = t.checked; ms.sub = 1; clearInterval(ms.anim); ms.anim = null; } else ms.cols.buildSec = Number(t.value); msColsSave(); ms.shown = null; ms.baseShown = null; if (t.dataset.bu === "on" && t.checked) msAnimate(); msPaintSoon(); msApply(); return; }
     if (t.dataset.sq && s) { s[t.dataset.sq] = t.checked; ms.shown = null; msTouch(); msApply(); return; }
     if (t.id === "msStyle") { ms.repStyle = t.value; }
     if (t.id === "msImgQ") { ms.imgQ = t.value; }
@@ -450,7 +499,10 @@ function msWire() {
     if (t.id === "msLogoFile") { msLoadLogo(t.files && t.files[0]); }
     if (t.dataset.lg) { ms.logo[t.dataset.lg] = t.value; msLogoSave(); }
   };
-  root.oninput = e => { const t = e.target; if (t.classList.contains("ms-range")) { msGo(Number(t.value) - 1); const r = ms.el.querySelector(".ms-range"); if (r) r.focus(); } else if (t.id === "msPx") { ms.px = Number(t.value); msPaint(); const r = ms.el.querySelector("#msPx"); if (r) r.focus(); } };
+  root.oninput = e => { const t = e.target;
+    if (t.dataset.col || t.dataset.op) { const k = t.dataset.col || t.dataset.op; if (t.dataset.col) ms.cols[k].c = t.value; else { ms.cols[k].o = Number(t.value); const b = ms.el.querySelector(`[data-opv="${k}"]`); if (b) b.textContent = t.value + " %"; } msColsSave(); clearTimeout(ms.colT); ms.colT = setTimeout(() => { ms.shown = null; msApply(); }, 200); return; }
+    if (t.classList.contains("ms-sub")) { clearInterval(ms.anim); ms.anim = null; ms.sub = Number(t.value) / 100; msApply(); return; }
+    if (t.classList.contains("ms-range")) { msGo(Number(t.value) - 1, true); const r = ms.el.querySelector(".ms-range"); if (r) r.focus(); } else if (t.id === "msPx") { ms.px = Number(t.value); msPaint(); const r = ms.el.querySelector("#msPx"); if (r) r.focus(); } };
   // dra rader i listan
   root.querySelectorAll(".ms-row").forEach(r => { r.ondragstart = e => { ms.drag = Number(r.dataset.i); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", String(ms.drag)); } catch (x) { /* */ } }; r.ondragover = e => { e.preventDefault(); }; r.ondrop = e => { e.preventDefault(); if (ms.drag !== null) { const from = ms.drag; ms.drag = null; msMove(from, Number(r.dataset.i)); } }; });
   // dra staplar i ganttvyn
@@ -469,7 +521,11 @@ function msBarDates(x, edge, dd) { let s = x.s, e = x.e; if (edge === "m") { s =
 function msBarCommit(x, edge, dd) {
   const [s, e] = msBarDates(x, edge, dd), st = x.st;
   if (x.act) { st.pS = s; st.pE = e; if (s === x.ppS && e === x.ppE) { st.pS = ""; st.pE = ""; } }
-  else { st.start = s; st.dur = Math.max(1, msDiff(s, e) + 1); }
+  else if (st.deps.length) { // flytt av ett steg som väntar på andra ändrar glappet mot det som styr starten; steget följer sedan med när föregångaren flyttas
+    if (edge !== "r") { const vs = msViews(ms.cur), pv = st.deps.map(d => vs.find(v => v.st.id === d)).filter(Boolean); st.depLags = st.depLags || {};
+      if (pv.length) { const lag0 = d => Number(st.depLags[d]) || 0, drv = pv.reduce((m, p) => (msAdd(p.e, 1 + lag0(p.st.id)) > msAdd(m.e, 1 + lag0(m.st.id)) ? p : m), pv[0]); st.depLags[drv.st.id] = msDiff(msAdd(drv.e, 1), s); st.start = ""; ms.msg = `Glapp ${st.depLags[drv.st.id] > 0 ? "+" : ""}${st.depLags[drv.st.id]} d efter "${drv.st.name}"`; } else st.start = s; }
+    st.dur = Math.max(1, msDiff(s, e) + 1);
+  } else { st.start = s; st.dur = Math.max(1, msDiff(s, e) + 1); }
   msTouch(); msPaint(); msApply();
 }
 function msInit() { const b = document.getElementById("ganttAssemblyBtn"); if (b) b.onclick = () => { const t = document.querySelector('[data-gantt-view="montage"]'); if (t) t.click(); }; }
