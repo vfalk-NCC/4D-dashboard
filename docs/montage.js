@@ -379,7 +379,7 @@ async function msCollectObjects(views, note, opts) {
       if (opts.list && typeof V.getObjectProperties === "function") { try { pr = (await V.getObjectProperties(modelId, rids)) || []; } catch (e) { console.warn("Egenskaper", e); } }
       const bm = new Map(bb.map(b => [b.id, b.boundingBox])), pm = new Map(pr.map(p => [p.id, p]));
       chunk.forEach(t => { const p = pm.get(t.rid), flat = p && typeof qtyFlat === "function" ? qtyFlat(p) : {}, bx = bm.get(t.rid);
-        list.push({ id: String(t.objectId).slice(-8), n: (p && ((p.product && p.product.name) || p.class)) || "Objekt " + t.rid, t: p && p.class ? String(p.class).replace(/^Ifc/, "") : "", p: [], _f: flat, b: bx && bx.min && bx.max ? [bx.min.x, bx.min.y, bx.min.z, bx.max.x, bx.max.y, bx.max.z] : null }); });
+        list.push({ id: String(t.objectId).slice(-8), g: String(t.objectId), n: (p && ((p.product && p.product.name) || p.class)) || "Objekt " + t.rid, t: p && p.class ? String(p.class).replace(/^Ifc/, "") : "", p: [], _f: flat, b: bx && bx.min && bx.max ? [bx.min.x, bx.min.y, bx.min.z, bx.max.x, bx.max.y, bx.max.z] : null }); });
       n += chunk.length; note(`Hämtar objekt … ${n} av ${tot}`);
     }
     list.sort((a, b) => (a.b ? a.b[2] + a.b[5] : 0) - (b.b ? b.b[2] + b.b[5] : 0) || (a.b ? a.b[0] - b.b[0] : 0) || (a.b ? a.b[1] - b.b[1] : 0)); byStep[x.st.id] = list; list.forEach(o => { if (o.b) all.push(o.b); });

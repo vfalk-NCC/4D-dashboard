@@ -244,6 +244,7 @@ seed('plan_item_activities.json', []);
       ms.cur = msNewSeq('Prefab 3D', [A, B]); ms.cur.start = msToday(); ms.mode = 'send'; modelCtl.on = true; ms.opt.props = 'Volume, Weight, Mark, Element_length, Planning_production_date'; msPaint(); });
     const [dl3d] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exHtml"]')]); const h3d = fs.readFileSync(await dl3d.path(), 'utf8');
     if (!/cv3/.test(h3d) || !/"has3d":true/.test(h3d) || !/"cols":\["Volume","Weight","Mark","Element_length"\]/.test(h3d)) fail('HTML har 3D-vy, lådor och egenskapskolumner');
+    if (process.env.DUMP) fs.writeFileSync(process.env.DUMP, h3d);
     const p3 = await browser.newPage({ viewport: { width: 1500, height: 1000 } }); const e3 = []; p3.on('pageerror', e => e3.push(e.message)); await p3.setContent(h3d); await p3.waitForSelector('#cv3'); await p3.waitForTimeout(600);
     const px = () => p3.evaluate(() => { const cv = document.getElementById('cv3'), c2 = document.createElement('canvas'); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext('2d'); g.drawImage(cv, 0, 0); const d = g.getImageData(0, 0, c2.width, c2.height).data; let n = 0, sum = 0; for (let i = 0; i < d.length; i += 4) { if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 40) n++; sum += d[i] + d[i + 1] * 3 + d[i + 2] * 7; } return { n, sum }; });
     const st0 = await p3.evaluate(() => window.__v3 && window.__v3.state().N), a = await px(); if (st0 !== 5 || a.n < 300) fail('3D-vyn ritar lådorna: ' + JSON.stringify({ st0, a }));
