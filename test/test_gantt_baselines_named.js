@@ -52,7 +52,7 @@ seed('plan_baselines.json', [{ id: 'main', name: 'Kontraktstidplan', source: 'Ko
   await page.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
   // Testar de klassiska staplarna (Visning → Ny tidslinje av); den nya tidslinjen testas i test_gantt_timeline.js.
   await page.addInitScript(() => localStorage.setItem('4ddash-gantt-classic', '1'));
-  await page.addInitScript(() => { localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1'); });
+  await page.addInitScript(() => { localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1'); localStorage.setItem('4ddash-test-modelctl', '1'); });
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
   const fail = m => { throw new Error(m); };

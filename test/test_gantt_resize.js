@@ -127,7 +127,7 @@ async function run() {
   await page.addInitScript(() => localStorage.setItem('4ddash-gantt-classic', '1'));
   await page.addInitScript(() => {
     window.localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 'fake-token-for-test' }));
-    window.localStorage.setItem('4ddash-unlocked', '1');
+    window.localStorage.setItem('4ddash-unlocked', '1'); localStorage.setItem('4ddash-test-modelctl', '1');
   });
 
   // ---- 1) Grundfall: kanten är fullt synlig (litet, ozoomat "Anpassa"-läge) - ska fungera precis som innan.

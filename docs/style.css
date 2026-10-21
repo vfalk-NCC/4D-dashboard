@@ -3152,3 +3152,12 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .gantt-time-menu .gtm-opt-split .gtm-opt-in { padding: 8px 10px; border-radius: 10px; }
 .ms-camrow { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; margin: 4px 0 2px; } .ms-camrow button { width: auto; font: inherit; font-size: 12px; padding: 3px 9px; border: 1px solid #d0d7de; border-radius: 8px; background: #f6f8fa; cursor: pointer; } .ms-camrow button:disabled { opacity: .45; cursor: default; } .ms-camrow .ok { color: #1a7f37; }
 .ms-camact { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px; margin: 4px 0 8px; padding: 6px 8px; background: #f6f8fa; border: 1px solid #e5e7eb; border-radius: 8px; } .ms-camact button { width: auto; font: inherit; font-size: 12px; padding: 3px 9px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; cursor: pointer; margin-left: 4px; } .ms-camact button:disabled { opacity: .45; cursor: default; } .ms-ck { width: auto; margin: 0; }
+
+/* Huvudbrytare 3D-styrning (model-guard.js) */
+.mg-sw { position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 8px; border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; font-size: 12px; font-weight: 600; color: #475569; cursor: pointer; user-select: none; white-space: nowrap; }
+.mg-sw input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
+.mg-sw i { position: relative; flex: none; width: 30px; height: 17px; border-radius: 999px; background: #cbd5e1; transition: background .15s; }
+.mg-sw i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.35); transition: transform .15s; }
+.mg-sw.on { border-color: #16a34a; background: #f0fdf4; color: #166534; } .mg-sw.on i { background: #16a34a; } .mg-sw.on i::after { transform: translateX(13px); }
+.mg-sw:focus-within { outline: 2px solid #93c5fd; outline-offset: 2px; }
+@media (max-width: 700px) { .mg-sw span { display: none; } }

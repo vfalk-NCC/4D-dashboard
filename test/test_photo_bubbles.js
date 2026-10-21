@@ -53,7 +53,7 @@ seed('plan_items.json', [
     r.fulfill({ status: 405, body: '' });
   });
   await page.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
-  await page.addInitScript(() => { localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1'); });
+  await page.addInitScript(() => { localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1'); localStorage.setItem('4ddash-test-modelctl', '1'); });
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
   const fail = m => { throw new Error(m); };
@@ -82,11 +82,11 @@ seed('plan_items.json', [
       await dl.saveAs(process.env.PHB_OUT + '/foto.pdf');
       const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('#phbPng')]);
       await dl2.saveAs(process.env.PHB_OUT + '/foto.png');
-      // Flytta en bubblas punkt (ankaret) i redigeringsläget.
+      // Punkten (ankaret) är låst till objektet och kan inte dras bort från det.
       { const g = await page.evaluate(() => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.cards[st.cards.length - 1], r = cv.getBoundingClientRect(); return { ax: c.ax, ay: c.ay, x: r.left + c.ax * r.width / st.W, y: r.top + c.ay * r.height / st.H, f: r.width / st.W }; });
         await page.mouse.move(g.x, g.y); await page.mouse.down(); await page.mouse.move(g.x + 40, g.y + 25, { steps: 4 }); await page.mouse.up();
         const g2 = await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.cards[st.cards.length - 1]; return { ax: c.ax, ay: c.ay, x: c.x, y: c.y }; });
-        if (Math.abs((g2.ax - g.ax) * g.f - 40) > 3 || Math.abs((g2.ay - g.ay) * g.f - 25) > 3) fail('Punkten ska följa musen: ' + JSON.stringify({ g, g2 })); }
+        if (Math.abs(g2.ax - g.ax) > 0.5 || Math.abs(g2.ay - g.ay) > 0.5) fail('Punkten är låst till objektet och ska inte kunna flyttas: ' + JSON.stringify({ g, g2 })); }
       // Ta bort en bubbla: ✕ vid hovring, högerklick, Delete och Ångra.
       const where = async i => page.evaluate(i => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.cards[i], r = cv.getBoundingClientRect(); return { x: r.left + (c.x + c.W / 2) * r.width / st.W, y: r.top + (c.y + c.h / 2) * r.height / st.H, cx: r.left + (c.x + c.W - 2 * st.k) * r.width / st.W, cy: r.top + (c.y + 2 * st.k) * r.height / st.H }; }, i);
       let w = await where(0); await page.mouse.move(w.x, w.y); await page.waitForTimeout(100); await page.mouse.click(w.cx, w.cy);
@@ -152,16 +152,16 @@ seed('plan_items.json', [
       const [dl5] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]); await dl5.saveAs(process.env.PHB_OUT + '/foto3.pdf');
       if (!fs.readFileSync(process.env.PHB_OUT + '/foto3.pdf', 'latin1').includes('bubbla-obj')) fail('PDF saknar objektbubbla');
       const ln = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return isFinite(c.ax) && isFinite(c.ay); }); if (!ln) fail('Objektbubblan ska ha en linje/punkt');
-      await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; c.ax += 37; c.ay -= 21; window.__anc = [c.ax, c.ay]; });
+      await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; window.__anc = [c.ax, c.ay]; c.ax += 37; c.ay -= 21; });
       await page.fill('#phbVwName', 'Testvy'); await page.click('#phbVwSave'); await page.waitForSelector('#phbVwSel');
       const un = await page.evaluate(() => [phbOcNum('12,3456', 'Qto / NetVolume (m3)', 1), phbOcNum('2500000', 'Area (mm2)', 2), phbOcNum('5', 'Namn', 0)]);
       if (un[0] !== '12,3 m³' || !/^2,50 m²$/.test(un[1].replace(/\s/g, ' ')) || un[2] !== '5') fail('Enheter/decimaler: ' + JSON.stringify(un));
       // Förval: spara bubblans inställning och få den på nästa bubblor från markeringen
-      await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.ocards[0]; c.dec = 3; c.scale = 1.4; c.colOver = '#112233'; c.titleSrc = 'area'; c.text = 'Förvalstext'; c.fields = ['◆ Antal objekt']; st.sel = c; });
+      await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.ocards[0]; c.dec = 3; c.scale = 1.4; c.colOver = '#112233'; c.titleSrc = 'area'; c.text = 'Förvalstext'; c.title = 'Spännarmering'; c.fields = ['◆ Antal objekt']; st.sel = c; });
       await page.evaluate(() => { phbOcSavePreset(document.getElementById('phbCv')._state().ocards[0]); });
       await page.click('#phbOcNew'); await page.waitForSelector('#phbOcMake'); await page.click('#phbOcMake'); await page.waitForTimeout(250);
-      const nb = await page.evaluate(() => { const l = document.getElementById('phbCv')._state().ocards, c = l[l.length - 1]; return { dec: c.dec, scale: c.scale, col: c.colOver, src: c.titleSrc, text: c.text, f: c.fields }; });
-      if (nb.dec !== 3 || nb.scale !== 1.4 || nb.col !== '#112233' || nb.src !== 'area' || nb.text !== 'Förvalstext' || JSON.stringify(nb.f) !== '["◆ Antal objekt"]') fail('Förvalet ska gälla nya bubblor: ' + JSON.stringify(nb));
+      const nb = await page.evaluate(() => { const l = document.getElementById('phbCv')._state().ocards, c = l[l.length - 1]; return { dec: c.dec, scale: c.scale, col: c.colOver, src: c.titleSrc, text: c.text, title: c.title, f: c.fields }; });
+      if (nb.dec !== 3 || nb.scale !== 1.4 || nb.col !== '#112233' || nb.src !== 'area' || nb.text !== 'Förvalstext' || nb.title !== 'Spännarmering' || JSON.stringify(nb.f) !== '["◆ Antal objekt"]') fail('Förvalet ska gälla nya bubblor: ' + JSON.stringify(nb));
       await page.evaluate(() => localStorage.removeItem('4ddash-phb-oc-preset'));
       await page.click('#phbOcDel'); await page.waitForTimeout(100);
       // TC-kameran ändras efter att vyn sparats – "Använd" ska flytta tillbaka den och ta nytt foto
@@ -169,7 +169,7 @@ seed('plan_items.json', [
       await page.click('#phbVwUse'); await page.waitForFunction(() => window.__setCams > 0, null, { timeout: 8000 }); await page.waitForTimeout(900);
       const camBack = await page.evaluate(() => JSON.stringify(window.__cam) === JSON.stringify(window.__camSaved)); if (!camBack) fail('Kameran ska flyttas tillbaka till den sparade vyn: ' + JSON.stringify(await page.evaluate(() => [window.__cam, window.__camSaved])));
       const anc = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return [c.ax, c.ay, window.__anc[0], window.__anc[1]]; });
-      if (Math.abs(anc[0] - anc[2]) > 1 || Math.abs(anc[1] - anc[3]) > 1) fail('Insättningspunkten ska ligga kvar när en vy läses in: ' + JSON.stringify(anc));
+      if (Math.abs(anc[0] - anc[2]) > 1 || Math.abs(anc[1] - anc[3]) > 1) fail('Insättningspunkten är låst till objektet och ska ligga i objektets läge när en vy läses in: ' + JSON.stringify(anc));
       const vw = await page.evaluate(() => { const s = document.getElementById('phbCv')._state(); return { n: s.ocards.length, t: (s.ocards[0] || {}).text }; });
       if (vw.n !== 1 || vw.t !== 'Egen text här') fail('Sparad vy: ' + JSON.stringify(vw));
       await page.selectOption('#phbOcTSrc', 'area'); await page.click('#phbOcQty'); await page.waitForTimeout(500);

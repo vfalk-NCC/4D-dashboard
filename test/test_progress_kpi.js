@@ -90,7 +90,7 @@ async function run() {
 
   await page.addInitScript(() => {
     window.localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 'fake-token-for-test' }));
-    window.localStorage.setItem('4ddash-unlocked', '1');
+    window.localStorage.setItem('4ddash-unlocked', '1'); localStorage.setItem('4ddash-test-modelctl', '1');
   });
 
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });

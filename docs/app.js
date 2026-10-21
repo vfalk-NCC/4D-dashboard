@@ -333,6 +333,7 @@ async function initApp() {
   bindUI();
 
   API = await TrimbleConnectWorkspace.connect(window.parent, (event, data) => onTcEvent(event, data), 30000);
+  if (typeof modelGuardInstall === "function") modelGuardInstall(API); // 3D-styrningen är av tills reglaget slås på
 
   const project = await API.project.getProject();
   projectId = project.id;

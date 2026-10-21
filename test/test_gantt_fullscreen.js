@@ -48,7 +48,7 @@ seed('plan_items.json', [
     r.fulfill({ status: 405, body: '' });
   });
   await page.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
-  await page.addInitScript(() => { localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1'); });
+  await page.addInitScript(() => { localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1'); localStorage.setItem('4ddash-test-modelctl', '1'); });
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
   const fail = m => { throw new Error(m); };
@@ -97,7 +97,7 @@ seed('plan_items.json', [
   const ctx2 = await browser.newContext({ viewport: { width: 1180, height: 820 }, hasTouch: true });
   const ipad = await ctx2.newPage();
   await ipad.addInitScript(() => {
-    localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1');
+    localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1'); localStorage.setItem('4ddash-test-modelctl', '1');
     Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5 });
     const mm = window.matchMedia.bind(window); window.matchMedia = q => q.includes('pointer: coarse') ? { matches: true, addEventListener() {}, removeEventListener() {} } : mm(q);
     window.__rf = 0; Element.prototype.requestFullscreen = function () { window.__rf++; return Promise.resolve(); };
@@ -141,7 +141,7 @@ seed('plan_items.json', [
   const ctx3 = await browser.newContext({ viewport: { width: 1180, height: 820 }, hasTouch: true });
   const app = await ctx3.newPage();
   await app.addInitScript(() => {
-    localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1');
+    localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' })); localStorage.setItem('4ddash-unlocked', '1'); localStorage.setItem('4ddash-test-modelctl', '1');
     const mm = window.matchMedia.bind(window); window.matchMedia = q => q.includes('display-mode: standalone') ? { matches: true, addEventListener() {}, removeEventListener() {} } : mm(q);
     window.__rf = 0; Element.prototype.requestFullscreen = function () { window.__rf++; return Promise.resolve(); };
   });

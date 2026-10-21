@@ -61,7 +61,7 @@ seed('plan_items.json', items);
   await page.addInitScript(() => localStorage.setItem('4ddash-gantt-classic', '1'));
   await page.addInitScript(() => {
     localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't' }));
-    localStorage.setItem('4ddash-unlocked', '1');
+    localStorage.setItem('4ddash-unlocked', '1'); localStorage.setItem('4ddash-test-modelctl', '1');
     window.__prints = 0; window.print = () => { window.__prints++; };
   });
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });
