@@ -105,7 +105,7 @@ seed('plan_item_activities.json', []);
   const sendTxt = await page.evaluate(() => document.querySelector('.ms-left').innerText);
   if (!/1\s*flyttade/i.test(sendTxt.replace(/\n/g, ' '))) fail('en flyttad aktivitet: ' + sendTxt.slice(0, 200));
   if (process.env.SHOT) await (await page.$('.ms-root')).screenshot({ path: '/tmp/ms_send.png' });
-  const [dl1] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exXml"]')]);
+  const [dl1] = await Promise.all([page.waitForEvent('download'), (async () => { await page.evaluate(() => { document.querySelector('.ms-more').open = true; }); await page.click('[data-a="exXml"]'); })()]);
   const xml = fs.readFileSync(await dl1.path(), 'utf8'); if (!/<Project/.test(xml) || !xml.includes('Stål SF1') || xml.includes('Platta SF1')) fail('XML med bara flyttade: ' + xml.slice(0, 200));
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exHtml"]')]);
   const html = fs.readFileSync(await dl2.path(), 'utf8'); if (!html.includes('Vägg SF1') || !html.includes('montageordning')) fail('HTML-rapport');
@@ -151,7 +151,7 @@ seed('plan_item_activities.json', []);
   // XML med sammanfattningsrader per del
   await page.evaluate(() => { ms.mode = 'send'; msPaint(); });
   await page.evaluate(() => { document.getElementById('msAllXml').checked = true; document.getElementById('msAllXml').dispatchEvent(new Event('change', { bubbles: true })); }); await page.waitForTimeout(200);
-  const [dlx] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exXml"]')]);
+  const [dlx] = await Promise.all([page.waitForEvent('download'), (async () => { await page.evaluate(() => { document.querySelector('.ms-more').open = true; }); await page.click('[data-a="exXml"]'); })()]);
   const x2 = fs.readFileSync(await dlx.path(), 'utf8'); if (!x2.includes('Transportband 1') || !x2.includes('Transportband 2') || !x2.includes('Sovringsverket band')) fail('XML har delarna som sammanfattningar');
   // Logotyp, avsändare, timmar och mängd (avancerat)
   if (!(await page.evaluate(async () => { const c = document.createElement('canvas'); c.width = 1400; c.height = 800; const g = c.getContext('2d'); for (let i = 0; i < 400; i++) { g.fillStyle = `hsl(${i * 7} 70% 50%)`; g.fillRect((i * 37) % 1400, (i * 91) % 800, 60, 40); } const src = c.toDataURL('image/png'); const hi = await msShrink(src, 'high'), mi = await msShrink(src, 'mid'), mn = await msShrink(src, 'min'); return hi.length > mi.length && mi.length > mn.length; }))) fail('lägre bildkvalitet ger mindre filer');
@@ -252,6 +252,7 @@ seed('plan_item_activities.json', []);
     if ((await p3.evaluate(() => window.__v3.state().cam.az)) === az0) fail('dra roterar 3D-vyn');
     await (await p3.$('#ruler')).scrollIntoViewIfNeeded(); const rb3 = await (await p3.$('#ruler')).boundingBox(); await p3.mouse.move(rb3.x + 300, rb3.y + 30); await p3.mouse.down(); await p3.mouse.move(rb3.x + rb3.width - 40, rb3.y + 30, { steps: 6 }); await p3.mouse.up(); await p3.waitForTimeout(300);
     const b2 = await px(); if (b2.sum === a.sum) fail('tidslinjen ändrar vad som syns i 3D');
+    await p3.click('#ctl1'); await p3.click('#ctl2'); if ((await p3.isVisible('#tlp')) || (await p3.isVisible('#tw'))) fail('tidplan och steg kan fällas ihop'); await p3.click('#ctl1'); await p3.click('#ctl2'); if (!(await p3.isVisible('#tlp')) || !(await p3.isVisible('#tw'))) fail('tidplan och steg kan fällas ut');
     // objektlistan: bocka monterad, kommentar, filter
     await p3.click('.tab[data-t="objs"]'); await p3.click('[data-of="all"]'); const rowsN = (await p3.$$('#tw tr.or')).length; if (rowsN !== 5) fail('objektlistan har 5 rader: ' + rowsN);
     const txt = await p3.textContent('#tw'); if (!txt.includes('Balk G2') || !txt.includes('M-G3') || !txt.includes('3600')) fail('objektlistan visar namn och egenskaper: ' + txt.slice(0, 200));
@@ -262,6 +263,8 @@ seed('plan_item_activities.json', []);
     await p3.click('#ed'); const [dlK] = await Promise.all([p3.waitForEvent('download'), p3.click('#xl2')]); const hk = fs.readFileSync(await dlK.path(), 'utf8'); if (!/"locked":2/.test(hk) || !hk.includes('Spricka i hörnet')) fail('skrivskyddad export bär bockar och kommentarer');
     const p5 = await browser.newPage({ viewport: { width: 1500, height: 1000 } }); await p5.setContent(hk); await p5.waitForSelector('#tli'); await p5.click('.tab[data-t="objs"]'); await p5.click('[data-of="all"]');
     if ((await p5.$$('#tw input[data-m]:disabled')).length !== 5 || !(await p5.$eval('#tw input.cm[readonly]', e => !!e))) fail('skrivskyddad: bockar och kommentarer är låsta'); if ((await p5.$$('#tw tr.or.ok')).length !== 1) fail('inbakad bock visas'); await p5.close();
+    { const n0 = (h3d.match(/"note":/g) || []).length; await page.evaluate(() => { const b = [...document.querySelectorAll('[data-ex]')].pop(); b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true })); }); await page.waitForTimeout(200);
+    if (!(await page.evaluate(() => ms.exSkip.size === 1))) fail('bocklistan väljer bort ett steg'); const [dlS] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exHtml"]')]); const hs = fs.readFileSync(await dlS.path(), 'utf8'); if ((hs.match(/"note":/g) || []).length !== n0 - 1) fail('exporten innehåller bara ibockade steg: ' + n0 + ' -> ' + (hs.match(/"note":/g) || []).length); }
     if (e3.length) fail('JS-fel i HTML: ' + e3.join(' | ')); if (process.env.SHOT) { await p3.click('.tab[data-t="steps"]'); await p3.waitForTimeout(300); await p3.screenshot({ path: '/tmp/r3d.png', fullPage: true }); } await p3.close(); }
   // Ladda om: sparade sekvenser finns kvar, öppna och ta bort
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
