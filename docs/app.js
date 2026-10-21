@@ -3126,7 +3126,8 @@ function loadGanttPrefs() {
     if (typeof prefs.rangeStart === "string" || prefs.rangeStart === null) ganttRangeStart = prefs.rangeStart;
     if (typeof prefs.rangeEnd === "string" || prefs.rangeEnd === null) ganttRangeEnd = prefs.rangeEnd;
     if (typeof prefs.editable === "boolean") ganttEditable = prefs.editable;
-    if (prefs.view === "bars" || prefs.view === "board" || prefs.view === "test") ganttView = prefs.view;
+    if (prefs.view === "bars" || prefs.view === "board" || prefs.view === "montage") ganttView = prefs.view;
+    else if (prefs.view === "test") ganttView = "montage";
     if (["contractor", "area", "activity"].includes(prefs.colorBy)) ganttColorBy = prefs.colorBy;
     if (typeof prefs.boardOneLine === "boolean") ganttBoardOneLine = prefs.boardOneLine;
     if (typeof prefs.boardFullText === "boolean") ganttBoardFullText = prefs.boardFullText;
@@ -4354,7 +4355,8 @@ function renderGantt(list, target) {
   if (!target) renderGanttHiddenBar(el, hiddenNow);
   applyBaselineColor(el);
   if (!target) syncBaselinePicker();
-  if (ganttView === "test" && !target && typeof labRender === "function" && labRender(list, el, target)) return;
+  if (ganttView !== "montage" && typeof msLeave === "function") msLeave();
+  if (ganttView === "montage" && !target && typeof msRender === "function" && msRender(list, el)) return;
   if (ganttView === "board") { renderGanttBoard(list, target); if (!target) applyGanttModelSel(false); return; }
   // Tidslinjen (gantt-timeline.js) ersätter de gamla staplarna på skärmen; utskriften (target) och "Klassiska staplar" använder den gamla vyn.
   if (typeof tlRender === "function" && typeof ganttClassic !== "undefined" && !ganttClassic && tlRender(list, el, { print: !!target })) return;

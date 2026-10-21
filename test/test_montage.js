@@ -3,7 +3,7 @@
 const { chromium } = require('playwright');
 const path = require('path'), http = require('http'), fs = require('fs');
 const DOCS_DIR = path.join(__dirname, '..', 'docs');
-const PORT = 8996;
+const PORT = 8999;
 const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css' };
 const PID = 'test-project';
 const store = new Map(); let n = 0;
@@ -15,10 +15,9 @@ const base = { project_id: PID, model_id: null, actual_start_date: null, actual_
 let k = 0;
 const it = (name, area, activity, s, e, extra = {}) => ({ ...base, id: 'i' + (++k), object_id: 'x' + k, object_name: name, area, activity, contractor: 'NCC', start_date: day(s), end_date: day(e), status: 'planerad', progress: 0, ...extra });
 seed('plan_items.json', [
-  it('Platta', 'SF1', 'Betong', 0, 3, { model_id: 'M1', object_id: 'G1' }),
-  it('Vägg', 'SF1', 'Betong', 4, 8, { model_id: 'M1', object_id: 'G2' }),
-  it('Okopplad', 'SF1', 'Mark', 2, 3),
-  it('Tak', 'SF1', 'Stål', 9, 12, { model_id: 'M1', object_id: 'G3' }),
+  it('Platta SF1', 'SF1', 'Betong', 0, 3, { model_id: 'M1', object_id: 'G1' }),
+  it('Vägg SF1', 'SF1', 'Betong', 4, 8, { model_id: 'M1', object_id: 'G2' }),
+  it('Stål SF1', 'SF1', 'Stål', 9, 14),
 ]);
 seed('plan_item_activities.json', []);
 ['plan_milestones.json', 'plan_deliveries.json', 'plan_item_baseline_history.json'].forEach(f => seed(f, []));
@@ -58,43 +57,58 @@ seed('plan_item_activities.json', []);
   await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
   const fail = m => { throw new Error(m); };
-  await page.click('[data-gantt-view="board"]'); await page.waitForTimeout(300);
-  const calls = () => page.evaluate(() => window.__calls || []);
-  await page.evaluate(() => { document.getElementById('ganttAssemblyBtn').click(); });
-  await page.waitForSelector('#asmPanel:not(.hidden)'); await page.waitForTimeout(400);
-  const title = () => page.evaluate(() => document.querySelector('#asmPanel .asm-title').textContent);
-  const stepTxt = () => page.evaluate(() => document.querySelector('#asmPanel .asm-step').textContent.replace(/\s+/g, ' '));
-  if (await title() !== 'Platta') fail('steg 1 ska vara Platta: ' + await title());
-  if (!/1 \/ 3/.test(await stepTxt())) fail('okopplade ska hoppas över (3 steg): ' + await stepTxt());
-  let iso = await page.evaluate(() => window.__iso || []);
-  if (JSON.stringify(iso[iso.length - 1]) !== JSON.stringify([{ modelId: 'M1', entityIds: ['G1'] }])) fail('steg 1 isolerar bara Platta: ' + JSON.stringify(iso));
-  await page.keyboard.press('ArrowRight'); await page.waitForTimeout(400);
-  if (await title() !== 'Vägg') fail('pil höger → Vägg');
-  iso = await page.evaluate(() => window.__iso || []);
-  if ([...iso[iso.length - 1][0].entityIds].sort().join() !== 'G1,G2') fail('steg 2 visar G1+G2: ' + JSON.stringify(iso[iso.length - 1]));
-  const cs = await calls();
-  const lastColors = cs.filter(c => c.b && c.b.color && c.b.color !== 'reset').slice(-2);
-  if (!lastColors.some(c => c.b.color.r === 245) || !lastColors.some(c => c.b.color.r === 150)) fail('klart grått + aktuellt orange: ' + JSON.stringify(lastColors));
-  if (!cs.some(c => c.a && c.a.modelObjectIds === undefined) && false) fail('x');
-  // Okopplade med
-  await page.evaluate(() => { const c = document.querySelector('#asmPanel input[data-o="skip"]'); c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); }); await page.waitForTimeout(300);
-  if (!/\/ 4/.test(await stepTxt())) fail('alla 4 steg när okopplade tas med');
-  await page.evaluate(() => { const c = document.querySelector('#asmPanel input[data-o="skip"]'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); }); await page.waitForTimeout(300);
-  // Lista, hopp
-  await page.click('#asmPanel [data-a="list"]');
-  await page.click('#asmPanel .asm-row[data-k="2"]'); await page.waitForTimeout(400);
-  if (await title() !== 'Tak') fail('klick i listan → Tak');
-  await page.click('#asmPanel [data-a="next"]'); await page.waitForTimeout(200);
-  if (await title() !== 'Tak') fail('sista steget stannar');
-  // Spela
-  await page.click('#asmPanel [data-a="first"]'); await page.click('#asmPanel [data-a="play"]'); await page.waitForTimeout(5600);
-  if (await title() === 'Platta') fail('spela ska gå framåt');
-  await page.keyboard.press('Space');
-  // Stäng återställer
-  await page.evaluate(() => { window.__state = []; }); await page.keyboard.press('Escape'); await page.waitForTimeout(400);
-  const st = await page.evaluate(() => window.__state || []);
-  if (!st.some(b => b.color === 'reset') || !st.some(b => b.visible === 'reset')) fail('stängning återställer färg och synlighet: ' + JSON.stringify(st));
-  if (await page.evaluate(() => !document.getElementById('asmPanel').classList.contains('hidden'))) fail('panelen ska stängas');
-  if (errors.length) fail('JS-fel: ' + errors.join(' | '));
-  console.log('OK test_assembly_player'); await browser.close(); server.close();
+  const seqs = () => { const e = store.get(`projects/${PID}/plan_assembly_sequences.json`); return e ? JSON.parse(e.content) : []; };
+  await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-root .ms-intro'); await page.waitForTimeout(300);
+  // Mall -> 11 steg, spara
+  await page.click('[data-a="newTpl"]'); await page.waitForSelector('.ms-row');
+  if ((await page.$$('.ms-row')).length !== 11) fail('mallen har 11 steg');
+  await page.click('[data-a="save"]'); await page.waitForTimeout(500);
+  if (seqs().length !== 1 || seqs()[0].steps.length !== 11 || seqs()[0].name !== 'Transportband 1') fail('sparad i 4D-data: ' + JSON.stringify(seqs()).slice(0, 200));
+  // Beräknade datum: steg 4 startar dagen efter steg 3
+  const dates = await page.evaluate(() => msViews(ms.cur).map(v => [v.s, v.e]));
+  if (dates[3][0] !== iso(new Date(new Date(dates[2][1] + 'T00:00:00Z').getTime() + 864e5))) fail('steg 4 efter steg 3: ' + JSON.stringify(dates.slice(0, 4)));
+  if (!(dates[7][0] > dates[4][1] && dates[7][0] > dates[5][1] && dates[7][0] > dates[6][1])) fail('steg 8 väntar på 5,6,7');
+  if (process.env.SHOT) await page.screenshot({ path: '/tmp/ms_steps.png', fullPage: true });
+  // Gantt
+  await page.click('[data-mode="gantt"]'); await page.waitForSelector('.ms-bar2');
+  if ((await page.$$('.ms-bar2')).length !== 11) fail('11 staplar');
+  if ((await page.$$('.ms-gb svg path')).length < 11) fail('beroendepilar ritas');
+  if (process.env.SHOT) await (await page.$('.ms-root')).screenshot({ path: '/tmp/ms_gantt.png' });
+  // dra en stapel (steg 2) 3 dagar framåt => eget startdatum
+  const b = await (await page.$('[data-bar="1"]')).boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down(); await page.mouse.move(b.x + b.width / 2 + 16 * 3, b.y + b.height / 2, { steps: 4 }); await page.mouse.up(); await page.waitForTimeout(300);
+  const st2 = await page.evaluate(() => ({ start: ms.cur.steps[1].start, dirty: ms.dirty })); if (!st2.start || !st2.dirty) fail('stapeln flyttas: ' + JSON.stringify(st2));
+  // Ny tom sekvens (tom gantt)
+  await page.click('[data-a="newEmpty"]'); await page.waitForTimeout(300);
+  if (!(await page.evaluate(() => !!document.querySelector('.ms-g') && /Tom ganttvy/.test(document.querySelector('.ms-left').innerText)))) fail('tom ganttvy');
+  await page.click('[data-a="addFree"]'); await page.waitForTimeout(200);
+  if ((await page.$$('.ms-bar2')).length !== 1) fail('ett steg i tom gantt');
+  await page.fill('[data-sf="name"]', 'Montera A'); await page.dispatchEvent('[data-sf="name"]', 'change');
+  await page.fill('[data-f="name"]', 'Min plan'); await page.dispatchEvent('[data-f="name"]', 'change');
+  await page.click('[data-a="save"]'); await page.waitForTimeout(500);
+  if (seqs().length !== 2) fail('två sparade sekvenser');
+  // Från filtret: aktivitetssteg med förslag
+  await page.click('[data-a="newFilter"]'); await page.waitForTimeout(300);
+  const nAct = await page.evaluate(() => ms.cur.steps.filter(s => s.kind === 'act').length); if (nAct !== 3) fail('3 aktivitetssteg från filtret: ' + nAct);
+  await page.evaluate(() => { ms.cur.steps[2].pS = msAdd(msViews(ms.cur)[2].ppS, 7); ms.mode = 'send'; msPaint(); });
+  const sendTxt = await page.evaluate(() => document.querySelector('.ms-left').innerText);
+  if (!/1\s*flyttade/i.test(sendTxt.replace(/\n/g, ' '))) fail('en flyttad aktivitet: ' + sendTxt.slice(0, 200));
+  if (process.env.SHOT) await (await page.$('.ms-root')).screenshot({ path: '/tmp/ms_send.png' });
+  const [dl1] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exXml"]')]);
+  const xml = fs.readFileSync(await dl1.path(), 'utf8'); if (!/<Project/.test(xml) || !xml.includes('Stål SF1') || xml.includes('Platta SF1')) fail('XML med bara flyttade: ' + xml.slice(0, 200));
+  const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exHtml"]')]);
+  const html = fs.readFileSync(await dl2.path(), 'utf8'); if (!html.includes('Vägg SF1') || !html.includes('förslag')) fail('HTML-förslag');
+  // 3D: stega i sekvensen
+  await page.evaluate(() => { ms.mode = 'steps'; ms.live = true; ms.i = 0; ms.shown = null; window.__iso = []; msPaint(); });
+  await page.click('[data-a="next"]'); await page.waitForTimeout(500);
+  const iso1 = await page.evaluate(() => window.__iso || []); if (!iso1.length || ![].concat(...iso1.map(e => e.flatMap(m => m.entityIds))).includes('G1')) fail('3D isolerar stegets objekt: ' + JSON.stringify(iso1));
+  // Ladda om: sparade sekvenser finns kvar, öppna och ta bort
+  await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
+  await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-cards .ms-card');
+  if ((await page.$$('.ms-card')).length !== 2) fail('två sparade efter omladdning');
+  await page.click('.ms-card >> text=Transportband 1'); await page.waitForSelector('.ms-row');
+  await page.click('[data-a="del"]'); await page.waitForTimeout(600);
+  if (seqs().length !== 1) fail('borttagen sekvens');
+  const real = errors.filter(e => !/allow-same-origin/.test(e)); if (real.length) fail('JS-fel: ' + real.join(' | '));
+  console.log('OK test_montage'); await browser.close(); server.close();
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });
