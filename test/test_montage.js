@@ -219,6 +219,21 @@ seed('plan_item_activities.json', []);
       const ids = () => { const l = window.__iso[window.__iso.length - 1]; return l ? l.flatMap(m => m.entityIds).join() : ''; };
       window.__iso = []; ms.shown = null; ms.baseShown = null; ms.sub = 0.5; await msApply(); const half = ids(); ms.sub = 0.25; await msApply(); const quarter = ids(); ms.sub = 1; await msApply(); const full = ids(); ms.cols.buildUp = false; return { half, quarter, full }; });
     if (r.half !== 'G2,G4' || r.quarter !== 'G2' || r.full.split(',').length !== 4) fail('Tänd nedifrån och upp (lägsta först): ' + JSON.stringify(r)); }
+  // 3D-HTML med tidslinje (omslutande lådor)
+  { await page.evaluate(() => { const z = { G1: 0, G2: 2, G3: 4, G4: 6, G5: 0 }; API.viewer.getObjectBoundingBoxes = (m, rids) => Promise.resolve(rids.map(id => ({ id, boundingBox: { min: { x: 169000 + (z[id] || 0) * 0.5, y: 7456000, z: 480 + (z[id] || 0) }, max: { x: 169002 + (z[id] || 0) * 0.5, y: 7456002, z: 482 + (z[id] || 0) } } })));
+      const A = msStepFree('Platta', 3, []), B = msStepFree('Pelare', 4, [A.id]); A.objs = [{ modelId: 'M1', objectId: 'G1' }, { modelId: 'M1', objectId: 'G5' }]; B.objs = ['G2', 'G3', 'G4'].map(o => ({ modelId: 'M1', objectId: o })); A.start = msToday();
+      ms.cur = msNewSeq('Prefab 3D', [A, B]); ms.cur.start = msToday(); ms.mode = 'send'; modelCtl.on = true; msPaint(); });
+    const [dl3d] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="ex3d"]')]); const h3d = fs.readFileSync(await dl3d.path(), 'utf8');
+    if (!/cv3/.test(h3d) || !/"has3d":true/.test(h3d)) fail('3D-HTML har 3D-vy och lådor');
+    const p3 = await browser.newPage({ viewport: { width: 1300, height: 950 } }); const e3 = []; p3.on('pageerror', e => e3.push(e.message)); await p3.setContent(h3d); await p3.waitForSelector('#cv3'); await p3.waitForTimeout(600);
+    const px = () => p3.evaluate(() => { const cv = document.getElementById('cv3'), c2 = document.createElement('canvas'); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext('2d'); g.drawImage(cv, 0, 0); const d = g.getImageData(0, 0, c2.width, c2.height).data; let n = 0, sum = 0; for (let i = 0; i < d.length; i += 4) { if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 40) n++; sum += d[i] + d[i + 1] * 3 + d[i + 2] * 7; } return { n, sum }; });
+    const st0 = await p3.evaluate(() => window.__v3 && window.__v3.state().N), a = await px(); if (st0 !== 5 || a.n < 300) fail('3D-vyn ritar lådorna: ' + JSON.stringify({ st0, a }));
+    const cb = await (await p3.$('#cv3')).boundingBox(); const az0 = await p3.evaluate(() => window.__v3.state().cam.az);
+    await p3.mouse.move(cb.x + 300, cb.y + 200); await p3.mouse.down(); await p3.mouse.move(cb.x + 420, cb.y + 230, { steps: 5 }); await p3.mouse.up(); await p3.waitForTimeout(200);
+    if ((await p3.evaluate(() => window.__v3.state().cam.az)) === az0) fail('dra roterar 3D-vyn');
+    const tb = await (await p3.$('#tl')).boundingBox(); await p3.mouse.move(tb.x + 4, tb.y + 30); await p3.mouse.down(); await p3.mouse.move(tb.x + tb.width - 6, tb.y + 30, { steps: 6 }); await p3.mouse.up(); await p3.waitForTimeout(300);
+    const b2 = await px(); if (b2.sum === a.sum) fail('tidslinjen ändrar vad som syns i 3D');
+    await p3.click('[data-v="g"]'); if (!(await p3.$eval('#gw', e => !e.hidden))) fail('flik Gantt visas'); if (e3.length) fail('JS-fel i 3D-HTML: ' + e3.join(' | ')); if (process.env.SHOT) { await p3.click('[data-v="3d"]'); await p3.waitForTimeout(300); await p3.screenshot({ path: '/tmp/r3d.png' }); } await p3.close(); }
   // Ladda om: sparade sekvenser finns kvar, öppna och ta bort
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
   await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-cards .ms-card');

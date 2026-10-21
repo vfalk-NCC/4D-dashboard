@@ -1,7 +1,7 @@
 /* HTML-rapporten för montageordning, uppbyggd som en monteringsanvisning (Victor 2026-10-21): omslag, innehåll, tidsöversikt och en sida per steg
    med stort stegnummer, förkunskaper, Obs!-ruta och bock för klart. Bläddra eller visa alla sidor; skrivs ut med en sida per steg. En enda fristående fil som öppnas i valfri webbläsare utan Trimble Connect.
    Allt är inbyggt – inga bibliotek hämtas. */
-function msReportData(s, views, imgs) {
+function msReportData(s, views, imgs, boxes) {
   const idx = new Map(views.map((x, i) => [x.st.id, i])), succ = views.map(() => []);
   const deps = views.map(x => x.st.deps.filter(d => idx.has(d)).map(d => idx.get(d)));
   views.forEach((x, i) => { // en del som startar efter en annan del väntar på det steget (eller på delens sista steg)
@@ -12,8 +12,8 @@ function msReportData(s, views, imgs) {
   deps.forEach((ds, i) => ds.forEach(d => succ[d].push(i)));
   const parts = [...new Set(views.map(x => (x.part ? x.partName : "")))];
   return {
-    title: s.name, logo: (typeof ms !== "undefined" && ms.logo && ms.logo.src) || "", company: (typeof ms !== "undefined" && ms.logo && ms.logo.company) || "", area: s.area || "", desc: s.desc || "", generated: new Date().toISOString().slice(0, 10), parts: parts.filter(Boolean), hasImg: !!(imgs && Object.keys(imgs).length),
-    steps: views.map((x, i) => ({ n: x.st.name, p: x.part ? x.partName : "", s: x.s, e: x.e, ps: x.act ? x.ppS : "", pe: x.act ? x.ppE : "", k: x.isNew ? "new" : x.changed ? "moved" : "same", sh: x.shift || 0, note: x.st.note || "", deps: deps[i], img: (imgs && imgs[x.st.id]) || "", h: x.hours || 0, q: x.qty || 0, u: x.st.unit || "" }))
+    has3d: !!(boxes && Object.values(boxes).some(a => a.length)), title: s.name, logo: (typeof ms !== "undefined" && ms.logo && ms.logo.src) || "", company: (typeof ms !== "undefined" && ms.logo && ms.logo.company) || "", area: s.area || "", desc: s.desc || "", generated: new Date().toISOString().slice(0, 10), parts: parts.filter(Boolean), hasImg: !!(imgs && Object.keys(imgs).length),
+    steps: views.map((x, i) => ({ n: x.st.name, p: x.part ? x.partName : "", s: x.s, e: x.e, ps: x.act ? x.ppS : "", pe: x.act ? x.ppE : "", k: x.isNew ? "new" : x.changed ? "moved" : "same", sh: x.shift || 0, note: x.st.note || "", deps: deps[i], img: (imgs && imgs[x.st.id]) || "", bx: (boxes && boxes[x.st.id]) || [], h: x.hours || 0, q: x.qty || 0, u: x.st.unit || "" }))
   };
 }
 function msReportRuntime(D) {
