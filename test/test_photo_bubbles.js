@@ -164,6 +164,12 @@ seed('plan_items.json', [
       if (nb.dec !== 3 || nb.scale !== 1.4 || nb.col !== '#112233' || nb.src !== 'area' || nb.text !== 'Förvalstext' || nb.title !== 'Spännarmering' || JSON.stringify(nb.f) !== '["◆ Antal objekt"]') fail('Förvalet ska gälla nya bubblor: ' + JSON.stringify(nb));
       { const sm = await page.evaluate(() => { const K = 'Qto / NetVolume (m3)', mk = v => ({ flat: { [K]: v } }), objs = [mk('1,5'), mk('2,5'), mk('3'), mk('4')]; return [phbOcVal({}, { objs, dec: 2 }, K)[0], phbOcVal({}, { objs, dec: 2, sum: false }, K)[0], phbOcVal({}, { objs: [objs[0]], dec: 2 }, K)[0], phbOcVal({}, { objs: [objs[0], mk('x')], dec: 1 }, K)[0]]; });
         if (!/^Σ 11,00 m³ \(4 objekt\)$/.test(sm[0])) fail('Summerad volym för 4 objekt: ' + JSON.stringify(sm)); if (/Σ/.test(sm[1]) || /Σ/.test(sm[2]) || /Σ/.test(sm[3])) fail('Ingen summering när av, för ett objekt eller icke-numeriskt: ' + JSON.stringify(sm)); }
+      { const r = await page.evaluate(() => { const W = 2000, H = 1000, cam = { position: { x: 0, y: -100, z: 50 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 }, projectionType: 'ORTHOGRAPHIC', orthoSize: 40 };
+          const pts = [{ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }, { x: -5, y: 3, z: 0 }]; const c = phbPickCamera(cam, pts, W, H); const q = c && phbProject(c, pts[1], W, H), q0 = c && phbProject(c, pts[0], W, H);
+          const pe = phbPickCamera({ ...cam, projectionType: 'perspective', fov: 60 }, pts, W, H);
+          const au = phbPickCamera({ position: cam.position, target: cam.target, up: cam.up, projectionType: 'orthographic' }, pts, W, H);
+          return { ortho: !!(c && c.ortho), dx: q && q.x - W / 2, cx: q0 && q0.x, persp: !!(pe && !pe.ortho), auto: !!(au && au.ortho && au.vh > 0) }; });
+        if (!r.ortho || Math.abs(r.dx - 250) > 2 || Math.abs(r.cx - 1000) > 1 || !r.persp || !r.auto) fail('Parallellprojektion: ' + JSON.stringify(r)); }
       await page.evaluate(() => localStorage.removeItem('4ddash-phb-oc-preset'));
       await page.click('#phbOcDel'); await page.waitForTimeout(100);
       // TC-kameran ändras efter att vyn sparats – "Använd" ska flytta tillbaka den och ta nytt foto

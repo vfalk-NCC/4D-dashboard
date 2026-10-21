@@ -13,8 +13,20 @@ const phbOkVec = a => a && isFinite(a.x) && isFinite(a.y) && isFinite(a.z);
 
 /* Alla rimliga tolkningar av kameran (Trimble Connect-kamerans format och enheter är inte dokumenterade här): läge i m/mm,
    riktning ur mål/riktning eller ur gir/lutning i grader/radianer. Den tolkning där flest objekt hamnar i bilden vinner. */
+/* Parallellprojektion (ortogonal vy): ingen perspektiv, skalan är fast. Trimble Connects kamera anger det på olika sätt – flera fältnamn provas. */
+let phbProj = "auto"; // "auto" | "persp" | "ortho" (valbart i bildredigeraren)
+function phbCamIsOrtho(cam) {
+  if (phbProj === "ortho") return true; if (phbProj === "persp") return false;
+  const str = ["projectionType", "projection", "projectionMode", "cameraType", "type", "mode", "viewMode"].map(k => cam && cam[k]).find(v => typeof v === "string" && /ortho|parallel|paralell|2d/i.test(v));
+  return !!str || ["orthographic", "isOrthographic", "ortho", "isOrtho", "parallel", "isParallel"].some(k => cam && cam[k] === true);
+}
+function phbOrthoHeights(cam) { // synlig höjd i världsenheter, om kameran anger den
+  const out = []; ["orthoSize", "orthographicSize", "orthoHeight", "orthoScale", "viewHeight", "frustumHeight", "viewSize", "size", "height", "scale", "zoom"].forEach(k => { const v = Number(cam && cam[k]); if (v > 0 && isFinite(v)) { out.push(v, v * 2); } });
+  return out;
+}
 function phbCamCandidates(cam) {
   const out = []; if (!cam || typeof cam !== "object") return out;
+  const ortho = phbCamIsOrtho(cam), vhs = ortho ? phbOrthoHeights(cam) : [];
   const pos0 = phbV3(cam.position || cam.eye || cam.pos);
   if (!phbOkVec(pos0)) return out;
   const up = phbV3(cam.up || cam.upVector) || { x: 0, y: 0, z: 1 };
@@ -36,9 +48,15 @@ function phbCamCandidates(cam) {
       }
     });
   });
+  if (ortho) { const res = []; out.forEach(c => { if (vhs.length) vhs.forEach(vh => res.push({ ...c, ortho: true, vh: vh * c.sc })); else res.push({ ...c, ortho: true, vh: 0 }); }); return res; }
   return out;
 }
 function phbProject(c, P, W, H) {
+  if (c.ortho) {
+    const right = phbNorm(phbCross(c.fwd, c.up)); if (!phbOkVec(right) || !(c.vh > 0)) return null;
+    const upv = phbCross(right, c.fwd), d = phbSub(P, c.pos), ps = H / c.vh;
+    return { x: W / 2 + phbDot(d, right) * ps, y: H / 2 - phbDot(d, upv) * ps, z: 1 };
+  }
   const right = phbNorm(phbCross(c.fwd, c.up)); if (!phbOkVec(right)) return null;
   const upv = phbCross(right, c.fwd), d = phbSub(P, c.pos), z = phbDot(d, c.fwd);
   if (!(z > 0.05)) return null;
@@ -47,11 +65,18 @@ function phbProject(c, P, W, H) {
 }
 function phbPickCamera(cam, pts, W, H) {
   let best = null, bs = -1;
-  phbCamCandidates(cam).forEach(c => {
-    let s = 0; pts.forEach(P => { const q = phbProject(c, P, W, H); if (q && q.x > -0.1 * W && q.x < 1.1 * W && q.y > -0.1 * H && q.y < 1.1 * H) s++; });
+  phbCamCandidates(cam).forEach(c0 => {
+    let c = c0;
+    if (c.ortho && !(c.vh > 0)) { // skalan okänd: största zoom där alla punkter ryms i bilden (8 % marginal)
+      const right = phbNorm(phbCross(c.fwd, c.up)), upv = phbCross(right, c.fwd); let mu = 1e-9, mv = 1e-9;
+      pts.forEach(P => { const d = phbSub(P, c.pos); mu = Math.max(mu, Math.abs(phbDot(d, right))); mv = Math.max(mv, Math.abs(phbDot(d, upv))); });
+      const ps = Math.min(W / (2 * mu * 1.08), H / (2 * mv * 1.08)); c = { ...c, vh: H / ps, auto: true };
+    }
+    let s = 0, lo = Infinity, hi = -Infinity; pts.forEach(P => { const q = phbProject(c, P, W, H); if (q && q.x > -0.1 * W && q.x < 1.1 * W && q.y > -0.1 * H && q.y < 1.1 * H) { s++; lo = Math.min(lo, q.x); hi = Math.max(hi, q.x); } });
+    if (c.ortho && s) s += Math.max(0, hi - lo) / W * 0.01; // lika många i bilden: den skala där punkterna sprider sig mest (inte hopklumpade) är rimligast
     if (s > bs) { bs = s; best = c; }
   });
-  return best && bs >= Math.max(1, Math.ceil(pts.length * 0.6)) ? best : null;
+  return best && Math.floor(bs) >= Math.max(1, Math.ceil(pts.length * 0.6)) ? best : null;
 }
 
 /* Aktiviteternas lägen i modellen (meter): överkant mitt på objektens samlade box. */
@@ -477,6 +502,7 @@ function phbPreview(st) {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").replace(/^(\d{8})(\d{4})$/, "$1-$2");
   d.innerHTML = `<div class="phb-box"><div class="phb-main"><div class="phb-img"><canvas id="phbCv" width="${st.W}" height="${st.H}"></canvas></div><aside class="phb-side" id="phbSide"></aside></div>
     <div class="phb-bar"><span class="phb-info" id="phbInfo"></span>
+    <label class="phb-sel" title="Om punkterna hamnar fel: prova Parallell (ortogonal vy i Trimble Connect)">Vy <select id="phbProj"><option value="auto">Auto</option><option value="persp">Perspektiv</option><option value="ortho">Parallell</option></select></label><button type="button" id="phbCamCopy" title="Kopiera kamerans data (för felsökning av punkternas läge)">Kameradata</button>
     <label class="phb-sel">Visa <select id="phbScope"><option value="auto">Markerade, annars pågående</option><option value="marked">Bara markerade</option><option value="active">Pågående</option><option value="all">Alla i schemat</option></select></label>
     <span class="phb-zoom" title="Zooma i förhandsvisningen (mushjul, Ctrl +/−). Panorera: mellanklick-dra, Mellanslag-dra eller rullningslisterna"><button type="button" id="phbZm" aria-label="Zooma ut">−</button><button type="button" id="phbZv" aria-label="Anpassa till fönstret">100 %</button><button type="button" id="phbZp" aria-label="Zooma in">+</button></span><button type="button" id="phbUndo" class="hidden" title="Ta tillbaka den senast borttagna bubblan (Ctrl+Z)">↶ Ångra borttagning</button><button type="button" id="phbPdf" class="primary" title="Foto + bubblor, lista och texter som flyttbara stämplar i egna lager – flytta dem i PDF-läsaren">Spara PDF</button><button type="button" id="phbPng">Spara PNG</button><button type="button" id="phbClose">Stäng</button></div></div>`;
   (document.fullscreenElement || document.body).appendChild(d);
@@ -663,6 +689,13 @@ function phbPreview(st) {
   undoBtn.onclick = undoRemove;
   const close = () => { d.remove(); document.removeEventListener("keydown", keys, true); };
   d.querySelector("#phbClose").onclick = close; d.addEventListener("pointerdown", e => { if (e.target === d) close(); });
+  d.querySelector("#phbCamCopy").onclick = async () => { const t = JSON.stringify(phbLast && phbLast.cam, null, 1); try { await navigator.clipboard.writeText(t); modelToast("Kameradata kopierad"); } catch (e) { prompt("Kopiera kameradata", t); } };
+  { const ps = d.querySelector("#phbProj"); ps.value = phbProj; ps.onchange = async () => {
+      phbProj = ps.value;
+      try { const n = await phbBuild(phbLast.blob, phbLast.cam, d.querySelector("#phbScope").value); n.ocards = cur.ocards || []; n.tables = cur.tables || []; n.camC = n.camC || null;
+        n.ocards.forEach(c => { if (!c.free && typeof phbOcAnchor === "function") { phbOcEnsureCam(n, c.objs); const q = phbOcAnchor(n, c.objs); if (q) { c.ax = q.x; c.ay = q.y; } } });
+        phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); modelToast(phbProj === "auto" ? "Vy: auto" : phbProj === "ortho" ? "Vy: parallell – punkterna är räknade om" : "Vy: perspektiv – punkterna är räknade om");
+      } catch (err) { modelToast("Kunde inte byta vy: " + ((err && err.message) || err)); } }; }
   d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); n.ocards = cur.ocards || []; n.tables = cur.tables || []; phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
   const dl = (blob, ext) => { const url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = `4D-foto-${stamp}.${ext}`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); };
   d.querySelector("#phbPng").onclick = () => { cur.ui = false; phbRender(ctx, cur); cv.toBlob(b => { cur.ui = true; draw(); dl(b, "png"); }, "image/png"); };
