@@ -156,6 +156,22 @@ seed('plan_item_activities.json', []);
   if (!(await page.evaluate(() => !!ms.cur.cam && ms.cur.camAll === true))) fail('sekvensens kameravy sparas');
   await page.evaluate(() => { ms.shown = null; msGo(0); }); await page.waitForTimeout(300); await page.evaluate(() => { msGo(1); }); await page.waitForTimeout(400);
   const cams = await page.evaluate(() => window.__cams); if (cams.length < 2 || cams.some(c => c.id !== 'cam1')) fail('alla steg använder samma kameravy: ' + JSON.stringify(cams));
+  // Samma kameravy på flera steg: Skift-intervall, spara aktuell TC-vy, kopiera, rensa
+  await page.evaluate(() => { ms.mode = 'steps'; ms.cur.steps.forEach(x => { x.cam = null; }); ms.cur.camAll = false; ms.multi.clear(); ms.lastCk = null; msPaint(); });
+  await page.click('[data-ck="0"]'); await page.keyboard.down('Shift'); await page.click('[data-ck="2"]'); await page.keyboard.up('Shift');
+  if ((await page.evaluate(() => ms.multi.size)) !== 3) fail('Skift-klick markerar intervall: ' + await page.evaluate(() => ms.multi.size));
+  await page.evaluate(() => { API.viewer.getCamera = () => Promise.resolve({ id: 'camX', position: { x: 9 } }); });
+  await page.click('[data-a="camSetSel"]'); await page.waitForTimeout(200);
+  if (!(await page.evaluate(() => ms.cur.steps.filter(x => x.cam && x.cam.id === 'camX').length === 3))) fail('vyn satt på 3 valda steg');
+  await page.click('[data-a="ckNoCam"]'); await page.waitForTimeout(100); // inga utan vy (alla har)
+  await page.evaluate(() => { ms.cur.steps[1].cam = null; ms.multi.clear(); msPaint(); });
+  await page.click('[data-a="ckNoCam"]'); if ((await page.evaluate(() => ms.multi.size)) !== 1) fail('markera utan vy');
+  await page.evaluate(() => { ms.i = 0; ms.multi.clear(); ms.multi.add(ms.cur.steps[1].id); msPaint(); });
+  await page.click('[data-a="camCopySel"]'); await page.waitForTimeout(100);
+  if (!(await page.evaluate(() => !!ms.cur.steps[1].cam))) fail('kopiera vy från aktuellt steg');
+  await page.click('[data-a="camClearSel"]'); if ((await page.evaluate(() => ms.cur.steps[1].cam)) !== null) fail('rensa vy på valda');
+  await page.evaluate(() => { ms.i = 0; msPaint(); }); await page.click('[data-a="camAllSteps"]'); await page.waitForTimeout(100);
+  if (!(await page.evaluate(() => ms.cur.steps.every(x => x.cam)))) fail('samma vy på alla steg');
   await page.evaluate(() => { ms.mode = 'send'; msPaint(); });
   await page.setInputFiles('#msLogoFile', png); await page.waitForSelector('.ms-logoimg'); await page.fill('[data-lg="company"]', 'NCC Sverige'); await page.dispatchEvent('[data-lg="company"]', 'change');
   const [dl3] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exHtml"]')]);

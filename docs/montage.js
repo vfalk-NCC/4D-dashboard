@@ -6,7 +6,7 @@
 const MS_TABLE = "plan_assembly_sequences";
 const msLogoLoad = () => { try { return JSON.parse(localStorage.getItem("4ddash-montage-logo") || "null") || { src: "", company: "" }; } catch (e) { return { src: "", company: "" }; } };
 const msLogoSave = () => { try { localStorage.setItem("4ddash-montage-logo", JSON.stringify(ms.logo)); } catch (e) { ms.msg = "Kunde inte spara loggan i webbläsaren (för stor?)"; } };
-const ms = { logo: msLogoLoad(), seqs: [], loaded: false, loading: false, cur: null, dirty: false, mode: "steps", i: 0, play: false, timer: null, live: true, follow: true, future: false, px: 16, busy: false, pending: false, shown: null, el: null, img: null, msg: "", drag: null };
+const ms = { multi: new Set(), lastCk: null, logo: msLogoLoad(), seqs: [], loaded: false, loading: false, cur: null, dirty: false, mode: "steps", i: 0, play: false, timer: null, live: true, follow: true, future: false, px: 16, busy: false, pending: false, shown: null, el: null, img: null, msg: "", drag: null };
 const msEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const msAdd = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const msDiff = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 864e5);
@@ -214,11 +214,16 @@ function msPaint() {
 }
 
 function msStepsHtml(s, views) {
-  const rows = views.map(x => `<div class="ms-row${x.i === ms.i ? " cur" : ""}${x.missing ? " miss" : ""}" draggable="true" data-i="${x.i}"><span class="ms-h" title="Dra för att flytta">⋮⋮</span><b>${x.i + 1}</b>
-    <span class="ms-nm">${msEsc(x.st.name)}<small>${x.st.kind === "act" ? (x.missing ? "aktiviteten finns inte längre" : "tidplan: " + msEsc(x.ppS.slice(5)) + "–" + msEsc(x.ppE.slice(5)) + (x.changed ? ` · förslag ${msEsc(x.s.slice(5))}–${msEsc(x.e.slice(5))}` : "")) : "fritt steg · " + msEsc(x.s.slice(5)) + "–" + msEsc(x.e.slice(5))}${x.st.objs.length ? " · " + x.st.objs.length + " obj." : ""}${x.st.note ? " · 📝" : ""}</small></span>
+  const rows = views.map(x => `<div class="ms-row${x.i === ms.i ? " cur" : ""}${x.missing ? " miss" : ""}" draggable="true" data-i="${x.i}"><span class="ms-h" title="Dra för att flytta">⋮⋮</span><input type="checkbox" class="ms-ck" data-ck="${x.i}"${ms.multi.has(x.st.id) ? " checked" : ""} aria-label="Markera steg ${x.i + 1}" title="Markera (Skift-klick markerar ett intervall)"><b>${x.i + 1}</b>
+    <span class="ms-nm">${msEsc(x.st.name)}<small>${x.st.kind === "act" ? (x.missing ? "aktiviteten finns inte längre" : "tidplan: " + msEsc(x.ppS.slice(5)) + "–" + msEsc(x.ppE.slice(5)) + (x.changed ? ` · förslag ${msEsc(x.s.slice(5))}–${msEsc(x.e.slice(5))}` : "")) : "fritt steg · " + msEsc(x.s.slice(5)) + "–" + msEsc(x.e.slice(5))}${x.st.objs.length ? " · " + x.st.objs.length + " obj." : ""}${x.st.cam ? " · 📷" : ""}${x.st.note ? " · 📝" : ""}</small></span>
     <span class="ms-ra"><button type="button" data-up="${x.i}" aria-label="Upp">▲</button><button type="button" data-dn="${x.i}" aria-label="Ner">▼</button></span></div>`).join("");
   return `<div class="ms-bar"><button type="button" data-a="addFree">＋ Fritt steg</button><button type="button" data-a="addAct">＋ Aktivitet ur tidplanen …</button><button type="button" data-a="addSel" title="Markera objekt i TC först">＋ Från markering i TC</button><button type="button" data-a="sortStart" title="Ordna efter start">Sortera efter start</button></div>
-    <div id="msPick" class="ms-pick hidden"></div>${rows || `<p class="hint">Inga steg än. Lägg till ett steg ovan, eller byt till Gantt och bygg planen där.</p>`}`;
+    ${views.length ? msCamBarHtml(views) : ""}<div id="msPick" class="ms-pick hidden"></div>${rows || `<p class="hint">Inga steg än. Lägg till ett steg ovan, eller byt till Gantt och bygg planen där.</p>`}`;
+}
+function msCamBarHtml(views) {
+  const n = views.filter(x => ms.multi.has(x.st.id)).length, cur = views[ms.i];
+  return `<div class="ms-camact"><span class="hint">📷 Kameravy på flera steg:</span><span class="ms-sel">Markera <button type="button" data-a="ckAll">alla</button><button type="button" data-a="ckNone">inga</button><button type="button" data-a="ckNoCam">utan vy</button><button type="button" data-a="ckCam">med vy</button></span>
+    <span class="ms-act"><b>${n}</b> valda:<button type="button" data-a="camSetSel"${n ? "" : " disabled"} title="Ställ in vyn i TC först">Spara aktuell TC-vy på valda</button><button type="button" data-a="camCopySel"${n && cur && cur.st.cam ? "" : " disabled"} title="Kopierar vyn från det markerade steget (${cur ? cur.i + 1 : "–"})">Kopiera vy från steg ${cur ? cur.i + 1 : "–"}</button><button type="button" data-a="camClearSel"${n ? "" : " disabled"}>Rensa vy</button></span></div>`;
 }
 function msGanttHtml(s, views) {
   const today = msToday(), px = ms.px;
@@ -248,7 +253,7 @@ function msEditorHtml(s, views) {
     <label>Anteckning <textarea data-sf="note" rows="3">${msEsc(st.note)}</textarea></label>
     <details class="ms-adv"${st.hours !== "" && st.hours != null || st.qty !== "" && st.qty != null ? " open" : ""}><summary>Avancerat</summary><div class="ms-advb"><label>Timmar <input type="number" min="0" step="any" data-sf="hours" value="${msEsc(st.hours)}" placeholder="${x.act && msActHours(x.act) ? msActHours(x.act) + " (tidplan)" : ""}"></label><label>Mängd <input type="number" min="0" step="any" data-sf="qty" value="${msEsc(st.qty)}"></label><label>Enhet <input data-sf="unit" value="${msEsc(st.unit)}" placeholder="m³, m², st …" style="width:80px"></label></div><small class="hint">Visas diskret i rapporten och i CSV-filen.</small></details>
     <label>Väntar på <select data-sf="deps" multiple size="${Math.min(6, Math.max(2, others.length))}">${others.map(o => `<option value="${msEsc(o.st.id)}"${st.deps.includes(o.st.id) ? " selected" : ""}>${o.i + 1}. ${msEsc(o.st.name)}</option>`).join("")}</select></label>
-    <div class="ms-ob"><b>3D:</b> ${(x.t || msTargets(st, msActMap())).length} objekt <button type="button" data-a="setObjs" title="Markera objekt i TC först">Sätt från markering</button><button type="button" data-a="showObjs">Visa</button>${st.objs.length ? `<button type="button" data-a="clearObjs">Rensa egna</button>` : ""}<br><button type="button" data-a="saveCam">Spara kameravy</button>${st.cam ? `<button type="button" data-a="clearCam">Ta bort kameravy</button><small class="hint">kameravy sparad</small>` : `<small class="hint">ingen – zoomar till objekten</small>`}</div>
+    <div class="ms-ob"><b>3D:</b> ${(x.t || msTargets(st, msActMap())).length} objekt <button type="button" data-a="setObjs" title="Markera objekt i TC först">Sätt från markering</button><button type="button" data-a="showObjs">Visa</button>${st.objs.length ? `<button type="button" data-a="clearObjs">Rensa egna</button>` : ""}<br><button type="button" data-a="saveCam">Spara kameravy</button>${st.cam ? `<button type="button" data-a="clearCam">Ta bort kameravy</button><br><button type="button" data-a="camEmptySteps" title="Kopierar vyn till alla steg som saknar kameravy">Samma vy på steg utan vy</button><button type="button" data-a="camAllSteps" title="Kopierar vyn till alla steg">Samma vy på alla steg</button><small class="hint">kameravy sparad</small>` : `<small class="hint">ingen – zoomar till objekten</small>`}</div>
     <div class="ms-del"><button type="button" data-a="delStep">Ta bort steget</button></div>`;
 }
 
@@ -373,6 +378,8 @@ function msLoadLogo(file) {
 function msWire() {
   const el = ms.el; if (!el) return; const root = el.querySelector(".ms-root"); if (!root) return;
   root.onclick = async e => {
+    const ck = e.target.closest("[data-ck]");
+    if (ck) { const i = Number(ck.dataset.ck), v = msViews(ms.cur); if (e.shiftKey && ms.lastCk !== null) { const [a, b] = [Math.min(i, ms.lastCk), Math.max(i, ms.lastCk)]; for (let k = a; k <= b; k++) ms.multi[ck.checked ? "add" : "delete"](v[k].st.id); } else ms.multi[ck.checked ? "add" : "delete"](v[i].st.id); ms.lastCk = i; msPaint(); return; }
     const psel = e.target.closest("[data-psel]"); const tg = e.target.closest("[data-tg]");
     if (tg) { const p = ms.cur.parts[Number(tg.dataset.tg)]; p.collapsed = !p.collapsed; msTouch(); msPaint(); return; }
     if (psel) { ms.pi = Number(psel.dataset.psel); ms.i = msComposeLayout(ms.cur).parts[ms.pi].first || 0; msPaint(); msApply(); return; }
@@ -384,7 +391,7 @@ function msWire() {
     const mode = e.target.closest("[data-mode]"); if (mode) { ms.mode = mode.dataset.mode; msPaint(); return; }
     const sel = e.target.closest("[data-sel]"); if (sel) { msGo(Number(sel.dataset.sel)); return; }
     const up = e.target.closest("[data-up]"), dn = e.target.closest("[data-dn]"); if (up) { msMove(Number(up.dataset.up), Number(up.dataset.up) - 1); return; } if (dn) { msMove(Number(dn.dataset.dn), Number(dn.dataset.dn) + 1); return; }
-    const row = e.target.closest(".ms-row"); if (row && !e.target.closest("button")) { msGo(Number(row.dataset.i)); return; }
+    const row = e.target.closest(".ms-row"); if (row && !e.target.closest("button") && !e.target.closest("input")) { msGo(Number(row.dataset.i)); return; }
     const pick = e.target.closest("[data-pick]"); if (pick) { const a = msActMap().get(pick.dataset.pick); if (a) { ms.cur.steps.splice(ms.i + 1 > ms.cur.steps.length ? ms.cur.steps.length : ms.i + 1, 0, { id: msId(), kind: "act", key: pick.dataset.pick, name: a.objectName || a.activity, note: "", pS: "", pE: "", start: "", dur: 0, deps: [], objs: [], cam: null }); ms.i = Math.min(ms.cur.steps.length - 1, ms.cur.steps.length > 1 ? ms.i + 1 : 0); msTouch(); msPaint(); msApply(); } return; }
     const b = e.target.closest("[data-a]"); if (!b) return; const k = b.dataset.a, s = ms.cur, st = s && s.steps[ms.i];
     if (k === "newCompose") { msNew("compose"); return; }
@@ -408,6 +415,15 @@ function msWire() {
     else if (k === "first") msGo(0); else if (k === "last") msGo((msLen() || 1) - 1); else if (k === "prev") msGo(ms.i - 1); else if (k === "next") msGo(ms.i + 1);
     else if (k === "play") { msPlay(!ms.play); msPaint(); }
     else if (k === "reset3d") { ms.touched3d = true; ms.live = false; await msRestoreModel(); msPaint(); }
+    else if (k === "ckAll") { msViews(s).forEach(x => ms.multi.add(x.st.id)); msPaint(); }
+    else if (k === "ckNone") { ms.multi.clear(); msPaint(); }
+    else if (k === "ckNoCam") { ms.multi.clear(); s.steps.forEach(x => { if (!x.cam) ms.multi.add(x.id); }); msPaint(); }
+    else if (k === "ckCam") { ms.multi.clear(); s.steps.forEach(x => { if (x.cam) ms.multi.add(x.id); }); msPaint(); }
+    else if (k === "camSetSel") { try { const cam = await API.viewer.getCamera(); let n = 0; s.steps.forEach(x => { if (ms.multi.has(x.id)) { x.cam = JSON.parse(JSON.stringify(cam)); n++; } }); ms.shown = null; msTouch(); ms.msg = `Kameravyn är satt på ${n} steg (spara sekvensen)`; msPaint(); } catch (err) { modelToast("Kunde inte läsa kameran i TC"); } }
+    else if (k === "camCopySel") { const cam = st && st.cam; if (!cam) { modelToast("Det markerade steget har ingen kameravy"); return; } let n = 0; s.steps.forEach(x => { if (ms.multi.has(x.id) && x.id !== st.id) { x.cam = JSON.parse(JSON.stringify(cam)); n++; } }); ms.shown = null; msTouch(); ms.msg = `Vyn är kopierad till ${n} steg (spara sekvensen)`; msPaint(); }
+    else if (k === "camClearSel") { let n = 0; s.steps.forEach(x => { if (ms.multi.has(x.id) && x.cam) { x.cam = null; n++; } }); ms.shown = null; msTouch(); ms.msg = `Vyn är rensad på ${n} steg`; msPaint(); }
+    else if (k === "camAllSteps" && st) { if (!st.cam) { modelToast("Spara en kameravy på steget först"); return; } s.steps.forEach(x => { x.cam = JSON.parse(JSON.stringify(st.cam)); }); ms.shown = null; msTouch(); ms.msg = "Vyn är kopierad till alla steg (spara sekvensen)"; msPaint(); }
+    else if (k === "camEmptySteps" && st) { if (!st.cam) { modelToast("Spara en kameravy på steget först"); return; } let n = 0; s.steps.forEach(x => { if (!x.cam) { x.cam = JSON.parse(JSON.stringify(st.cam)); n++; } }); ms.shown = null; msTouch(); ms.msg = `Vyn är kopierad till ${n} steg utan vy (spara sekvensen)`; msPaint(); }
     else if (k === "saveSeqCam") { try { s.cam = await API.viewer.getCamera(); if (s.camAll === undefined) s.camAll = true; ms.shown = null; msTouch(); ms.msg = "Kameravyn är sparad – alla steg tas nu från samma vy (spara sekvensen)"; msPaint(); } catch (err) { modelToast("Kunde inte läsa kameran i TC"); } }
     else if (k === "goSeqCam") { try { await API.viewer.setCamera(s.cam); } catch (err) { modelToast("Kunde inte flytta kameran"); } }
     else if (k === "clearSeqCam") { s.cam = null; ms.shown = null; msTouch(); msPaint(); }
