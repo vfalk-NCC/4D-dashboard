@@ -181,6 +181,12 @@ seed('plan_items.json', [
           const pts = [P, { x: P.x + 3, y: P.y - 4, z: P.z }, { x: P.x - 2, y: P.y + 5, z: P.z - 1 }], c = phbPickCamera(cam, pts, 1800, 960), q = c && phbProject(c, P, 1800, 960);
           return { ok: !!c, ortho: !!(c && c.ortho), why: c && c.why, x: q && q.x, y: q && q.y }; });
         if (!r.ok || r.ortho || r.why !== 'mål' || Math.abs(r.x - 900) > 0.5 || Math.abs(r.y - 480) > 0.5) fail('Verkligt TC-kameraformat: ' + JSON.stringify(r)); }
+      { const r = await page.evaluate(() => { const W = 1800, H = 960, pos = { x: 0, y: -500, z: 300 }, fwd = phbNorm({ x: 0, y: 500, z: -300 }), up = { x: 0, y: 0, z: 1 }, cam = { orthoSize: 100 };
+          const c = { pos, fwd, up, ortho: true, vh: 100, sc: 1, fov: 60 }, P = { x: 12, y: 3, z: 1 }, right = phbNorm(phbCross(fwd, up)), upv = phbCross(right, fwd), d = phbSub(P, pos), ps = H / 25;
+          const click = { x: W / 2 + phbDot(d, right) * ps, y: H / 2 - phbDot(d, upv) * ps }, r1 = phbCalibrate(c, cam, P, click, W, H);
+          const cp = { pos, fwd, up, fov: 60, sc: 1 }, q = phbProject(cp, P, W, H), q2 = { x: W / 2 + (q.x - W / 2) * 1.5, y: H / 2 + (q.y - H / 2) * 1.5 }, r2 = phbCalibrate(cp, {}, P, q2, W, H);
+          return { k1: r1 && r1.k, m1: r1 && r1.mode, k2: r2 && r2.k, m2: r2 && r2.mode }; });
+        if (r.m1 !== 'ortho' || Math.abs(r.k1 - 0.25) > 0.002 || r.m2 !== 'persp' || Math.abs(r.k2 - 1.5) > 0.02) fail('Kalibrering med ett klick: ' + JSON.stringify(r)); }
       await page.evaluate(() => localStorage.removeItem('4ddash-phb-oc-preset'));
       await page.click('#phbOcDel'); await page.waitForTimeout(100);
       // TC-kameran ändras efter att vyn sparats – "Använd" ska flytta tillbaka den och ta nytt foto

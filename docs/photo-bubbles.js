@@ -14,6 +14,8 @@ const phbOkVec = a => a && isFinite(a.x) && isFinite(a.y) && isFinite(a.z);
 /* Alla rimliga tolkningar av kameran (Trimble Connect-kamerans format och enheter är inte dokumenterade här): läge i m/mm,
    riktning ur mål/riktning eller ur gir/lutning i grader/radianer. Den tolkning där flest objekt hamnar i bilden vinner. */
 /* Parallellprojektion (ortogonal vy): ingen perspektiv, skalan är fast. Trimble Connects kamera anger det på olika sätt – flera fältnamn provas. */
+const phbCalGet = k => { try { const v = Number(localStorage.getItem("4ddash-phb-" + k)); return v > 0 && isFinite(v) ? v : 0; } catch (e) { return 0; } };
+let phbOrthoK = phbCalGet("orthok"), phbFocalK = phbCalGet("focalk") || 1; // kalibrering: ortho-storlek → synlig höjd, och brännviddsfaktor för perspektiv (sparas i webbläsaren)
 let phbProj = "auto"; // "auto" | "persp" | "ortho" (valbart i bildredigeraren)
 function phbCamIsOrtho(cam) {
   if (phbProj === "ortho") return true; if (phbProj === "persp") return false;
@@ -48,7 +50,7 @@ function phbCamCandidates(cam) {
       }
     });
   });
-  if (ortho) { const res = []; out.forEach(c => { if (vhs.length) vhs.forEach(vh => res.push({ ...c, ortho: true, vh: vh * c.sc })); else res.push({ ...c, ortho: true, vh: 0 }); }); return res; }
+  if (ortho) { const res = [], os = Number(cam.orthoSize ?? cam.orthographicSize ?? cam.orthoHeight) || 0; out.forEach(c => { if (phbOrthoK && os > 0) res.push({ ...c, ortho: true, vh: os * phbOrthoK * c.sc, cal: true }); else if (vhs.length) vhs.forEach(vh => res.push({ ...c, ortho: true, vh: vh * c.sc })); else res.push({ ...c, ortho: true, vh: 0 }); }); return res; }
   return out;
 }
 function phbProject(c, P, W, H) {
@@ -60,8 +62,15 @@ function phbProject(c, P, W, H) {
   const right = phbNorm(phbCross(c.fwd, c.up)); if (!phbOkVec(right)) return null;
   const upv = phbCross(right, c.fwd), d = phbSub(P, c.pos), z = phbDot(d, c.fwd);
   if (!(z > 0.05)) return null;
-  const f = (H / 2) / Math.tan(c.fov * Math.PI / 360);
+  const f = (H / 2) / Math.tan(c.fov * Math.PI / 360) * phbFocalK;
   return { x: W / 2 + phbDot(d, right) / z * f, y: H / 2 - phbDot(d, upv) / z * f, z };
+}
+/* Kalibrering med ett klick: P = objektets 3D-läge, click = var det verkligen ligger i bilden. Ger faktorn som skalan ska multipliceras med. */
+function phbCalibrate(c, cam, P, click, W, H) {
+  const right = phbNorm(phbCross(c.fwd, c.up)), upv = phbCross(right, c.fwd), d = phbSub(P, c.pos), u = phbDot(d, right), v = phbDot(d, upv), px = click.x - W / 2, py = H / 2 - click.y;
+  if (c.ortho) { const os = Number(cam.orthoSize ?? cam.orthographicSize ?? cam.orthoHeight) || 0, den = u * u + v * v; if (!(os > 0) || den < 1e-6) return null; const ps = (px * u + py * v) / den; if (!(ps > 0)) return null; return { mode: "ortho", k: (H / ps) / (os * c.sc) }; }
+  const z = phbDot(d, c.fwd), den = u * u + v * v; if (!(z > 0.05) || den < 1e-9) return null; const f = (px * u + py * v) / den * z; if (!(f > 0)) return null;
+  return { mode: "persp", k: f / (((H / 2) / Math.tan(c.fov * Math.PI / 360)) * phbFocalK) };
 }
 function phbPickCamera(cam, pts, W, H) {
   let best = null, bs = -1;
@@ -510,12 +519,12 @@ function phbPreview(st) {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").replace(/^(\d{8})(\d{4})$/, "$1-$2");
   d.innerHTML = `<div class="phb-box"><div class="phb-main"><div class="phb-img"><canvas id="phbCv" width="${st.W}" height="${st.H}"></canvas></div><aside class="phb-side" id="phbSide"></aside></div>
     <div class="phb-bar"><span class="phb-info" id="phbInfo"></span>
-    <label class="phb-sel" title="Om punkterna hamnar fel: prova Parallell (ortogonal vy i Trimble Connect)">Vy <select id="phbProj"><option value="auto">Auto</option><option value="persp">Perspektiv</option><option value="ortho">Parallell</option></select></label><label class="phb-sel" title="Var på objektet punkten ska sitta">Punkt <select id="phbAnch"><option value="top">Överkant</option><option value="mid">Mitt i objektet</option></select></label><button type="button" id="phbCamCopy" title="Kopiera kamerans data (för felsökning av punkternas läge)">Kameradata</button>
+    <label class="phb-sel" title="Om punkterna hamnar fel: prova Parallell (ortogonal vy i Trimble Connect)">Vy <select id="phbProj"><option value="auto">Auto</option><option value="persp">Perspektiv</option><option value="ortho">Parallell</option></select></label><label class="phb-sel" title="Var på objektet punkten ska sitta">Punkt <select id="phbAnch"><option value="top">Överkant</option><option value="mid">Mitt i objektet</option></select></label><button type="button" id="phbCal" title="Markera en bubbla och klicka sedan på objektets riktiga plats i bilden – skalan räknas ut och sparas">Kalibrera</button><button type="button" id="phbCalReset" title="Nollställ kalibreringen">↺</button><button type="button" id="phbCamCopy" title="Kopiera kamerans data (för felsökning av punkternas läge)">Kameradata</button>
     <label class="phb-sel">Visa <select id="phbScope"><option value="auto">Markerade, annars pågående</option><option value="marked">Bara markerade</option><option value="active">Pågående</option><option value="all">Alla i schemat</option></select></label>
     <span class="phb-zoom" title="Zooma i förhandsvisningen (mushjul, Ctrl +/−). Panorera: mellanklick-dra, Mellanslag-dra eller rullningslisterna"><button type="button" id="phbZm" aria-label="Zooma ut">−</button><button type="button" id="phbZv" aria-label="Anpassa till fönstret">100 %</button><button type="button" id="phbZp" aria-label="Zooma in">+</button></span><button type="button" id="phbUndo" class="hidden" title="Ta tillbaka den senast borttagna bubblan (Ctrl+Z)">↶ Ångra borttagning</button><button type="button" id="phbPdf" class="primary" title="Foto + bubblor, lista och texter som flyttbara stämplar i egna lager – flytta dem i PDF-läsaren">Spara PDF</button><button type="button" id="phbPng">Spara PNG</button><button type="button" id="phbClose">Stäng</button></div></div>`;
   (document.fullscreenElement || document.body).appendChild(d);
   const cv = d.querySelector("#phbCv"), ctx = cv.getContext("2d"), info = d.querySelector("#phbInfo"), side = d.querySelector("#phbSide"), undoBtn = d.querySelector("#phbUndo");
-  let cur = st, removed = [], drag = null; cv._state = () => cur;
+  let cur = st, removed = [], drag = null, cal = null; cv._state = () => cur;
   const draw = () => {
     cur.ui = cur.ui !== false; phbRender(ctx, cur); undoBtn.classList.toggle("hidden", !removed.length);
     info.textContent = `${cur.cards.length} bubbl${cur.cards.length === 1 ? "a" : "or"} – dra bubblan eller dess punkt, klicka för att redigera, ✕ / Delete / högerklick tar bort${removed.length ? ` · ${removed.length} ${removed.length === 1 ? "borttagen" : "borttagna"}` : ""}${cur.note ? ". " + cur.note : ""}`;
@@ -667,6 +676,11 @@ function phbPreview(st) {
   const hitDot = p => cur.g.lines ? [...(cur.placed ? cur.cards : []), ...(cur.ocards || [])].reverse().find(c => isFinite(c.ax) && Math.hypot(p.x - c.ax, p.y - c.ay) <= (8 * cur.g.dot + 5) * cur.k) : null;
   const onClose = (p, it) => { const b = phbCloseBox(it, cur.k); return Math.hypot(p.x - b.x, p.y - b.y) <= b.r * 1.15; };
   cv.addEventListener("pointerdown", e => {
+    if (cal) { e.preventDefault(); e.stopImmediatePropagation(); const p0 = pos(e), sel0 = cal; cal = null; cv.style.cursor = "";
+      const c0 = cur.camC; if (!c0 || !sel0.P || !phbLast) { modelToast("Ingen kamera att kalibrera"); return; }
+      const r = phbCalibrate(c0, phbLast.cam, sel0.P, p0, cur.W, cur.H); if (!r || !(r.k > 0)) { modelToast("Kunde inte räkna ut skalan – välj en bubbla längre från bildens mitt"); return; }
+      if (r.mode === "ortho") { phbOrthoK = r.k; try { localStorage.setItem("4ddash-phb-orthok", String(r.k)); } catch (x) { /* */ } } else { phbFocalK = phbFocalK * r.k; try { localStorage.setItem("4ddash-phb-focalk", String(phbFocalK)); } catch (x) { /* */ } }
+      d.querySelector("#phbAnch").onchange(); return; }
     if (e.button === 2) return; const p = pos(e), hv = phbObjects(cur).find(i => i.o === cur.hover);
     if (hv && onClose(p, hv)) { removeObj(hv); e.preventDefault(); return; }
     const dot = hitDot(p);
@@ -697,6 +711,10 @@ function phbPreview(st) {
   undoBtn.onclick = undoRemove;
   const close = () => { d.remove(); document.removeEventListener("keydown", keys, true); };
   d.querySelector("#phbClose").onclick = close; d.addEventListener("pointerdown", e => { if (e.target === d) close(); });
+  d.querySelector("#phbCal").onclick = () => { const sel = cur.sel; let P = null; if (sel && sel.o && sel.o.P) P = sel.o.P; else if (sel && sel.objs) { const bs = sel.objs.map(o => o.box).filter(Boolean); if (bs.length) { const lo = { x: Infinity, y: Infinity, z: Infinity }, hi = { x: -Infinity, y: -Infinity, z: -Infinity }; bs.forEach(b => ["x", "y", "z"].forEach(k => { lo[k] = Math.min(lo[k], b.min[k]); hi[k] = Math.max(hi[k], b.max[k]); })); P = phbTopOnObject(bs, lo, hi); } }
+    if (!P) { modelToast("Markera först en bubbla vars objekt du ser tydligt i bilden"); return; }
+    cal = { P }; cv.style.cursor = "crosshair"; modelToast("Klicka nu på objektets riktiga plats i bilden"); };
+  d.querySelector("#phbCalReset").onclick = () => { phbOrthoK = 0; phbFocalK = 1; try { localStorage.removeItem("4ddash-phb-orthok"); localStorage.removeItem("4ddash-phb-focalk"); } catch (e) { /* */ } d.querySelector("#phbAnch").onchange(); };
   d.querySelector("#phbCamCopy").onclick = async () => { const t = JSON.stringify(phbLast && phbLast.cam, null, 1); try { await navigator.clipboard.writeText(t); modelToast("Kameradata kopierad"); } catch (e) { prompt("Kopiera kameradata", t); } };
   { const ps = d.querySelector("#phbProj"), an = d.querySelector("#phbAnch"); ps.value = phbProj; an.value = phbAnchorMode;
     const rebuild = async what => {
