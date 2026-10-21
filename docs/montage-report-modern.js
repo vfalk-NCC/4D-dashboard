@@ -127,7 +127,7 @@ function msModernRuntime(D) {
     const bs = $(".bs", el); if (bs) { const w = $(".b2w", el), u = () => { w.style.clipPath = `inset(0 ${100 - bs.value}% 0 0)`; }; bs.oninput = u; u(); } $(".ba", el).onclick = e => { if (e.target.classList.contains("bs")) return; $("#lb img").src = x.img; $("#lb").hidden = false; }; };
   const drawCard = i => {
     if ($("#cur [contenteditable=true]:focus")) return; const x = S[i], p = ph(x, st.d), nO = (x.obj || []).length, nM = mountedIn(i), act = S.map((y, k) => [y, k]).filter(([y, k]) => ph(y, st.d) === "act" && k !== i);
-    $("#cur").innerHTML = `<div class="cn">Steg ${i + 1} av ${N} <span class="bd ${p}">${LB[p]}</span></div><h2>${ED("s:" + i + ":n", x.n)}</h2>${x.p ? `<div class="mu">${esc(x.p)}</div>` : ""}
+    $("#cur").innerHTML = `<div class="cn">Steg ${i + 1} av ${N} <span class="bd ${p}">${LB[p]}</span></div><h2>${ED("s:" + i + ":n", x.n)}</h2>${x.p ? `<div class="mu">${esc(x.p)}</div>` : ""}${x.gn ? `<div class="mu" style="color:${esc(x.gc)};font-weight:600">⛓ ${esc(x.gn)}</div>` : ""}
       <div class="kv"><div><span>Start</span><b>${sd(x.s)}</b></div><div><span>Slut</span><b>${sd(x.e)}</b></div><div><span>Dagar</span><b>${days(x)}</b></div>${x.h ? `<div><span>Timmar</span><b>${x.h}</b></div>` : ""}${x.q ? `<div><span>Mängd</span><b>${x.q} ${esc(x.u)}</b></div>` : ""}</div>
       <div class="sp"><i style="width:${pct(x, st.d)}%"></i></div><div class="mu sm2">${pct(x, st.d)} % av stegets tid har gått</div>
       ${nO ? `<div class="mnt"><b>${nM}</b> av ${nO} objekt monterade<div class="sp g"><i style="width:${Math.round(nM / nO * 100)}%"></i></div></div>` : ""}

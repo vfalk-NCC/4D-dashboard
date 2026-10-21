@@ -68,6 +68,23 @@ function msViewsSeq(seq) {
 
 /* Sammansättning: en sekvens av sekvenser. Varje del pekar på en sparad sekvens och startar på eget datum, efter en annan del
    (hela eller efter ett visst steg, med glapp) eller vid sammansättningens start. Stegen är de ursprungliga sekvensernas steg. */
+/* Grupper av steg (Kombinera): stegen i en grupp visas och spelas upp tillsammans och binds ihop visuellt i ganttvyn. */
+const MS_GCOL = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#f97316"];
+const msHexA = (h, a) => { const x = String(h || "#4f46e5").replace("#", ""); return `rgba(${parseInt(x.slice(0, 2), 16) || 0},${parseInt(x.slice(2, 4), 16) || 0},${parseInt(x.slice(4, 6), 16) || 0},${a})`; };
+const msGrpMap = seq => new Map(((seq && seq.groups) || []).map(g => [g.id, g]));
+function msGrp(views, i) { const v = views[i], gm = msGrpMap(ms.cur); if (!v || !v.st.grp || !gm.has(v.st.grp)) return { a: i, b: i, g: null }; let a = i, b = i; views.forEach(x => { if (x.st.grp === v.st.grp) { a = Math.min(a, x.i); b = Math.max(b, x.i); } }); return { a, b, g: gm.get(v.st.grp) }; }
+const msNext = () => { if (ms.cur) msGo(msGrp(msViews(ms.cur), ms.i).b + 1); }, msPrev = () => msGo(ms.i - 1);
+function msGroupMake() {
+  const s = ms.cur; if (!s || s.type === "compose") return; const ids = [...ms.multi].filter(id => s.steps.some(x => x.id === id));
+  if (ids.length < 2) { if (typeof modelToast === "function") modelToast("Välj minst två steg (Ctrl+klick på staplarna)"); return; }
+  s.groups = s.groups || []; const touched = new Set(ids.map(id => s.steps.find(x => x.id === id).grp).filter(Boolean)); let gid = [...touched][0];
+  if (!gid) { gid = msId(); s.groups.push({ id: gid, name: `Grupp ${s.groups.length + 1}`, color: MS_GCOL[s.groups.length % MS_GCOL.length] }); }
+  s.steps.forEach(x => { if (ids.includes(x.id) || (x.grp && touched.has(x.grp))) x.grp = gid; });
+  const first = s.steps.findIndex(x => x.grp === gid), moved = s.steps.filter(x => x.grp === gid); s.steps = s.steps.filter(x => x.grp !== gid); s.steps.splice(first, 0, ...moved); // medlemmarna läggs intill varandra
+  msGroupClean(s); ms.multi.clear(); ms.i = first; ms.shown = null; msTouch(); ms.msg = `${moved.length} steg kombinerade i "${msGrpMap(s).get(gid).name}"`; msPaint(); msApply();
+}
+function msGroupClean(s) { const cnt = {}; s.steps.forEach(x => { if (x.grp) cnt[x.grp] = (cnt[x.grp] || 0) + 1; }); s.steps.forEach(x => { if (x.grp && cnt[x.grp] < 2) x.grp = ""; }); s.groups = (s.groups || []).filter(g => cnt[g.id] >= 2); }
+function msGroupBreak(ids) { const s = ms.cur; if (!s) return; let n = 0; s.steps.forEach(x => { if (ids.includes(x.id) && x.grp) { x.grp = ""; n++; } }); msGroupClean(s); ms.multi.clear(); ms.shown = null; msTouch(); ms.msg = n ? `${n} steg avgrupperade` : ""; msPaint(); msApply(); }
 const msLab = x => (x.part ? `${x.partName} › ${x.st.name}` : x.st.name);
 function msComposeLayout(seq) {
   const parts = (seq.parts || []).map(p => ({ p, name: "", seq: ms.seqs.find(x => x.id === p.seqId && x.type !== "compose") || null }));
@@ -143,14 +160,14 @@ async function msApply() {
   try {
     const V = API && API.viewer; if (!V || typeof V.setObjectState !== "function" || typeof V.convertToObjectRuntimeIds !== "function") return;
     const views = msViews(ms.cur); await msGroups(V, views);
-    const cur = views[ms.i]; if (!cur) return;
+    const cur = views[ms.i]; if (!cur) return; const gr = msGrp(views, ms.i);
     const anyObj = views.some(x => x.g.length); if (ms.noObjs !== !anyObj) { ms.noObjs = !anyObj; msPaintSoon(); }
     if (!anyObj) { ms.shown = null; return; } // inget steg har objekt i modellen: rör inte modellen
-    const done = msMerge(views.filter(x => x.i < ms.i).map(x => x.g)), now = cur.g, fut = ms.future ? msMerge(views.filter(x => x.i > ms.i).map(x => x.g)) : [];
+    const done = msMerge(views.filter(x => x.i < gr.a).map(x => x.g)), now = msMerge(views.filter(x => x.i >= gr.a && x.i <= gr.b).map(x => x.g)), fut = ms.future ? msMerge(views.filter(x => x.i > gr.b).map(x => x.g)) : [];
     const nNow = now.reduce((a, g) => a + g.rids.length, 0); if (ms.nNow !== nNow) { ms.nNow = nNow; msPaintSoon(); }
     const build = ms.cols.buildUp && nNow > 1; let nowVis = now, k = nNow;
-    if (build) { const ord = await msOrder(V, cur); k = Math.max(0, Math.min(ord.length, Math.ceil(ms.sub * ord.length - 1e-9))); nowVis = msGroupsOf(ord.slice(0, k)); }
-    const vis = msMerge([done, nowVis, fut]), base = JSON.stringify([ms.cur.id, ms.i, ms.future, ms.follow, ms.cols, vis.length ? 1 : 0, done.length, fut.length, nNow]), sig = base + "|" + k + "|" + build;
+    if (build) { const ord = await msOrder(V, { st: { id: gr.g ? gr.g.id : cur.st.id }, g: now }); k = Math.max(0, Math.min(ord.length, Math.ceil(ms.sub * ord.length - 1e-9))); nowVis = msGroupsOf(ord.slice(0, k)); }
+    const vis = msMerge([done, nowVis, fut]), base = JSON.stringify([ms.cur.id, ms.i, gr.b, ms.future, ms.follow, ms.cols, vis.length ? 1 : 0, done.length, fut.length, nNow]), sig = base + "|" + k + "|" + build;
     if (ms.shown === sig) return;
     const ents = vis.map(g => ({ modelId: g.modelId, entityIds: g.rids })), same = ms.baseShown === base && build;
     // allt som inte hör till klara steg, aktuellt steg (eller kommande vid "svagt") släcks undan – även när det aktuella steget saknar objekt
@@ -197,17 +214,17 @@ async function msRestoreModel() {
 }
 function msLeave() { if (!ms.view) return; ms.view = ""; msPlay(false); document.removeEventListener("keydown", msKey, true); msRestoreModel(); }
 const msLen = () => (ms.cur ? msViews(ms.cur).length : 0);
-function msPlay(on) { ms.play = on; clearInterval(ms.timer); ms.timer = null; if (on && ms.cur) { if (ms.i >= msLen() - 1) ms.i = 0; ms.timer = setInterval(() => { if (!ms.busy) msGo(ms.i + 1); }, Math.max(2500, ms.cols.buildUp ? ms.cols.buildSec * 1000 + 900 : 0)); } }
+function msPlay(on) { ms.play = on; clearInterval(ms.timer); ms.timer = null; if (on && ms.cur) { if (ms.i >= msLen() - 1) ms.i = 0; ms.timer = setInterval(() => { if (!ms.busy) msNext(); }, Math.max(2500, ms.cols.buildUp ? ms.cols.buildSec * 1000 + 900 : 0)); } }
 function msGo(i, instant) {
   if (!ms.cur || !msLen()) return; const n = msLen(), was = ms.i;
-  ms.i = Math.max(0, Math.min(n - 1, i)); ms.touched3d = ms.live; if (ms.play && ms.i >= n - 1) msPlay(false);
+  ms.i = Math.max(0, Math.min(n - 1, i)); ms.i = msGrp(msViews(ms.cur), ms.i).a; ms.touched3d = ms.live; if (ms.play && msGrp(msViews(ms.cur), ms.i).b >= n - 1) msPlay(false);
   if (instant || ms.i === was) { if (ms.i !== was) { clearInterval(ms.anim); ms.sub = 1; } } else msAnimate();
   msPaint(); msApply();
 }
 function msKey(e) {
   if (ms.view !== "montage" || !ms.cur) return; const t = e.target;
   if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && t.type !== "range" && t.type !== "checkbox") return;
-  if (e.key === "ArrowRight") { e.preventDefault(); msGo(ms.i + 1); } else if (e.key === "ArrowLeft") { e.preventDefault(); msGo(ms.i - 1); } else if (e.key === " " && !(t && (t.type === "checkbox" || t.tagName === "BUTTON"))) { e.preventDefault(); msPlay(!ms.play); msPaint(); }
+  if (e.key === "ArrowRight") { e.preventDefault(); msNext(); } else if (e.key === "ArrowLeft") { e.preventDefault(); msPrev(); } else if (e.key === " " && !(t && (t.type === "checkbox" || t.tagName === "BUTTON"))) { e.preventDefault(); msPlay(!ms.play); msPaint(); }
 }
 
 /* ---- Skärmen ------------------------------------------------------------------------------------------------------------------------------------ */
@@ -260,8 +277,8 @@ function msColPopHtml() {
     <label class="ms-bu">Tid per steg <select data-bu="sec">${[1, 2, 3, 5, 8, 12].map(v => `<option value="${v}"${Number(ms.cols.buildSec) === v ? " selected" : ""}>${v} s</option>`).join("")}</select></label><button type="button" data-a="colReset">Återställ</button></div>`;
 }
 function msStepsHtml(s, views) {
-  const rows = views.map(x => `<div class="ms-row${x.i === ms.i ? " cur" : ""}${x.missing ? " miss" : ""}" draggable="true" data-i="${x.i}"><span class="ms-h" title="Dra för att flytta">⋮⋮</span><input type="checkbox" class="ms-ck" data-ck="${x.i}"${ms.multi.has(x.st.id) ? " checked" : ""} aria-label="Markera steg ${x.i + 1}" title="Markera (Skift-klick markerar ett intervall)"><b>${x.i + 1}</b>
-    <span class="ms-nm">${msEsc(x.st.name)}<small>${x.st.kind === "act" ? (x.missing ? "aktiviteten finns inte längre" : "tidplan: " + msEsc(x.ppS.slice(5)) + "–" + msEsc(x.ppE.slice(5)) + (x.changed ? ` · förslag ${msEsc(x.s.slice(5))}–${msEsc(x.e.slice(5))}` : "")) : "fritt steg · " + msEsc(x.s.slice(5)) + "–" + msEsc(x.e.slice(5))}${x.st.objs.length ? " · " + x.st.objs.length + " obj." : ""}${x.st.cam ? " · 📷" : ""}${x.st.note ? " · 📝" : ""}</small></span>
+  const rows = views.map(x => `<div class="ms-row${x.i === ms.i ? " cur" : ""}${x.missing ? " miss" : ""}" draggable="true" data-i="${x.i}"${x.st.grp && msGrpMap(s).has(x.st.grp) ? ` style="border-left:5px solid ${msGrpMap(s).get(x.st.grp).color}"` : ""}><span class="ms-h" title="Dra för att flytta">⋮⋮</span><input type="checkbox" class="ms-ck" data-ck="${x.i}"${ms.multi.has(x.st.id) ? " checked" : ""} aria-label="Markera steg ${x.i + 1}" title="Markera (Skift-klick markerar ett intervall)"><b>${x.i + 1}</b>
+    <span class="ms-nm">${msEsc(x.st.name)}<small>${x.st.kind === "act" ? (x.missing ? "aktiviteten finns inte längre" : "tidplan: " + msEsc(x.ppS.slice(5)) + "–" + msEsc(x.ppE.slice(5)) + (x.changed ? ` · förslag ${msEsc(x.s.slice(5))}–${msEsc(x.e.slice(5))}` : "")) : "fritt steg · " + msEsc(x.s.slice(5)) + "–" + msEsc(x.e.slice(5))}${x.st.objs.length ? " · " + x.st.objs.length + " obj." : ""}${x.st.cam ? " · 📷" : ""}${x.st.note ? " · 📝" : ""}${x.st.grp && msGrpMap(s).has(x.st.grp) ? " · ⛓ " + msEsc(msGrpMap(s).get(x.st.grp).name) : ""}</small></span>
     <span class="ms-ra"><button type="button" data-up="${x.i}" aria-label="Upp">▲</button><button type="button" data-dn="${x.i}" aria-label="Ner">▼</button></span></div>`).join("");
   return `<div class="ms-bar"><button type="button" data-a="addFree">＋ Fritt steg</button><button type="button" data-a="addAct">＋ Aktivitet ur tidplanen …</button><button type="button" data-a="addSel" title="Markera objekt i TC först">＋ Från markering i TC</button><button type="button" data-a="sortStart" title="Ordna efter start">Sortera efter start</button></div>
     ${views.length ? msCamBarHtml(views) : ""}<div id="msPick" class="ms-pick hidden"></div>${rows || `<p class="hint">Inga steg än. Lägg till ett steg ovan, eller byt till Gantt och bygg planen där.</p>`}`;
@@ -269,10 +286,10 @@ function msStepsHtml(s, views) {
 function msCamBarHtml(views) {
   const n = views.filter(x => ms.multi.has(x.st.id)).length, cur = views[ms.i];
   return `<div class="ms-camact"><span class="hint">📷 Kameravy på flera steg:</span><span class="ms-sel">Markera <button type="button" data-a="ckAll">alla</button><button type="button" data-a="ckNone">inga</button><button type="button" data-a="ckNoCam">utan vy</button><button type="button" data-a="ckCam">med vy</button></span>
-    <span class="ms-act"><b>${n}</b> valda:<button type="button" data-a="camSetSel"${n ? "" : " disabled"} title="Ställ in vyn i TC först">Spara aktuell TC-vy på valda</button><button type="button" data-a="camCopySel"${n && cur && cur.st.cam ? "" : " disabled"} title="Kopierar vyn från det markerade steget (${cur ? cur.i + 1 : "–"})">Kopiera vy från steg ${cur ? cur.i + 1 : "–"}</button><button type="button" data-a="camClearSel"${n ? "" : " disabled"}>Rensa vy</button></span></div>`;
+    <span class="ms-act"><b>${n}</b> valda:<button type="button" data-a="camSetSel"${n ? "" : " disabled"} title="Ställ in vyn i TC först">Spara aktuell TC-vy på valda</button><button type="button" data-a="camCopySel"${n && cur && cur.st.cam ? "" : " disabled"} title="Kopierar vyn från det markerade steget (${cur ? cur.i + 1 : "–"})">Kopiera vy från steg ${cur ? cur.i + 1 : "–"}</button><button type="button" data-a="camClearSel"${n ? "" : " disabled"}>Rensa vy</button><button type="button" data-a="grpMake"${n > 1 ? "" : " disabled"} title="Låt de valda stegen ingå i samma sekvens">⛓ Kombinera</button><button type="button" data-a="grpBreak"${n ? "" : " disabled"}>Avgruppera</button></span></div>`;
 }
 function msGanttHtml(s, views) {
-  const today = msToday(), px = ms.px;
+  const today = msToday(), px = ms.px, gmap = msGrpMap(s);
   let mn = views.length ? views.reduce((m, x) => (x.s < m ? x.s : m), views[0].s) : today, mx = views.length ? views.reduce((m, x) => (x.e > m ? x.e : m), views[0].e) : msAdd(today, 56);
   views.forEach(x => { if (x.act) { if (x.ppS < mn) mn = x.ppS; if (x.ppE > mx) mx = x.ppE; } });
   mn = msAdd(mn, -((new Date(mn + "T00:00:00Z").getUTCDay() + 6) % 7) - 7); mx = msAdd(mx, 21);
@@ -282,18 +299,25 @@ function msGanttHtml(s, views) {
     const y = x.i * 28 + 4, cur = x.i === ms.i ? " cur" : "";
     const pp = x.act ? `<i class="ms-pp" style="left:${X(x.ppS)}px;width:${Math.max(4, (msDiff(x.ppS, x.ppE) + 1) * px)}px;top:${y + 1}px" title="Tidplan: ${msEsc(x.ppS)} → ${msEsc(x.ppE)}"></i>` : "";
     const cls = x.act ? (x.changed ? "prop" : "pl") : "free";
-    return `${pp}<i class="ms-bar2 ${cls}${cur}" data-bar="${x.i}" style="left:${X(x.s)}px;width:${Math.max(6, (msDiff(x.s, x.e) + 1) * px)}px;top:${y + (x.act && x.changed ? 9 : 4)}px" title="${msEsc(x.st.name)}: ${msEsc(x.s)} → ${msEsc(x.e)}"><u data-edge="l"></u><span>${msEsc(x.st.name)}</span><u data-edge="r"></u></i>`;
+    const sel = ms.multi.has(x.st.id) ? " msel" : "", gc = x.st.grp && gmap.has(x.st.grp) ? gmap.get(x.st.grp).color : "";
+    return `${pp}<i class="ms-bar2 ${cls}${cur}${sel}${gc ? " ing" : ""}" data-bar="${x.i}" style="${gc ? "--gc:" + gc + ";" : ""}left:${X(x.s)}px;width:${Math.max(6, (msDiff(x.s, x.e) + 1) * px)}px;top:${y + (x.act && x.changed ? 9 : 4)}px" title="${msEsc(x.st.name)}: ${msEsc(x.s)} → ${msEsc(x.e)}"><u data-edge="l"></u><span>${msEsc(x.st.name)}</span><u data-edge="r"></u></i>`;
   }).join("");
   const pos = new Map(views.map(x => [x.st.id, x])); let arrows = "";
   views.forEach(x => x.st.deps.forEach(d => { const p = pos.get(d); if (!p) return; const x1 = X(p.e) + px, y1 = p.i * 28 + 18, x2 = X(x.s), y2 = x.i * 28 + 18, xm = Math.max(x1 + 4, Math.min(x2 - 4, x1 + 6)); arrows += `<path d="M${x1} ${y1}H${xm}V${y2}H${x2}" />`; }));
-  const labels = views.map(x => `<div class="ms-gl${x.i === ms.i ? " cur" : ""}" data-sel="${x.i}" title="${msEsc(x.st.name)}"><b>${x.i + 1}</b> ${msEsc(x.st.name)}</div>`).join("");
-  return `<div class="ms-bar"><button type="button" data-a="addFree">＋ Steg</button><button type="button" data-a="addAct">＋ Aktivitet ur tidplanen …</button><label>Zoom <input type="range" id="msPx" min="6" max="40" value="${px}"></label><span class="hint">Dra en stapel för att flytta, dra i kanten för längd. Orange = ditt förslag mot tidplanen (grå stapel under).</span></div><div id="msPick" class="ms-pick hidden"></div>
-    <div class="ms-g"><div class="ms-glabels"><div class="ms-ghead">&nbsp;</div>${labels}</div><div class="ms-gscroll"><div class="ms-gcanvas" style="width:${W}px;height:${H + 22}px"><div class="ms-gh">${head}</div><div class="ms-gb" style="height:${H}px"><div class="ms-today" style="left:${X(today)}px"></div>${bars}<svg width="${W}" height="${H}">${arrows}</svg></div></div></div></div>${views.length ? "" : `<p class="hint">Tom ganttvy. Tryck ＋ Steg för att börja planera.</p>`}`;
+  // grupper: tonat band bakom medlemmarnas staplar och en färgad kant i etiketterna
+  let bands = "";
+  gmap.forEach(g => { const mem = views.filter(v => v.st.grp === g.id); if (mem.length < 2) return; const a = mem[0].i, b = mem[mem.length - 1].i, x0 = Math.min(...mem.map(v => X(v.s))) - 7, x1 = Math.max(...mem.map(v => X(v.e) + px)) + 7;
+    bands += `<i class="ms-gband" style="--gc:${g.color};--gb:${msHexA(g.color, 0.1)};left:${x0}px;width:${x1 - x0}px;top:${a * 28 + 1}px;height:${(b - a + 1) * 28 - 2}px"></i><i class="ms-gtag" style="--gc:${g.color};left:${x0 + 4}px;top:${a * 28 - 9}px">⛓ ${msEsc(g.name)} · ${mem.length}</i>`; });
+  const labels = views.map(x => { const g = x.st.grp ? gmap.get(x.st.grp) : null; return `<div class="ms-gl${x.i === ms.i ? " cur" : ""}${ms.multi.has(x.st.id) ? " msel" : ""}${g ? " grp" : ""}" data-sel="${x.i}" title="${msEsc(x.st.name)}"${g ? ` style="--gc:${g.color}"` : ""}><b>${x.i + 1}</b> ${msEsc(x.st.name)}</div>`; }).join("");
+  const nSel = views.filter(v => ms.multi.has(v.st.id)).length, selBar = `<span class="ms-multi">${nSel ? `<b>${nSel} valda</b><button type="button" class="primary" data-a="grpMake"${nSel > 1 ? "" : " disabled"} title="Låt de valda stegen ingå i samma sekvens – de visas och spelas upp tillsammans">⛓ Kombinera</button><button type="button" data-a="grpBreak" title="Ta de valda stegen ur sin grupp">Avgruppera</button><button type="button" data-a="grpClear">Rensa val</button>` : `<span class="hint">Ctrl+klick på staplar för att välja flera och kombinera dem</span>`}</span>`;
+  return `<div class="ms-bar"><button type="button" data-a="addFree">＋ Steg</button><button type="button" data-a="addAct">＋ Aktivitet ur tidplanen …</button><label>Zoom <input type="range" id="msPx" min="6" max="40" value="${px}"></label>${selBar}<span class="hint">Dra en stapel för att flytta, dra i kanten för längd. Orange = ditt förslag mot tidplanen (grå stapel under).</span></div><div id="msPick" class="ms-pick hidden"></div>
+    <div class="ms-g"><div class="ms-glabels"><div class="ms-ghead">&nbsp;</div>${labels}</div><div class="ms-gscroll"><div class="ms-gcanvas" style="width:${W}px;height:${H + 22}px"><div class="ms-gh">${head}</div><div class="ms-gb" style="height:${H}px"><div class="ms-today" style="left:${X(today)}px"></div>${bands}${bars}<svg width="${W}" height="${H}">${arrows}</svg></div></div></div></div>${views.length ? "" : `<p class="hint">Tom ganttvy. Tryck ＋ Steg för att börja planera.</p>`}`;
 }
 function msEditorHtml(s, views) {
   const x = views[ms.i]; if (!x) return `<p class="hint">Välj ett steg för att redigera det.</p>`;
   const st = x.st, others = views.filter(v => v.i !== x.i);
   return `<h4>Steg ${x.i + 1}</h4><label>Namn <input data-sf="name" value="${msEsc(st.name)}" ${st.kind === "act" ? 'title="Eget namn i sekvensen – tidplanens namn ändras inte"' : ""}></label>
+    ${(() => { const g = st.grp ? msGrpMap(s).get(st.grp) : null; return g ? `<div class="ms-grpe" style="--gc:${g.color}"><b>⛓ Grupp</b><input data-gn value="${msEsc(g.name)}" aria-label="Gruppens namn"><input type="color" data-gc value="${msEsc(g.color)}" aria-label="Gruppens färg"><button type="button" data-a="grpBreak1">Ta ur gruppen</button><small class="hint">Stegen i gruppen visas och spelas upp tillsammans.</small></div>` : ""; })()}
     ${st.kind === "act" ? `<div class="ms-info">${x.missing ? `<b class="bad">Aktiviteten finns inte längre i tidplanen.</b>` : `Tidplan: ${msEsc(x.ppS)} → ${msEsc(x.ppE)}`}<br><label>Förslag start <input type="date" data-sf="pS" value="${msEsc(st.pS)}"></label> <label>slut <input type="date" data-sf="pE" value="${msEsc(st.pE)}"></label> <button type="button" data-a="clearProp">Rensa förslag</button></div>`
       : `<div class="ms-info"><label>Start <input type="date" data-sf="start" value="${msEsc(st.start)}" title="Tomt = efter föregående steg (eller sekvensens start)"></label> <label>Längd (dagar) <input type="number" min="1" data-sf="dur" value="${st.dur || 1}" style="width:64px"></label>${st.deps.length && !st.start ? `<small class="hint">Startar dagen efter föregående: ${msEsc(x.s)}</small>` : ""}</div>`}
     <label>Anteckning <textarea data-sf="note" rows="3">${msEsc(st.note)}</textarea></label>
@@ -471,7 +495,7 @@ function msWire() {
     const ps = e.target.closest("[data-pickseq]"); if (ps) { msAddPart(ps.dataset.pickseq); return; }
     const open = e.target.closest("[data-open]"); if (open) { await msOpenSeq(open.dataset.open); return; }
     const mode = e.target.closest("[data-mode]"); if (mode) { ms.mode = mode.dataset.mode; msPaint(); return; }
-    const sel = e.target.closest("[data-sel]"); if (sel) { msGo(Number(sel.dataset.sel)); return; }
+    const sel = e.target.closest("[data-sel]"); if (sel) { if (e.ctrlKey || e.metaKey) { const vs = msViews(ms.cur), v = vs[Number(sel.dataset.sel)]; if (v) { if (ms.multi.has(v.st.id)) ms.multi.delete(v.st.id); else ms.multi.add(v.st.id); ms.lastCk = v.i; msPaint(); } return; } msGo(Number(sel.dataset.sel)); return; }
     const up = e.target.closest("[data-up]"), dn = e.target.closest("[data-dn]"); if (up) { msMove(Number(up.dataset.up), Number(up.dataset.up) - 1); return; } if (dn) { msMove(Number(dn.dataset.dn), Number(dn.dataset.dn) + 1); return; }
     const row = e.target.closest(".ms-row"); if (row && !e.target.closest("button") && !e.target.closest("input")) { msGo(Number(row.dataset.i)); return; }
     const pick = e.target.closest("[data-pick]"); if (pick) { const a = msActMap().get(pick.dataset.pick); if (a) { ms.cur.steps.splice(ms.i + 1 > ms.cur.steps.length ? ms.cur.steps.length : ms.i + 1, 0, { id: msId(), kind: "act", key: pick.dataset.pick, name: a.objectName || a.activity, note: "", pS: "", pE: "", start: "", dur: 0, deps: [], objs: [], cam: null }); ms.i = Math.min(ms.cur.steps.length - 1, ms.cur.steps.length > 1 ? ms.i + 1 : 0); msTouch(); msPaint(); msApply(); } return; }
@@ -494,9 +518,13 @@ function msWire() {
     else if (k === "showObjs" && st) { const V = API && API.viewer, v = msViews(s); await msGroups(V, v); const g = v[ms.i].g; if (g.length) { try { ownModelSelectionUntil = Date.now() + 1500; await V.setSelection({ modelObjectIds: msMo(g) }, "set"); await V.setCamera({ modelObjectIds: msMo(g) }); } catch (err) { console.warn(err); } } else modelToast("Inga objekt i modellen för steget"); }
     else if (k === "saveCam" && st) { try { st.cam = await API.viewer.getCamera(); msTouch(); msPaint(); modelToast("Kameravyn är sparad på steget"); } catch (err) { modelToast("Kunde inte läsa kameran"); } }
     else if (k === "clearCam" && st) { st.cam = null; msTouch(); msPaint(); }
-    else if (k === "first") msGo(0); else if (k === "last") msGo((msLen() || 1) - 1); else if (k === "prev") msGo(ms.i - 1); else if (k === "next") msGo(ms.i + 1);
+    else if (k === "first") msGo(0); else if (k === "last") msGo((msLen() || 1) - 1); else if (k === "prev") msPrev(); else if (k === "next") msNext();
     else if (k === "play") { msPlay(!ms.play); msPaint(); }
     else if (k === "reset3d") { ms.touched3d = true; ms.live = false; await msRestoreModel(); msPaint(); }
+    else if (k === "grpMake") msGroupMake();
+    else if (k === "grpBreak") msGroupBreak(ms.multi.size ? [...ms.multi] : (s && s.steps[ms.i] ? [s.steps[ms.i].id] : []));
+    else if (k === "grpClear") { ms.multi.clear(); msPaint(); }
+    else if (k === "grpBreak1" && st) msGroupBreak([st.id]);
     else if (k === "ckAll") { msViews(s).forEach(x => ms.multi.add(x.st.id)); msPaint(); }
     else if (k === "ckNone") { ms.multi.clear(); msPaint(); }
     else if (k === "ckNoCam") { ms.multi.clear(); s.steps.forEach(x => { if (!x.cam) ms.multi.add(x.id); }); msPaint(); }
@@ -523,6 +551,7 @@ function msWire() {
     if (!s) return;
     if (t.dataset.pf && s) { const pr = s.parts[msPartIdx(s, msComposeLayout(s))]; if (!pr) return; const f = t.dataset.pf; pr[f] === undefined && (pr[f] = ""); pr[f] = f === "afterStep" || f === "lag" ? Number(t.value) || (f === "afterStep" ? 0 : 0) : t.value; if (f === "afterStep") pr.afterStep = Number(t.value); if (f === "after") { pr.afterStep = -1; if (t.value) pr.start = ""; } if (f === "start" && t.value) pr.after = ""; msTouch(); msPaintSoon(); return; }
     if (t.dataset.f) { s[t.dataset.f] = t.value; msTouch(); if (t.dataset.f === "start") msPaintSoon(); return; }
+    if ((t.dataset.gn !== undefined || t.dataset.gc !== undefined) && s) { const st1 = s.steps[ms.i], g = st1 && st1.grp ? msGrpMap(s).get(st1.grp) : null; if (g) { if (t.dataset.gn !== undefined) g.name = t.value || g.name; else g.color = t.value; msTouch(); msPaintSoon(); } return; }
     if (t.dataset.lag && s) { const st0 = s.steps[ms.i]; if (st0) { st0.depLags = st0.depLags || {}; st0.depLags[t.dataset.lag] = Math.round(Number(t.value)) || 0; msTouch(); msPaintSoon(); } return; }
     if (t.dataset.sf) { const st = s.steps[ms.i]; if (!st) return; if (t.dataset.sf === "deps") st.deps = [...t.selectedOptions].map(o => o.value); else if (t.dataset.sf === "hours" || t.dataset.sf === "qty") st[t.dataset.sf] = t.value === "" ? "" : Math.max(0, Number(t.value)); else if (t.dataset.sf === "dur") st.dur = Math.max(1, Math.round(Number(t.value)) || 1); else st[t.dataset.sf] = t.value; msTouch(); msPaintSoon(); return; }
     if (t.dataset.bu) { if (t.dataset.bu === "on") { ms.cols.buildUp = t.checked; ms.sub = 1; clearInterval(ms.anim); ms.anim = null; } else ms.cols.buildSec = Number(t.value); msColsSave(); ms.shown = null; ms.baseShown = null; if (t.dataset.bu === "on" && t.checked) msAnimate(); msPaintSoon(); msApply(); return; }
@@ -543,6 +572,11 @@ function msWire() {
   root.querySelectorAll("[data-sum]").forEach(bar => { bar.onpointerdown = e => msSumDown(e, bar); });
 }
 function msBarDown(e, bar) {
+  if (e.ctrlKey || e.metaKey || e.shiftKey) { // välj flera staplar (Ctrl/Cmd = lägg till/ta bort, Skift = intervall)
+    e.preventDefault(); const i0 = Number(bar.dataset.bar), vs = msViews(ms.cur);
+    if (e.shiftKey && ms.lastCk !== null && vs[ms.lastCk]) { const [a, b] = [Math.min(i0, ms.lastCk), Math.max(i0, ms.lastCk)]; for (let k = a; k <= b; k++) ms.multi.add(vs[k].st.id); }
+    else if (ms.multi.has(vs[i0].st.id)) ms.multi.delete(vs[i0].st.id); else ms.multi.add(vs[i0].st.id);
+    ms.lastCk = i0; msPaint(); return; }
   e.preventDefault(); const i = Number(bar.dataset.bar), s = ms.cur, views = msViews(s), x = views[i], edge = e.target.dataset.edge || "m", x0 = e.clientX, px = ms.px;
   msGo(i); let moved = false, dd = 0;
   const c0 = ms.el.querySelector(`[data-bar="${i}"]`), l0 = parseFloat(c0.style.left), w0 = parseFloat(c0.style.width); c0.setPointerCapture && c0.setPointerCapture(e.pointerId);

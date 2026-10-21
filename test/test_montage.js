@@ -79,6 +79,16 @@ seed('plan_item_activities.json', []);
   const b = await (await page.$('[data-bar="1"]')).boundingBox();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down(); await page.mouse.move(b.x + b.width / 2 + 16 * 3, b.y + b.height / 2, { steps: 4 }); await page.mouse.up(); await page.waitForTimeout(300);
   const st2 = await page.evaluate(() => ({ start: ms.cur.steps[1].start, lag: Object.values(ms.cur.steps[1].depLags || {})[0], dirty: ms.dirty })); if (st2.start !== '' || !(st2.lag > 0) || !st2.dirty) fail('stapeln flyttas (ändrar glappet mot föregångaren): ' + JSON.stringify(st2));
+  // Kombinera: Ctrl+klick på två staplar => grupp i ganttvyn
+  await page.click('[data-bar="3"]', { modifiers: ['Control'] }); await page.click('[data-bar="5"]', { modifiers: ['Control'] }); await page.waitForTimeout(200);
+  if ((await page.$$('.ms-bar2.msel')).length !== 2) fail('två markerade staplar med Ctrl+klick');
+  await page.click('[data-a="grpMake"]'); await page.waitForTimeout(300);
+  const gs = await page.evaluate(() => ({ g: ms.cur.groups.length, ids: ms.cur.steps.map((x, k) => x.grp ? k : -1).filter(k => k >= 0) }));
+  if (gs.g !== 1 || gs.ids.length !== 2 || gs.ids[1] - gs.ids[0] !== 1) fail('grupp skapad, medlemmar intill varandra: ' + JSON.stringify(gs));
+  if (!(await page.$('.ms-gband')) || !(await page.$('.ms-gtag'))) fail('grupp syns i ganttvyn (band + etikett)');
+  await page.evaluate(g => { ms.i = g; }, gs.ids[0]); const nx = await page.evaluate(() => { msNext(); return ms.i; }); if (nx !== gs.ids[1] + 1) fail('nästa-steg hoppar över gruppen: ' + nx);
+  await page.evaluate(() => { ms.multi.add(ms.cur.steps.find(x => x.grp).id); msPaint(); }); await page.click('[data-a="grpBreak"]'); await page.waitForTimeout(200);
+  if (await page.evaluate(() => (ms.cur.groups || []).length + ms.cur.steps.filter(x => x.grp).length)) fail('avgruppera tar bort gruppen');
   // Ny tom sekvens (tom gantt)
   await page.click('[data-a="newEmpty"]'); await page.waitForTimeout(300);
   if (!(await page.evaluate(() => !!document.querySelector('.ms-g') && /Tom ganttvy/.test(document.querySelector('.ms-left').innerText)))) fail('tom ganttvy');
