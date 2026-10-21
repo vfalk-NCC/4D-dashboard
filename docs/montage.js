@@ -11,7 +11,7 @@ const msColsSave = () => { try { localStorage.setItem("4ddash-montage-cols", JSO
 const msRgba = k => { const c = ms.cols[k], h = String(c.c || "#888888").replace("#", ""); return { r: parseInt(h.slice(0, 2), 16) || 0, g: parseInt(h.slice(2, 4), 16) || 0, b: parseInt(h.slice(4, 6), 16) || 0, a: Math.round(Math.max(0, Math.min(100, Number(c.o))) / 100 * 255) }; };
 const msLogoLoad = () => { try { return JSON.parse(localStorage.getItem("4ddash-montage-logo") || "null") || { src: "", company: "" }; } catch (e) { return { src: "", company: "" }; } };
 const msLogoSave = () => { try { localStorage.setItem("4ddash-montage-logo", JSON.stringify(ms.logo)); } catch (e) { ms.msg = "Kunde inte spara loggan i webbläsaren (för stor?)"; } };
-const ms = { cols: msColsLoad(), colPop: false, sub: 1, anim: null, orderCache: new Map(), baseShown: null, multi: new Set(), lastCk: null, logo: msLogoLoad(), seqs: [], loaded: false, loading: false, cur: null, dirty: false, mode: "steps", i: 0, play: false, timer: null, live: true, follow: true, future: false, px: 16, busy: false, pending: false, shown: null, el: null, img: null, msg: "", drag: null };
+const ms = { opt: { b3d: true, list: true, props: "Volume, Weight, Mark" }, cols: msColsLoad(), colPop: false, sub: 1, anim: null, orderCache: new Map(), baseShown: null, multi: new Set(), lastCk: null, logo: msLogoLoad(), seqs: [], loaded: false, loading: false, cur: null, dirty: false, mode: "steps", i: 0, play: false, timer: null, live: true, follow: true, future: false, px: 16, busy: false, pending: false, shown: null, el: null, img: null, msg: "", drag: null };
 const msEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const msAdd = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const msDiff = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 864e5);
@@ -311,16 +311,18 @@ function msSendHtml(s, views) {
   return `<p class="hint">Samlar dina förslag mot tidplanen: nya steg, flyttade aktiviteter och anteckningar. Skicka HTML-filen (läsbar, kan skrivas ut som PDF) och/eller XML-filen som kan importeras i Powerproject (Importera från Microsoft Project® XML).</p>
     <div class="ms-kpis"><div><b>${views.length}</b>steg</div><div><b>${nNew}</b>nya steg</div><div><b>${nMov}</b>flyttade mot tidplanen</div><div><b>${views.filter(x => x.st.note).length}</b>anteckningar</div></div>
     <details class="ms-adv ms-logo"${ms.logo.src || ms.logo.company ? " open" : ""}><summary>Logotyp och avsändare i rapporten</summary><div class="ms-advb"><label>Logotyp <input type="file" id="msLogoFile" accept="image/png,image/jpeg,image/svg+xml,image/webp"></label>${ms.logo.src ? `<img class="ms-logoimg" src="${msEsc(ms.logo.src)}" alt="Logotyp"><button type="button" data-a="logoDel">Ta bort</button>` : ""}<label>Företag / avsändare <input data-lg="company" value="${msEsc(ms.logo.company)}" placeholder="t.ex. NCC Sverige" style="width:180px"></label></div><small class="hint">Loggan sparas i den här webbläsaren och visas i rapportens sidhuvud (på en ljus bricka, så den syns oavsett färg).</small></details>
-    <div class="ms-bar"><label><input type="checkbox" id="msImg"> 3D-bild per steg i HTML-filen (tar en stund)</label><label title="Lägre kvalitet ger mycket mindre fil">Bildkvalitet <select id="msImgQ"><option value="high"${ms.imgQ === "high" ? " selected" : ""}>Hög (stor fil)</option><option value="mid"${!ms.imgQ || ms.imgQ === "mid" ? " selected" : ""}>Medel</option><option value="low"${ms.imgQ === "low" ? " selected" : ""}>Låg</option><option value="min"${ms.imgQ === "min" ? " selected" : ""}>Minsta fil</option></select></label><label title="Monteringsanvisning = en sida per steg. Tidslinje = dra i en tidslinje med datum och se framdriften.">Stil <select id="msStyle"><option value="manual"${ms.repStyle !== "timeline" ? " selected" : ""}>Monteringsanvisning</option><option value="timeline"${ms.repStyle === "timeline" ? " selected" : ""}>Tidslinje med datum</option></select></label><label><input type="checkbox" id="msAllXml"> Alla steg i XML (annars bara nya och flyttade)</label></div>
-    <div class="ms-bar"><button type="button" class="primary" data-a="exHtml">Ladda ner HTML</button><button type="button" data-a="ex3d" title="Hämtar objektens lägen ur Trimble Connect och gör en HTML-fil med 3D-vy (omslutande lådor) och tidslinje">Ladda ner 3D-HTML med tidslinje</button><button type="button" data-a="exXml">Ladda ner MS Project-XML (${ms.allXml ? views.length : ch.length} aktiviteter)</button><button type="button" data-a="exTxt">Kopiera som text</button><span id="msExMsg" class="hint"></span></div>
+    <div class="ms-bar"><label title="Objektens lägen hämtas ur Trimble Connect och visas som omslutande lådor i en 3D-vy som tänds nedifrån och upp"><input type="checkbox" id="msOb3d"${ms.opt.b3d ? " checked" : ""}> 3D-modell (lådor)</label><label title="Datatabell över de kopplade objekten med bock för monterad och kommentar"><input type="checkbox" id="msObList"${ms.opt.list ? " checked" : ""}> Objektlista</label><label>Egenskaper i listan <input id="msProps" value="${msEsc(ms.opt.props)}" placeholder="Volume, Weight, Mark" style="width:190px" title="Ord som ska finnas i egenskapens namn, kommaseparerade"></label></div>
+    <div class="ms-bar"><label><input type="checkbox" id="msImg"> Bild per steg (tar en stund)</label><label title="Lägre kvalitet ger mycket mindre fil">Bildkvalitet <select id="msImgQ"><option value="high"${ms.imgQ === "high" ? " selected" : ""}>Hög (stor fil)</option><option value="mid"${!ms.imgQ || ms.imgQ === "mid" ? " selected" : ""}>Medel</option><option value="low"${ms.imgQ === "low" ? " selected" : ""}>Låg</option><option value="min"${ms.imgQ === "min" ? " selected" : ""}>Minsta fil</option></select></label><label><input type="checkbox" id="msAllXml"> Alla steg i XML</label></div>
+    <div class="ms-bar"><button type="button" class="primary" data-a="exHtml">Ladda ner HTML</button><button type="button" data-a="exXml">Ladda ner MS Project-XML (${ms.allXml ? views.length : ch.length} aktiviteter)</button><button type="button" data-a="exTxt">Kopiera som text</button><span id="msExMsg" class="hint"></span></div>
+    <p class="hint">HTML-filen är redigerbar: texter kan ändras i filen (✎ Redigera texter) och sparas sedan som ny, låst HTML. Objektlistan har bock för monterad och kommentar per objekt.</p>
     <table class="ms-tbl"><tr><th>#</th><th>Steg</th><th>Tidplan</th><th>Förslag</th><th>Skillnad</th></tr>${views.map(x => `<tr><td>${x.i + 1}</td><td>${msEsc(msLab(x))}${x.st.note ? `<small>📝 ${msEsc(x.st.note)}</small>` : ""}</td><td>${x.act ? msEsc(x.ppS) + " → " + msEsc(x.ppE) : "–"}</td><td>${msEsc(x.s)} → ${msEsc(x.e)}</td><td>${x.isNew ? "nytt steg" : x.changed ? (x.shift > 0 ? "+" : "") + x.shift + " d" : ""}</td></tr>`).join("")}</table>`;
 }
 function msDownload(name, text, mime) { const a = document.createElement("a"), u = URL.createObjectURL(new Blob([text], { type: mime || "text/html;charset=utf-8" })); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000); }
 const msSafe = t => String(t || "").replace(/[^\wåäöÅÄÖ.-]+/g, "_").slice(0, 40) || "sekvens";
 function msText(s, views) { return `${s.name}${s.area ? " (" + s.area + ")" : ""} – förslag på montageordning\n${s.desc ? s.desc + "\n" : ""}\n` + views.map(x => `${x.i + 1}. ${msLab(x)}: ${x.s} → ${x.e}${x.act ? (x.changed ? ` (tidplan ${x.ppS} → ${x.ppE}, ${x.shift > 0 ? "+" : ""}${x.shift} d)` : " (som tidplan)") : " (nytt steg)"}${x.st.deps.length ? " – väntar på " + x.st.deps.map(d => { const p = views.find(v => v.st.id === d); return p ? p.i + 1 : "?"; }).join(", ") : ""}${x.st.note ? "\n   " + x.st.note : ""}`).join("\n"); }
-function msHtmlDoc(s, views, imgs, style, boxes) {
-  const D = msReportData(s, views, imgs, boxes), json = JSON.stringify(D).replace(/</g, "\\u003c"), tl = style === "timeline";
-  return `<!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${msEsc(s.name)} – ${tl ? "tidslinje" : "montageanvisning"}</title><style>${tl ? MS_TL_CSS : MS_REPORT_CSS}</style></head><body><noscript><p style="padding:20px">Rapporten kräver JavaScript för att visas.</p></noscript><script>(${(tl ? msTimelineRuntime : msReportRuntime).toString()})(${json});<\/script></body></html>`;
+function msHtmlDoc(s, views, imgs, info) {
+  const D = msReportData(s, views, imgs, info), json = JSON.stringify(D).replace(/</g, "\\u003c");
+  return `<!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${msEsc(s.name)} – montageordning</title><style>${MS_MOD_CSS}</style></head><body><noscript><p style="padding:20px">Rapporten kräver JavaScript för att visas.</p></noscript><script>(${msModernRuntime.toString()})(${json});<\/script></body></html>`;
 }
 function msXml(s, views, all) {
   const use = views.filter(x => all || x.isNew || x.changed), ids = new Set(use.map(x => x.st.id));
@@ -337,33 +339,42 @@ async function msSnapshots(views, note) {
   for (const x of views) { ms.i = x.i; ms.shown = null; ms.touched3d = true; note(`3D-bild ${x.i + 1} av ${views.length} …`); await msApply(); await new Promise(r => setTimeout(r, 700)); try { const sn = await V.getSnapshot(); const raw = typeof sn === "string" ? sn : (sn && (sn.data || sn.dataUrl)) || ""; out[x.st.id] = raw ? await msShrink(raw, ms.imgQ || "mid") : ""; } catch (e) { console.warn(e); } }
   ms.follow = keepFollow; ms.i = keep; ms.shown = null; msApply(); return out;
 }
-/* Objektens omslutande lådor ur TC (förenklad modell): per steg, sorterade nedifrån och upp, relativt modellens mittpunkt. */
-async function msCollectBoxes(views, note) {
-  const V = API && API.viewer; if (!V || typeof V.getObjectBoundingBoxes !== "function") throw new Error("Trimble Connect-vyn behövs för att hämta objektens lägen");
-  await msGroups(V, views); const out = {}; let all = [], n = 0, tot = views.reduce((a, x) => a + x.g.reduce((b, g) => b + g.rids.length, 0), 0);
+/* Objekten per steg ur TC: namn, typ, valda egenskaper och omslutande låda (för 3D-vyn), sorterade nedifrån och upp. */
+async function msCollectObjects(views, note, opts) {
+  const V = API && API.viewer; if (!V) throw new Error("Trimble Connect-vyn behövs för att hämta objekten");
+  await msGroups(V, views); const cols = String(opts.props || "").split(",").map(x => x.trim()).filter(Boolean), byStep = {}, all = []; let n = 0; const tot = views.reduce((a, x) => a + x.g.reduce((b, g) => b + g.rids.length, 0), 0);
+  const r2 = v => Math.round(v * 100) / 100;
   for (const x of views) {
-    const list = [];
-    for (const g of x.g) for (let i = 0; i < g.rids.length; i += 150) {
-      const chunk = g.rids.slice(i, i + 150); let bb = []; try { bb = (await V.getObjectBoundingBoxes(g.modelId, chunk)) || []; } catch (e) { console.warn("Lådor", e); }
-      bb.forEach(b => { const m = b.boundingBox; if (m && m.min && m.max) list.push([m.min.x, m.min.y, m.min.z, m.max.x, m.max.y, m.max.z]); }); n += chunk.length; note(`Hämtar objektens lägen … ${n} av ${tot}`);
+    const targets = (x.t || []).map(t => ({ ...t, rid: ganttRidCache.get(`${t.modelId}|${t.objectId}`) })).filter(t => t.rid !== undefined && t.rid !== null), list = [];
+    const byModel = new Map(); targets.forEach(t => (byModel.get(t.modelId) || byModel.set(t.modelId, []).get(t.modelId)).push(t));
+    for (const [modelId, ts] of byModel) for (let i = 0; i < ts.length; i += 120) {
+      const chunk = ts.slice(i, i + 120), rids = chunk.map(t => t.rid); let bb = [], pr = [];
+      if (opts.b3d && typeof V.getObjectBoundingBoxes === "function") { try { bb = (await V.getObjectBoundingBoxes(modelId, rids)) || []; } catch (e) { console.warn("Lådor", e); } }
+      if (opts.list && typeof V.getObjectProperties === "function") { try { pr = (await V.getObjectProperties(modelId, rids)) || []; } catch (e) { console.warn("Egenskaper", e); } }
+      const bm = new Map(bb.map(b => [b.id, b.boundingBox])), pm = new Map(pr.map(p => [p.id, p]));
+      chunk.forEach(t => { const p = pm.get(t.rid), flat = p && typeof qtyFlat === "function" ? qtyFlat(p) : {}, bx = bm.get(t.rid);
+        const vals = cols.map(c => { const k = Object.keys(flat).find(key => key.toLowerCase().includes(c.toLowerCase()) && String(flat[key]).trim() !== ""); return k ? String(flat[k]).trim().slice(0, 28) : ""; });
+        list.push({ id: String(t.objectId).slice(-8), n: (p && ((p.product && p.product.name) || p.class)) || "Objekt " + t.rid, t: p && p.class ? String(p.class).replace(/^Ifc/, "") : "", p: vals, b: bx && bx.min && bx.max ? [bx.min.x, bx.min.y, bx.min.z, bx.max.x, bx.max.y, bx.max.z] : null }); });
+      n += chunk.length; note(`Hämtar objekt … ${n} av ${tot}`);
     }
-    list.sort((a, b) => (a[2] + a[5]) - (b[2] + b[5]) || a[0] - b[0] || a[1] - b[1]); out[x.st.id] = list; all = all.concat(list);
+    list.sort((a, b) => (a.b ? a.b[2] + a.b[5] : 0) - (b.b ? b.b[2] + b.b[5] : 0) || (a.b ? a.b[0] - b.b[0] : 0) || (a.b ? a.b[1] - b.b[1] : 0)); byStep[x.st.id] = list; list.forEach(o => { if (o.b) all.push(o.b); });
   }
-  if (!all.length) return null;
-  const o = [Math.min(...all.map(b => b[0])), Math.min(...all.map(b => b[1])), Math.min(...all.map(b => b[2]))], r = v => Math.round(v * 100) / 100;
-  Object.keys(out).forEach(k => { out[k] = out[k].map(b => [r(b[0] - o[0]), r(b[1] - o[1]), r(b[2] - o[2]), r(b[3] - o[0]), r(b[4] - o[1]), r(b[5] - o[2])]); });
-  return out;
+  const has3d = opts.b3d && all.length > 0;
+  if (has3d) { const o = [Math.min(...all.map(b => b[0])), Math.min(...all.map(b => b[1])), Math.min(...all.map(b => b[2]))]; Object.values(byStep).forEach(l => l.forEach(ob => { if (ob.b) ob.b = [r2(ob.b[0] - o[0]), r2(ob.b[1] - o[1]), r2(ob.b[2] - o[2]), r2(ob.b[3] - o[0]), r2(ob.b[4] - o[1]), r2(ob.b[5] - o[2])]; })); }
+  if (!opts.list) Object.values(byStep).forEach(l => l.forEach(ob => { ob.p = []; })); // bara 3D: ingen objektlista med egenskaper
+  return { byStep, cols: opts.list ? cols : [], has3d, count: Object.values(byStep).reduce((a, l) => a + l.length, 0) };
 }
 async function msExport(kind) {
   const s = ms.cur, views = msViews(s), msg = t => { const e = document.getElementById("msExMsg"); if (e) e.textContent = t; };
   if (!views.length) { msg("Inga steg att skicka."); return; }
-  if (kind === "3d") {
-    try { const boxes = await msCollectBoxes(views, msg); if (!boxes) { msg("Inga objekt med läge i modellen – koppla stegen till objekt först (Sätt från markering)."); return; }
-      const html = msHtmlDoc(s, views, null, "timeline", boxes); msDownload(`montageordning_${msSafe(s.name)}_3d_${msToday()}.html`, html);
-      msg(`3D-HTML är skapad (${html.length > 1048576 ? (html.length / 1048576).toFixed(1) + " MB" : Math.round(html.length / 1024) + " kB"}, ${Object.values(boxes).reduce((a, l) => a + l.length, 0)} objekt som lådor).`);
-    } catch (e) { console.warn(e); msg("Kunde inte skapa 3D-HTML: " + ((e && e.message) || e)); }
-    return; }
-  if (kind === "html") { const wantImg = document.getElementById("msImg") && document.getElementById("msImg").checked; let imgs = null; if (wantImg) { if (!ms.live) { ms.live = true; } ms.imgQ = (document.getElementById("msImgQ") || {}).value || "mid"; imgs = await msSnapshots(views, msg); } ms.repStyle = (document.getElementById("msStyle") || {}).value === "timeline" ? "timeline" : "manual"; const html = msHtmlDoc(s, views, imgs, ms.repStyle); msDownload(`montageordning_${msSafe(s.name)}${ms.repStyle === "timeline" ? "_tidslinje" : ""}_${msToday()}.html`, html); msg(`HTML-filen är skapad (${html.length > 1048576 ? (html.length / 1048576).toFixed(1) + " MB" : Math.round(html.length / 1024) + " kB"}).`); }
+  if (kind === "html") {
+    ms.opt.b3d = !!(document.getElementById("msOb3d") || {}).checked; ms.opt.list = !!(document.getElementById("msObList") || {}).checked; ms.opt.props = (document.getElementById("msProps") || {}).value || "";
+    const wantImg = document.getElementById("msImg") && document.getElementById("msImg").checked; let imgs = null, info = null;
+    if (ms.opt.b3d || ms.opt.list) { try { info = await msCollectObjects(views, msg, ms.opt); if (!info.count) { msg("Inga objekt med läge i modellen – koppla stegen till objekt först (Sätt från markering). Skapar ändå filen utan 3D och objektlista."); info = null; } } catch (e) { console.warn(e); msg("Kunde inte hämta objekten: " + ((e && e.message) || e) + " – skapar filen utan 3D och objektlista."); info = null; } }
+    if (wantImg) { if (!ms.live) { ms.live = true; } ms.imgQ = (document.getElementById("msImgQ") || {}).value || "mid"; imgs = await msSnapshots(views, msg); }
+    const html = msHtmlDoc(s, views, imgs, info); msDownload(`montageordning_${msSafe(s.name)}_${msToday()}.html`, html);
+    msg(`HTML-filen är skapad (${html.length > 1048576 ? (html.length / 1048576).toFixed(1) + " MB" : Math.round(html.length / 1024) + " kB"}${info ? ", " + info.count + " objekt" : ""}).`);
+  }
   else if (kind === "xml") { const r = msXml(s, views, !!(document.getElementById("msAllXml") || {}).checked); if (!r) { msg("Inget nytt eller flyttat att exportera."); return; } msDownload(`montageordning_${msSafe(s.name)}_${msToday()}.xml`, r.xml, "application/xml"); msg(`XML med ${r.tasks} aktiviteter (${r.links} kopplingar${r.droppedLinks ? ", " + r.droppedLinks + " utanför exporten utelämnade" : ""}).`); }
   else { const t = msText(s, views); try { await navigator.clipboard.writeText(t); msg("Kopierad."); } catch (e) { msDownload(`montageordning_${msSafe(s.name)}.txt`, t, "text/plain;charset=utf-8"); msg("Kunde inte kopiera – hämtade en textfil i stället."); } }
 }
@@ -502,7 +513,7 @@ function msWire() {
     else if (k === "colReset") { const bu = ms.cols.buildUp, bs = ms.cols.buildSec; localStorage.removeItem("4ddash-montage-cols"); ms.cols = msColsLoad(); ms.cols.buildUp = bu; ms.cols.buildSec = bs; msColsSave(); ms.shown = null; msPaint(); msApply(); }
     else if (k === "mgOn") { if (typeof modelGuardSet === "function") { await modelGuardSet(true); ms.shown = null; msPaint(); msApply(); } }
     else if (k === "logoDel") { ms.logo.src = ""; msLogoSave(); msPaint(); }
-    else if (k === "ex3d") msExport("3d"); else if (k === "exHtml") msExport("html"); else if (k === "exXml") msExport("xml"); else if (k === "exTxt") msExport("txt");
+    else if (k === "exHtml") msExport("html"); else if (k === "exXml") msExport("xml"); else if (k === "exTxt") msExport("txt");
   };
   const tpl = root.querySelector("#msTpl"); if (tpl) tpl.onchange = () => { if (tpl.value !== "") msNew("tpl:" + tpl.value); };
   const sel = root.querySelector("#msSel"); if (sel) sel.onchange = async () => { const ok = await msOpenSeq(sel.value || null); if (ok === false) msPaint(); };
@@ -516,7 +527,6 @@ function msWire() {
     if (t.dataset.sf) { const st = s.steps[ms.i]; if (!st) return; if (t.dataset.sf === "deps") st.deps = [...t.selectedOptions].map(o => o.value); else if (t.dataset.sf === "hours" || t.dataset.sf === "qty") st[t.dataset.sf] = t.value === "" ? "" : Math.max(0, Number(t.value)); else if (t.dataset.sf === "dur") st.dur = Math.max(1, Math.round(Number(t.value)) || 1); else st[t.dataset.sf] = t.value; msTouch(); msPaintSoon(); return; }
     if (t.dataset.bu) { if (t.dataset.bu === "on") { ms.cols.buildUp = t.checked; ms.sub = 1; clearInterval(ms.anim); ms.anim = null; } else ms.cols.buildSec = Number(t.value); msColsSave(); ms.shown = null; ms.baseShown = null; if (t.dataset.bu === "on" && t.checked) msAnimate(); msPaintSoon(); msApply(); return; }
     if (t.dataset.sq && s) { s[t.dataset.sq] = t.checked; ms.shown = null; msTouch(); msApply(); return; }
-    if (t.id === "msStyle") { ms.repStyle = t.value; }
     if (t.id === "msImgQ") { ms.imgQ = t.value; }
     if (t.id === "msAllXml") { ms.allXml = t.checked; msPaintSoon(); }
     if (t.id === "msLogoFile") { msLoadLogo(t.files && t.files[0]); }

@@ -181,16 +181,24 @@ seed('plan_item_activities.json', []);
   const nc = await page.evaluate(() => { ganttNoColor = true; const a = ganttTimeColorOf({ phase: 'pagaende' }), b = ganttTimeColorOf({ phase: 'forsenad' }); ganttNoColor = false; const c = ganttTimeColorOf({ phase: 'pagaende' }); return [a, b, typeof c]; });
   if (nc[0] !== 'reset' || nc[1] !== 'reset' || nc[2] !== 'object') fail('Ingen färgning ger originalfärger: ' + JSON.stringify(nc));
   if (!(await page.$('#ganttTimeNoColor'))) fail('rutan Ingen färgning finns i menyn');
-  // Alternativ HTML-rapport: tidslinje med datum (dra i tidslinjen)
-  { const h = await page.evaluate(() => { const v = msViews(ms.cur); return msHtmlDoc(ms.cur, v, null, 'timeline'); });
-    if (!/tidslinje/.test(h) || /Monteringsanvisning|Läs igenom hela anvisningen/.test(h)) fail('tidslinjerapporten har egen stil');
-    const p2 = await browser.newPage({ viewport: { width: 1300, height: 900 } }); const e2 = []; p2.on('pageerror', e => e2.push(e.message)); await p2.setContent(h); await p2.waitForSelector('#tl'); await p2.waitForTimeout(300);
-    const d0 = await p2.textContent('#dt'); const b = await (await p2.$('#tl')).boundingBox();
-    await p2.mouse.move(b.x + 4, b.y + 30); await p2.mouse.down(); await p2.mouse.move(b.x + b.width * 0.6, b.y + 30, { steps: 6 }); await p2.mouse.up(); await p2.waitForTimeout(200);
+  // Modern HTML-rapport: dra i tidslinjen, redigera texter och exportera låst
+  { const h = await page.evaluate(() => { const v = msViews(ms.cur); return msHtmlDoc(ms.cur, v, null, null); });
+    if (/Läs igenom hela anvisningen|IKEA/.test(h)) fail('ingen IKEA-stil'); if (process.env.SHOT) fs.writeFileSync('/tmp/rep_mod.html', h);
+    const p2 = await browser.newPage({ viewport: { width: 1500, height: 950 } }); const e2 = []; p2.on('pageerror', e => e2.push(e.message)); await p2.setContent(h); await p2.waitForSelector('#tli'); await p2.waitForTimeout(300);
+    const d0 = await p2.textContent('#dt'); await (await p2.$('#ruler')).scrollIntoViewIfNeeded(); const rb = await (await p2.$('#ruler')).boundingBox();
+    await p2.mouse.move(rb.x + rb.width * 0.3, rb.y + 30); await p2.mouse.down(); await p2.mouse.move(rb.x + rb.width * 0.8, rb.y + 30, { steps: 6 }); await p2.mouse.up(); await p2.waitForTimeout(200);
     const d1 = await p2.textContent('#dt'), c1 = await p2.textContent('#ct'); if (d0 === d1 || !/Dag \d+ av \d+/.test(c1) || !/klara/.test(c1)) fail('att dra i tidslinjen ändrar datum och läge: ' + d0 + ' → ' + d1 + ' | ' + c1);
-    await p2.click('#fl [data-f="done"]'); const nDone = (await p2.$$('#tb .tr')).length; await p2.click('#fl [data-f="all"]'); const nAll = (await p2.$$('#tb .tr')).length; if (!(nDone > 0 && nDone < nAll)) fail('filtret Klara visar bara klara steg: ' + nDone + '/' + nAll);
+    if (!(await p2.$$('#tli .mo')).length || !(await p2.$$('#tli .wk')).length || !(await p2.$$('#tli .bar')).length) fail('tidslinjen visar månader, veckor och aktiviteter');
     await p2.click('#pl'); await p2.waitForTimeout(900); await p2.click('#pl'); if ((await p2.textContent('#dt')) === d1) fail('spela upp flyttar datum');
-    if (e2.length) fail('JS-fel i tidslinjerapporten: ' + e2.join(' | ')); if (process.env.SHOT) await p2.screenshot({ path: '/tmp/tl_report.png', fullPage: true }); await p2.close(); }
+    // redigera texter -> låst export
+    await p2.click('#ed'); if (!(await p2.$eval('[data-ed="title"]', e => e.isContentEditable))) fail('texter blir redigerbara');
+    await p2.evaluate(() => { const t = document.querySelector('[data-ed="title"]'); t.innerText = 'Ny rubrik 123'; t.dispatchEvent(new Event('input', { bubbles: true })); });
+    await p2.click('#cur .tr2, .tr2[data-i="0"]').catch(() => {}); await p2.evaluate(() => { const n = document.querySelector('#cur [data-ed="s:0:n"]') || document.querySelector('#cur [data-ed^="s:"]'); if (n) { n.innerText = 'Nytt stegnamn'; n.dispatchEvent(new Event('input', { bubbles: true })); } });
+    const [dlL] = await Promise.all([p2.waitForEvent('download'), p2.click('#xl1')]); const hl = fs.readFileSync(await dlL.path(), 'utf8');
+    if (!hl.includes('Ny rubrik 123') || !/"locked":1/.test(hl)) fail('låst export har ändrad rubrik och låst-flagga');
+    const p4 = await browser.newPage({ viewport: { width: 1500, height: 950 } }); await p4.setContent(hl); await p4.waitForSelector('#tli');
+    if (await p4.$('#ed')) fail('låst HTML har ingen redigera-knapp'); if (!(await p4.textContent('h1')).includes('Ny rubrik 123')) fail('låst HTML visar den nya rubriken'); await p4.close();
+    if (e2.length) fail('JS-fel i rapporten: ' + e2.join(' | ')); if (process.env.SHOT) await p2.screenshot({ path: '/tmp/tl_report.png', fullPage: true }); await p2.close(); }
   // Allt annat släcks undan, även när aktuellt steg saknar objekt; varning när 3D-styrningen är av eller inga objekt finns
   { await page.evaluate(() => { ms.mode = 'steps'; ms.cur = msNewSeq('Släck', msStepsFromFilter()); ms.cur.steps.forEach(x => { x.kind = 'free'; x.start = ''; x.dur = 2; x.cam = null; x.objs = []; }); ms.cur.steps[1].objs = [{ modelId: 'M1', objectId: 'G1' }]; ms.live = true; ms.follow = false; ms.i = 0; ms.shown = null; ms.noObjs = false; window.__calls = []; window.__iso = []; modelCtl.on = true; msPaint(); });
     await page.evaluate(() => msGo(1)); await page.waitForTimeout(500);
@@ -219,21 +227,32 @@ seed('plan_item_activities.json', []);
       const ids = () => { const l = window.__iso[window.__iso.length - 1]; return l ? l.flatMap(m => m.entityIds).join() : ''; };
       window.__iso = []; ms.shown = null; ms.baseShown = null; ms.sub = 0.5; await msApply(); const half = ids(); ms.sub = 0.25; await msApply(); const quarter = ids(); ms.sub = 1; await msApply(); const full = ids(); ms.cols.buildUp = false; return { half, quarter, full }; });
     if (r.half !== 'G2,G4' || r.quarter !== 'G2' || r.full.split(',').length !== 4) fail('Tänd nedifrån och upp (lägsta först): ' + JSON.stringify(r)); }
-  // 3D-HTML med tidslinje (omslutande lådor)
+  // HTML med 3D (omslutande lådor) och objektlista (monterad + kommentar)
   { await page.evaluate(() => { const z = { G1: 0, G2: 2, G3: 4, G4: 6, G5: 0 }; API.viewer.getObjectBoundingBoxes = (m, rids) => Promise.resolve(rids.map(id => ({ id, boundingBox: { min: { x: 169000 + (z[id] || 0) * 0.5, y: 7456000, z: 480 + (z[id] || 0) }, max: { x: 169002 + (z[id] || 0) * 0.5, y: 7456002, z: 482 + (z[id] || 0) } } })));
+      API.viewer.getObjectProperties = (m, rids) => Promise.resolve(rids.map(id => ({ id, class: 'IfcBeam', product: { name: 'Balk ' + id }, properties: [{ name: 'Qto', properties: [{ name: 'NetVolume', value: '1,5' }, { name: 'Weight', value: '3600' }] }, { name: 'Pset', properties: [{ name: 'Mark', value: 'M-' + id }] }] })));
       const A = msStepFree('Platta', 3, []), B = msStepFree('Pelare', 4, [A.id]); A.objs = [{ modelId: 'M1', objectId: 'G1' }, { modelId: 'M1', objectId: 'G5' }]; B.objs = ['G2', 'G3', 'G4'].map(o => ({ modelId: 'M1', objectId: o })); A.start = msToday();
       ms.cur = msNewSeq('Prefab 3D', [A, B]); ms.cur.start = msToday(); ms.mode = 'send'; modelCtl.on = true; msPaint(); });
-    const [dl3d] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="ex3d"]')]); const h3d = fs.readFileSync(await dl3d.path(), 'utf8');
-    if (!/cv3/.test(h3d) || !/"has3d":true/.test(h3d)) fail('3D-HTML har 3D-vy och lådor');
-    const p3 = await browser.newPage({ viewport: { width: 1300, height: 950 } }); const e3 = []; p3.on('pageerror', e => e3.push(e.message)); await p3.setContent(h3d); await p3.waitForSelector('#cv3'); await p3.waitForTimeout(600);
+    const [dl3d] = await Promise.all([page.waitForEvent('download'), page.click('[data-a="exHtml"]')]); const h3d = fs.readFileSync(await dl3d.path(), 'utf8');
+    if (!/cv3/.test(h3d) || !/"has3d":true/.test(h3d) || !/"cols":\["Volume","Weight","Mark"\]/.test(h3d)) fail('HTML har 3D-vy, lådor och egenskapskolumner');
+    const p3 = await browser.newPage({ viewport: { width: 1500, height: 1000 } }); const e3 = []; p3.on('pageerror', e => e3.push(e.message)); await p3.setContent(h3d); await p3.waitForSelector('#cv3'); await p3.waitForTimeout(600);
     const px = () => p3.evaluate(() => { const cv = document.getElementById('cv3'), c2 = document.createElement('canvas'); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext('2d'); g.drawImage(cv, 0, 0); const d = g.getImageData(0, 0, c2.width, c2.height).data; let n = 0, sum = 0; for (let i = 0; i < d.length; i += 4) { if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 40) n++; sum += d[i] + d[i + 1] * 3 + d[i + 2] * 7; } return { n, sum }; });
     const st0 = await p3.evaluate(() => window.__v3 && window.__v3.state().N), a = await px(); if (st0 !== 5 || a.n < 300) fail('3D-vyn ritar lådorna: ' + JSON.stringify({ st0, a }));
     const cb = await (await p3.$('#cv3')).boundingBox(); const az0 = await p3.evaluate(() => window.__v3.state().cam.az);
     await p3.mouse.move(cb.x + 300, cb.y + 200); await p3.mouse.down(); await p3.mouse.move(cb.x + 420, cb.y + 230, { steps: 5 }); await p3.mouse.up(); await p3.waitForTimeout(200);
     if ((await p3.evaluate(() => window.__v3.state().cam.az)) === az0) fail('dra roterar 3D-vyn');
-    const tb = await (await p3.$('#tl')).boundingBox(); await p3.mouse.move(tb.x + 4, tb.y + 30); await p3.mouse.down(); await p3.mouse.move(tb.x + tb.width - 6, tb.y + 30, { steps: 6 }); await p3.mouse.up(); await p3.waitForTimeout(300);
+    await (await p3.$('#ruler')).scrollIntoViewIfNeeded(); const rb3 = await (await p3.$('#ruler')).boundingBox(); await p3.mouse.move(rb3.x + 300, rb3.y + 30); await p3.mouse.down(); await p3.mouse.move(rb3.x + rb3.width - 40, rb3.y + 30, { steps: 6 }); await p3.mouse.up(); await p3.waitForTimeout(300);
     const b2 = await px(); if (b2.sum === a.sum) fail('tidslinjen ändrar vad som syns i 3D');
-    await p3.click('[data-v="g"]'); if (!(await p3.$eval('#gw', e => !e.hidden))) fail('flik Gantt visas'); if (e3.length) fail('JS-fel i 3D-HTML: ' + e3.join(' | ')); if (process.env.SHOT) { await p3.click('[data-v="3d"]'); await p3.waitForTimeout(300); await p3.screenshot({ path: '/tmp/r3d.png' }); } await p3.close(); }
+    // objektlistan: bocka monterad, kommentar, filter
+    await p3.click('.tab[data-t="objs"]'); await p3.click('[data-of="all"]'); const rowsN = (await p3.$$('#tw tr.or')).length; if (rowsN !== 5) fail('objektlistan har 5 rader: ' + rowsN);
+    const txt = await p3.textContent('#tw'); if (!txt.includes('Balk G2') || !txt.includes('M-G3') || !txt.includes('3600')) fail('objektlistan visar namn och egenskaper: ' + txt.slice(0, 200));
+    await p3.click('#tw tr.or:nth-child(2) input[data-m]'); await p3.fill('#tw tr.or:nth-child(3) input.cm', 'Spricka i hörnet'); await p3.waitForTimeout(200);
+    const stt = await p3.evaluate(() => window.__rep.state()); if (Object.keys(stt.m).length !== 1 || Object.values(stt.c)[0] !== 'Spricka i hörnet') fail('bock och kommentar sparas: ' + JSON.stringify(stt));
+    await p3.click('[data-of="com"]'); if ((await p3.$$('#tw tr.or')).length !== 1) fail('filtret Med kommentar'); await p3.click('[data-of="open"]'); if ((await p3.$$('#tw tr.or')).length !== 4) fail('filtret Ej monterade');
+    // låst export med bockar och kommentarer inbakade
+    await p3.click('#ed'); const [dlK] = await Promise.all([p3.waitForEvent('download'), p3.click('#xl2')]); const hk = fs.readFileSync(await dlK.path(), 'utf8'); if (!/"locked":2/.test(hk) || !hk.includes('Spricka i hörnet')) fail('skrivskyddad export bär bockar och kommentarer');
+    const p5 = await browser.newPage({ viewport: { width: 1500, height: 1000 } }); await p5.setContent(hk); await p5.waitForSelector('#tli'); await p5.click('.tab[data-t="objs"]'); await p5.click('[data-of="all"]');
+    if ((await p5.$$('#tw input[data-m]:disabled')).length !== 5 || !(await p5.$eval('#tw input.cm[readonly]', e => !!e))) fail('skrivskyddad: bockar och kommentarer är låsta'); if ((await p5.$$('#tw tr.or.ok')).length !== 1) fail('inbakad bock visas'); await p5.close();
+    if (e3.length) fail('JS-fel i HTML: ' + e3.join(' | ')); if (process.env.SHOT) { await p3.click('.tab[data-t="steps"]'); await p3.waitForTimeout(300); await p3.screenshot({ path: '/tmp/r3d.png', fullPage: true }); } await p3.close(); }
   // Ladda om: sparade sekvenser finns kvar, öppna och ta bort
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(600);
   await page.click('[data-gantt-view="montage"]'); await page.waitForSelector('.ms-cards .ms-card');
