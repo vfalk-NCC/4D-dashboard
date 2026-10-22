@@ -10,6 +10,7 @@ const base = { project_id: PID, model_id: null, actual_start_date: null, actual_
 seed('plan_items.json', [
   { ...base, id: 'A1', object_id: 'o1', model_id: 'M1', object_name: 'Form stödmur linje J', area: 'PRODUKTION / 742A Krönlinje J', activity: '742A Krönlinje J', start_date: '2026-10-15', end_date: '2026-10-25', source_key: 'PP a||1', origin: 'powerproject' },
   { ...base, id: 'A2', object_id: 'o2', model_id: 'M1', object_name: 'Kontrafor M12', area: 'PRODUKTION / 7421 Förtjockardel', activity: '7421 Förtjockardel', start_date: '2026-10-16', end_date: '2026-10-28', source_key: 'PP a||2', origin: 'powerproject' },
+  { ...base, id: 'A4', object_id: 'o4', model_id: 'M1', object_name: 'Grovbetong för fundament linje E17-30', area: 'PRODUKTION / 744 Fläkthuset', activity: 'Grovbetong', start_date: '2026-10-15', end_date: '2026-10-30', source_key: 'PP a||4', origin: 'powerproject' },
 ]);
 ['plan_item_activities.json', 'plan_milestones.json', 'plan_deliveries.json', 'plan_item_baseline_history.json'].forEach(f => seed(f, []));
 const mail = (date, wk) => `Plan for ${date}\nProcyon :  40+1 crane operators\n   * Formwork stodmur at J line - ${wk} workers\n   * Formwork kontrafor M12-6 workers\n`;
@@ -50,6 +51,18 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
   const s2 = get('ue_dayplans.json'); if (s2.length !== 1 || s2[0].history.length !== 1 || s2[0].history[0].tasks[0].workers !== 8 || s2[0].tasks[0].workers !== 14) fail('den gamla blir en version: ' + JSON.stringify(s2[0].history));
   await page.waitForSelector('.dp-ver'); await page.selectOption('.dp-ver', '0'); await page.waitForTimeout(200); if ((await page.inputValue('.dp-t tbody tr[data-i="0"] .dp-wk')) !== '8') fail('tidigare version kan läsas in'); await page.click('.dp-x');
   if (!(await page.textContent('.dph-v')).includes('v2')) fail('versionsmärke i historiken');
+  // Outlook-mejl med punkt på egen rad, skift och iso-8859-2 (som Procyons riktiga mejl)
+  { const body = `Plan for 22.10.2026\r\nProcyon: 68 +1 crane operators + 1 operator manitou\r\n\r\n\r\nFirst shift:\r\n\r\n  *\r\nFormwork for lean concrete line E and F - 5 workers\r\n\r\n  *\r\nFormwork stodmur line J- 6 workers\r\n\r\n  *\r\nCasting of  kontrafor M/12 - 4 workers\r\n\r\n  *\r\nReinforcement prefabrication < ST=D6DMUR 1,2 -LAPPKYRKEV=C4GEN> - 6 workers\r\n\r\n\r\nSecond shift:\r\n\r\n  *\r\nFormwork for kontrafor line J/10- 5 workers\r\n\r\n  *\r\nPreparation for winter at elyta - 4 workers\r\n`;
+    const raw = `From: Procyon <plan@example.invalid>\r\nSubject: Plan for 22.10.2026\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary="X"\r\n\r\n--X\r\nContent-Type: text/plain; charset="iso-8859-2"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${body}\r\n--X--\r\n`;
+    await dropFiles([['Plan_for_22.10.2026.eml', raw, 'message/rfc822']]); await page.waitForSelector('.dp-dlg .dp-t tbody tr[data-i]');
+    const rs = await page.$$eval('.dp-t tbody tr[data-i]', e => e.map(tr => ({ tx: tr.querySelector('.dp-tx').value, wk: tr.querySelector('.dp-wk').value, sh: tr.querySelector('.dp-shift').value, act: tr.querySelector('.dp-act').value, area: tr.querySelector('.dp-area').value, sub: (tr.querySelector('.dp-ar small') || {}).textContent || '' })));
+    if (rs.length !== 6 || rs.filter(r => r.sh === '1').length !== 4 || rs.filter(r => r.sh === '2').length !== 2) fail('rader och skift ur Outlook-mejlet: ' + JSON.stringify(rs.map(r => [r.tx, r.sh])));
+    if (rs[0].area !== 'Linje E, F' || rs[1].area !== 'Linje J' || rs[2].area !== 'M12' || !/STÖDMUR 1,2 -LAPPKYRKEVÄGEN/.test(rs[3].area) || rs[4].area !== 'Linje J · J10') fail('område ur raderna: ' + JSON.stringify(rs.map(r => r.area)));
+    if (!/Grovbetong för fundament linje E17-30/.test(rs[0].act)) fail('grovbetong linje E och F kopplas till linje E17-30: ' + rs[0].act);
+    if (!/Form stödmur/.test(rs[1].act) || !/Kontrafor M12/.test(rs[2].act)) fail('aktivitet kopplas (inkl. M/12): ' + JSON.stringify(rs.map(r => r.act)));
+    if (!/742A Krönlinje J/.test(rs[1].sub) || !/7421 Förtjockardel/.test(rs[2].sub)) fail('aktivitetens område visas: ' + JSON.stringify(rs.map(r => r.sub)));
+    const [dlH] = await Promise.all([page.waitForEvent('download'), page.click('.dp-html')]); const hh = fs.readFileSync(await dlH.path(), 'utf8'); if (!hh.includes('Skift 1') || !hh.includes('Linje E, F') || !/skift 2/.test(hh)) fail('HTML-exporten visar skift och område');
+    await page.click('.dp-x'); }
   // 3) .msg (Outlook) + .eml på en gång -> lista, spara båda
   const msg = fs.readFileSync(path.join(__dirname, 'fixtures', 'dayplan_mail.msg'));
   await dropFiles([['Procyon plan 21.10.msg', msg, 'application/vnd.ms-outlook'], ['Plan 20 okt.eml', eml('Plan 20 okt', mail('20.10.2026', 9)), 'message/rfc822']]);

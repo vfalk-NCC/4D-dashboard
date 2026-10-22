@@ -9,19 +9,39 @@ const DP_ALIAS_PATH = () => `projects/${encodeURIComponent(projectId)}/ue_aliase
 let dayplans = [], dpAliases = [], dpLoaded = false, dpLoading = null;
 
 /* ---- Text -> rader ---- */
-const dpNorm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9\s\-./]/g, " ").replace(/\s+/g, " ").trim();
+const dpNorm = s => String(s || "").toLowerCase().replace(/\b([a-z])\s*\/\s*(\d{1,3})\b/g, "$1$2").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9\s\-./]/g, " ").replace(/\s+/g, " ").trim();
 function dpIso(d, m, y) { return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`; }
-/* { date, company, total, extras, tasks: [{ text, workers }] } */
+/* Punkt på egen rad ("  *" och texten på raden under) slås ihop med texten, som i mejl från Outlook. */
+function dpPrepText(text) { return String(text || "").replace(/\r/g, "").replace(/\u00a0/g, " ").replace(/^[ \t]*[*•·●▪–-][ \t]*\n(?:[ \t]*\n)*[ \t]*(?=\S)/gm, "* "); }
+/* Skiftrubriker: "First shift:", "Second shift", "Shift 2", "Night shift", "Skift 1", "Nattskift". */
+function dpShift(line) {
+  const l = String(line || "").trim().replace(/[:\-–]+$/, "").trim(); if (!/shift|skift/i.test(l) || l.length > 30 || /\d+\s*(workers?|pers)/i.test(l)) return 0;
+  const m = l.match(/(first|1st|second|2nd|third|3rd|night|morning|day|afternoon|evening|första|andra|tredje|natt|dag|kväll)|(\d)/i); if (!m) return 0;
+  const w = (m[1] || m[2]).toLowerCase(); return /^(first|1st|morning|day|första|dag|1)$/.test(w) ? 1 : /^(second|2nd|afternoon|evening|andra|kväll|2)$/.test(w) ? 2 : 3;
+}
+/* Plats som nämns i raden: <namn i vinkelparentes>, linje (E och F), koder som M12 eller J/10. */
+function dpAreaHint(text) {
+  const t = String(text || ""), out = [], split = s => s.split(/\s*(?:,|and|&|och|\/)\s*/i).map(x => x.trim().toUpperCase()).filter(Boolean);
+  const br = t.match(/<\s*([^<>]{3,60}?)\s*>/); if (br) out.push(br[1].replace(/\s+/g, " "));
+  const lm = [...t.matchAll(/\b(?:lines?|linje|linjer)\s+([A-Za-z](?:\s*(?:,|and|&|och)\s*[A-Za-z])*)(?![A-Za-z])/gi)].flatMap(m => split(m[1])); const lm2 = [...t.matchAll(/\b([A-Za-z])\s+line\b/gi)].map(m => m[1].toUpperCase());
+  const lm3 = [...t.matchAll(/\b([A-Z])\s+(?:and|&|och)\s+([A-Z])\b/g)].flatMap(m => [m[1], m[2]]);
+  const lines = [...new Set([...lm, ...lm2, ...lm3])]; if (lines.length) out.push("Linje " + lines.join(", "));
+  const codes = [...t.matchAll(/\b([A-Za-z])\s*\/\s*(\d{1,3})\b/g)].map(m => m[1].toUpperCase() + m[2]).concat([...t.matchAll(/\b([A-Z]\d{2}(?:-\d{2})?)\b/g)].map(m => m[1])); if (codes.length) out.push([...new Set(codes)].join(", "));
+  return [...new Set(out)].join(" · ");
+}
+/* { date, company, total, extras, tasks: [{ text, workers, shift, area }] } */
 function dpParse(text) {
-  const lines = String(text || "").replace(/\r/g, "").split("\n").map(l => l.trim()).filter(Boolean);
+  const lines = dpPrepText(text).split("\n").map(l => l.trim()).filter(Boolean);
   const out = { date: "", company: "", total: null, extras: "", tasks: [] };
   const clean = l => l.replace(/^[\s*•\-–·●▪]+/, "").trim();
+  let shift = 0;
   for (const l of lines) {
     if (!out.date) { const m = l.match(/(\d{1,2})[./-](\d{1,2})[./-](20\d{2})/); if (m && /plan|dag|date|datum|temat|subject/i.test(l)) out.date = dpIso(+m[1], +m[2], m[3]); else { const iso = l.match(/(20\d{2})-(\d{2})-(\d{2})/); if (iso && /plan|date|datum/i.test(l)) out.date = iso[0]; } }
   }
   if (!out.date) { const m = String(text).match(/(\d{1,2})[./-](\d{1,2})[./-](20\d{2})/); if (m) out.date = dpIso(+m[1], +m[2], m[3]); }
   for (const raw of lines) {
     if (/^(od|from|från|wys[łl]ane|sent|do|to|till|temat|subject|cc)\s*:/i.test(raw)) continue;
+    if (!/^[*•\-–·●▪]/.test(raw)) { const sh = dpShift(raw); if (sh) { shift = sh; continue; } }
     // Företagsrad: "Procyon :  68+2 crane operators+2sennebogen operator+1manitue operator"
     const head = raw.match(/^([A-Za-zÅÄÖåäö][\w .&-]{1,40}?)\s*:\s*(\d+)\s*((?:\+\s*\d+\s*[^+\n]+)*)\s*$/);
     if (head && !/^[*•\-–]/.test(raw) && out.total === null) { out.company = head[1].trim(); out.total = +head[2]; out.extras = (head[3] || "").split("+").map(x => x.trim()).filter(Boolean).map(x => x.replace(/^(\d+)\s*/, "$1 ")).join(", "); continue; }
@@ -30,8 +50,8 @@ function dpParse(text) {
     // Antal sist: "… - 8 workers", "… -10", "… 10 workers"
     let m = t.match(/^(.*?)[\s–\-:,]+(\d+)\s*(?:workers?|worker|pers\.?|persons?|people|man|st)?\.?\s*$/i);
     if (!m) m = t.match(/^(.*?)\s*\(\s*(\d+)\s*(?:workers?|pers\w*)?\s*\)\s*$/i);
-    if (m && m[1].trim()) out.tasks.push({ text: m[1].replace(/[\s–\-:,]+$/, "").trim(), workers: +m[2] });
-    else out.tasks.push({ text: t, workers: 0 });
+    if (m && m[1].trim()) { const tx = m[1].replace(/[\s–\-:,]+$/, "").trim(); out.tasks.push({ text: tx, workers: +m[2], shift, area: dpAreaHint(tx) }); }
+    else if (t) out.tasks.push({ text: t, workers: 0, shift, area: dpAreaHint(t) });
   }
   return out;
 }
@@ -45,8 +65,8 @@ function dpScore(task, hay, nameHay) {
   const norm = dpNorm(task), toks = norm.split(" ").filter(Boolean);
   let s = 0;
   // Platskoder: "J line" / "line F" -> "linje j"; kodtecken som M12, E17-30 matchas hårt.
-  const lm = [...norm.matchAll(/\b([a-z])\s+line\b|\bline\s+([a-z])\b/g)].map(m => m[1] || m[2]);
-  lm.forEach(c => { if (new RegExp(`(linje|line)\\s*${c}\\b`).test(hay)) s += 4; });
+  const lm = [...norm.matchAll(/\b([a-z])\s+line\b/g)].map(m => m[1]).concat([...norm.matchAll(/\blines?\s+([a-z](?:\s*(?:,|and|&)\s*[a-z])*)(?![a-z])/g)].flatMap(m => m[1].split(/\s*(?:,|and|&)\s*/).filter(Boolean)));
+  lm.forEach(c => { if (new RegExp(`(linje|line)\\s*${c}(?![a-z])`).test(hay)) s += 4; });
   toks.forEach(t => {
     if (DP_STOP.has(t)) return;
     if (/^[a-z]\d+(-\d+)?$/.test(t)) { if (hay.includes(t)) s += 4; return; }
@@ -86,7 +106,7 @@ async function dpLoad(force) {
   return dpLoading;
 }
 /* En tidigare version sparas kompakt i posten (högst 25), så att historiken visar vad som ändrats och går att återställa. */
-const dpSnap = r => ({ at: r.updated_at || r.created_at || "", by: r.updated_by || "", date: r.date, company: r.company || "", total: r.total, extras: r.extras || "", tasks: (r.tasks || []).map(t => ({ text: t.text, workers: t.workers, key: t.key || null, label: t.label || "", objs: t.objs && t.objs.length ? t.objs : undefined })) });
+const dpSnap = r => ({ at: r.updated_at || r.created_at || "", by: r.updated_by || "", date: r.date, company: r.company || "", total: r.total, extras: r.extras || "", tasks: (r.tasks || []).map(t => ({ text: t.text, workers: t.workers, key: t.key || null, label: t.label || "", shift: t.shift || undefined, area: t.area || undefined, objs: t.objs && t.objs.length ? t.objs : undefined })) });
 const dpSame = (a, b) => JSON.stringify(dpSnap({ ...a, updated_at: "", updated_by: "" })) === JSON.stringify(dpSnap({ ...b, updated_at: "", updated_by: "" }));
 async function dpSave(rec) {
   const prev = dayplans.find(r => r.id === rec.id);
@@ -139,12 +159,13 @@ async function dpOpen(opts = {}) {
   const esc = escapeHtml;
   const saved = () => dayplans.slice().sort((a, b) => b.date.localeCompare(a.date));
   const render = () => {
+    const byKey = new Map(mergeActivityGroups(items.filter(x => x.startDate)).map(a => [dpKeyOf(a), a]));
     d.innerHTML = `<div class="dp-box">
       <div class="dp-h"><b>👷 Dagsplan från underentreprenör</b><span class="dp-sp"></span>${saved().length ? `<select class="dp-load" aria-label="Sparade dagsplaner"><option value="">Sparade dagsplaner …</option>${saved().map(p => `<option value="${esc(p.id)}"${p.id === rec.id ? " selected" : ""}>${esc(p.date)} · ${esc(p.company || "")} · ${p.tasks.length} rader</option>`).join("")}</select>` : ""}${(rec.history || []).length ? `<select class="dp-ver" aria-label="Tidigare versioner"><option value="">Versioner (${rec.history.length + 1}) …</option>${rec.history.map((h, i) => `<option value="${i}">${esc(String(h.at || "").slice(0, 16).replace("T", " ") || "äldre")} · ${h.tasks.length} rader · ${h.tasks.reduce((a, x) => a + (Number(x.workers) || 0), 0)} pers.</option>`).reverse().join("")}</select>` : ""}<button type="button" class="dp-x" aria-label="Stäng">✕</button></div>
       <div class="dp-body">${rec.source_name ? `<div class="dp-from">Inläst från: <b>${esc(rec.source_name)}</b></div>` : ""}
         <details class="dp-paste"${rec.tasks.length ? "" : " open"}><summary>Klistra in mejlet</summary><textarea class="dp-text" rows="7" placeholder="Plan for 19.10.2026&#10;Procyon : 68+2 crane operators&#10;   * Formwork stodmur at J line - 8 workers&#10;   * Reinforcement prefabrication - 16 workers">${esc(rec.source || "")}</textarea><div class="dp-row"><button type="button" class="dp-read primary">Läs in</button><span class="hint">Raderna läses in och kopplas till aktiviteter. Du justerar allt nedan innan du sparar.</span></div></details>
         <div class="dp-fields"><label>Datum <input type="date" class="dp-date" value="${esc(rec.date)}"></label><label>Underentreprenör <input type="text" class="dp-co" value="${esc(rec.company || "")}"></label><label>Totalt antal <input type="number" class="dp-tot" min="0" value="${rec.total ?? ""}"></label><label class="dp-ex">Övrigt (kranförare m.m.) <input type="text" class="dp-extras" value="${esc(rec.extras || "")}"></label></div>
-        <div class="dp-tw"><table class="dp-t"><thead><tr><th>Arbete (enligt mejlet)</th><th>Pers.</th><th>Aktivitet i schemat</th><th title="Koppling till modellen (valfri, kräver inte Trimble Connect)">Modell</th><th></th></tr></thead><tbody>${rec.tasks.map((t, i) => `<tr data-i="${i}"><td><input type="text" class="dp-tx" value="${esc(t.text)}"></td><td><input type="number" class="dp-wk" min="0" value="${Number(t.workers) || 0}"></td><td><input type="text" class="dp-act${t.key ? " ok" : ""}" value="${esc(t.label || "")}" placeholder="Sök aktivitet …">${t.src ? `<small class="dp-src">${esc(t.src === "alias" ? "enligt tidigare val" : "förslag")}</small>` : ""}</td><td class="dp-mo">${typeof dpObjBtn === "function" ? dpObjBtn(t) : ""}</td><td><button type="button" class="dp-del" aria-label="Ta bort raden">✕</button></td></tr>`).join("") || `<tr><td colspan="5" class="hint">Inga rader – klistra in mejlet eller lägg till en rad.</td></tr>`}</tbody></table></div>
+        <div class="dp-tw"><table class="dp-t"><thead><tr><th>Arbete (enligt mejlet)</th><th>Pers.</th><th title="Skift enligt mejlet">Skift</th><th>Aktivitet i schemat</th><th title="Område: enligt aktiviteten i schemat, annars det som nämns i raden">Område</th><th title="Koppling till modellen (valfri, kräver inte Trimble Connect)">Modell</th><th></th></tr></thead><tbody>${rec.tasks.map((t, i) => `<tr data-i="${i}"><td><input type="text" class="dp-tx" value="${esc(t.text)}"></td><td><input type="number" class="dp-wk" min="0" value="${Number(t.workers) || 0}"></td><td><select class="dp-shift" aria-label="Skift"><option value="0"${!t.shift ? " selected" : ""}>–</option>${[1, 2, 3].map(n => `<option value="${n}"${Number(t.shift) === n ? " selected" : ""}>${n}</option>`).join("")}</select></td><td><input type="text" class="dp-act${t.key ? " ok" : ""}" value="${esc(t.label || "")}" placeholder="Sök aktivitet …">${t.src ? `<small class="dp-src">${esc(t.src === "alias" ? "enligt tidigare val" : "förslag")}</small>` : ""}</td><td class="dp-ar"><input type="text" class="dp-area" value="${esc(t.area || "")}" placeholder="${t.key ? "enligt schemat" : "område"}">${t.key && byKey.get(String(t.key)) ? `<small title="Aktivitetens område i schemat">${esc(String(byKey.get(String(t.key)).area || "").split(" / ").slice(-2).join(" / "))}</small>` : ""}</td><td class="dp-mo">${typeof dpObjBtn === "function" ? dpObjBtn(t) : ""}</td><td><button type="button" class="dp-del" aria-label="Ta bort raden">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="hint">Inga rader – klistra in mejlet eller lägg till en rad.</td></tr>`}</tbody></table></div>
         <div class="dp-sum"></div>
       </div>
       <div class="dp-foot"><button type="button" class="dp-add">＋ Rad</button><span class="dp-sp"></span><button type="button" class="dp-del-all danger"${saved().some(p => p.id === rec.id) ? "" : " hidden"}>Ta bort dagsplanen</button><button type="button" class="dp-model" title="Visa dagens arbeten i modellen i Trimble Connect (kräver att 3D-styrningen är på)">🧊 Visa i modellen</button><button type="button" class="dp-copy">Kopiera text</button><button type="button" class="dp-html">Exportera HTML</button><button type="button" class="dp-save primary">Spara</button></div></div>`;
@@ -155,7 +176,7 @@ async function dpOpen(opts = {}) {
     rec.date = d.querySelector(".dp-date").value || rec.date; rec.company = d.querySelector(".dp-co").value.trim();
     const tot = d.querySelector(".dp-tot").value; rec.total = tot === "" ? null : Number(tot); rec.extras = d.querySelector(".dp-extras").value.trim();
     const ta = d.querySelector(".dp-text"); if (ta) rec.source = ta.value;
-    d.querySelectorAll(".dp-t tbody tr[data-i]").forEach(tr => { const t = rec.tasks[Number(tr.dataset.i)]; if (!t) return; t.text = tr.querySelector(".dp-tx").value.trim(); t.workers = Number(tr.querySelector(".dp-wk").value) || 0; });
+    d.querySelectorAll(".dp-t tbody tr[data-i]").forEach(tr => { const t = rec.tasks[Number(tr.dataset.i)]; if (!t) return; t.text = tr.querySelector(".dp-tx").value.trim(); t.workers = Number(tr.querySelector(".dp-wk").value) || 0; t.shift = Number(tr.querySelector(".dp-shift").value) || 0; t.area = tr.querySelector(".dp-area").value.trim(); });
   };
   function bind() {
     d.querySelector(".dp-x").onclick = dpClose;
@@ -177,7 +198,7 @@ async function dpOpen(opts = {}) {
     const vs = d.querySelector(".dp-ver"); if (vs) vs.onchange = () => { if (vs.value === "") return; const h = rec.history[Number(vs.value)]; if (h) { pull(); rec.total = h.total; rec.extras = h.extras; rec.company = h.company || rec.company; rec.tasks = h.tasks.map(x => ({ ...x, src: null })); render(); modelToast("Tidigare version inläst – spara för att ersätta den nuvarande"); } };
     d.querySelectorAll(".dp-obj").forEach(b => { b.onclick = ev => { ev.stopPropagation(); pull(); const t = rec.tasks[Number(b.closest("tr").dataset.i)]; if (t && typeof dpObjMenu === "function") dpObjMenu(b, t, render, rec); }; });
     const mb = d.querySelector(".dp-model"); if (mb) mb.onclick = () => { pull(); if (typeof dpModelShow === "function") dpModelShow(rec); };
-    d.querySelector(".dp-add").onclick = () => { pull(); rec.tasks.push({ text: "", workers: 0, key: null, label: "" }); render(); };
+    d.querySelector(".dp-add").onclick = () => { pull(); rec.tasks.push({ text: "", workers: 0, key: null, label: "", shift: 0, area: "" }); render(); };
     d.querySelectorAll(".dp-del").forEach(b => b.onclick = () => { pull(); rec.tasks.splice(Number(b.closest("tr").dataset.i), 1); render(); });
     d.querySelectorAll(".dp-t tbody tr[data-i]").forEach(tr => {
       const t = rec.tasks[Number(tr.dataset.i)], inp = tr.querySelector(".dp-act");
@@ -205,7 +226,7 @@ async function dpOpen(opts = {}) {
   d.addEventListener("keydown", e => { if (e.key === "Escape" && !e.defaultPrevented && !d.querySelector(".cb-list:not([hidden])")) { e.stopPropagation(); dpClose(); } });
   render();
 }
-function dpText(rec) { return `Dagsplan ${rec.date}${rec.company ? " – " + rec.company : ""}${rec.total ? `: ${rec.total}${rec.extras ? " + " + rec.extras : ""} personer` : ""}\n` + rec.tasks.map(t => `• ${t.text} – ${t.workers} pers.${t.label ? `  [${t.label}]` : ""}`).join("\n"); }
+function dpText(rec) { return `Dagsplan ${rec.date}${rec.company ? " – " + rec.company : ""}${rec.total ? `: ${rec.total}${rec.extras ? " + " + rec.extras : ""} personer` : ""}\n` + rec.tasks.map(t => `• ${t.shift ? `[Skift ${t.shift}] ` : ""}${t.text} – ${t.workers} pers.${t.label ? `  [${t.label}]` : ""}${t.area ? `  (${t.area})` : ""}`).join("\n"); }
 
 /* ---- HTML-export ---- */
 function dpExportHtml(rec) {
@@ -218,9 +239,9 @@ function dpExportHtml(rec) {
   const col = { pagaende: "#d4a90a", forsenad: "#e5262b", klar: "#2fa84f", planerad: "#9aa3af" };
   const sumW = rec.tasks.reduce((a, t) => a + (Number(t.workers) || 0), 0), max = Math.max(1, ...rec.tasks.map(t => Number(t.workers) || 0));
   const css = `:root{--bg:#f3f5f9;--card:#fff;--ink:#0f172a;--mut:#64748b;--line:#e2e8f0;--acc:#2563eb}@media(prefers-color-scheme:dark){:root{--bg:#0b1220;--card:#131c2e;--ink:#e5ebf5;--mut:#94a3b8;--line:#243049;--acc:#60a5fa}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}.w{max-width:960px;margin:0 auto;padding:22px 16px 50px}h1{margin:0;font-size:24px}.sub{color:var(--mut);margin:2px 0 14px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:12px 0 18px}.c{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}.c b{display:block;font-size:26px;line-height:1.1}.c span{color:var(--mut);font-size:12.5px}h2{font-size:14px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:20px 0 8px}.row{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--l,#9aa3af);border-radius:10px;padding:10px 14px;margin:0 0 8px;display:grid;grid-template-columns:1fr auto;gap:2px 14px;align-items:center}.row b{font-size:15px}.row small{color:var(--mut);grid-column:1}.n{grid-row:1/3;grid-column:2;text-align:right;font-size:24px;font-weight:700}.n small{display:block;font-size:11px;font-weight:400;color:var(--mut)}.bar{grid-column:1/3;height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;background:var(--acc)}.pg{display:inline-block;width:70px;height:5px;border-radius:3px;background:var(--line);vertical-align:middle;margin:0 6px 0 4px;overflow:hidden}.pg i{display:block;height:100%;background:var(--l)}.un{opacity:.85;border-left-color:var(--line)}@media print{body{background:#fff}.row{break-inside:avoid}}`;
-  const body = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([area, list]) => `<h2>${esc(area)}</h2>` + list.map(({ t, a, ph }) => { const l = col[ph] || "#9aa3af", p = a ? Math.round(Number(a.progress) || 0) : 0; return `<div class="row${a ? "" : " un"}" style="--l:${l}"><b>${esc(t.text)}</b><div class="n">${Number(t.workers) || 0}<small>personer</small></div>${a ? `<small>${esc(itemLabel(a))} · ${esc(fd(a.startDate))}–${esc(fd(a.endDate))} · framdrift ${p} %<span class="pg" style="--l:${l}"><i style="width:${p}%"></i></span></small>` : `<small>Ingen kopplad aktivitet</small>`}<div class="bar"><i style="width:${Math.round(100 * (Number(t.workers) || 0) / max)}%"></i></div></div>`; }).join("")).join("");
-  const html = `<!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dagsplan ${esc(rec.date)}${rec.company ? " – " + esc(rec.company) : ""}</title><style>${css}</style></head><body><div class="w"><h1>Dagsplan ${esc(head)}</h1><div class="sub">${esc(rec.company || "Underentreprenör")} · ${esc((typeof projectName !== "undefined" && projectName) || "")}</div>
-<div class="cards"><div class="c"><b>${rec.total ?? sumW}</b><span>personer totalt${rec.extras ? " + " + esc(rec.extras) : ""}</span></div><div class="c"><b>${rec.tasks.length}</b><span>arbeten</span></div><div class="c"><b>${sumW}</b><span>personer på raderna</span></div><div class="c"><b>${groups.size}</b><span>områden</span></div></div>${body}</div></body></html>`;
+  const body = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], "sv", { numeric: true })).map(([area, list]) => `<h2>${esc(area)}</h2>` + list.map(({ t, a, ph }) => { const l = col[ph] || "#9aa3af", p = a ? Math.round(Number(a.progress) || 0) : 0; const tg = `${t.shift ? `<span class="tag">Skift ${t.shift}</span>` : ""}${t.area ? `<span class="tag ar">📍 ${esc(t.area)}</span>` : ""}`; return `<div class="row${a ? "" : " un"}" style="--l:${l}"><b>${esc(t.text)}</b><div class="n">${Number(t.workers) || 0}<small>personer</small></div>${a ? `<small>${tg}${esc(itemLabel(a))} · ${esc(fd(a.startDate))}–${esc(fd(a.endDate))} · framdrift ${p} %<span class="pg" style="--l:${l}"><i style="width:${p}%"></i></span></small>` : `<small>${tg}Ingen kopplad aktivitet</small>`}<div class="bar"><i style="width:${Math.round(100 * (Number(t.workers) || 0) / max)}%"></i></div></div>`; }).join("")).join("");
+  const html = `<!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dagsplan ${esc(rec.date)}${rec.company ? " – " + esc(rec.company) : ""}</title><style>${css}.tag{display:inline-block;font-size:11px;font-weight:600;border:1px solid var(--line);border-radius:99px;padding:0 8px;margin-right:6px;color:var(--mut)}.tag.ar{color:var(--acc)}</style></head><body><div class="w"><h1>Dagsplan ${esc(head)}</h1><div class="sub">${esc(rec.company || "Underentreprenör")} · ${esc((typeof projectName !== "undefined" && projectName) || "")}</div>
+<div class="cards"><div class="c"><b>${rec.total ?? sumW}</b><span>personer totalt${rec.extras ? " + " + esc(rec.extras) : ""}</span></div><div class="c"><b>${rec.tasks.length}</b><span>arbeten</span></div><div class="c"><b>${sumW}</b><span>personer på raderna</span></div>${[1, 2, 3].filter(n => rec.tasks.some(x => Number(x.shift) === n)).map(n => `<div class="c"><b>${rec.tasks.filter(x => Number(x.shift) === n).reduce((a, x) => a + (Number(x.workers) || 0), 0)}</b><span>skift ${n}</span></div>`).join("")}<div class="c"><b>${groups.size}</b><span>områden</span></div></div>${body}</div></body></html>`;
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" })); a.download = `Dagsplan ${rec.date}${rec.company ? " " + rec.company : ""}.html`.replace(/[\\/:*?"<>|]/g, "-");
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
