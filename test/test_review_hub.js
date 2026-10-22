@@ -37,7 +37,11 @@ if (!PDFJS) { console.log('SKIP test_review_hub (hittar inte pdf.js lokalt)'); p
   const refs = await page.evaluate(() => { const d = rv.docs.find(x => /K-40/.test(x.name)), r = rvRefs(); return [...(r.out.get(d.id) || new Map()).keys()].map(id => rv.docs.find(x => x.id === id).no).sort(); });
   if (JSON.stringify(refs) !== JSON.stringify(['5082590', 'A-2600-1'])) fail('hänvisningar med rena siffror och A-2600-1: ' + JSON.stringify(refs));
   // öppna K-40 och kolla länkrutor
-  await page.selectOption('#rvMode', 'disc'); await page.click('.rv-doc[data-open] >> text=K-40-001'); await page.waitForFunction(() => rvv.doc && /K-40/.test(rvv.doc.name) && rvv.links && rvv.links.length === 2 && rvv.W > 0, null, { timeout: 15000 });
+  await page.click('[data-view="disc"]'); await page.click('.rv-doc[data-open] >> text=K-40-001'); await page.waitForFunction(() => rvv.doc && /K-40/.test(rvv.doc.name) && rvv.links && rvv.links.length === 2 && rvv.W > 0, null, { timeout: 15000 });
+  // släck hänvisningarna: ingen markering och inget hopp
+  await page.click('[data-v="links"]'); if ((await page.evaluate(() => localStorage.getItem('4ddash-review-links'))) !== '0') fail('länkar av sparas');
+  { await page.click('[data-tool="hand"]'); const bxl = await (await page.$('#rvOv')).boundingBox(), L0 = await page.evaluate(() => rvv.links.map(l => ({ x: (l.r[0] + l.r[2] / 2) * rvv.W, y: (l.r[1] + l.r[3] / 2) * rvv.H }))); const id0 = await page.evaluate(() => rvv.id); await page.mouse.click(bxl.x + L0[0].x, bxl.y + L0[0].y); await page.waitForTimeout(500); if ((await page.evaluate(() => rvv.id)) !== id0) fail('med länkar av ska ett tryck inte hoppa'); }
+  await page.click('[data-v="links"]');
   // hopp mellan ritningar
   const pos = await page.evaluate(() => [rv.order.length, rv.order.indexOf(rvv.id)]); if (pos[0] !== 3 || pos[1] < 0) fail('ritningsordning: ' + pos);
   const before = await page.evaluate(() => rvv.id); await page.click('[data-v="pdoc"]'); await page.waitForFunction(b => rvv.id !== b, before, { timeout: 10000 });
@@ -64,6 +68,10 @@ if (!PDFJS) { console.log('SKIP test_review_hub (hittar inte pdf.js lokalt)'); p
   await page.mouse.move(stg.x + 400, stg.y + 300); await page.mouse.down({ button: 'middle' }); await page.waitForSelector('.rv-hub'); const items = await page.$$eval('.rv-hub-it', e => e.length); if (items !== 10) fail('hubben har 10 verktyg: ' + items);
   await page.mouse.move(stg.x + 400 + 95, stg.y + 300 + 31, { steps: 4 }); await page.waitForTimeout(100); if ((await page.$eval('.rv-hub-it.on', e => e.dataset.k)) !== 'arrow') fail('hubben lyser upp pilen');
   await page.mouse.up({ button: 'middle' }); await page.waitForTimeout(100); if ((await page.evaluate(() => rvv.tool)) !== 'arrow' || (await page.$('.rv-hub'))) fail('släpp väljer verktyget och stänger hubben');
+  { // helskärmen ska överleva Esc och byte av ritning
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150); const id0 = await page.evaluate(() => rvv.id); await page.click('[data-v="ndoc"], [data-v="pdoc"]'); await page.waitForFunction(i => rvv.id !== i && rvv.W > 0, id0, { timeout: 10000 }); await page.waitForTimeout(300);
+    const fsx = await page.evaluate(() => { const b = document.getElementById('revBox'); return { want: rvv.fsWant, cls: b.classList.contains('rv-fsm'), big: document.fullscreenElement === b || b.classList.contains('fsx'), sel: !!document.getElementById('rvDocSel') }; });
+    if (!fsx.want || !fsx.cls || !fsx.big || !fsx.sel) fail('helskärmen ligger kvar efter Esc och ritningsbyte: ' + JSON.stringify(fsx)); }
   await page.click('[data-v="fs"]'); await page.waitForTimeout(300);
   // synk mot 4D-data
   await page.evaluate(() => rvsSync(true)); await page.waitForFunction(() => /Synkat/.test(rv.msg || ''), null, { timeout: 30000 });

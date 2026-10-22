@@ -3211,7 +3211,6 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .rv-main { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); min-height: 520px; display: flex; flex-direction: column; }
 .rv-hello { padding: 22px; max-width: 560px; color: var(--muted); } .rv-hello h3 { color: var(--text); margin-top: 0; }
 .rv-view { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--panel); border-radius: 10px; }
-.rv-view.fsx { position: fixed; inset: 0; z-index: 9000; border-radius: 0; }
 .rv-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--bg); border-radius: 10px 10px 0 0; }
 .rv-title { flex: 1 1 160px; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .rv-title small { color: var(--muted); font-weight: 400; }
 .rv-grpb { display: inline-flex; gap: 3px; align-items: center; } .rv-grpb input { width: 46px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); text-align: center; }
@@ -3219,7 +3218,7 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .rv-sw { width: 20px; height: 20px; padding: 0 !important; border-radius: 50% !important; border: 2px solid transparent !important; } .rv-sw.on { border-color: var(--text) !important; box-shadow: 0 0 0 2px var(--bg) inset; }
 .rv-bar em { font-style: normal; opacity: .75; }
 .rv-body { display: flex; flex: 1; min-height: 0; } .rv-stage { flex: 1; overflow: auto; position: relative; min-height: 460px; max-height: 80vh; touch-action: none; padding: 12px; background: #8b929c; }
-.rv-view.fsx .rv-stage, .rv-view:fullscreen .rv-stage { max-height: none; height: calc(100vh - 54px); } .rv-view:fullscreen { background: var(--panel); }
+
 .rv-pagebox { position: relative; margin: 0 auto; box-shadow: 0 6px 24px rgba(0,0,0,.35); background: #fff; } .rv-pagebox canvas { display: block; position: absolute; left: 0; top: 0; }
 .rv-legend { position: sticky; left: 8px; bottom: 8px; width: max-content; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; font-size: 12px; } .rv-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin: 0 4px 0 8px; vertical-align: -2px; }
 .rv-marks { width: 280px; flex: none; border-left: 1px solid var(--border); background: var(--bg); overflow: auto; max-height: 80vh; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
@@ -3287,3 +3286,28 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .rv-co select { margin-left: 4px; }
 .rv-co .rv-sw { margin-left: 3px; }
 .rv-pos { margin-left: 6px; color: var(--muted); white-space: nowrap; }
+
+/* Helskärm för hela PDF-hubben */
+#revBox.rv-fsm { background: var(--bg); }
+#revBox.fsx { position: fixed; inset: 0; z-index: 9000; padding: 0; overflow: hidden; }
+#revBox.rv-fsm .rv-wrap { display: block; min-height: 100vh; }
+#revBox.rv-fsm .rv-side { display: none; }
+#revBox.rv-fsm .rv-main { border: 0; border-radius: 0; min-height: 100vh; }
+#revBox.rv-fsm .rv-view { border-radius: 0; min-height: 100vh; }
+#revBox.rv-fsm .rv-stage { max-height: none; height: calc(100vh - 54px); }
+#revBox.rv-fsm .rv-backb { display: none; }
+#rvDocSel { max-width: 220px; }
+
+/* Mappflikar i PDF-hubben */
+.rv-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.rv-tab { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 8px; padding: 4px 9px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.rv-tab em { font-style: normal; font-weight: 700; font-size: 10.5px; opacity: .65; }
+.rv-tab.on { background: var(--accent); border-color: var(--accent); color: #fff; } .rv-tab.on em { opacity: .85; }
+.rv-tabnote { font-size: 11.5px; color: var(--muted); padding: 0 2px; }
+.rv-gh .rv-fi { margin-right: 4px; }
+.rv-gh { border-radius: 6px; } .rv-gh:hover { background: var(--panel); }
+.rv-grp.rv-d0 > .rv-gh { font-size: 12.5px; color: var(--text); background: var(--bg); border: 1px solid var(--border); padding: 6px 8px; margin-top: 4px; }
+.rv-fold { display: flex; gap: 10px; justify-content: flex-end; font-size: 11.5px; } .rv-fold button { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; }
+.rv-row.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid var(--accent); }
+.rv-selbar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; background: var(--bg); border: 1px solid var(--accent); border-radius: 8px; padding: 4px 6px; margin-bottom: 4px; font-size: 12px; }
+.rv-selbar button { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; }

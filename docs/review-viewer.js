@@ -96,7 +96,7 @@ function rvvBuild(main) {
     <span class="rv-grpb rv-tl">${RVV_TOOLS.map(([k, ic, t]) => `<button data-tool="${k}" class="${rvv.tool === k ? "on" : ""}" title="${rvEsc(t)}">${ic}</button>`).join("")}</span>
     <span class="rv-grpb">${RVV_COLORS.map(c => `<button class="rv-sw${rvv.color === c ? " on" : ""}" data-color="${c}" style="background:${c}" title="Färg" aria-label="Färg"></button>`).join("")}</span>
     <span class="rv-grpb"><button data-v="undo" title="Ångra (Ctrl+Z)">↶</button><button data-v="redo" title="Gör om (Ctrl+Y)">↷</button></span>
-    <button data-v="cmp" title="Jämför med en annan revision av samma ritning"${older.length ? "" : " disabled"}>Jämför rev</button><button data-v="side" title="Visa/dölj markeringslistan">Markeringar <em id="rvMkN"></em></button><button data-v="fs" title="Helskärm (f)">⛶</button></div>
+    <button data-v="links" class="${rvvLinksOn() ? "on" : ""}" title="Visa/dölj hänvisningarna (understrukna ritningsnummer) i ritningen – dölj dem på tillverkningsritningar och detaljer">🔗 Länkar</button><button data-v="cmp" title="Jämför med en annan revision av samma ritning"${older.length ? "" : " disabled"}>Jämför rev</button><button data-v="side" title="Visa/dölj markeringslistan">Markeringar <em id="rvMkN"></em></button>${rvv.fsWant ? `<select id="rvDocSel" title="Byt ritning">${rv.order.map(id => { const x = rv.docs.find(d => d.id === id); return x ? `<option value="${id}"${id === rvv.id ? " selected" : ""}>${rvEsc((x.no || x.name).slice(0, 28))} ${rvEsc((x.title || "").slice(0, 26))}</option>` : ""; }).join("")}</select>` : ""}<button data-v="fs" title="Helskärm (F) – lämnas bara med ⛶ eller F">⛶</button></div>
     <div class="rv-body"><div class="rv-stage" id="rvStage"><div class="rv-pagebox" id="rvBox"><canvas id="rvCv"></canvas><canvas id="rvCmp" hidden></canvas><canvas id="rvOv"></canvas></div><div class="rv-legend" id="rvLegend" hidden></div></div><aside class="rv-marks" id="rvMarks"></aside></div></div>`;
   rvvWire(); rvvMarksPane();
 }
@@ -106,11 +106,12 @@ function rvvWire() {
     const b = e.target.closest("button"); if (!b) return; const a = b.dataset.v;
     if (b.dataset.tool) { rvv.tool = b.dataset.tool; v.querySelectorAll("[data-tool]").forEach(x => x.classList.toggle("on", x.dataset.tool === rvv.tool)); rvvCursor(); return; }
     if (b.dataset.color) { rvv.color = b.dataset.color; v.querySelectorAll("[data-color]").forEach(x => x.classList.toggle("on", x.dataset.color === rvv.color)); const m = rvv.marks.find(x => x.id === rvv.sel); if (m) { rvvMod(m, { color: rvv.color }); } return; }
-    if (a === "pdoc") rvvDocStep(-1); else if (a === "ndoc") rvvDocStep(1); else if (a === "prev") rvvGo(rvv.num - 1); else if (a === "next") rvvGo(rvv.num + 1); else if (a === "zin") rvvZoom(rvv.zoom * 1.25); else if (a === "zout") rvvZoom(rvv.zoom / 1.25);
+    if (a === "links") { try { localStorage.setItem("4ddash-review-links", rvvLinksOn() ? "0" : "1"); } catch (x) { /* */ } b.classList.toggle("on", rvvLinksOn()); rvvOv(); } else if (a === "pdoc") rvvDocStep(-1); else if (a === "ndoc") rvvDocStep(1); else if (a === "prev") rvvGo(rvv.num - 1); else if (a === "next") rvvGo(rvv.num + 1); else if (a === "zin") rvvZoom(rvv.zoom * 1.25); else if (a === "zout") rvvZoom(rvv.zoom / 1.25);
     else if (a === "fit") { rvv.fitMode = rvv.fitMode === "w" ? "p" : "w"; rvv.zoom = 1; rvvRender(); } else if (a === "undo") rvvUndo(); else if (a === "redo") rvvRedo();
     else if (a === "side") { v.classList.toggle("no-side"); setTimeout(() => rvvRender(), 60); } else if (a === "fs") rvvFs();
     else if (a === "cmp") rvvCompareMenu(b); else if (a === "navback") rvvNavBack(); else if (a === "back") { rv.open = null; rv.nav = []; document.querySelector(".rv-wrap").classList.remove("has-doc"); const m = document.getElementById("rvMain"); rvRender(); }
   };
+  { const ds = document.getElementById("rvDocSel"); if (ds) ds.onchange = e => rvOpenDoc(e.target.value, {}); }
   document.getElementById("rvPageIn").onchange = e => rvvGo(Number(e.target.value));
   st.addEventListener("contextmenu", e => { if (rvv.fs) e.preventDefault(); });
   st.addEventListener("mousedown", e => { if (e.button === 1 && rvv.fs) e.preventDefault(); });
@@ -159,7 +160,8 @@ async function rvvLinkRects(page, vp) {
   } catch (e) { /* utan länkar */ }
   return out;
 }
-const rvvLinkAt = (px, py) => (rvv.links || []).find(l => px >= l.r[0] * rvv.W - 2 && px <= (l.r[0] + l.r[2]) * rvv.W + 2 && py >= l.r[1] * rvv.H - 2 && py <= (l.r[1] + l.r[3]) * rvv.H + 2);
+const rvvLinksOn = () => { try { return localStorage.getItem("4ddash-review-links") !== "0"; } catch (e) { return true; } };
+const rvvLinkAt = (px, py) => !rvvLinksOn() ? null : (rvv.links || []).find(l => px >= l.r[0] * rvv.W - 2 && px <= (l.r[0] + l.r[2]) * rvv.W + 2 && py >= l.r[1] * rvv.H - 2 && py <= (l.r[1] + l.r[3]) * rvv.H + 2);
 function rvvJump(id, page) { if (!id || !rv.docs.find(d => d.id === id)) return; if (rvv.id) rv.nav.push({ id: rvv.id, page: rvv.num }); if (rv.nav.length > 30) rv.nav.shift(); rvOpenDoc(id, { page: page || 1 }); }
 function rvvNavBack() { const p = rv.nav.pop(); if (p) rvOpenDoc(p.id, { page: p.page }); }
 async function rvvHlRects(page, vp) {
@@ -169,7 +171,7 @@ async function rvvHlRects(page, vp) {
 }
 function rvvOv(draft) {
   const ov = document.getElementById("rvOv"); if (!ov) return; const g = ov.getContext("2d"); g.clearRect(0, 0, ov.width, ov.height);
-  rvvDraw(g, rvvMarks(), rvv.W, rvv.H, rvv.k || 1, { sel: rvv.sel, hl: rvv.hlRects, links: (rvv.links || []).map(l => l.r), draft });
+  rvvDraw(g, rvvMarks(), rvv.W, rvv.H, rvv.k || 1, { sel: rvv.sel, hl: rvv.hlRects, links: rvvLinksOn() ? (rvv.links || []).map(l => l.r) : [], draft });
   const n = document.getElementById("rvMkN"); if (n) n.textContent = rvv.marks.length ? `(${rvv.marks.filter(m => m.status === "open").length}/${rvv.marks.length})` : "";
 }
 function rvvZoom(z, cx, cy) {
@@ -228,7 +230,7 @@ document.addEventListener("keydown", e => {
   const v = document.getElementById("rvView"); if (!v || /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) return;
   if (e.shiftKey && e.key === "ArrowRight") rvvDocStep(1); else if (e.shiftKey && e.key === "ArrowLeft") rvvDocStep(-1); else if (e.key === "ArrowRight" || e.key === "PageDown") rvvGo(rvv.num + 1); else if (e.key === "ArrowLeft" || e.key === "PageUp") rvvGo(rvv.num - 1);
   else if (e.key === "+" || e.key === "=") rvvZoom(rvv.zoom * 1.25); else if (e.key === "-") rvvZoom(rvv.zoom / 1.25); else if (e.key === "f") rvvFs();
-  else if ((e.key === "Delete" || e.key === "Backspace") && rvv.sel) { e.preventDefault(); rvvDelete(rvv.sel); } else if (e.key === "Escape") { if (rvv.sel) { rvv.sel = null; rvvOv(); rvvMarksPane(); } else if (rvv.fs) rvvFs(); }
+  else if ((e.key === "Delete" || e.key === "Backspace") && rvv.sel) { e.preventDefault(); rvvDelete(rvv.sel); } else if (e.key === "Escape") { if (rvv.sel) { rvv.sel = null; rvvOv(); rvvMarksPane(); } }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? rvvRedo() : rvvUndo(); } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); rvvRedo(); }
 });
 /* Verktygshubb: håll in scrollhjulet i helskärm, dra åt ett håll och släpp. */
@@ -249,12 +251,25 @@ function rvvHubClose(apply) {
   const hb = rvv.hub; if (!hb) return; rvv.hub = null; hb.el.remove();
   if (apply && hb.pick) { rvv.tool = hb.pick; document.querySelectorAll("[data-tool]").forEach(x => x.classList.toggle("on", x.dataset.tool === rvv.tool)); rvvCursor(); }
 }
-function rvvFs() {
-  const v = document.getElementById("rvView"); if (!v) return; const on = document.fullscreenElement === v || v.classList.contains("fsx");
-  if (on) { if (document.fullscreenElement) document.exitFullscreen(); v.classList.remove("fsx"); rvv.fs = false; } else { rvv.fs = true; if (v.requestFullscreen) v.requestFullscreen().catch(() => v.classList.add("fsx")); else v.classList.add("fsx"); }
-  setTimeout(() => rvvRender(), 120);
+/* Helskärm: hela PDF-hubben (#revBox) är helskärmsytan, inte själva visaren – så att den överlever när ritningen byts (visaren byggs om då).
+   Tangentbordslås (Chrome/Edge) gör att Esc inte lämnar helskärmen: håll Esc nedtryckt en stund, tryck ⛶ eller F. Lämnar webbläsaren helskärmen ändå
+   (Firefox/Safari, eller Esc-hållet) ligger visaren kvar som ett stort fönster över sidan tills du själv stänger den. */
+function rvvFs(force) {
+  const b = document.getElementById("revBox"); if (!b) return; const want = force != null ? force : !rvv.fsWant;
+  if (!want) { rvv.fsWant = false; rvv.fs = false; try { if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock(); } catch (e) { /* */ } if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); b.classList.remove("fsx", "rv-fsm"); }
+  else {
+    rvv.fsWant = true; rvv.fs = true; b.classList.add("rv-fsm");
+    if (b.requestFullscreen) b.requestFullscreen().then(() => { try { if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(["Escape"]).catch(() => {}); } catch (e) { /* */ } }).catch(() => b.classList.add("fsx")); else b.classList.add("fsx");
+    rvToast("Helskärm: lämna med ⛶ eller F (Esc lämnar inte längre helskärmen)");
+  }
+  setTimeout(() => { rvvRender(); rvvBarSync(); }, 150);
 }
-document.addEventListener("fullscreenchange", () => { rvvHubClose(); const v = document.getElementById("rvView"); if (v && document.fullscreenElement !== v) rvv.fs = false; setTimeout(() => rvvRender(), 120); });
+function rvvBarSync() { const v = document.getElementById("rvView"); if (v) v.classList.toggle("is-fs", !!rvv.fsWant); }
+document.addEventListener("fullscreenchange", () => {
+  rvvHubClose(); const b = document.getElementById("revBox");
+  if (b && rvv.fsWant) { if (document.fullscreenElement === b) b.classList.remove("fsx"); else b.classList.add("fsx"); }
+  setTimeout(() => rvvRender(), 120);
+});
 
 /* ---- Markeringar: skapa, ändra, ångra, lista -------------------------------------------------------------------------------------------------- */
 function rvvNew(type, o) { const n = rvv.marks.reduce((a, m) => Math.max(a, m.n || 0), 0) + 1; return { id: rvId(), doc: rvv.id, page: rvv.num, type, color: rvv.color, status: "open", text: "", n, created: new Date().toISOString(), upd: Date.now(), by: (() => { try { return localStorage.getItem("4ddash-review-author") || ""; } catch (e) { return ""; } })(), ...o }; }

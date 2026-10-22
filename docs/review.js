@@ -9,7 +9,7 @@
    - Markeringar kan exporteras och läsas in som fil, och som granskningsrapport (HTML med bildutsnitt). */
 
 const RV_DB = "4ddash-review", RV_VER = 1;
-const rv = { pms: [], pm: "", view: (() => { try { return localStorage.getItem("4ddash-review-view") || "main"; } catch (e) { return "main"; } })(), numIdx: new Map(), docs: [], marks: new Map(), q: "", hits: null, showOld: false, sort: "no", grpClosed: new Set(JSON.parse((() => { try { return localStorage.getItem("4ddash-review-closed") || "[]"; } catch (e) { return "[]"; } })())), open: null, nav: [], order: [], queue: [], indexing: 0, msg: "", ready: false, filter: "all" };
+const rv = { pms: [], pm: "", view: (() => { try { const v = localStorage.getItem("4ddash-review-view"); return ["main", "valid", "pm", "zone", "disc", "pkg"].includes(v) ? v : "main"; } catch (e) { return "main"; } })(), numIdx: new Map(), docs: [], marks: new Map(), q: "", hits: null, showOld: false, sort: "no", grpClosed: new Set(JSON.parse((() => { try { return localStorage.getItem("4ddash-review-closed") || "[]"; } catch (e) { return "[]"; } })())), open: null, nav: [], order: [], selSet: new Set(), selAnchor: "", queue: [], indexing: 0, msg: "", ready: false, filter: "all" };
 const rvEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const rvId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const rvToast = t => { if (typeof modelToast === "function") modelToast(t); else console.info(t); };
@@ -215,25 +215,54 @@ function rvSearch(q) {
 }
 async function rvMarksCount(docs) { const all = await rvAll("marks"); const m = new Map(); all.forEach(x => { const o = m.get(x.doc) || { n: 0, open: 0 }; o.n++; if (x.status === "open") o.open++; m.set(x.doc, o); }); rv.mc = m; }
 function rvListHtml() {
-  const docs = rvScope().filter(d => (rv.showOld && rv.view !== "main") || !d.old).filter(d => rv.view !== "main" || d.type === "Bygghandling").filter(d => rv.filter === "fav" ? d.fav : rv.filter === "open" ? ((rv.mc && rv.mc.get(d.id)) || { open: 0 }).open > 0 : true);
+  const docs = rvScope().filter(d => (rv.showOld && rv.view !== "main" && rv.view !== "valid") || !d.old).filter(d => rv.view === "main" ? d.type === "Bygghandling" : rv.view === "valid" ? d.type === "Gällande handlingar" : rv.view === "pm" ? d.type === "PM" : true).filter(d => rv.filter === "fav" ? d.fav : rv.filter === "open" ? ((rv.mc && rv.mc.get(d.id)) || { open: 0 }).open > 0 : true);
   if (rv.hits) rv.order = rv.hits.map(h => h.d.id);
   if (rv.hits) return rv.hits.length ? rv.hits.map(h => `<div class="rv-hit"><button class="rv-doc" data-open="${h.d.id}"><b>${rvEsc(h.d.no || h.d.name)}</b> ${rvEsc(h.d.title)}${h.d.rev ? ` <i class="rv-rev">rev ${rvEsc(h.d.rev)}</i>` : ""}</button>${h.pages.map(p => `<button class="rv-snip" data-open="${h.d.id}" data-page="${p.p}" data-hl="${rvEsc(rv.q)}"><u>s.${p.p}</u> ${rvEsc(p.s)}</button>`).join("")}${h.n > h.pages.length ? `<small>… ${h.n - h.pages.length} träffar till</small>` : ""}</div>`).join("") : `<p class="rv-empty">Inga träffar på "${rvEsc(rv.q)}".</p>`;
   if (!docs.length) return `<p class="rv-empty">${rv.docs.length ? (rv.view === "main" ? "Inga ritningar att visa i huvudmappen – byt vy ovan för att se PM och övriga handlingar." : "Inget att visa med det här filtret.") : "Släpp PDF-filer (eller en hel mapp) här så sorteras de upp automatiskt."}</p>`;
   rv.order = [];
   const favs = docs.filter(d => d.fav), recent = docs.filter(d => d.opened).sort((a, b) => b.opened - a.opened).slice(0, 4);
-  const row = (d, noOrd) => { if (!noOrd) rv.order.push(d.id); const mc = (rv.mc && rv.mc.get(d.id)) || null, pk = rv.pms.find(p => p.id === d.pm); return `<div class="rv-row${rv.open === d.id ? " on" : ""}${d.old ? " old" : ""}" data-doc="${d.id}"><button class="rv-doc" data-open="${d.id}" title="${rvEsc(d.name)}${pk ? " · " + rvEsc(pk.name) : ""}">${d.thumb ? `<img class="rv-th" src="${d.thumb}" alt="">` : `<span class="rv-th ph"></span>`}<span class="rv-t"><b>${rvEsc(d.no || d.name.replace(/\.pdf$/i, ""))}</b><small>${rvEsc(d.title || "")}</small></span></button>${d.rev ? `<span class="rv-rev" title="Revision">${rvEsc(d.rev)}</span>` : ""}${d.old ? `<span class="rv-badge old" title="Det finns en nyare revision">ersatt</span>` : d.revs > 1 ? `<span class="rv-badge new" title="${d.revs} revisioner finns">ny rev</span>` : ""}${mc && mc.n ? `<span class="rv-badge ${mc.open ? "open" : "ok"}" title="${mc.open} öppna av ${mc.n} markeringar">${mc.open || "✓"}</span>` : ""}<button class="rv-star${d.fav ? " on" : ""}" data-fav="${d.id}" title="Favorit (snabbåtkomst ute på bygget)" aria-label="Favorit">★</button><button class="rv-more" data-more="${d.id}" title="Fler val" aria-label="Fler val">⋯</button></div>`; };
+  const row = (d, noOrd) => { if (!noOrd) rv.order.push(d.id); const mc = (rv.mc && rv.mc.get(d.id)) || null, pk = rv.pms.find(p => p.id === d.pm); return `<div class="rv-row${rv.open === d.id ? " on" : ""}${d.old ? " old" : ""}${rv.selSet.has(d.id) ? " sel" : ""}" data-doc="${d.id}"><button class="rv-doc" data-open="${d.id}" title="${rvEsc(d.name)}${pk ? " · " + rvEsc(pk.name) : ""}">${d.thumb ? `<img class="rv-th" src="${d.thumb}" alt="">` : `<span class="rv-th ph"></span>`}<span class="rv-t"><b>${rvEsc(d.no || d.name.replace(/\.pdf$/i, ""))}</b><small>${rvEsc(d.title || "")}</small></span></button>${d.rev ? `<span class="rv-rev" title="Revision">${rvEsc(d.rev)}</span>` : ""}${d.old ? `<span class="rv-badge old" title="Det finns en nyare revision">ersatt</span>` : d.revs > 1 ? `<span class="rv-badge new" title="${d.revs} revisioner finns">ny rev</span>` : ""}${mc && mc.n ? `<span class="rv-badge ${mc.open ? "open" : "ok"}" title="${mc.open} öppna av ${mc.n} markeringar">${mc.open || "✓"}</span>` : ""}<button class="rv-star${d.fav ? " on" : ""}" data-fav="${d.id}" title="Favorit (snabbåtkomst ute på bygget)" aria-label="Favorit">★</button><button class="rv-more" data-more="${d.id}" title="Fler val" aria-label="Fler val">⋯</button></div>`; };
   const zoneKey = d => rvZoneOf(d), pkgName = d => (rv.pms.find(p => p.id === d.pm) || { name: "Utan paket" }).name;
   const LV = { type: d => d.type, zone: d => zoneKey(d), disc: d => d.grp || d.disc || "Övrigt", pkg: pkgName };
-  const plan = { main: ["zone"], type: ["type", "zone"], zone: ["zone", "type"], disc: ["disc"], pkg: ["pkg", "type"] }[rv.view] || ["zone"];
+  const plan = { main: ["zone"], valid: ["zone"], pm: ["pkg"], zone: ["zone", "type"], disc: ["disc"], pkg: ["pkg", "type"] }[rv.view] || ["zone"];
   const label = (lv, k) => lv === "zone" ? rvZoneName(k) : k;
-  const order = (lv, keys) => keys.sort((a, b) => lv === "type" ? RV_TYPES.indexOf(a) - RV_TYPES.indexOf(b) : (lv === "zone" ? (!a) - (!b) : (a === "Övrigt") - (b === "Övrigt")) || label(lv, a).localeCompare(label(lv, b), "sv", { numeric: true }));
+  const pkgAge = n => { const p = rv.pms.find(x => x.name === n); return p ? p.created || 0 : 0; };
+  const order = (lv, keys) => keys.sort((a, b) => lv === "pkg" ? pkgAge(b) - pkgAge(a) || a.localeCompare(b, "sv", { numeric: true }) : lv === "type" ? RV_TYPES.indexOf(a) - RV_TYPES.indexOf(b) : (lv === "zone" ? (!a) - (!b) : (a === "Övrigt") - (b === "Övrigt")) || label(lv, a).localeCompare(label(lv, b), "sv", { numeric: true }));
   const tree = (list, lvls, path) => {
     if (!lvls.length) return list.sort(rvCmp).map(d => row(d)).join("");
     const lv = lvls[0], by = new Map(); list.forEach(d => { const k = LV[lv](d) || ""; (by.get(k) || by.set(k, []).get(k)).push(d); });
-    return order(lv, [...by.keys()]).map(k => { const sub = by.get(k), id = path + "/" + k, closed = rv.grpClosed.has(id), depth = path.split("/").length - 1; return `<div class="rv-grp rv-d${depth}"><button class="rv-gh" data-grp="${rvEsc(id)}">${closed ? "▸" : "▾"} ${rvEsc(label(lv, k))} <em>${sub.length}</em></button>${closed ? "" : tree(sub, lvls.slice(1), id)}</div>`; }).join("");
+    return order(lv, [...by.keys()]).map(k => { const sub = by.get(k), id = path + "/" + k, closed = rv.grpClosed.has(id), depth = path.split("/").length - 1; return `<div class="rv-grp rv-d${depth}"><button class="rv-gh" data-grp="${rvEsc(id)}">${closed ? "▸" : "▾"} <span class="rv-fi">${depth === 0 ? (closed ? "📁" : "📂") : "📄"}</span>${rvEsc(label(lv, k))} <em>${sub.length}</em></button>${closed ? "" : tree(sub, lvls.slice(1), id)}</div>`; }).join("");
   };
-  const mainHint = rv.view === "main" ? `<div class="rv-note">Huvudmapp: senaste revisionen av varje ritning${rv.docs.some(d => d.old) ? `, ${rv.docs.filter(d => d.old).length} äldre revisioner ligger kvar under "ersatta"` : ""}.</div>` : "";
-  return mainHint + (favs.length || recent.length ? `<div class="rv-grp"><div class="rv-gh">★ Snabbåtkomst</div>${[...favs, ...recent.filter(r => !r.fav)].map(d => row(d, true)).join("")}</div>` : "") + tree(docs, plan, "");
+  const NOTE = { main: "", valid: "Gällande handlingar: förteckningar, beskrivningar, kontrollplaner m.m. – senaste versionen av varje.", pm: "PM: en mapp per utskick/paket, senaste överst.", zone: "Delområden: varje område med sina ritningar och handlingar.", disc: "Discipliner: arkitekt, konstruktion, el, VVS …", pkg: "Utskick: allt precis som det kom, en mapp per paket (senaste överst)." };
+  const mainHint = rv.view !== "main" && NOTE[rv.view] ? `<div class="rv-note">${NOTE[rv.view]}</div>` : rv.view === "main" ? `<div class="rv-note">Huvudmapp: senaste revisionen av varje ritning${rv.docs.some(d => d.old) ? `, ${rv.docs.filter(d => d.old).length} äldre revisioner ligger kvar under "ersatta"` : ""}.</div>` : "";
+  return rvSelBar() + mainHint + (favs.length || recent.length ? `<div class="rv-grp"><div class="rv-gh">★ Snabbåtkomst</div>${[...favs, ...recent.filter(r => !r.fav)].map(d => row(d, true)).join("")}</div>` : "") + tree(docs, plan, "");
+}
+function rvSelBar() {
+  if (!rv.selSet.size) return "";
+  return `<div class="rv-selbar"><b>${rv.selSet.size} valda</b><button data-bulk="type">Typ</button><button data-bulk="zone">Delområde</button><button data-bulk="pkg">Paket</button><button data-bulk="fav">★</button><button data-bulk="zip">ZIP</button><button data-bulk="del">Ta bort</button><button data-bulk="clear">Avmarkera</button></div>`;
+}
+const rvSelDocs = () => rv.docs.filter(d => rv.selSet.has(d.id));
+function rvSelClick(id, e) {
+  if (e.shiftKey && rv.selAnchor && rv.order.includes(rv.selAnchor)) { const a = rv.order.indexOf(rv.selAnchor), b = rv.order.indexOf(id), [x, y] = a < b ? [a, b] : [b, a]; if (!(e.ctrlKey || e.metaKey)) rv.selSet.clear(); rv.order.slice(x, y + 1).forEach(i => rv.selSet.add(i)); }
+  else { if (rv.selSet.has(id)) rv.selSet.delete(id); else rv.selSet.add(id); rv.selAnchor = id; }
+  const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml();
+}
+async function rvBulk(kind, anchor) {
+  const docs = rvSelDocs(); if (!docs.length) return; const ask = async (t, v) => typeof dashPrompt === "function" ? dashPrompt(t, v) : prompt(t, v);
+  const done = async () => { rvPrep(); rvRender(true); const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); };
+  const setAll = (patch) => async () => { for (const d of docs) { Object.assign(d, patch); await rvSaveDoc(d); } await done(); rvToast(`${docs.length} ändrade`); };
+  if (kind === "clear") { rv.selSet.clear(); rv.selAnchor = ""; await done(); return; }
+  if (kind === "type") rvMenu(anchor, [["Handlingstyp: automatiskt", setAll({ dtype: "" })], ...RV_TYPES.map(t => ["Handlingstyp: " + t, setAll({ dtype: t })])]);
+  else if (kind === "zone") { const codes = [...new Set([...(rvZoneKnown() || { codes: [] }).codes, ...rv.docs.map(rvZoneOf).filter(Boolean)])].sort(); rvMenu(anchor, [["Delområde: automatiskt", setAll({ zone: "" })], ...codes.slice(0, 14).map(c => ["Delområde: " + rvZoneName(c), setAll({ zone: c })]), ["Annat delområde …", async () => { const n = await ask("Delområde (kod, t.ex. 742)", ""); if (n != null) await setAll({ zone: String(n).trim() })(); }]]); }
+  else if (kind === "pkg") rvMenu(anchor, [...rv.pms.slice(0, 14).map(p => ["Flytta till paket: " + p.name, setAll({ pm: p.id })]), ["Nytt paket …", async () => { const n = await ask("Namn på paketet", ""); if (n && n.trim()) await setAll({ pm: await rvPmByName(n.trim()) })(); }]]);
+  else if (kind === "fav") { const on = docs.some(d => !d.fav); await setAll({ fav: on })(); }
+  else if (kind === "zip") { if (typeof rvExportMain === "function") await rvExportMain(docs, "valda_ritningar"); }
+  else if (kind === "del") { if (!(await dashConfirm(`Ta bort ${docs.length} filer och deras markeringar?\n\nDet går inte att ångra. Filerna finns kvar där du hämtade dem.`, { ok: "Ta bort" }))) return; for (const d of docs) await rvDeleteDoc(d.id, true); rv.selSet.clear(); await rvMarksCount(); await done(); }
+}
+function rvTabsHtml() {
+  const sc = rvScope(), cnt = { main: sc.filter(d => !d.old && d.type === "Bygghandling").length, valid: sc.filter(d => !d.old && d.type === "Gällande handlingar").length, pm: sc.filter(d => d.type === "PM").length, zone: sc.filter(d => !d.old).length, disc: sc.filter(d => !d.old).length, pkg: sc.length };
+  const T = [["main", "📁", "Huvudmapp", "Senaste revisionen av alla ritningar"], ["valid", "📜", "Gällande handlingar", "Förteckningar, beskrivningar, kontrollplaner"], ["pm", "📝", "PM", "PM, en mapp per utskick"], ["zone", "🗂", "Delområden", "Per område: 741, 742 …"], ["disc", "🛠", "Discipliner", "Arkitekt, konstruktion, el, VVS …"], ["pkg", "📦", "Utskick", "Alla filer per paket, senaste överst"]];
+  return `<div class="rv-tabs" role="tablist">${T.map(([k, ic, l, t]) => `<button type="button" role="tab" class="rv-tab${rv.view === k ? " on" : ""}" data-view="${k}" title="${rvEsc(t)}">${ic} ${l} <em>${cnt[k]}</em></button>`).join("")}</div><div class="rv-fold"><button type="button" data-fold="close">Fäll ihop alla</button><button type="button" data-fold="open">Öppna alla</button></div>`;
 }
 function rvHtml() {
   const pm = rv.pms.find(p => p.id === rv.pm), nOld = rvScope().filter(d => d.old).length, tot = rvScope().length;
@@ -242,7 +271,7 @@ function rvHtml() {
     <aside class="rv-side"><div class="rv-pmbar"><select id="rvPm" aria-label="Paket"><option value="">Alla paket (${rv.docs.length})</option>${rv.pms.map(p => `<option value="${p.id}"${p.id === rv.pm ? " selected" : ""}>${rvEsc(p.name)} (${rv.docs.filter(d => d.pm === p.id).length})</option>`).join("")}</select><button id="rvNewPm" title="Nytt paket (t.ex. ett PM du fått)">＋</button>${pm ? `<button id="rvPmMore" title="Fler val för paketet">⋯</button>` : ""}</div>
       <div class="rv-drop" id="rvDrop" tabindex="0"><b>Släpp PDF:er här</b><span>eller en hel mapp – <label class="rv-pick">välj filer<input type="file" id="rvFile" accept="application/pdf,.pdf" multiple hidden></label> · <label class="rv-pick">välj mapp<input type="file" id="rvDir" webkitdirectory hidden></label></span></div>
       ${rv.msg ? `<div class="rv-msg">${rvEsc(rv.msg)}${rv.indexing ? ` <span class="rv-spin"></span> läser sidor (${rv.queue.length} kvar)` : ""}</div>` : rv.indexing ? `<div class="rv-msg"><span class="rv-spin"></span> Läser sidor och söker rubriker (${rv.queue.length} kvar)</div>` : ""}
-      <div class="rv-tools"><select id="rvMode" aria-label="Mappvy"><option value="main"${rv.view === "main" ? " selected" : ""}>Huvudmapp – senaste ritningar</option><option value="type"${rv.view === "type" ? " selected" : ""}>Mappar: Bygghandling / PM / Gällande</option><option value="zone"${rv.view === "zone" ? " selected" : ""}>Delområden</option><option value="disc"${rv.view === "disc" ? " selected" : ""}>Discipliner</option><option value="pkg"${rv.view === "pkg" ? " selected" : ""}>Paket (utskick)</option></select></div>
+      ${rvTabsHtml()}
       <div class="rv-tools"><input type="search" id="rvQ" placeholder="Sök i filnamn, rubriker och texten i ritningarna …" value="${rvEsc(rv.q)}" aria-label="Sök"></div>
       <div class="rv-tools"><select id="rvSort" aria-label="Sortera"><option value="no"${rv.sort === "no" ? " selected" : ""}>Ritningsnr</option><option value="name"${rv.sort === "name" ? " selected" : ""}>Filnamn</option><option value="date"${rv.sort === "date" ? " selected" : ""}>Senast tillagd</option><option value="rev"${rv.sort === "rev" ? " selected" : ""}>Revision</option></select><select id="rvFilter" aria-label="Visa"><option value="all"${rv.filter === "all" ? " selected" : ""}>Alla</option><option value="fav"${rv.filter === "fav" ? " selected" : ""}>Favoriter</option><option value="open"${rv.filter === "open" ? " selected" : ""}>Med öppna markeringar</option></select>${nOld && rv.view !== "main" ? `<label class="rv-chk" title="Visa även ritningar som ersatts av en nyare revision"><input type="checkbox" id="rvOld"${rv.showOld ? " checked" : ""}> ersatta (${nOld})</label>` : ""}</div>
       <div class="rv-list" id="rvList">${rvListHtml()}</div>
@@ -284,10 +313,15 @@ async function rvClick(e) {
   const t = e.target, q = s => t.closest(s);
   if (q("#rvNewPm")) { await rvNewPm(); return; }
   if (q("#rvPmMore")) { rvPmMenu(q("#rvPmMore")); return; }
-  const op = q("[data-open]"); if (op) { const d = op.dataset; rvOpenDoc(d.open, { page: d.page ? Number(d.page) : 1, hl: d.hl || "" }); return; }
+  const bk = q("[data-bulk]"); if (bk) { await rvBulk(bk.dataset.bulk, bk); return; }
+  const op = q("[data-open]"); if (op && (e.ctrlKey || e.metaKey || e.shiftKey) && op.closest(".rv-row")) { e.preventDefault(); rvSelClick(op.dataset.open, e); return; }
+  if (op && rv.selSet.size && op.closest(".rv-row")) { rv.selSet.clear(); const l0 = document.getElementById("rvList"); if (l0) l0.innerHTML = rvListHtml(); }
+  if (op) { const d = op.dataset; rvOpenDoc(d.open, { page: d.page ? Number(d.page) : 1, hl: d.hl || "" }); return; }
   const fv = q("[data-fav]"); if (fv) { const d = rv.docs.find(x => x.id === fv.dataset.fav); if (d) { d.fav = !d.fav; await rvSaveDoc(d); rvRender(true); const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); } return; }
   const mo = q("[data-more]"); if (mo) { rvDocMenu(mo, mo.dataset.more); return; }
   const g = q("[data-grp]"); if (g) { const k = g.dataset.grp; if (rv.grpClosed.has(k)) rv.grpClosed.delete(k); else rv.grpClosed.add(k); try { localStorage.setItem("4ddash-review-closed", JSON.stringify([...rv.grpClosed])); } catch (x) { /* */ } document.getElementById("rvList").innerHTML = rvListHtml(); return; }
+  const vt = q("[data-view]"); if (vt) { rv.view = vt.dataset.view; try { localStorage.setItem("4ddash-review-view", rv.view); } catch (x) { /* */ } rvRender(); return; }
+  const fd = q("[data-fold]"); if (fd) { if (fd.dataset.fold === "open") rv.grpClosed.clear(); else document.querySelectorAll("#rvList [data-grp]").forEach(b => rv.grpClosed.add(b.dataset.grp)); try { localStorage.setItem("4ddash-review-closed", JSON.stringify([...rv.grpClosed])); } catch (x) { /* */ } document.getElementById("rvList").innerHTML = rvListHtml(); return; }
   if (q("#rvSync")) { await rvsSync(true); return; }
   if (q("#rvMainZip")) { if (typeof rvExportMain === "function") await rvExportMain(); return; }
   if (q("#rvRep")) { if (typeof rvReportMenu === "function") rvReportMenu(q("#rvRep")); return; }
@@ -295,7 +329,6 @@ async function rvClick(e) {
 async function rvChange(e) {
   const t = e.target;
   if (t.id === "rvPm") { await rvSelectPm(t.value); }
-  else if (t.id === "rvMode") { rv.view = t.value; try { localStorage.setItem("4ddash-review-view", rv.view); } catch (x) { /* */ } rvRender(); }
   else if (t.id === "rvFile" || t.id === "rvDir") { const files = [...t.files].filter(rvIsPdf); t.value = ""; await rvImport(files); await rvMarksCount(); rvRender(); }
   else if (t.id === "rvSort") { rv.sort = t.value; document.getElementById("rvList").innerHTML = rvListHtml(); }
   else if (t.id === "rvFilter") { rv.filter = t.value; document.getElementById("rvList").innerHTML = rvListHtml(); }

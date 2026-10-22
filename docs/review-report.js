@@ -61,13 +61,13 @@ async function rvReport() {
 
 /* Exportera huvudmappen: senaste revisionen av varje ritning som ZIP, en mapp per delområde. Ren "lagra"-ZIP (ingen komprimering, PDF är redan packat) utan bibliotek. */
 const rvzCrc = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return u8 => { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = t[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }; })();
-async function rvExportMain() {
-  const docs = rvScope().filter(d => !d.old && d.type === "Bygghandling"); if (!docs.length) { rvToast("Huvudmappen är tom"); return; }
+async function rvExportMain(list, label) {
+  const docs = Array.isArray(list) ? list : rvScope().filter(d => !d.old && d.type === "Bygghandling"); if (!docs.length) { rvToast("Inget att exportera"); return; }
   const enc = new TextEncoder(), parts = [], central = [], used = new Set(); let off = 0; const clean = x => String(x).replace(/[\\/:*?"<>|]+/g, "_").trim() || "x";
   const dt = new Date(), dosT = (dt.getHours() << 11) | (dt.getMinutes() << 5) | (dt.getSeconds() >> 1), dosD = ((dt.getFullYear() - 1980) << 9) | ((dt.getMonth() + 1) << 5) | dt.getDate();
   let i = 0;
   for (const d of docs) {
-    i++; rv.msg = `Packar huvudmappen … ${i} av ${docs.length}`; const bx = document.querySelector(".rv-msg"); if (bx) bx.textContent = rv.msg; else rvRender(true);
+    i++; rv.msg = `Packar ${label || "huvudmappen"} … ${i} av ${docs.length}`; const bx = document.querySelector(".rv-msg"); if (bx) bx.textContent = rv.msg; else rvRender(true);
     const b = await rvGet("blobs", d.id); if (!b) continue; const data = new Uint8Array(await b.blob.arrayBuffer());
     let name = clean(rvZoneName(rvZoneOf(d))) + "/" + clean(d.name); while (used.has(name.toLowerCase())) name = name.replace(/(\.pdf)?$/i, "_" + i + "$1"); used.add(name.toLowerCase());
     const nm = enc.encode(name), crc = rvzCrc(data), h = new DataView(new ArrayBuffer(30));
@@ -77,6 +77,6 @@ async function rvExportMain() {
   }
   const cs = central.reduce((a, x) => a + (x.byteLength != null ? x.byteLength : x.length), 0), e = new DataView(new ArrayBuffer(22)); e.setUint32(0, 0x06054b50, true); e.setUint16(8, used.size, true); e.setUint16(10, used.size, true); e.setUint32(12, cs, true); e.setUint32(16, off, true);
   rv.msg = ""; rvRender(true);
-  rvrDl(`huvudmapp_${new Date().toISOString().slice(0, 10)}.zip`, new Blob([...parts, ...central, e.buffer], { type: "application/zip" }), "application/zip");
-  rvToast(`Huvudmappen exporterad: ${used.size} ritningar`);
+  rvrDl(`${label ? rvrSafe(label) : "huvudmapp"}_${new Date().toISOString().slice(0, 10)}.zip`, new Blob([...parts, ...central, e.buffer], { type: "application/zip" }), "application/zip");
+  rvToast(`${label ? "Valda filer" : "Huvudmappen"} exporterad: ${used.size} filer`);
 }
