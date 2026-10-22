@@ -58,7 +58,20 @@ Procyon :  68+2 crane operators+2sennebogen operator+1manitue operator
   // HTML-export
   const dl = page.waitForEvent('download'); await page.click('.dp-html'); const d = await dl;
   const html = fs.readFileSync(await d.path(), 'utf8');
-  if (!/Dagsplan måndag 19 okt 2026/.test(html) || !/Form stödmur linje J/.test(html) || !/Procyon/.test(html)) fail('HTML-exporten saknar innehåll');
+  if (!/Dagsplan måndag 19 okt 2026/.test(html) || !/Procyon/.test(html)) fail('HTML-exporten saknar innehåll ' + [/Dagsplan måndag 19 okt 2026/.test(html), /Form stödmur linje J/.test(html), /Procyon/.test(html)] + html.slice(html.indexOf('<h1>'), html.indexOf('<h1>') + 300));
+  if (/framdrift|Ingen kopplad aktivitet|data-f="ph"/.test(html)) fail('HTML-exporten ska inte ta med aktivitet från tidplan som standard');
+  await page.check('.dp-withact'); const dl2 = page.waitForEvent('download'); await page.click('.dp-html'); const html2 = fs.readFileSync(await (await dl2).path(), 'utf8');
+  if (!/Form stödmur linje J/.test(html2) || /Form stödmur linje J/.test(html) || !/framdrift/.test(html2) || !/data-f="ph"/.test(html2)) fail('Med bockrutan ska aktiviteten från tidplanen följa med');
+  // exporterad HTML: sök, filter, fäll ihop områden
+  { const pg = await browser.newPage(); const pe = []; pg.on('pageerror', e => pe.push(e.message)); await pg.setContent(html2);
+    const r = await pg.evaluate(async () => { const o = {}, $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)], vis = () => $$('.row:not(.hid)').length;
+      o.total = $$('.row').length; o.secs = $$('.ag').length; o.hasTools = !!$('#q') && $$('.chip[data-f]').length > 0;
+      const h = $('.ag h2'); h.click(); o.collapsed = $('.ag').classList.contains('cl') && getComputedStyle($('.ag .rows')).display === 'none'; h.click(); o.opened = getComputedStyle($('.ag .rows')).display !== 'none';
+      $('#ca').click(); o.allCl = $$('.ag.cl').length === o.secs; $('#ea').click(); o.allOp = $$('.ag.cl').length === 0;
+      const q = $('#q'); q.value = 'stödmur'; q.dispatchEvent(new Event('input')); o.search = vis() > 0 && vis() < o.total || o.total === vis(); o.visTxt = $('#vis').textContent;
+      q.value = 'zzzz-finns-inte'; q.dispatchEvent(new Event('input')); o.none = vis() === 0 && $$('.ag:not(.hid)').length === 0; $('#cl').click(); o.reset = vis() === o.total && $('#q').value === '';
+      const c = $('.chip[data-f="ph"]'); c.click(); o.chip = c.classList.contains('on') && vis() <= o.total; c.click(); o.chipOff = vis() === o.total; return o; });
+    if (!r.hasTools || !r.collapsed || !r.opened || !r.allCl || !r.allOp || !r.search || !r.none || !r.reset || !r.chip || !r.chipOff || pe.length) fail('HTML-exportens filter/fäll ihop: ' + JSON.stringify(r) + pe.join('|')); await pg.close(); }
   if (errors.length) fail('sidfel: ' + errors.slice(0, 3));
   console.log('ALLA TESTER OK'); await browser.close(); server.close();
 })().catch(e => { console.error('FEL: ' + e.message); process.exit(1); });
