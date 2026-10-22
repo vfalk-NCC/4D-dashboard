@@ -3273,3 +3273,17 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .rv-lk i { font-style: normal; opacity: .7; }
 .rv-lk small { opacity: .65; }
 .rv-lk:hover { background: var(--accent); color: #fff; }
+
+/* PDF-hubb: verktygshubb (scrollhjulet i helskärm), callout, ritningsstegning */
+.rv-hub { position: fixed; z-index: 10000; width: 2px; height: 2px; pointer-events: none; --dx: 0px; --dy: 0px; }
+.rv-hub-ring { position: absolute; left: -205px; top: -205px; width: 410px; height: 410px; border-radius: 50%; background: radial-gradient(circle, rgba(8,16,40,0) 0 36%, rgba(8,16,40,.8) 37% 100%); backdrop-filter: blur(5px); box-shadow: 0 0 0 1.5px rgba(90,209,255,.65), 0 0 60px rgba(42,123,255,.55), inset 0 0 40px rgba(42,123,255,.35); animation: rvHubIn .16s ease-out; }
+.rv-hub-core { position: absolute; left: calc(-44px + var(--dx)); top: calc(-44px + var(--dy)); width: 88px; height: 88px; border-radius: 50%; background: rgba(8,16,40,.92); border: 1.5px solid #5ad1ff; box-shadow: 0 0 22px rgba(42,123,255,.7); color: #bfe9ff; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 11px; line-height: 1.25; }
+.rv-hub-it { position: absolute; width: 68px; height: 68px; margin: -34px 0 0 -34px; border-radius: 50%; background: rgba(20,34,70,.94); border: 1.5px solid #4aa8ff; color: #dff3ff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; box-shadow: 0 0 14px rgba(42,123,255,.45); transition: transform .08s, background .08s; }
+.rv-hub-it b { font-size: 22px; font-weight: 400; line-height: 1.1; }
+.rv-hub-it.cur { border-color: #fff; }
+.rv-hub-it.on { background: #1f6bff; border-color: #9ae3ff; box-shadow: 0 0 30px rgba(90,209,255,.85); transform: scale(1.2); }
+@keyframes rvHubIn { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.rv-co { display: grid; gap: 6px; padding: 6px 0; font-size: 12px; }
+.rv-co select { margin-left: 4px; }
+.rv-co .rv-sw { margin-left: 3px; }
+.rv-pos { margin-left: 6px; color: var(--muted); white-space: nowrap; }

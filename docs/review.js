@@ -9,7 +9,7 @@
    - Markeringar kan exporteras och läsas in som fil, och som granskningsrapport (HTML med bildutsnitt). */
 
 const RV_DB = "4ddash-review", RV_VER = 1;
-const rv = { pms: [], pm: "", view: (() => { try { return localStorage.getItem("4ddash-review-view") || "main"; } catch (e) { return "main"; } })(), numIdx: new Map(), docs: [], marks: new Map(), q: "", hits: null, showOld: false, sort: "no", grpClosed: new Set(JSON.parse((() => { try { return localStorage.getItem("4ddash-review-closed") || "[]"; } catch (e) { return "[]"; } })())), open: null, nav: [], queue: [], indexing: 0, msg: "", ready: false, filter: "all" };
+const rv = { pms: [], pm: "", view: (() => { try { return localStorage.getItem("4ddash-review-view") || "main"; } catch (e) { return "main"; } })(), numIdx: new Map(), docs: [], marks: new Map(), q: "", hits: null, showOld: false, sort: "no", grpClosed: new Set(JSON.parse((() => { try { return localStorage.getItem("4ddash-review-closed") || "[]"; } catch (e) { return "[]"; } })())), open: null, nav: [], order: [], queue: [], indexing: 0, msg: "", ready: false, filter: "all" };
 const rvEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const rvId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const rvToast = t => { if (typeof modelToast === "function") modelToast(t); else console.info(t); };
@@ -45,7 +45,7 @@ function rvParse(file) {
   if (rm) { out.rev = rm[1].toUpperCase(); base = base.replace(rm[0], " "); }
   else { const tm = /\d[-.\s]([A-Z])$/.exec(base.trim()); if (tm) { out.rev = tm[1]; base = base.trim().slice(0, -2); } }
   base = base.replace(/\s+/g, " ").trim();
-  const nm = /([A-ZÅÄÖa-zåäö]{1,3}[-. ]?\d{1,4}(?:[-.]\d{1,4}){0,3})/.exec(base) || /(\d{2,}(?:[-.]\d{1,4}){1,3})/.exec(base);
+  const nm = /^(\d{5,9})(?!\d)/.exec(base) || /([A-ZÅÄÖa-zåäö]{1,3}[-. ]?\d{1,4}(?:[-.]\d{1,4}){0,3})/.exec(base) || /(\d{2,}(?:[-.]\d{1,4}){1,3})/.exec(base) || /(?<!\d)(\d{5,9})(?!\d)/.exec(base);
   if (nm) { out.no = nm[1].replace(/\s+/g, "").toUpperCase(); out.title = base.replace(nm[1], "").replace(/^[\s\-.:]+|[\s\-.:]+$/g, ""); } else out.title = base;
   const low = raw.toLowerCase(), w = RV_WORDS.find(([, re]) => re.test(low));
   if (w) out.disc = w[0]; else { const pm = /^([A-Za-zÅÄÖ]{1,2})[-_. ]?\d/.exec(raw.trim()); if (pm && RV_PREFIX[pm[1].toUpperCase()]) out.disc = RV_PREFIX[pm[1].toUpperCase()]; }
@@ -79,26 +79,26 @@ const rvIsPdf = f => /\.pdf$/i.test(f.name || "") || f.type === "application/pdf
 /* Släppta filer och mappar (webkitGetAsEntry läser mappar rekursivt). */
 async function rvFilesFromDrop(dt) {
   const out = [], items = dt.items ? [...dt.items] : [];
-  const walk = async en => { if (!en) return; if (en.isFile) { await new Promise(r => en.file(f => { out.push(f); r(); }, r)); } else if (en.isDirectory) { const rd = en.createReader(); let more = true; while (more) { const list = await new Promise(r => rd.readEntries(r, () => r([]))); more = list.length > 0; for (const c of list) await walk(c); } } };
+  const walk = async (en, root) => { if (!en) return; if (en.isFile) { await new Promise(r => en.file(f => { try { f.rvRoot = root || ""; } catch (e) { /* */ } out.push(f); r(); }, r)); } else if (en.isDirectory) { root = root || en.name; const rd = en.createReader(); let more = true; while (more) { const list = await new Promise(r => rd.readEntries(r, () => r([]))); more = list.length > 0; for (const c of list) await walk(c, root); } } };
   if (items.length && items[0].webkitGetAsEntry) { const ents = items.map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean); for (const en of ents) await walk(en); }
   if (!out.length) [...(dt.files || [])].forEach(f => out.push(f));
   return out.filter(rvIsPdf);
 }
 async function rvImport(files) {
   files = files.filter(rvIsPdf); if (!files.length) { rvToast("Inga PDF-filer att läsa in"); return; }
-  const pmId = rv.pm || await rvAutoPm(); let added = 0, dup = 0; rv.msg = `Läser in ${files.length} filer …`; rvRender();
+  const roots = new Set(); let added = 0, dup = 0; rv.msg = `Läser in ${files.length} filer …`; rvRender();
   const have = new Set(rv.docs.map(d => d.name + "|" + d.size));
   for (const f of files) {
     if (have.has(f.name + "|" + f.size)) { dup++; continue; }
     try {
-      const id = rvId(), meta = rvParse(f.name), doc = { id, pm: pmId, name: f.name, size: f.size, added: Date.now(), pages: 0, text: null, thumb: "", fav: false, opened: 0, grp: "", ...meta };
+      const root = f.rvRoot || (f.webkitRelativePath ? f.webkitRelativePath.split("/")[0] : ""), pmId = root ? await rvPmByName(root) : (rv.pm || await rvAutoPm()); if (root) roots.add(root); const id = rvId(), meta = rvParse(f.name), doc = { id, pm: pmId, name: f.name, size: f.size, added: Date.now(), pages: 0, text: null, thumb: "", fav: false, opened: 0, grp: "", ...meta };
       await rvTx(["docs", "blobs"], "readwrite", (d, b) => { d.put(doc); b.put({ id, blob: f }); });
       rv.docs.push(doc); have.add(f.name + "|" + f.size); rv.queue.push(id); added++;
       if (added % 20 === 0) { rv.msg = `Läst in ${added} av ${files.length} …`; rvRender(); }
     } catch (e) { console.warn("Granskning: kunde inte spara", f.name, e); rv.msg = "Kunde inte spara " + f.name + ": " + ((e && e.message) || e); }
   }
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* */ }
-  rvPrep(); rv.msg = `${added} nya ritningar${dup ? `, ${dup} fanns redan` : ""}.`; rvRender(); rvRunQueue();
+  rvPrep(); rv.msg = `${added} nya ritningar${roots.size ? " i paketet " + [...roots].join(", ") : ""}${dup ? `, ${dup} fanns redan` : ""}.`; rvsSoon && rvsSoon(); rvRender(); rvRunQueue();
 }
 /* Bakgrund: antal sidor, miniatyr, textindex och sidhuvud. */
 async function rvRunQueue() {
@@ -126,6 +126,7 @@ async function rvAutoPm() {
   if (!pm) { pm = { id: rvId(), name, created: Date.now() }; await rvPut("pms", pm); rv.pms.push(pm); }
   return pm.id;
 }
+async function rvPmByName(name) { if (!name) return ""; let pm = rv.pms.find(p => p.name === name); if (!pm) { pm = { id: rvId(), name, created: Date.now() }; await rvPut("pms", pm); rv.pms.push(pm); } return pm.id; }
 async function rvNewPm(name, silent) {
   name = name || (typeof dashPrompt === "function" ? await dashPrompt("Namn på paketet (t.ex. PM 2026-10 Fläkthuset)", "PM " + new Date().toISOString().slice(0, 10)) : prompt("Namn på paketet", "PM " + new Date().toISOString().slice(0, 10)));
   if (!name || !String(name).trim()) return; const pm = { id: rvId(), name: String(name).trim(), created: Date.now() };
@@ -139,11 +140,13 @@ async function rvDeletePm() {
   await rvDel("pms", pm.id); rv.pms = rv.pms.filter(p => p.id !== pm.id); rv.open = null; await rvSelectPm(""); rvPrep(); await rvMarksCount(); rvRender();
 }
 async function rvDeleteDoc(id, quiet) {
+  { const d0 = rv.docs.find(d => d.id === id); if (d0 && typeof rvsTombAdd === "function") rvsTombAdd("doc:" + rvSid(d0)); }
   const marks = await rvAll("marks", "doc", id); for (const m of marks) await rvDel("marks", m.id);
   await rvDel("blobs", id); await rvDel("docs", id); rv.docs = rv.docs.filter(d => d.id !== id); rv.marks.delete(id); if (rv.open === id) rv.open = null;
   if (!quiet) { rvPrep(); rvRender(); }
 }
-async function rvSaveDoc(d) { await rvPut("docs", d); }
+async function rvSaveDoc(d) { d.upd = Date.now(); await rvPut("docs", d); if (typeof rvsOn === "function" && rvsOn()) { try { clearTimeout(rvsSaveT); } catch (e) { /* */ } rvsSaveT = setTimeout(() => rvsSync(false), 5000); } }
+let rvsSaveT = 0;
 
 /* ---- Hubb: handlingstyp, delområde och ritningslänkar ------------------------------------------------------------------------------- */
 /* Handlingstyp: Bygghandling (ritningar), PM, Gällande handlingar (förteckningar, beskrivningar, kontrollplaner …). Gissas ur filnamn och första sidan, kan ändras för hand. */
@@ -177,14 +180,14 @@ const rvZoneOf = d => d.zone || d.zoneAuto || "";
 const rvNorm = s => String(s || "").toUpperCase().replace(/[^A-Z0-9ÅÄÖ]/g, "");
 function rvNumbers(text) {
   const out = new Set(), t = String(text || "");
-  for (const m of t.matchAll(/[A-ZÅÄÖ0-9][A-ZÅÄÖ0-9]*(?:[-._][A-ZÅÄÖ0-9]+){1,5}|[A-ZÅÄÖ]{1,3}\d{3,}/gi)) { const raw = m[0], parts = raw.split(/[-._]/); out.add(rvNorm(raw)); if (parts.length > 2) out.add(rvNorm(parts.slice(0, -1).join("-"))); }
+  for (const m of t.matchAll(/[A-ZÅÄÖ0-9][A-ZÅÄÖ0-9]*(?:[-._][A-ZÅÄÖ0-9]+){1,5}|[A-ZÅÄÖ]{1,3}\d{3,}|(?<![A-Za-z0-9])\d{5,9}(?![A-Za-z0-9])/gi)) { const raw = m[0], parts = raw.split(/[-._]/); out.add(rvNorm(raw)); if (parts.length > 2) out.add(rvNorm(parts.slice(0, -1).join("-"))); }
   return out;
 }
 function rvPrep() {
   rvMarkOld(rv.docs);
   const known = rvZoneKnown(), freq = new Map(); rv.docs.forEach(d => new Set([...(d.name + " " + (d.title || "")).matchAll(/(?<![\d])([1-9]\d{2})[A-Za-z]?(?![\d])/g)].map(m => m[1])).forEach(c => freq.set(c, (freq.get(c) || 0) + 1)));
   rv.docs.forEach(d => { d.zoneAuto = rvZoneAuto(d, known, freq); d.type = rvTypeOf(d); });
-  rv.numIdx = new Map(); rv.docs.forEach(d => { const n = rvNorm(d.no); if (n.length < 4 || !/\d/.test(n)) return; const cur = rv.numIdx.get(n); if (!cur || (cur.old && !d.old)) rv.numIdx.set(n, d); });
+  rv.numIdx = new Map(); rv.docs.forEach(d => { const keys = new Set([rvNorm(d.no)]); String(d.name).replace(/\.pdf$/i, "").split(/[\s_]+/).forEach(tk => rvNumbers(tk).forEach(k => keys.add(k))); keys.forEach(n => { if (n.length < 4 || !/\d/.test(n) || /^20\d{6}$/.test(n)) return; const cur = rv.numIdx.get(n); if (!cur || (cur.old && !d.old)) rv.numIdx.set(n, d); }); });
   rv.refs = null;
 }
 const rvLinkDoc = (norm, from) => { const d = rv.numIdx.get(norm); return d && (!from || d.key !== from.key) ? d : null; };
@@ -213,22 +216,24 @@ function rvSearch(q) {
 async function rvMarksCount(docs) { const all = await rvAll("marks"); const m = new Map(); all.forEach(x => { const o = m.get(x.doc) || { n: 0, open: 0 }; o.n++; if (x.status === "open") o.open++; m.set(x.doc, o); }); rv.mc = m; }
 function rvListHtml() {
   const docs = rvScope().filter(d => (rv.showOld && rv.view !== "main") || !d.old).filter(d => rv.view !== "main" || d.type === "Bygghandling").filter(d => rv.filter === "fav" ? d.fav : rv.filter === "open" ? ((rv.mc && rv.mc.get(d.id)) || { open: 0 }).open > 0 : true);
+  if (rv.hits) rv.order = rv.hits.map(h => h.d.id);
   if (rv.hits) return rv.hits.length ? rv.hits.map(h => `<div class="rv-hit"><button class="rv-doc" data-open="${h.d.id}"><b>${rvEsc(h.d.no || h.d.name)}</b> ${rvEsc(h.d.title)}${h.d.rev ? ` <i class="rv-rev">rev ${rvEsc(h.d.rev)}</i>` : ""}</button>${h.pages.map(p => `<button class="rv-snip" data-open="${h.d.id}" data-page="${p.p}" data-hl="${rvEsc(rv.q)}"><u>s.${p.p}</u> ${rvEsc(p.s)}</button>`).join("")}${h.n > h.pages.length ? `<small>… ${h.n - h.pages.length} träffar till</small>` : ""}</div>`).join("") : `<p class="rv-empty">Inga träffar på "${rvEsc(rv.q)}".</p>`;
   if (!docs.length) return `<p class="rv-empty">${rv.docs.length ? (rv.view === "main" ? "Inga ritningar att visa i huvudmappen – byt vy ovan för att se PM och övriga handlingar." : "Inget att visa med det här filtret.") : "Släpp PDF-filer (eller en hel mapp) här så sorteras de upp automatiskt."}</p>`;
+  rv.order = [];
   const favs = docs.filter(d => d.fav), recent = docs.filter(d => d.opened).sort((a, b) => b.opened - a.opened).slice(0, 4);
-  const row = d => { const mc = (rv.mc && rv.mc.get(d.id)) || null, pk = rv.pms.find(p => p.id === d.pm); return `<div class="rv-row${rv.open === d.id ? " on" : ""}${d.old ? " old" : ""}" data-doc="${d.id}"><button class="rv-doc" data-open="${d.id}" title="${rvEsc(d.name)}${pk ? " · " + rvEsc(pk.name) : ""}">${d.thumb ? `<img class="rv-th" src="${d.thumb}" alt="">` : `<span class="rv-th ph"></span>`}<span class="rv-t"><b>${rvEsc(d.no || d.name.replace(/\.pdf$/i, ""))}</b><small>${rvEsc(d.title || "")}</small></span></button>${d.rev ? `<span class="rv-rev" title="Revision">${rvEsc(d.rev)}</span>` : ""}${d.old ? `<span class="rv-badge old" title="Det finns en nyare revision">ersatt</span>` : d.revs > 1 ? `<span class="rv-badge new" title="${d.revs} revisioner finns">ny rev</span>` : ""}${mc && mc.n ? `<span class="rv-badge ${mc.open ? "open" : "ok"}" title="${mc.open} öppna av ${mc.n} markeringar">${mc.open || "✓"}</span>` : ""}<button class="rv-star${d.fav ? " on" : ""}" data-fav="${d.id}" title="Favorit (snabbåtkomst ute på bygget)" aria-label="Favorit">★</button><button class="rv-more" data-more="${d.id}" title="Fler val" aria-label="Fler val">⋯</button></div>`; };
+  const row = (d, noOrd) => { if (!noOrd) rv.order.push(d.id); const mc = (rv.mc && rv.mc.get(d.id)) || null, pk = rv.pms.find(p => p.id === d.pm); return `<div class="rv-row${rv.open === d.id ? " on" : ""}${d.old ? " old" : ""}" data-doc="${d.id}"><button class="rv-doc" data-open="${d.id}" title="${rvEsc(d.name)}${pk ? " · " + rvEsc(pk.name) : ""}">${d.thumb ? `<img class="rv-th" src="${d.thumb}" alt="">` : `<span class="rv-th ph"></span>`}<span class="rv-t"><b>${rvEsc(d.no || d.name.replace(/\.pdf$/i, ""))}</b><small>${rvEsc(d.title || "")}</small></span></button>${d.rev ? `<span class="rv-rev" title="Revision">${rvEsc(d.rev)}</span>` : ""}${d.old ? `<span class="rv-badge old" title="Det finns en nyare revision">ersatt</span>` : d.revs > 1 ? `<span class="rv-badge new" title="${d.revs} revisioner finns">ny rev</span>` : ""}${mc && mc.n ? `<span class="rv-badge ${mc.open ? "open" : "ok"}" title="${mc.open} öppna av ${mc.n} markeringar">${mc.open || "✓"}</span>` : ""}<button class="rv-star${d.fav ? " on" : ""}" data-fav="${d.id}" title="Favorit (snabbåtkomst ute på bygget)" aria-label="Favorit">★</button><button class="rv-more" data-more="${d.id}" title="Fler val" aria-label="Fler val">⋯</button></div>`; };
   const zoneKey = d => rvZoneOf(d), pkgName = d => (rv.pms.find(p => p.id === d.pm) || { name: "Utan paket" }).name;
   const LV = { type: d => d.type, zone: d => zoneKey(d), disc: d => d.grp || d.disc || "Övrigt", pkg: pkgName };
   const plan = { main: ["zone"], type: ["type", "zone"], zone: ["zone", "type"], disc: ["disc"], pkg: ["pkg", "type"] }[rv.view] || ["zone"];
   const label = (lv, k) => lv === "zone" ? rvZoneName(k) : k;
   const order = (lv, keys) => keys.sort((a, b) => lv === "type" ? RV_TYPES.indexOf(a) - RV_TYPES.indexOf(b) : (lv === "zone" ? (!a) - (!b) : (a === "Övrigt") - (b === "Övrigt")) || label(lv, a).localeCompare(label(lv, b), "sv", { numeric: true }));
   const tree = (list, lvls, path) => {
-    if (!lvls.length) return list.sort(rvCmp).map(row).join("");
+    if (!lvls.length) return list.sort(rvCmp).map(d => row(d)).join("");
     const lv = lvls[0], by = new Map(); list.forEach(d => { const k = LV[lv](d) || ""; (by.get(k) || by.set(k, []).get(k)).push(d); });
     return order(lv, [...by.keys()]).map(k => { const sub = by.get(k), id = path + "/" + k, closed = rv.grpClosed.has(id), depth = path.split("/").length - 1; return `<div class="rv-grp rv-d${depth}"><button class="rv-gh" data-grp="${rvEsc(id)}">${closed ? "▸" : "▾"} ${rvEsc(label(lv, k))} <em>${sub.length}</em></button>${closed ? "" : tree(sub, lvls.slice(1), id)}</div>`; }).join("");
   };
   const mainHint = rv.view === "main" ? `<div class="rv-note">Huvudmapp: senaste revisionen av varje ritning${rv.docs.some(d => d.old) ? `, ${rv.docs.filter(d => d.old).length} äldre revisioner ligger kvar under "ersatta"` : ""}.</div>` : "";
-  return mainHint + (favs.length || recent.length ? `<div class="rv-grp"><div class="rv-gh">★ Snabbåtkomst</div>${[...favs, ...recent.filter(r => !r.fav)].map(row).join("")}</div>` : "") + tree(docs, plan, "");
+  return mainHint + (favs.length || recent.length ? `<div class="rv-grp"><div class="rv-gh">★ Snabbåtkomst</div>${[...favs, ...recent.filter(r => !r.fav)].map(d => row(d, true)).join("")}</div>` : "") + tree(docs, plan, "");
 }
 function rvHtml() {
   const pm = rv.pms.find(p => p.id === rv.pm), nOld = rvScope().filter(d => d.old).length, tot = rvScope().length;
@@ -241,7 +246,7 @@ function rvHtml() {
       <div class="rv-tools"><input type="search" id="rvQ" placeholder="Sök i filnamn, rubriker och texten i ritningarna …" value="${rvEsc(rv.q)}" aria-label="Sök"></div>
       <div class="rv-tools"><select id="rvSort" aria-label="Sortera"><option value="no"${rv.sort === "no" ? " selected" : ""}>Ritningsnr</option><option value="name"${rv.sort === "name" ? " selected" : ""}>Filnamn</option><option value="date"${rv.sort === "date" ? " selected" : ""}>Senast tillagd</option><option value="rev"${rv.sort === "rev" ? " selected" : ""}>Revision</option></select><select id="rvFilter" aria-label="Visa"><option value="all"${rv.filter === "all" ? " selected" : ""}>Alla</option><option value="fav"${rv.filter === "fav" ? " selected" : ""}>Favoriter</option><option value="open"${rv.filter === "open" ? " selected" : ""}>Med öppna markeringar</option></select>${nOld && rv.view !== "main" ? `<label class="rv-chk" title="Visa även ritningar som ersatts av en nyare revision"><input type="checkbox" id="rvOld"${rv.showOld ? " checked" : ""}> ersatta (${nOld})</label>` : ""}</div>
       <div class="rv-list" id="rvList">${rvListHtml()}</div>
-      <div class="rv-foot">${tot} ritningar${rv.store ? ` · <span title="Webbläsarens lagring för den här sidan på den här enheten (IndexedDB): PDF:erna, miniatyrer, textindex och markeringar. Siffran efter \"av\" är utrymmet webbläsaren tillåter, inte något som är fullt. Ingenting ligger i Trimble Connect, och rensar du webbläsarens webbplatsdata försvinner det.">lagrat på den här enheten: ${rv.store.replace(" av ", " (utrymme ")}${rv.store.includes(" av ") ? ")" : ""}</span>` : ""}${mcOpen ? ` · <b>${mcOpen}</b> öppna markeringar` : ""} <button id="rvMainZip" title="Senaste revisionen av alla ritningar som ZIP, en mapp per delområde">Exportera huvudmapp</button> <button id="rvRep" title="Granskningsrapport (HTML) och markeringar som fil">Rapport / export …</button></div></aside>
+      <div class="rv-foot">${tot} ritningar${rv.store ? ` · <span title="Webbläsarens lagring för den här sidan på den här enheten (IndexedDB): PDF:erna, miniatyrer, textindex och markeringar. Siffran efter \"av\" är utrymmet webbläsaren tillåter, inte något som är fullt. Ingenting ligger i Trimble Connect, och rensar du webbläsarens webbplatsdata försvinner det.">lagrat på den här enheten: ${rv.store.replace(" av ", " (utrymme ")}${rv.store.includes(" av ") ? ")" : ""}</span>` : ""}${mcOpen ? ` · <b>${mcOpen}</b> öppna markeringar` : ""} ${typeof rvsOn === "function" && rvsOn() ? `<button id="rvSync" title="Synka PDF:er, markeringar och inställningar med 4D-data (delas med alla som använder projektet)">Synka${rv.remoteOnly ? ` (${rv.remoteOnly} nya)` : ""}</button> ` : ""}<button id="rvMainZip" title="Senaste revisionen av alla ritningar som ZIP, en mapp per delområde">Exportera huvudmapp</button> <button id="rvRep" title="Granskningsrapport (HTML) och markeringar som fil">Rapport / export …</button></div></aside>
     <section class="rv-main" id="rvMain">${rv.open ? "" : `<div class="rv-hello"><h3>${pm ? rvEsc(pm.name) : "PDF-hubb"}</h3><p>Välj en ritning i listan för att öppna den. I visaren kan du markera, kommentera, mäta, söka i texten och jämföra revisioner. Allt sparas på den här enheten, så ritningarna fungerar även utan nät ute på bygget.</p><ul><li>Släpp alla PDF:er (ritningar, PM, förteckningar) på ytan till vänster – de sorteras på handlingstyp, delområde, disciplin, ritningsnummer och revision.</li><li>Huvudmappen visar senaste revisionen av varje ritning. Ritningsnummer som nämns i en ritning eller ett PM blir länkar.</li><li>★ lägger en ritning under Snabbåtkomst.</li><li>Sökningen går i filnamn och i själva texten i PDF:erna.</li></ul></div>`}</section>
   </div>`;
 }
@@ -272,6 +277,7 @@ async function rvInit() {
   }
   try { if (navigator.storage && navigator.storage.estimate) { const e = await navigator.storage.estimate(); if (e && e.usage != null) rv.store = (e.usage / 1048576 >= 1024 ? (e.usage / 1073741824).toFixed(1) + " GB" : Math.round(e.usage / 1048576) + " MB") + (e.quota ? " av " + (e.quota / 1073741824 >= 1 ? (e.quota / 1073741824).toFixed(0) + " GB" : Math.round(e.quota / 1048576) + " MB") : ""); } } catch (e) { /* */ }
   rvRender(); if (rv.queue.length) rvRunQueue();
+  if (typeof rvsOn === "function" && rvsOn()) setTimeout(() => rvsSync(false), 2500);
   [3000, 9000].forEach(ms => setTimeout(() => { const k = rvZoneKnown(), z = k ? k.codes.join(",") : ""; if (z !== rv.zsig) rvRender(true); }, ms));
 }
 async function rvClick(e) {
@@ -282,6 +288,7 @@ async function rvClick(e) {
   const fv = q("[data-fav]"); if (fv) { const d = rv.docs.find(x => x.id === fv.dataset.fav); if (d) { d.fav = !d.fav; await rvSaveDoc(d); rvRender(true); const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); } return; }
   const mo = q("[data-more]"); if (mo) { rvDocMenu(mo, mo.dataset.more); return; }
   const g = q("[data-grp]"); if (g) { const k = g.dataset.grp; if (rv.grpClosed.has(k)) rv.grpClosed.delete(k); else rv.grpClosed.add(k); try { localStorage.setItem("4ddash-review-closed", JSON.stringify([...rv.grpClosed])); } catch (x) { /* */ } document.getElementById("rvList").innerHTML = rvListHtml(); return; }
+  if (q("#rvSync")) { await rvsSync(true); return; }
   if (q("#rvMainZip")) { if (typeof rvExportMain === "function") await rvExportMain(); return; }
   if (q("#rvRep")) { if (typeof rvReportMenu === "function") rvReportMenu(q("#rvRep")); return; }
 }

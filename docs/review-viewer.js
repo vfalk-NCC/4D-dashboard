@@ -5,7 +5,7 @@
 
 const RVV_COLORS = ["#e5484d", "#f59e0b", "#2da44e", "#0b5fff", "#8250df", "#1f2328"];
 const RVV_STATUS = { open: ["Öppen", "#e5484d"], done: ["Åtgärdad", "#f59e0b"], ok: ["Godkänd", "#2da44e"] };
-const RVV_TOOLS = [["hand", "✋", "Flytta/markera – dra för att panorera, klicka på en markering för att välja den"], ["pin", "📍", "Kommentar (pin)"], ["arrow", "➜", "Pil"], ["rect", "▭", "Rektangel"], ["hl", "▬", "Överstrykning"], ["cloud", "☁", "Revisionsmoln"], ["pen", "✎", "Penna"], ["text", "T", "Text på ritningen"], ["measure", "📏", "Mät avstånd (kräver skala)"], ["calib", "⚖", "Sätt skala: rita en linje med känd längd"]];
+const RVV_TOOLS = [["hand", "✋", "Flytta/markera – dra för att panorera, klicka på en markering för att välja den"], ["pin", "📍", "Kommentar (pin)"], ["arrow", "➜", "Pil"], ["rect", "▭", "Rektangel"], ["hl", "▬", "Överstrykning"], ["cloud", "☁", "Revisionsmoln"], ["pen", "✎", "Penna"], ["text", "T", "Text på ritningen"], ["callout", "💬", "Callout: klicka där den ska peka – dra sedan bubblan och spetsen dit du vill"], ["measure", "📏", "Mät avstånd (kräver skala)"], ["calib", "⚖", "Sätt skala: rita en linje med känd längd"]];
 const rvv = { id: "", doc: null, pdf: null, pdfs: new Map(), num: 1, zoom: 1, fitMode: "w", tool: "hand", color: RVV_COLORS[0], marks: [], sel: null, undo: [], redo: [], W: 0, H: 0, tok: 0, hl: "", hlRects: [], cmp: null, cmpDoc: null, drag: null, ptrs: new Map(), pinch: null, vp1: null, fs: false };
 const rvvMarks = () => rvv.marks.filter(m => m.page === rvv.num);
 const rvvFmtLen = m => { const d = rvv.doc && rvv.doc.scaleW; if (!d || !rvv.W) return ""; const [a, b] = m.pts, len = Math.hypot((b[0] - a[0]) * rvv.W, (b[1] - a[1]) * rvv.H) / rvv.W * d; return (len >= 100 ? len.toFixed(1) : len >= 10 ? len.toFixed(2) : len.toFixed(3)).replace(".", ",") + " m"; };
@@ -17,7 +17,15 @@ function rvvCloud(ctx, x, y, w, h) {
     for (let i = 0; i < n; i++) { const p0 = [a[0] + dx * i / n, a[1] + dy * i / n], p1 = [a[0] + dx * (i + 1) / n, a[1] + dy * (i + 1) / n], mx = (p0[0] + p1[0]) / 2 + nx * r * 1.1, my = (p0[1] + p1[1]) / 2 + ny * r * 1.1; ctx.quadraticCurveTo(mx, my, p1[0], p1[1]); } }
   ctx.closePath();
 }
+const rvvMeasCtx = document.createElement("canvas").getContext("2d");
+/* Callout: bubblan (bx,by = övre vänstra hörnet) och spetsen (x,y) sparas var för sig, normaliserade; textstorleken följer sidans bredd. */
+function rvvCoBox(m, W, H) {
+  const fp = Math.max(7, (m.fs || 13) * W / 900), lines = String(m.text || " ").split("\n"), pad = fp * 0.7; rvvMeasCtx.font = `${fp}px Arial`;
+  const w = Math.max(...lines.map(l => rvvMeasCtx.measureText(l || " ").width)) + pad * 2, h = lines.length * fp * 1.3 + pad * 1.4;
+  return { x: m.bx * W, y: m.by * H, w, h, fp, pad, lines };
+}
 function rvvBBox(m, W, H) {
+  if (m.type === "callout") { const b = rvvCoBox(m, W, H), x = Math.min(b.x, m.x * W), y = Math.min(b.y, m.y * H); return { x, y, w: Math.max(b.x + b.w, m.x * W) - x, h: Math.max(b.y + b.h, m.y * H) - y }; }
   if (m.type === "pin") return { x: m.x * W - 12, y: m.y * H - 12, w: 24, h: 24 };
   if (m.pts && m.pts.length) { const xs = m.pts.map(p => p[0] * W), ys = m.pts.map(p => p[1] * H), x = Math.min(...xs), y = Math.min(...ys); return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }; }
   if (m.type === "text") { const lines = String(m.text || "Text").split("\n"), w = Math.max(...lines.map(l => l.length)) * 7 + 12; return { x: m.x * W, y: m.y * H, w, h: lines.length * 17 + 8 }; }
@@ -37,6 +45,14 @@ function rvvDraw(ctx, marks, W, H, k, o = {}) {
     else if (m.type === "pen" && m.pts) { ctx.beginPath(); m.pts.forEach((p, i) => (i ? ctx.lineTo(p[0] * W, p[1] * H) : ctx.moveTo(p[0] * W, p[1] * H))); ctx.stroke(); }
     else if (m.type === "measure" && m.pts) { const [a, b] = m.pts, x0 = a[0] * W, y0 = a[1] * H, x1 = b[0] * W, y1 = b[1] * H, an = Math.atan2(y1 - y0, x1 - x0), nx = -Math.sin(an) * 6, ny = Math.cos(an) * 6; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.moveTo(x0 - nx, y0 - ny); ctx.lineTo(x0 + nx, y0 + ny); ctx.moveTo(x1 - nx, y1 - ny); ctx.lineTo(x1 + nx, y1 + ny); ctx.stroke(); const lab = (o.len || rvvFmtLen)(m) || "ej skala"; ctx.font = "bold 12px Arial"; const tw = ctx.measureText(lab).width + 10, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2; ctx.fillStyle = "#fff"; ctx.fillRect(cx - tw / 2, cy - 10, tw, 20); ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.strokeRect(cx - tw / 2, cy - 10, tw, 20); ctx.fillStyle = col; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(lab, cx, cy + 0.5); }
     else if (m.type === "calib" && m.pts) { /* hjälplinje, ritas bara tillfälligt */ }
+    else if (m.type === "callout") {
+      const b = rvvCoBox(m, W, H), ax = m.x * W, ay = m.y * H, nx = Math.max(b.x, Math.min(b.x + b.w, ax)), ny = Math.max(b.y, Math.min(b.y + b.h, ay)), r = Math.min(8, b.h / 3);
+      ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(ax, ay); ctx.stroke(); ctx.beginPath(); ctx.arc(ax, ay, 4.5, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(b.x + r, b.y); ctx.arcTo(b.x + b.w, b.y, b.x + b.w, b.y + b.h, r); ctx.arcTo(b.x + b.w, b.y + b.h, b.x, b.y + b.h, r); ctx.arcTo(b.x, b.y + b.h, b.x, b.y, r); ctx.arcTo(b.x, b.y, b.x + b.w, b.y, r); ctx.closePath();
+      ctx.fillStyle = m.fill == null ? "#ffffff" : m.fill; ctx.fill(); ctx.stroke();
+      ctx.fillStyle = m.tcol || "#1f2328"; ctx.font = `${b.fp}px Arial`; ctx.textAlign = "left"; ctx.textBaseline = "top"; b.lines.forEach((l, i) => ctx.fillText(l, b.x + b.pad, b.y + b.pad * 0.7 + i * b.fp * 1.3));
+      if (sel) { ctx.strokeStyle = "#0b5fff"; ctx.fillStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ax, ay, 8, 0, 7); ctx.fill(); ctx.stroke(); }
+    }
     else if (m.type === "text") { const b = rvvBBox(m, W, H), lines = String(m.text || "Text").split("\n"); ctx.fillStyle = "#fff"; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.lineWidth = 1.5; ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.fillStyle = col; ctx.font = "13px Arial"; ctx.textAlign = "left"; ctx.textBaseline = "top"; lines.forEach((l, i) => ctx.fillText(l, b.x + 6, b.y + 5 + i * 17)); }
     ctx.globalAlpha = 1;
     if (sel) { const b = rvvBBox(m, W, H); ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = "#0b5fff"; ctx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8); ctx.setLineDash([]); }
@@ -49,6 +65,7 @@ function rvvHit(px, py) {
   const W = rvv.W, H = rvv.H;
   for (const m of [...rvvMarks()].reverse()) {
     if (m.type === "pin") { if (Math.hypot(px - m.x * W, py - m.y * H) <= 15) return m; continue; }
+    if (m.type === "callout") { const b = rvvCoBox(m, W, H); if (Math.hypot(px - m.x * W, py - m.y * H) <= 12 || (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h)) return m; continue; }
     if ((m.type === "arrow" || m.type === "measure") && m.pts) { if (rvvDist(px, py, [m.pts[0][0] * W, m.pts[0][1] * H], [m.pts[1][0] * W, m.pts[1][1] * H]) <= 9) return m; continue; }
     if (m.type === "pen" && m.pts) { for (let i = 1; i < m.pts.length; i++) if (rvvDist(px, py, [m.pts[i - 1][0] * W, m.pts[i - 1][1] * H], [m.pts[i][0] * W, m.pts[i][1] * H]) <= 8) return m; continue; }
     const b = rvvBBox(m, W, H), edge = m.type === "rect" || m.type === "cloud";
@@ -61,7 +78,7 @@ function rvvHit(px, py) {
 /* ---- Öppna ritning ------------------------------------------------------------------------------------------------------------------------------------ */
 async function rvOpenDoc(id, opt = {}) {
   const doc = rv.docs.find(d => d.id === id), main = document.getElementById("rvMain"); if (!doc || !main) return;
-  if (!opt.again) { doc.opened = Date.now(); rvSaveDoc(doc).catch(() => {}); }
+  if (!opt.again) { doc.opened = Date.now(); rvPut("docs", doc).catch(() => {}); }
   rv.open = id; rvv.doc = doc; rvv.id = id; rvv.num = Math.max(1, opt.page || (rvv.id === id && opt.again ? rvv.num : 1)); rvv.hl = opt.hl || ""; rvv.cmp = null; rvv.cmpDoc = null; rvv.sel = null; rvv.undo = []; rvv.redo = [];
   rvv.zoom = opt.again ? rvv.zoom : 1; document.querySelectorAll(".rv-row").forEach(r => r.classList.toggle("on", r.dataset.doc === id));
   main.innerHTML = `<div class="rv-view"><div class="rv-loading"><span class="rv-spin"></span> Öppnar ${rvEsc(doc.name)} …</div></div>`; document.querySelector(".rv-wrap") && document.querySelector(".rv-wrap").classList.add("has-doc");
@@ -74,7 +91,7 @@ async function rvOpenDoc(id, opt = {}) {
 function rvvBuild(main) {
   const d = rvv.doc, older = rv.docs.filter(x => x.key === d.key && x.id !== d.id);
   main.innerHTML = `<div class="rv-view" id="rvView"><div class="rv-bar"><button data-v="back" class="rv-backb" title="Tillbaka till listan">‹ Lista</button>${rv.nav.length ? `<button data-v="navback" title="Tillbaka till föregående ritning">↩ ${rvEsc((rv.docs.find(x => x.id === rv.nav[rv.nav.length - 1].id) || {}).no || "Tillbaka")}</button>` : ""}<b class="rv-title" title="${rvEsc(d.name)}">${rvEsc(d.no || d.name)} <small>${rvEsc(d.title)}</small>${d.rev ? ` <i class="rv-rev">rev ${rvEsc(d.rev)}</i>` : ""}</b>
-    <span class="rv-grpb"><button data-v="prev" title="Föregående sida (←)">‹</button><input id="rvPageIn" type="number" min="1" max="${rvv.pdf.numPages}" value="${rvv.num}" aria-label="Sida"><span>/ ${rvv.pdf.numPages}</span><button data-v="next" title="Nästa sida (→)">›</button></span>
+    <span class="rv-grpb"><button data-v="pdoc" title="Föregående ritning i listan (Skift + ←)">⏮</button><button data-v="prev" title="Föregående sida (←). På första sidan: föregående ritning">‹</button><input id="rvPageIn" type="number" min="1" max="${rvv.pdf.numPages}" value="${rvv.num}" aria-label="Sida"><span>/ ${rvv.pdf.numPages}</span><button data-v="next" title="Nästa sida (→). På sista sidan: nästa ritning">›</button><button data-v="ndoc" title="Nästa ritning i listan (Skift + →)">⏭</button><small class="rv-pos">${rv.order.indexOf(rvv.id) >= 0 ? `ritning ${rv.order.indexOf(rvv.id) + 1}/${rv.order.length}` : ""}</small></span>
     <span class="rv-grpb"><button data-v="zout" title="Zooma ut (−)">−</button><button data-v="fit" title="Anpassa till bredden / hela sidan">⤢</button><button data-v="zin" title="Zooma in (+)">＋</button><span id="rvZ">100 %</span></span>
     <span class="rv-grpb rv-tl">${RVV_TOOLS.map(([k, ic, t]) => `<button data-tool="${k}" class="${rvv.tool === k ? "on" : ""}" title="${rvEsc(t)}">${ic}</button>`).join("")}</span>
     <span class="rv-grpb">${RVV_COLORS.map(c => `<button class="rv-sw${rvv.color === c ? " on" : ""}" data-color="${c}" style="background:${c}" title="Färg" aria-label="Färg"></button>`).join("")}</span>
@@ -89,20 +106,23 @@ function rvvWire() {
     const b = e.target.closest("button"); if (!b) return; const a = b.dataset.v;
     if (b.dataset.tool) { rvv.tool = b.dataset.tool; v.querySelectorAll("[data-tool]").forEach(x => x.classList.toggle("on", x.dataset.tool === rvv.tool)); rvvCursor(); return; }
     if (b.dataset.color) { rvv.color = b.dataset.color; v.querySelectorAll("[data-color]").forEach(x => x.classList.toggle("on", x.dataset.color === rvv.color)); const m = rvv.marks.find(x => x.id === rvv.sel); if (m) { rvvMod(m, { color: rvv.color }); } return; }
-    if (a === "prev") rvvGo(rvv.num - 1); else if (a === "next") rvvGo(rvv.num + 1); else if (a === "zin") rvvZoom(rvv.zoom * 1.25); else if (a === "zout") rvvZoom(rvv.zoom / 1.25);
+    if (a === "pdoc") rvvDocStep(-1); else if (a === "ndoc") rvvDocStep(1); else if (a === "prev") rvvGo(rvv.num - 1); else if (a === "next") rvvGo(rvv.num + 1); else if (a === "zin") rvvZoom(rvv.zoom * 1.25); else if (a === "zout") rvvZoom(rvv.zoom / 1.25);
     else if (a === "fit") { rvv.fitMode = rvv.fitMode === "w" ? "p" : "w"; rvv.zoom = 1; rvvRender(); } else if (a === "undo") rvvUndo(); else if (a === "redo") rvvRedo();
     else if (a === "side") { v.classList.toggle("no-side"); setTimeout(() => rvvRender(), 60); } else if (a === "fs") rvvFs();
     else if (a === "cmp") rvvCompareMenu(b); else if (a === "navback") rvvNavBack(); else if (a === "back") { rv.open = null; rv.nav = []; document.querySelector(".rv-wrap").classList.remove("has-doc"); const m = document.getElementById("rvMain"); rvRender(); }
   };
   document.getElementById("rvPageIn").onchange = e => rvvGo(Number(e.target.value));
-  st.addEventListener("wheel", e => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); const r = st.getBoundingClientRect(); rvvZoom(rvv.zoom * Math.exp(-e.deltaY * 0.0022), e.clientX - r.left, e.clientY - r.top); } }, { passive: false });
+  st.addEventListener("contextmenu", e => { if (rvv.fs) e.preventDefault(); });
+  st.addEventListener("mousedown", e => { if (e.button === 1 && rvv.fs) e.preventDefault(); });
+  st.addEventListener("wheel", e => { if (e.ctrlKey || e.metaKey || rvv.fs) { e.preventDefault(); const r = st.getBoundingClientRect(); rvvZoom(rvv.zoom * Math.exp(-e.deltaY * 0.0022), e.clientX - r.left, e.clientY - r.top); } }, { passive: false });
   st.addEventListener("pointerdown", rvvDown); st.addEventListener("pointermove", rvvMove); st.addEventListener("pointerup", rvvUp); st.addEventListener("pointercancel", rvvUp);
   st.addEventListener("dblclick", e => { if (rvv.tool === "hand" && !rvvHit(...rvvLocal(e))) { rvv.zoom = rvv.zoom > 1.05 ? 1 : 2.2; rvvZoom(rvv.zoom, e.clientX - st.getBoundingClientRect().left, e.clientY - st.getBoundingClientRect().top); } });
   rvvCursor();
 }
 const rvvLocal = e => { const r = document.getElementById("rvOv").getBoundingClientRect(); return [(e.clientX - r.left) * (rvv.W / r.width), (e.clientY - r.top) * (rvv.H / r.height)]; };
 function rvvCursor() { const st = document.getElementById("rvStage"); if (st) st.style.cursor = rvv.tool === "hand" ? "grab" : "crosshair"; }
-function rvvGo(n) { n = Math.max(1, Math.min(rvv.pdf.numPages, Math.round(n) || 1)); if (n === rvv.num) { const i = document.getElementById("rvPageIn"); if (i) i.value = n; return; } rvv.num = n; rvv.sel = null; const i = document.getElementById("rvPageIn"); if (i) i.value = n; rvvRender(true); rvvMarksPane(); }
+function rvvDocStep(dir, last) { const i = rv.order.indexOf(rvv.id), t = rv.order[i + dir]; if (i < 0 || !t) { rvToast(dir > 0 ? "Det här är sista ritningen i listan" : "Det här är första ritningen i listan"); return; } rvOpenDoc(t, { page: last ? 9999 : 1 }); }
+function rvvGo(n) { n = Math.round(n) || 1; if (n > rvv.pdf.numPages) { rvvDocStep(1); return; } if (n < 1) { rvvDocStep(-1, true); return; } if (n === rvv.num) { const i = document.getElementById("rvPageIn"); if (i) i.value = n; return; } rvv.num = n; rvv.sel = null; const i = document.getElementById("rvPageIn"); if (i) i.value = n; rvvRender(true); rvvMarksPane(); }
 
 /* ---- Rendering ---------------------------------------------------------------------------------------------------------------------------------------- */
 async function rvvRender(reset) {
@@ -128,7 +148,7 @@ async function rvvLinkRects(page, vp) {
     const tc = await page.getTextContent();
     tc.items.forEach(it => {
       const s = it.str || ""; if (s.length < 4) return;
-      for (const m of s.matchAll(/[A-ZÅÄÖ0-9][A-ZÅÄÖ0-9]*(?:[-._][A-ZÅÄÖ0-9]+){1,5}|[A-ZÅÄÖ]{1,3}\d{3,}/gi)) {
+      for (const m of s.matchAll(/[A-ZÅÄÖ0-9][A-ZÅÄÖ0-9]*(?:[-._][A-ZÅÄÖ0-9]+){1,5}|[A-ZÅÄÖ]{1,3}\d{3,}|(?<![A-Za-z0-9])\d{5,9}(?![A-Za-z0-9])/gi)) {
         let raw = m[0], n = rvNorm(raw), d = n !== self ? rvLinkDoc(n, cur) : null;
         if (!d) { const parts = raw.split(/[-._]/); if (parts.length > 2) { raw = raw.slice(0, raw.lastIndexOf(raw.match(/[-._]/g).pop())); n = rvNorm(raw); d = n !== self ? rvLinkDoc(n, cur) : null; } }
         if (!d) continue;
@@ -165,14 +185,16 @@ function rvvZoom(z, cx, cy) {
 function rvvDown(e) {
   const st = document.getElementById("rvStage"); if (!st || e.target.closest(".rv-legend")) return; st.setPointerCapture(e.pointerId); rvv.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (rvv.ptrs.size === 2) { rvv.drag = null; const [a, b] = [...rvv.ptrs.values()], r = st.getBoundingClientRect(); rvv.pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y), z0: rvv.zoom, cx: (a.x + b.x) / 2 - r.left, cy: (a.y + b.y) / 2 - r.top }; return; }
+  if (e.button === 1 && rvv.fs) { e.preventDefault(); rvvHubOpen(e); return; }
   if (e.button === 1 || e.button === 2) { rvv.drag = { t: "pan", sx: e.clientX, sy: e.clientY, l: st.scrollLeft, tp: st.scrollTop }; return; }
   const [px, py] = rvvLocal(e), inside = px >= 0 && py >= 0 && px <= rvv.W && py <= rvv.H, tool = rvv.tool;
   if (tool === "hand" || !inside) {
     const hit = inside ? rvvHit(px, py) : null; const lk = inside && !hit && e.pointerType !== "pen" ? rvvLinkAt(px, py) : null; if (lk) { rvv.drag = { t: "link", id: lk.id, sx: e.clientX, sy: e.clientY, l: st.scrollLeft, tp: st.scrollTop }; return; }
-    if (hit) { rvv.sel = hit.id; rvv.drag = { t: "move", m: hit, px, py, before: JSON.stringify(hit), moved: false }; rvvOv(); rvvMarksPane(); rvvCursor(); } else { if (rvv.sel) { rvv.sel = null; rvvOv(); rvvMarksPane(); } rvv.drag = { t: "pan", sx: e.clientX, sy: e.clientY, l: st.scrollLeft, tp: st.scrollTop }; st.style.cursor = "grabbing"; }
+    if (hit) { rvv.sel = hit.id; rvv.drag = { t: "move", m: hit, px, py, before: JSON.stringify(hit), moved: false, part: hit.type === "callout" ? (e.shiftKey || e.ctrlKey ? "all" : Math.hypot(px - hit.x * rvv.W, py - hit.y * rvv.H) <= 12 ? "a" : "b") : "" }; rvvOv(); rvvMarksPane(); rvvCursor(); } else { if (rvv.sel) { rvv.sel = null; rvvOv(); rvvMarksPane(); } rvv.drag = { t: "pan", sx: e.clientX, sy: e.clientY, l: st.scrollLeft, tp: st.scrollTop }; st.style.cursor = "grabbing"; }
     return;
   }
   const x = px / rvv.W, y = py / rvv.H;
+  if (tool === "callout") { const m = rvvNew("callout", { x, y, bx: Math.min(0.82, x + 0.05), by: Math.max(0.01, y - 0.07), text: "", fs: 13, fill: "#ffffff", tcol: "#1f2328" }); rvvAdd(m); rvv.sel = m.id; rvvOv(); rvvMarksPane(false, true); return; }
   if (tool === "pin" || tool === "text") { const m = rvvNew(tool, { x, y, text: "" }); rvvAdd(m); rvv.sel = m.id; rvvOv(); rvvMarksPane(false, true); return; }
   if (tool === "pen") rvv.drag = { t: "draw", m: rvvNew("pen", { pts: [[x, y]] }) };
   else if (tool === "arrow" || tool === "measure" || tool === "calib") rvv.drag = { t: "draw", m: rvvNew(tool, { pts: [[x, y], [x, y]] }) };
@@ -181,18 +203,20 @@ function rvvDown(e) {
 function rvvMove(e) {
   const st = document.getElementById("rvStage"); if (rvv.ptrs.has(e.pointerId)) { rvv.ptrs.get(e.pointerId).x = e.clientX; rvv.ptrs.get(e.pointerId).y = e.clientY; }
   if (rvv.pinch && rvv.ptrs.size >= 2) { const [a, b] = [...rvv.ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y); rvvZoom(rvv.pinch.z0 * d / Math.max(1, rvv.pinch.d0), rvv.pinch.cx, rvv.pinch.cy); return; }
+  if (rvv.hub) { rvvHubMove(e); return; }
   const dr = rvv.drag; if (!dr) { if (!e.buttons && e.pointerType === "mouse" && rvv.tool === "hand" && st) { const [px, py] = rvvLocal(e); st.style.cursor = px >= 0 && py >= 0 && px <= rvv.W && py <= rvv.H && !rvvHit(px, py) && rvvLinkAt(px, py) ? "pointer" : "grab"; } return; }
   if (dr.t === "link") { if (Math.hypot(e.clientX - dr.sx, e.clientY - dr.sy) < 6) return; dr.t = "pan"; st.style.cursor = "grabbing"; }
   if (dr.t === "pan") { st.scrollLeft = dr.l - (e.clientX - dr.sx); st.scrollTop = dr.tp - (e.clientY - dr.sy); return; }
   const [px, py] = rvvLocal(e), x = Math.max(0, Math.min(1, px / rvv.W)), y = Math.max(0, Math.min(1, py / rvv.H));
-  if (dr.t === "move") { const dx = (px - dr.px) / rvv.W, dy = (py - dr.py) / rvv.H, m = dr.m; if (Math.abs(px - dr.px) + Math.abs(py - dr.py) < 2 && !dr.moved) return; dr.moved = true; const b = JSON.parse(dr.before); if (m.pts) m.pts = b.pts.map(p => [p[0] + dx, p[1] + dy]); else { m.x = b.x + dx; m.y = b.y + dy; } rvvOv(); return; }
+  if (dr.t === "move") { const dx = (px - dr.px) / rvv.W, dy = (py - dr.py) / rvv.H, m = dr.m; if (Math.abs(px - dr.px) + Math.abs(py - dr.py) < 2 && !dr.moved) return; dr.moved = true; const b = JSON.parse(dr.before); if (m.pts) m.pts = b.pts.map(p => [p[0] + dx, p[1] + dy]); else if (m.type === "callout") { if (dr.part !== "b") { m.x = b.x + dx; m.y = b.y + dy; } if (dr.part !== "a") { m.bx = b.bx + dx; m.by = b.by + dy; } } else { m.x = b.x + dx; m.y = b.y + dy; } rvvOv(); return; }
   const m = dr.m; if (m.pts && m.type === "pen") m.pts.push([x, y]); else if (m.pts) m.pts[1] = [x, y]; else { m.w = x - m.x; m.h = y - m.y; } rvvOv(m);
 }
 async function rvvUp(e) {
   rvv.ptrs.delete(e.pointerId); const st = document.getElementById("rvStage"); if (rvv.pinch && rvv.ptrs.size < 2) { rvv.pinch = null; rvv.drag = null; return; }
+  if (rvv.hub) { rvvHubClose(true); return; }
   const dr = rvv.drag; rvv.drag = null; rvvCursor(); if (!dr) return;
   if (dr.t === "link") { rvvJump(dr.id, 1); return; }
-  if (dr.t === "move") { if (dr.moved) { rvvPush({ t: "mod", id: dr.m.id, before: JSON.parse(dr.before) }); await rvPut("marks", dr.m); } return; }
+  if (dr.t === "move") { if (dr.moved) { rvvPush({ t: "mod", id: dr.m.id, before: JSON.parse(dr.before) }); dr.m.upd = Date.now(); await rvPut("marks", dr.m); rvsSoon(); } return; }
   if (dr.t !== "draw") return; const m = dr.m, W = rvv.W, H = rvv.H;
   const size = m.pts ? (m.type === "pen" ? m.pts.length * 4 : Math.hypot((m.pts[1][0] - m.pts[0][0]) * W, (m.pts[1][1] - m.pts[0][1]) * H)) : Math.hypot(m.w * W, m.h * H);
   if (size < 6) { rvvOv(); return; }
@@ -202,23 +226,41 @@ async function rvvUp(e) {
 }
 document.addEventListener("keydown", e => {
   const v = document.getElementById("rvView"); if (!v || /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) return;
-  if (e.key === "ArrowRight" || e.key === "PageDown") rvvGo(rvv.num + 1); else if (e.key === "ArrowLeft" || e.key === "PageUp") rvvGo(rvv.num - 1);
+  if (e.shiftKey && e.key === "ArrowRight") rvvDocStep(1); else if (e.shiftKey && e.key === "ArrowLeft") rvvDocStep(-1); else if (e.key === "ArrowRight" || e.key === "PageDown") rvvGo(rvv.num + 1); else if (e.key === "ArrowLeft" || e.key === "PageUp") rvvGo(rvv.num - 1);
   else if (e.key === "+" || e.key === "=") rvvZoom(rvv.zoom * 1.25); else if (e.key === "-") rvvZoom(rvv.zoom / 1.25); else if (e.key === "f") rvvFs();
   else if ((e.key === "Delete" || e.key === "Backspace") && rvv.sel) { e.preventDefault(); rvvDelete(rvv.sel); } else if (e.key === "Escape") { if (rvv.sel) { rvv.sel = null; rvvOv(); rvvMarksPane(); } else if (rvv.fs) rvvFs(); }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? rvvRedo() : rvvUndo(); } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); rvvRedo(); }
 });
+/* Verktygshubb: håll in scrollhjulet i helskärm, dra åt ett håll och släpp. */
+const RVV_HUB = [["hand", "✋", "Flytta"], ["pin", "📍", "Kommentar"], ["callout", "💬", "Callout"], ["arrow", "➜", "Pil"], ["rect", "▭", "Ruta"], ["hl", "▬", "Markera"], ["cloud", "☁", "Moln"], ["pen", "✎", "Penna"], ["text", "T", "Text"], ["measure", "📏", "Mät"]];
+function rvvHubOpen(e) {
+  const v = document.getElementById("rvView"); if (!v) return; rvvHubClose(); const R = 150, n = RVV_HUB.length;
+  const h = document.createElement("div"); h.className = "rv-hub"; h.style.left = e.clientX + "px"; h.style.top = e.clientY + "px";
+  h.innerHTML = `<div class="rv-hub-ring"></div>${RVV_HUB.map(([k, ic, t], i) => { const a = i / n * 2 * Math.PI; return `<div class="rv-hub-it${rvv.tool === k ? " cur" : ""}" data-k="${k}" style="left:${(Math.sin(a) * R).toFixed(1)}px;top:${(-Math.cos(a) * R).toFixed(1)}px"><b>${ic}</b>${t}</div>`; }).join("")}<div class="rv-hub-core">Släpp<br>för att<br>välja</div>`;
+  v.appendChild(h); rvv.hub = { el: h, x: e.clientX, y: e.clientY, pick: null };
+}
+function rvvHubMove(e) {
+  const hb = rvv.hub; if (!hb) return; const dx = e.clientX - hb.x, dy = e.clientY - hb.y, d = Math.hypot(dx, dy); let pick = null;
+  if (d > 55) { const a = (Math.atan2(dx, -dy) + 2 * Math.PI) % (2 * Math.PI), i = Math.round(a / (2 * Math.PI) * RVV_HUB.length) % RVV_HUB.length; pick = RVV_HUB[i][0]; }
+  if (pick !== hb.pick) { hb.pick = pick; hb.el.querySelectorAll(".rv-hub-it").forEach(x => x.classList.toggle("on", x.dataset.k === pick)); }
+  hb.el.style.setProperty("--dx", Math.max(-40, Math.min(40, dx / 4)) + "px"); hb.el.style.setProperty("--dy", Math.max(-40, Math.min(40, dy / 4)) + "px");
+}
+function rvvHubClose(apply) {
+  const hb = rvv.hub; if (!hb) return; rvv.hub = null; hb.el.remove();
+  if (apply && hb.pick) { rvv.tool = hb.pick; document.querySelectorAll("[data-tool]").forEach(x => x.classList.toggle("on", x.dataset.tool === rvv.tool)); rvvCursor(); }
+}
 function rvvFs() {
   const v = document.getElementById("rvView"); if (!v) return; const on = document.fullscreenElement === v || v.classList.contains("fsx");
   if (on) { if (document.fullscreenElement) document.exitFullscreen(); v.classList.remove("fsx"); rvv.fs = false; } else { rvv.fs = true; if (v.requestFullscreen) v.requestFullscreen().catch(() => v.classList.add("fsx")); else v.classList.add("fsx"); }
   setTimeout(() => rvvRender(), 120);
 }
-document.addEventListener("fullscreenchange", () => { const v = document.getElementById("rvView"); if (v && document.fullscreenElement !== v) rvv.fs = false; setTimeout(() => rvvRender(), 120); });
+document.addEventListener("fullscreenchange", () => { rvvHubClose(); const v = document.getElementById("rvView"); if (v && document.fullscreenElement !== v) rvv.fs = false; setTimeout(() => rvvRender(), 120); });
 
 /* ---- Markeringar: skapa, ändra, ångra, lista -------------------------------------------------------------------------------------------------- */
-function rvvNew(type, o) { const n = rvv.marks.reduce((a, m) => Math.max(a, m.n || 0), 0) + 1; return { id: rvId(), doc: rvv.id, page: rvv.num, type, color: rvv.color, status: "open", text: "", n, created: new Date().toISOString(), by: (() => { try { return localStorage.getItem("4ddash-review-author") || ""; } catch (e) { return ""; } })(), ...o }; }
-async function rvvAdd(m, noUndo) { rvv.marks.push(m); rv.marks.set(rvv.id, rvv.marks); if (!noUndo) rvvPush({ t: "add", id: m.id }); await rvPut("marks", m); rvMarksCount().then(() => { const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); }); }
-async function rvvMod(m, patch, noUndo) { if (!noUndo) rvvPush({ t: "mod", id: m.id, before: JSON.parse(JSON.stringify(m)) }); Object.assign(m, patch); await rvPut("marks", m); rvvOv(); rvvMarksPane(true); rvMarksCount().then(() => { const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); }); }
-async function rvvDelete(id, noUndo) { const m = rvv.marks.find(x => x.id === id); if (!m) return; if (!noUndo) rvvPush({ t: "del", m: JSON.parse(JSON.stringify(m)) }); rvv.marks = rvv.marks.filter(x => x.id !== id); rv.marks.set(rvv.id, rvv.marks); if (rvv.sel === id) rvv.sel = null; await rvDel("marks", id); rvvOv(); rvvMarksPane(); rvMarksCount().then(() => { const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); }); }
+function rvvNew(type, o) { const n = rvv.marks.reduce((a, m) => Math.max(a, m.n || 0), 0) + 1; return { id: rvId(), doc: rvv.id, page: rvv.num, type, color: rvv.color, status: "open", text: "", n, created: new Date().toISOString(), upd: Date.now(), by: (() => { try { return localStorage.getItem("4ddash-review-author") || ""; } catch (e) { return ""; } })(), ...o }; }
+async function rvvAdd(m, noUndo) { rvv.marks.push(m); rv.marks.set(rvv.id, rvv.marks); if (!noUndo) rvvPush({ t: "add", id: m.id }); await rvPut("marks", m); rvsSoon(); rvMarksCount().then(() => { const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); }); }
+async function rvvMod(m, patch, noUndo) { if (!noUndo) rvvPush({ t: "mod", id: m.id, before: JSON.parse(JSON.stringify(m)) }); Object.assign(m, patch); m.upd = Date.now(); await rvPut("marks", m); rvsSoon(); rvvOv(); rvvMarksPane(true); rvMarksCount().then(() => { const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); }); }
+async function rvvDelete(id, noUndo) { const m = rvv.marks.find(x => x.id === id); if (!m) return; if (!noUndo) rvvPush({ t: "del", m: JSON.parse(JSON.stringify(m)) }); rvv.marks = rvv.marks.filter(x => x.id !== id); rv.marks.set(rvv.id, rvv.marks); if (rvv.sel === id) rvv.sel = null; await rvDel("marks", id); rvsTombAdd(id); rvsSoon(); rvvOv(); rvvMarksPane(); rvMarksCount().then(() => { const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); }); }
 function rvvPush(a) { rvv.undo.push(a); if (rvv.undo.length > 40) rvv.undo.shift(); rvv.redo = []; }
 async function rvvUndo() {
   const a = rvv.undo.pop(); if (!a) return;
@@ -234,21 +276,23 @@ async function rvvRedo() {
   else if (a.t === "mod") { const m = rvv.marks.find(x => x.id === a.id); if (m) { rvv.undo.push({ t: "mod", id: a.id, before: JSON.parse(JSON.stringify(m)) }); await rvvMod(m, a.before, true); } }
   rvvOv(); rvvMarksPane();
 }
-const RVV_TYPE = { pin: "Kommentar", arrow: "Pil", rect: "Ruta", hl: "Överstrykning", cloud: "Moln", pen: "Frihand", text: "Text", measure: "Mått" };
+const RVV_TYPE = { pin: "Kommentar", arrow: "Pil", rect: "Ruta", hl: "Överstrykning", cloud: "Moln", pen: "Frihand", text: "Text", measure: "Mått", callout: "Callout" };
 function rvvMarksPane(soft, focusText) {
   const el = document.getElementById("rvMarks"); if (!el) return; if (soft && el.contains(document.activeElement) && document.activeElement.tagName === "TEXTAREA" && !focusText) return;
   const sel = rvv.marks.find(x => x.id === rvv.sel), list = [...rvv.marks].sort((a, b) => a.page - b.page || a.n - b.n);
-  el.innerHTML = `${sel ? `<div class="rv-edit"><div class="rv-eh"><b>#${sel.n} ${RVV_TYPE[sel.type] || ""}</b><span>sida ${sel.page}</span><button data-mk="del" title="Ta bort (Delete)">🗑</button></div><textarea id="rvMkText" rows="3" placeholder="${sel.type === "text" ? "Text på ritningen" : "Skriv kommentar …"}">${rvEsc(sel.text)}</textarea><div class="rv-es">${Object.entries(RVV_STATUS).map(([k, [l, c]]) => `<button data-st="${k}" class="${sel.status === k ? "on" : ""}" style="--c:${c}">${l}</button>`).join("")}</div>${sel.type === "measure" ? `<div class="rv-meas">${rvEsc(rvvFmtLen(sel) || "Skala saknas – använd ⚖")}</div>` : ""}<small class="rv-by">${rvEsc(sel.by || "")} ${rvEsc(String(sel.created || "").slice(0, 16).replace("T", " "))}</small></div>` : `<p class="rv-hint">Välj ett verktyg ovan och markera på ritningen. Klicka på en markering för att kommentera den.</p>`}
+  el.innerHTML = `${sel ? `<div class="rv-edit"><div class="rv-eh"><b>#${sel.n} ${RVV_TYPE[sel.type] || ""}</b><span>sida ${sel.page}</span><button data-mk="del" title="Ta bort (Delete)">🗑</button></div><textarea id="rvMkText" rows="3" placeholder="${sel.type === "text" ? "Text på ritningen" : "Skriv kommentar …"}">${rvEsc(sel.text)}</textarea><div class="rv-es">${Object.entries(RVV_STATUS).map(([k, [l, c]]) => `<button data-st="${k}" class="${sel.status === k ? "on" : ""}" style="--c:${c}">${l}</button>`).join("")}</div>${sel.type === "callout" ? `<div class="rv-co"><label>Textstorlek <select id="rvCoFs">${[9, 11, 13, 16, 20, 26, 34].map(n => `<option value="${n}"${(sel.fs || 13) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label><div>Bubbla ${["#ffffff", "#fff3a3", "#ffd6d6", "#d6f0ff", "#d9f7d9", "rgba(255,255,255,0)"].map(c => `<button class="rv-sw${(sel.fill == null ? "#ffffff" : sel.fill) === c ? " on" : ""}" data-fill="${c}" style="background:${c === "rgba(255,255,255,0)" ? "repeating-conic-gradient(#ddd 0 25%,#fff 0 50%) 0 0/8px 8px" : c}" title="Bubblans färg" aria-label="Bubblans färg"></button>`).join("")}</div><div>Text ${["#1f2328", "#e5484d", "#0b5fff", "#2da44e", "#ffffff"].map(c => `<button class="rv-sw${(sel.tcol || "#1f2328") === c ? " on" : ""}" data-tcol="${c}" style="background:${c}" title="Textfärg" aria-label="Textfärg"></button>`).join("")}</div><small class="rv-hint">Färgen i verktygsraden styr ram och spets. Dra bubblan för att flytta den, dra spetsen (ringen) för att flytta den. Skift/Ctrl flyttar båda.</small></div>` : ""}${sel.type === "measure" ? `<div class="rv-meas">${rvEsc(rvvFmtLen(sel) || "Skala saknas – använd ⚖")}</div>` : ""}<small class="rv-by">${rvEsc(sel.by || "")} ${rvEsc(String(sel.created || "").slice(0, 16).replace("T", " "))}</small></div>` : `<p class="rv-hint">Välj ett verktyg ovan och markera på ritningen. Klicka på en markering för att kommentera den.</p>`}
     <div class="rv-ml"><div class="rv-mh">${rvv.marks.length} markeringar${rvv.doc && rvv.doc.scaleW ? ` · skala satt` : ""}</div>${list.map(m => `<button class="rv-mi${m.id === rvv.sel ? " on" : ""}" data-mi="${m.id}"><span class="rv-dot" style="background:${RVV_STATUS[m.status] ? RVV_STATUS[m.status][1] : "#999"}"></span><b>#${m.n}</b> <small>s.${m.page}</small> ${rvEsc((m.text || RVV_TYPE[m.type] || "").slice(0, 60))}</button>`).join("")}</div>`;
   const refs = rvRefs(), outs = [...(refs.out.get(rvv.doc.id) || new Map())], ins = [...(refs.inc.get(rvv.doc.id) || new Map())], chip = go => ([id, pg]) => { const t = rv.docs.find(x => x.id === id); return t ? `<button class="rv-lk" data-lk="${id}" data-pg="${pg}" title="${rvEsc(t.title || t.name)} – nämns på sida ${pg}"><b>${rvEsc(t.no || t.name)}</b>${t.rev ? ` <i>${rvEsc(t.rev)}</i>` : ""} <small>s.${pg}</small></button>` : ""; };
   if (outs.length || ins.length) el.insertAdjacentHTML("beforeend", `<div class="rv-links">${outs.length ? `<div class="rv-mh">Hänvisar till (${outs.length})</div><div class="rv-lkl">${outs.slice(0, 40).map(chip(false)).join("")}</div>` : ""}${ins.length ? `<div class="rv-mh">Hänvisas från (${ins.length})</div><div class="rv-lkl">${ins.slice(0, 40).map(chip(true)).join("")}</div>` : ""}</div>`);
   el.onclick = async e => {
+    const fl = e.target.closest("[data-fill]"); if (fl && sel) { await rvvMod(sel, { fill: fl.dataset.fill }); return; } const tc = e.target.closest("[data-tcol]"); if (tc && sel) { await rvvMod(sel, { tcol: tc.dataset.tcol }); return; }
     const lk = e.target.closest("[data-lk]"); if (lk) { rvvJump(lk.dataset.lk, Number(lk.dataset.pg) || 1); return; }
     const mi = e.target.closest("[data-mi]"); if (mi) { const m = rvv.marks.find(x => x.id === mi.dataset.mi); if (m) { if (m.page !== rvv.num) { rvv.num = m.page; const i = document.getElementById("rvPageIn"); if (i) i.value = m.page; rvv.sel = m.id; await rvvRender(); } rvv.sel = m.id; rvvOv(); rvvMarksPane(); rvvReveal(m); } return; }
     const s = e.target.closest("[data-st]"); if (s && sel) { await rvvMod(sel, { status: s.dataset.st }); return; }
     if (e.target.closest('[data-mk="del"]') && sel) await rvvDelete(sel.id);
   };
-  const ta = document.getElementById("rvMkText"); if (ta && sel) { ta.oninput = () => { sel.text = ta.value; clearTimeout(rvv.tt); rvv.tt = setTimeout(async () => { await rvPut("marks", sel); rvvOv(); }, 350); }; ta.onchange = () => { rvvPush({ t: "mod", id: sel.id, before: { ...JSON.parse(JSON.stringify(sel)), text: ta.dataset.was || "" } }); }; ta.onfocus = () => { ta.dataset.was = sel.text; }; if (focusText) ta.focus(); }
+  el.onchange = e => { if (e.target.id === "rvCoFs" && sel) rvvMod(sel, { fs: Number(e.target.value) }); };
+  const ta = document.getElementById("rvMkText"); if (ta && sel) { ta.oninput = () => { sel.text = ta.value; sel.upd = Date.now(); clearTimeout(rvv.tt); rvv.tt = setTimeout(async () => { await rvPut("marks", sel); rvsSoon(); rvvOv(); }, 350); }; ta.onchange = () => { rvvPush({ t: "mod", id: sel.id, before: { ...JSON.parse(JSON.stringify(sel)), text: ta.dataset.was || "" } }); }; ta.onfocus = () => { ta.dataset.was = sel.text; }; if (focusText) ta.focus(); }
 }
 function rvvReveal(m) { const st = document.getElementById("rvStage"), b = rvvBBox(m, rvv.W, rvv.H), box = document.getElementById("rvBox"); if (!st || !box) return; st.scrollTo({ left: box.offsetLeft + b.x + b.w / 2 - st.clientWidth / 2, top: box.offsetTop + b.y + b.h / 2 - st.clientHeight / 2, behavior: "smooth" }); }
 
