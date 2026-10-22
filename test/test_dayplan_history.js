@@ -45,7 +45,7 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
   await page.click('.dp-save'); await page.waitForTimeout(700); await page.click('.dp-x');
   if (get('ue_dayplans.json').length !== 1) fail('dagsplanen sparas');
   // historikpanelen
-  await page.waitForSelector('.dph-row'); const rowTxt = await page.textContent('.dph-row'); if (!rowTxt.includes('2026-10-19') || !rowTxt.includes('Procyon') || !rowTxt.includes('2 arbeten')) fail('historikrad: ' + rowTxt);
+  await page.waitForSelector('.dph-row'); const rowTxt = await page.textContent('.dph-row'); if (!rowTxt.includes('Mån 19 okt') || !rowTxt.includes('Procyon') || !rowTxt.includes('2 arbeten')) fail('historikrad: ' + rowTxt);
   if (!(await page.$('.dph-chart rect'))) fail('stapeldiagram över personer per dag');
   // 2) ändrad dagsplan för samma dag -> ny version i historiken
   await dropFiles([['Plan 19 okt rev.eml', eml('Dagsplan måndag – uppdaterad', mail('19.10.2026', 14)), 'message/rfc822']]);
@@ -64,7 +64,7 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
     if (!/Form stödmur/.test(rs[1].act) || !/Kontrafor M12/.test(rs[2].act)) fail('aktivitet kopplas (inkl. M/12): ' + JSON.stringify(rs.map(r => r.act)));
     if (!/742 Sikthall/.test(rs[1].sub) || !/742 Sikthall/.test(rs[2].sub)) fail('område enligt aktiviteten: ' + JSON.stringify(rs.map(r => r.sub)));
     const zs = await page.$$eval('.dp-t tbody tr[data-i] .dp-zone', e => e.map(s => s.options[s.selectedIndex].textContent)); if (zs[1] !== '742 Sikthall' || zs[2] !== '742 Sikthall') fail('område (742 Sikthall) ur raden/aktiviteten: ' + JSON.stringify(zs));
-    const [dlH] = await Promise.all([page.waitForEvent('download'), page.click('.dp-html')]); const hh = fs.readFileSync(await dlH.path(), 'utf8'); if (!hh.includes('Skift 1') || !hh.includes('Linje E, F') || !/skift 2/.test(hh) || !hh.includes('742 Sikthall')) fail('HTML-exporten visar skift och område');
+    const [dlH] = await Promise.all([page.waitForEvent('download'), page.click('.dp-html')]); const hh = fs.readFileSync(await dlH.path(), 'utf8'); if (!hh.includes('Skift 1') || !hh.includes('Linje E, F') || !/skift 2/.test(hh) || !hh.includes('742 - Sikthall')) fail('HTML-exporten visar skift och område');
     await page.click('.dp-x'); }
   // 3) .msg (Outlook) + .eml på en gång -> lista, spara båda
   const msg = fs.readFileSync(path.join(__dirname, 'fixtures', 'dayplan_mail.msg'));

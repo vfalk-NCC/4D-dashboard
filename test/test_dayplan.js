@@ -73,6 +73,19 @@ Procyon :  68+2 crane operators+2sennebogen operator+1manitue operator
       q.value = 'zzzz-finns-inte'; q.dispatchEvent(new Event('input')); o.none = vis() === 0 && $$('.ag:not(.hid)').length === 0; $('#cl').click(); o.reset = vis() === o.total && $('#q').value === '';
       const c = $('.chip[data-f="ph"]'); c.click(); o.chip = c.classList.contains('on') && vis() <= o.total; c.click(); o.chipOff = vis() === o.total; return o; });
     if (!r.hasTools || !r.collapsed || !r.opened || !r.allCl || !r.allOp || !r.search || !r.none || !r.reset || !r.chip || !r.chipOff || pe.length) fail('HTML-exportens filter/fäll ihop: ' + JSON.stringify(r) + pe.join('|')); await pg.close(); }
+  // arbetstyp + statistik
+  { const tr = await page.evaluate(() => ['Formwork stodmur at J line', 'Reinforcement prefabrication', 'Casting slab 7421', 'Gjutning platta', 'Armering vägg', 'Städning'].map(x => dpTradeOf(x)));
+    if (tr.join() !== 'form,prefab,gjutning,gjutning,armering,ovrigt') fail('arbetstyp gissas fel: ' + tr.join());
+    const dayh = await page.evaluate(() => dpDayLong('2026-10-19')); if (!/måndag 19 oktober 2026 · vecka 43/.test(dayh)) fail('datum/dag: ' + dayh);
+    const hist = await page.evaluate(async () => { await dpLoad().catch(() => {}); const had = typeof dayplans !== 'undefined' ? dayplans.length : 0; return had; });
+    const st = await page.evaluate(async () => { const rec = { id: 'x1', date: '2026-10-19', company: 'Procyon', tasks: [{ text: 'Formwork stodmur at J line', workers: 8, shift: 1, zone: '742' }, { text: 'Reinforcement', workers: 16, shift: 2, zone: '742' }, { text: 'Casting', workers: 5, shift: 1, area: 'Plan 2' }] }; const html = dpsHtml(dpsData([rec, { ...rec, id: 'x2', date: '2026-10-20' }], '', '')); return html.length; });
+    if (!(st > 5000)) fail('statistik-HTML saknas');
+    const pg = await browser.newPage(); const pe = []; pg.on('pageerror', e => pe.push(e.message));
+    const html3 = await page.evaluate(() => { const rec = { id: 'x1', date: '2026-10-19', company: 'Procyon', tasks: [{ text: 'Formwork stodmur at J line', workers: 8, shift: 1, zone: '742' }, { text: 'Reinforcement', workers: 16, shift: 2, zone: '742' }, { text: 'Casting', workers: 5, shift: 1, area: 'Plan 2' }] }; return dpsHtml(dpsData([rec, { ...rec, id: 'x2', date: '2026-10-20' }], '', '')); });
+    await pg.setContent(html3); await pg.waitForTimeout(300);
+    const r = await pg.evaluate(() => { const o = {}, q = s => document.querySelector(s); o.kpi = q('#kpi').textContent; o.heat = !!q('#heat table'); o.areas = document.querySelectorAll('.ar').length; o.days = document.querySelectorAll('#days tbody tr').length; o.week = /v43/.test(q('#time').innerHTML);
+      q('.chip[data-t="form"]').click(); o.filtered = q('#kpi .k b').textContent; q('#clr').click(); o.reset = q('#kpi .k b').textContent; q('.ar').click(); o.areaFilter = document.querySelectorAll('.ar').length; return o; });
+    if (r.filtered !== '16' || r.reset !== '58' || !r.heat || r.areas < 2 || r.days !== 2 || !r.week || pe.length) fail('statistikrapport: ' + JSON.stringify(r) + pe.join('|')); await pg.close(); }
   if (errors.length) fail('sidfel: ' + errors.slice(0, 3));
   console.log('ALLA TESTER OK'); await browser.close(); server.close();
 })().catch(e => { console.error('FEL: ' + e.message); process.exit(1); });
