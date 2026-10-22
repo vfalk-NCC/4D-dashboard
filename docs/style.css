@@ -241,10 +241,14 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; }
    är fortsatt synlig för den som öppnar utvecklarverktygen. */
 .access-gate {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.55);
+  background: rgba(15,23,42,0.94); /* nästan helt täckande om webbläsaren saknar backdrop-filter */
   display: flex; align-items: center; justify-content: center;
   z-index: 1000;
 }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .access-gate { background: rgba(15,23,42,0.78); -webkit-backdrop-filter: blur(70px) saturate(0.6); backdrop-filter: blur(70px) saturate(0.6); }
+}
+.access-box { box-shadow: 0 20px 60px rgba(0,0,0,.45); }
 .access-box {
   background: white;
   padding: 20px;
