@@ -91,7 +91,7 @@ async function rvImport(files) {
   for (const f of files) {
     if (have.has(f.name + "|" + f.size)) { dup++; continue; }
     try {
-      const root = f.rvRoot || (f.webkitRelativePath ? f.webkitRelativePath.split("/")[0] : ""), pmId = root ? await rvPmByName(root) : (rv.pm || await rvAutoPm()); if (root) roots.add(root); const id = rvId(), meta = rvParse(f.name), doc = { id, pm: pmId, name: f.name, size: f.size, added: Date.now(), pages: 0, text: null, thumb: "", fav: false, opened: 0, grp: "", ...meta };
+      const root = f.rvRoot || (f.webkitRelativePath ? f.webkitRelativePath.split("/")[0] : ""), pmId = root ? await rvPmByName(root) : (rv.pm || await rvAutoPm()); if (root) roots.add(root); const pmo = rv.pms.find(p => p.id === pmId), id = rvId(), meta = rvParse(f.name), doc = { id, pm: pmId, cat: (pmo && pmo.cat) || "", name: f.name, size: f.size, added: Date.now(), pages: 0, text: null, thumb: "", fav: false, opened: 0, grp: "", ...meta };
       await rvTx(["docs", "blobs"], "readwrite", (d, b) => { d.put(doc); b.put({ id, blob: f }); });
       rv.docs.push(doc); have.add(f.name + "|" + f.size); rv.queue.push(id); added++;
       if (added % 20 === 0) { rv.msg = `Läst in ${added} av ${files.length} …`; rvRender(); }
@@ -133,6 +133,10 @@ async function rvNewPm(name, silent) {
   await rvPut("pms", pm); rv.pms.push(pm); rv.pm = pm.id; try { localStorage.setItem("4ddash-review-pm", pm.id); } catch (e) { /* */ } if (!silent) rvRender();
 }
 async function rvSelectPm(id) { rv.pm = id; rv.hits = null; rv.q = ""; try { localStorage.setItem("4ddash-review-pm", id); } catch (e) { /* */ } rvRender(); }
+async function rvSetPmCat(c) {
+  const pm = rv.pms.find(p => p.id === rv.pm); if (!pm) { rvToast("Välj ett paket i rullistan först"); return; }
+  pm.cat = c; await rvPut("pms", pm); for (const d of rv.docs.filter(x => x.pm === pm.id)) { d.cat = c; await rvSaveDoc(d); } rvPrep(); rvRender(); rvToast(c ? `Paketet ligger nu under ${c}` : "Kategorin borttagen");
+}
 async function rvDeletePm() {
   const pm = rv.pms.find(p => p.id === rv.pm); if (!pm) return; const mine = rv.docs.filter(d => d.pm === pm.id);
   if (!(await dashConfirm(`Ta bort paketet "${pm.name}" med alla ${mine.length} ritningar och markeringar?\n\nDet går inte att ångra. Filerna finns kvar där du hämtade dem.`, { ok: "Ta bort" }))) return;
@@ -215,7 +219,7 @@ function rvSearch(q) {
 }
 async function rvMarksCount(docs) { const all = await rvAll("marks"); const m = new Map(); all.forEach(x => { const o = m.get(x.doc) || { n: 0, open: 0 }; o.n++; if (x.status === "open") o.open++; m.set(x.doc, o); }); rv.mc = m; }
 function rvListHtml() {
-  const docs = rvScope().filter(d => (rv.showOld && rv.view !== "main" && rv.view !== "valid") || !d.old).filter(d => rv.view === "main" ? d.type === "Bygghandling" : rv.view === "valid" ? d.type === "Gällande handlingar" : rv.view === "pm" ? d.type === "PM" : true).filter(d => rv.filter === "fav" ? d.fav : rv.filter === "open" ? ((rv.mc && rv.mc.get(d.id)) || { open: 0 }).open > 0 : true);
+  const docs = rvScope().filter(d => (rv.showOld && rv.view !== "main" && rv.view !== "valid") || !d.old).filter(d => rv.view === "main" ? d.type === "Bygghandling" : rv.view === "valid" ? d.type === "Gällande handlingar" : rv.view === "pm" ? (d.type === "PM" || !!d.cat || !!(rv.pms.find(p => p.id === d.pm) || {}).cat) : true).filter(d => rv.filter === "fav" ? d.fav : rv.filter === "open" ? ((rv.mc && rv.mc.get(d.id)) || { open: 0 }).open > 0 : true);
   if (rv.hits) rv.order = rv.hits.map(h => h.d.id);
   if (rv.hits) return rv.hits.length ? rv.hits.map(h => `<div class="rv-hit"><button class="rv-doc" data-open="${h.d.id}"><b>${rvEsc(h.d.no || h.d.name)}</b> ${rvEsc(h.d.title)}${h.d.rev ? ` <i class="rv-rev">rev ${rvEsc(h.d.rev)}</i>` : ""}</button>${h.pages.map(p => `<button class="rv-snip" data-open="${h.d.id}" data-page="${p.p}" data-hl="${rvEsc(rv.q)}"><u>s.${p.p}</u> ${rvEsc(p.s)}</button>`).join("")}${h.n > h.pages.length ? `<small>… ${h.n - h.pages.length} träffar till</small>` : ""}</div>`).join("") : `<p class="rv-empty">Inga träffar på "${rvEsc(rv.q)}".</p>`;
   if (!docs.length) return `<p class="rv-empty">${rv.docs.length ? (rv.view === "main" ? "Inga ritningar att visa i huvudmappen – byt vy ovan för att se PM och övriga handlingar." : "Inget att visa med det här filtret.") : "Släpp PDF-filer (eller en hel mapp) här så sorteras de upp automatiskt."}</p>`;
@@ -223,44 +227,58 @@ function rvListHtml() {
   const favs = docs.filter(d => d.fav), recent = docs.filter(d => d.opened).sort((a, b) => b.opened - a.opened).slice(0, 4);
   const row = (d, noOrd) => { if (!noOrd) rv.order.push(d.id); const mc = (rv.mc && rv.mc.get(d.id)) || null, pk = rv.pms.find(p => p.id === d.pm); return `<div class="rv-row${rv.open === d.id ? " on" : ""}${d.old ? " old" : ""}${rv.selSet.has(d.id) ? " sel" : ""}" data-doc="${d.id}"><button class="rv-doc" data-open="${d.id}" title="${rvEsc(d.name)}${pk ? " · " + rvEsc(pk.name) : ""}">${d.thumb ? `<img class="rv-th" src="${d.thumb}" alt="">` : `<span class="rv-th ph"></span>`}<span class="rv-t"><b>${rvEsc(d.no || d.name.replace(/\.pdf$/i, ""))}</b><small>${rvEsc(d.title || "")}</small></span></button>${d.rev ? `<span class="rv-rev" title="Revision">${rvEsc(d.rev)}</span>` : ""}${d.old ? `<span class="rv-badge old" title="Det finns en nyare revision">ersatt</span>` : d.revs > 1 ? `<span class="rv-badge new" title="${d.revs} revisioner finns">ny rev</span>` : ""}${mc && mc.n ? `<span class="rv-badge ${mc.open ? "open" : "ok"}" title="${mc.open} öppna av ${mc.n} markeringar">${mc.open || "✓"}</span>` : ""}<button class="rv-star${d.fav ? " on" : ""}" data-fav="${d.id}" title="Favorit (snabbåtkomst ute på bygget)" aria-label="Favorit">★</button><button class="rv-more" data-more="${d.id}" title="Fler val" aria-label="Fler val">⋯</button></div>`; };
   const zoneKey = d => rvZoneOf(d), pkgName = d => (rv.pms.find(p => p.id === d.pm) || { name: "Utan paket" }).name;
-  const LV = { type: d => d.type, zone: d => zoneKey(d), disc: d => d.grp || d.disc || "Övrigt", pkg: pkgName };
-  const plan = { main: ["zone"], valid: ["zone"], pm: ["pkg"], zone: ["zone", "type"], disc: ["disc"], pkg: ["pkg", "type"] }[rv.view] || ["zone"];
+  const LV = { cat: d => rvCatOf(d), type: d => d.type, zone: d => zoneKey(d), disc: d => d.grp || d.disc || "Övrigt", pkg: pkgName };
+  const plan = { main: ["zone"], valid: ["zone"], pm: ["cat", "pkg"], zone: ["zone", "type"], disc: ["disc"], pkg: ["pkg", "type"] }[rv.view] || ["zone"];
   const label = (lv, k) => lv === "zone" ? rvZoneName(k) : k;
   const pkgAge = n => { const p = rv.pms.find(x => x.name === n); return p ? p.created || 0 : 0; };
-  const order = (lv, keys) => keys.sort((a, b) => lv === "pkg" ? pkgAge(b) - pkgAge(a) || a.localeCompare(b, "sv", { numeric: true }) : lv === "type" ? RV_TYPES.indexOf(a) - RV_TYPES.indexOf(b) : (lv === "zone" ? (!a) - (!b) : (a === "Övrigt") - (b === "Övrigt")) || label(lv, a).localeCompare(label(lv, b), "sv", { numeric: true }));
+  const order = (lv, keys) => keys.sort((a, b) => lv === "cat" ? (a === "Okategoriserade") - (b === "Okategoriserade") || rvCatList().indexOf(a) - rvCatList().indexOf(b) : lv === "pkg" ? pkgAge(b) - pkgAge(a) || a.localeCompare(b, "sv", { numeric: true }) : lv === "type" ? RV_TYPES.indexOf(a) - RV_TYPES.indexOf(b) : (lv === "zone" ? (!a) - (!b) : (a === "Övrigt") - (b === "Övrigt")) || label(lv, a).localeCompare(label(lv, b), "sv", { numeric: true }));
   const tree = (list, lvls, path) => {
     if (!lvls.length) return list.sort(rvCmp).map(d => row(d)).join("");
     const lv = lvls[0], by = new Map(); list.forEach(d => { const k = LV[lv](d) || ""; (by.get(k) || by.set(k, []).get(k)).push(d); });
     return order(lv, [...by.keys()]).map(k => { const sub = by.get(k), id = path + "/" + k, closed = rv.grpClosed.has(id), depth = path.split("/").length - 1; return `<div class="rv-grp rv-d${depth}"><button class="rv-gh" data-grp="${rvEsc(id)}">${closed ? "▸" : "▾"} <span class="rv-fi">${depth === 0 ? (closed ? "📁" : "📂") : "📄"}</span>${rvEsc(label(lv, k))} <em>${sub.length}</em></button>${closed ? "" : tree(sub, lvls.slice(1), id)}</div>`; }).join("");
   };
-  const NOTE = { main: "", valid: "Gällande handlingar: förteckningar, beskrivningar, kontrollplaner m.m. – senaste versionen av varje.", pm: "PM: en mapp per utskick/paket, senaste överst.", zone: "Delområden: varje område med sina ritningar och handlingar.", disc: "Discipliner: arkitekt, konstruktion, el, VVS …", pkg: "Utskick: allt precis som det kom, en mapp per paket (senaste överst)." };
+  const NOTE = { main: "", valid: "Gällande handlingar: förteckningar, beskrivningar, kontrollplaner m.m. – senaste versionen av varje.", pm: "PM: sorterade i STÅL, BYGG och MARK & VA, sedan en mapp per utskick. Sätt kategori på ett paket via ⋯ bredvid paketlistan, eller på markerade filer (Kategori).", zone: "Delområden: varje område med sina ritningar och handlingar.", disc: "Discipliner: arkitekt, konstruktion, el, VVS …", pkg: "Utskick: allt precis som det kom, en mapp per paket (senaste överst)." };
   const mainHint = rv.view !== "main" && NOTE[rv.view] ? `<div class="rv-note">${NOTE[rv.view]}</div>` : rv.view === "main" ? `<div class="rv-note">Huvudmapp: senaste revisionen av varje ritning${rv.docs.some(d => d.old) ? `, ${rv.docs.filter(d => d.old).length} äldre revisioner ligger kvar under "ersatta"` : ""}.</div>` : "";
   return rvSelBar() + mainHint + (favs.length || recent.length ? `<div class="rv-grp"><div class="rv-gh">★ Snabbåtkomst</div>${[...favs, ...recent.filter(r => !r.fav)].map(d => row(d, true)).join("")}</div>` : "") + tree(docs, plan, "");
 }
+/* Listan finns på två ställen: i vänstermenyn och (i helskärm) under hänvisningarna till höger. */
+function rvListPaint() { const h = rvListHtml(); ["rvList", "rvList2"].forEach(id => { const l = document.getElementById(id); if (l) l.innerHTML = h; }); }
+/* PM-kategorier: STÅL, BYGG, MARK & VA (kan utökas). Sätts per paket (och därmed dess filer) eller per fil; gissas ur namnet tills du valt. */
+const RV_CAT_DEF = ["STÅL", "BYGG", "MARK & VA"];
+const rvCatList = () => { try { const v = JSON.parse(localStorage.getItem("4ddash-review-cats") || "null"); return Array.isArray(v) && v.length ? v : RV_CAT_DEF; } catch (e) { return RV_CAT_DEF; } };
+function rvCatAdd(n) { const l = rvCatList().slice(); if (n && !l.includes(n)) { l.push(n); try { localStorage.setItem("4ddash-review-cats", JSON.stringify(l)); } catch (e) { /* */ } } }
+function rvCatOf(d) {
+  if (d.cat) return d.cat; const pm = rv.pms.find(p => p.id === d.pm); if (pm && pm.cat) return pm.cat;
+  const hay = (d.name + " " + (pm ? pm.name : "")).toLowerCase(), list = rvCatList();
+  const hit = list.find(c => hay.includes(c.toLowerCase())); if (hit) return hit;
+  if (/\bstål\b|\bstal\b/.test(hay) && list.includes("STÅL")) return "STÅL"; if (/\bmark\b|\bva\b|vatten|avlopp|dagvatten|\bväg\b/.test(hay) && list.includes("MARK & VA")) return "MARK & VA"; if (/\bbygg\b|betong|stomme|bjälklag/.test(hay) && list.includes("BYGG")) return "BYGG";
+  return "Okategoriserade";
+}
 function rvSelBar() {
   if (!rv.selSet.size) return "";
-  return `<div class="rv-selbar"><b>${rv.selSet.size} valda</b><button data-bulk="type">Typ</button><button data-bulk="zone">Delområde</button><button data-bulk="pkg">Paket</button><button data-bulk="fav">★</button><button data-bulk="zip">ZIP</button><button data-bulk="del">Ta bort</button><button data-bulk="clear">Avmarkera</button></div>`;
+  return `<div class="rv-selbar"><b>${rv.selSet.size} valda</b><button data-bulk="type">Typ</button><button data-bulk="zone">Delområde</button><button data-bulk="pkg">Paket</button><button data-bulk="cat">Kategori</button><button data-bulk="fav">★</button><button data-bulk="zip">ZIP</button><button data-bulk="del">Ta bort</button><button data-bulk="clear">Avmarkera</button></div>`;
 }
 const rvSelDocs = () => rv.docs.filter(d => rv.selSet.has(d.id));
 function rvSelClick(id, e) {
   if (e.shiftKey && rv.selAnchor && rv.order.includes(rv.selAnchor)) { const a = rv.order.indexOf(rv.selAnchor), b = rv.order.indexOf(id), [x, y] = a < b ? [a, b] : [b, a]; if (!(e.ctrlKey || e.metaKey)) rv.selSet.clear(); rv.order.slice(x, y + 1).forEach(i => rv.selSet.add(i)); }
   else { if (rv.selSet.has(id)) rv.selSet.delete(id); else rv.selSet.add(id); rv.selAnchor = id; }
-  const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml();
+  rvListPaint();
 }
 async function rvBulk(kind, anchor) {
   const docs = rvSelDocs(); if (!docs.length) return; const ask = async (t, v) => typeof dashPrompt === "function" ? dashPrompt(t, v) : prompt(t, v);
-  const done = async () => { rvPrep(); rvRender(true); const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); };
+  const done = async () => { rvPrep(); rvRender(true); rvListPaint(); };
   const setAll = (patch) => async () => { for (const d of docs) { Object.assign(d, patch); await rvSaveDoc(d); } await done(); rvToast(`${docs.length} ändrade`); };
   if (kind === "clear") { rv.selSet.clear(); rv.selAnchor = ""; await done(); return; }
   if (kind === "type") rvMenu(anchor, [["Handlingstyp: automatiskt", setAll({ dtype: "" })], ...RV_TYPES.map(t => ["Handlingstyp: " + t, setAll({ dtype: t })])]);
   else if (kind === "zone") { const codes = [...new Set([...(rvZoneKnown() || { codes: [] }).codes, ...rv.docs.map(rvZoneOf).filter(Boolean)])].sort(); rvMenu(anchor, [["Delområde: automatiskt", setAll({ zone: "" })], ...codes.slice(0, 14).map(c => ["Delområde: " + rvZoneName(c), setAll({ zone: c })]), ["Annat delområde …", async () => { const n = await ask("Delområde (kod, t.ex. 742)", ""); if (n != null) await setAll({ zone: String(n).trim() })(); }]]); }
   else if (kind === "pkg") rvMenu(anchor, [...rv.pms.slice(0, 14).map(p => ["Flytta till paket: " + p.name, setAll({ pm: p.id })]), ["Nytt paket …", async () => { const n = await ask("Namn på paketet", ""); if (n && n.trim()) await setAll({ pm: await rvPmByName(n.trim()) })(); }]]);
+  else if (kind === "cat") rvMenu(anchor, [...rvCatList().map(c => ["PM-kategori: " + c, setAll({ cat: c })]), ["Ingen / automatiskt", setAll({ cat: "" })], ["Egen kategori …", async () => { const n = await ask("Namn på kategorin (t.ex. EL)", ""); if (n && n.trim()) { rvCatAdd(n.trim()); await setAll({ cat: n.trim() })(); } }]]);
   else if (kind === "fav") { const on = docs.some(d => !d.fav); await setAll({ fav: on })(); }
   else if (kind === "zip") { if (typeof rvExportMain === "function") await rvExportMain(docs, "valda_ritningar"); }
   else if (kind === "del") { if (!(await dashConfirm(`Ta bort ${docs.length} filer och deras markeringar?\n\nDet går inte att ångra. Filerna finns kvar där du hämtade dem.`, { ok: "Ta bort" }))) return; for (const d of docs) await rvDeleteDoc(d.id, true); rv.selSet.clear(); await rvMarksCount(); await done(); }
 }
 function rvTabsHtml() {
-  const sc = rvScope(), cnt = { main: sc.filter(d => !d.old && d.type === "Bygghandling").length, valid: sc.filter(d => !d.old && d.type === "Gällande handlingar").length, pm: sc.filter(d => d.type === "PM").length, zone: sc.filter(d => !d.old).length, disc: sc.filter(d => !d.old).length, pkg: sc.length };
+  const sc = rvScope(), cnt = { main: sc.filter(d => !d.old && d.type === "Bygghandling").length, valid: sc.filter(d => !d.old && d.type === "Gällande handlingar").length, pm: sc.filter(d => d.type === "PM" || !!d.cat || !!(rv.pms.find(p => p.id === d.pm) || {}).cat).length, zone: sc.filter(d => !d.old).length, disc: sc.filter(d => !d.old).length, pkg: sc.length };
   const T = [["main", "📁", "Huvudmapp", "Senaste revisionen av alla ritningar"], ["valid", "📜", "Gällande handlingar", "Förteckningar, beskrivningar, kontrollplaner"], ["pm", "📝", "PM", "PM, en mapp per utskick"], ["zone", "🗂", "Delområden", "Per område: 741, 742 …"], ["disc", "🛠", "Discipliner", "Arkitekt, konstruktion, el, VVS …"], ["pkg", "📦", "Utskick", "Alla filer per paket, senaste överst"]];
   return `<div class="rv-tabs" role="tablist">${T.map(([k, ic, l, t]) => `<button type="button" role="tab" class="rv-tab${rv.view === k ? " on" : ""}" data-view="${k}" title="${rvEsc(t)}">${ic} ${l} <em>${cnt[k]}</em></button>`).join("")}</div><div class="rv-fold"><button type="button" data-fold="close">Fäll ihop alla</button><button type="button" data-fold="open">Öppna alla</button></div>`;
 }
@@ -283,7 +301,7 @@ let rvBind = false, rvPaintT = 0;
 function rvRender(soft) {
   const box = document.getElementById("revBox"); if (!box) return;
   const zs = (() => { const k = rvZoneKnown(); return k ? k.codes.join(",") : ""; })(); if (zs !== rv.zsig) { rv.zsig = zs; if (rv.ready) rvPrep(); }
-  if (soft && rv.open && box.querySelector(".rv-view")) { const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); const f = box.querySelector(".rv-foot"); return; }
+  if (soft && rv.open && box.querySelector(".rv-view")) { rvListPaint(); const f = box.querySelector(".rv-foot"); return; }
   const keepQ = document.activeElement && document.activeElement.id === "rvQ";
   const view = rv.open ? box.querySelector(".rv-view") : null;
   box.innerHTML = rvHtml();
@@ -299,7 +317,7 @@ async function rvInit() {
   } catch (e) { box.innerHTML = `<p class="rv-empty">Granskningen kan inte starta: ${rvEsc((e && e.message) || e)}</p>`; return; }
   if (!rvBind) {
     rvBind = true;
-    box.addEventListener("click", rvClick); box.addEventListener("change", rvChange); box.addEventListener("input", e => { if (e.target.id === "rvQ") { rvSearch(e.target.value); const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); } });
+    box.addEventListener("click", rvClick); box.addEventListener("change", rvChange); box.addEventListener("input", e => { if (e.target.id === "rvQ") { rvSearch(e.target.value); rvListPaint(); } });
     const over = e => { if (e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files")) { e.preventDefault(); box.classList.add("rv-over"); } };
     box.addEventListener("dragover", over); box.addEventListener("dragenter", over); box.addEventListener("dragleave", e => { if (!box.contains(e.relatedTarget)) box.classList.remove("rv-over"); });
     box.addEventListener("drop", async e => { e.preventDefault(); box.classList.remove("rv-over"); const files = await rvFilesFromDrop(e.dataTransfer); await rvImport(files); await rvMarksCount(); rvRender(); });
@@ -315,13 +333,13 @@ async function rvClick(e) {
   if (q("#rvPmMore")) { rvPmMenu(q("#rvPmMore")); return; }
   const bk = q("[data-bulk]"); if (bk) { await rvBulk(bk.dataset.bulk, bk); return; }
   const op = q("[data-open]"); if (op && (e.ctrlKey || e.metaKey || e.shiftKey) && op.closest(".rv-row")) { e.preventDefault(); rvSelClick(op.dataset.open, e); return; }
-  if (op && rv.selSet.size && op.closest(".rv-row")) { rv.selSet.clear(); const l0 = document.getElementById("rvList"); if (l0) l0.innerHTML = rvListHtml(); }
+  if (op && rv.selSet.size && op.closest(".rv-row")) { rv.selSet.clear(); rvListPaint(); }
   if (op) { const d = op.dataset; rvOpenDoc(d.open, { page: d.page ? Number(d.page) : 1, hl: d.hl || "" }); return; }
-  const fv = q("[data-fav]"); if (fv) { const d = rv.docs.find(x => x.id === fv.dataset.fav); if (d) { d.fav = !d.fav; await rvSaveDoc(d); rvRender(true); const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); } return; }
+  const fv = q("[data-fav]"); if (fv) { const d = rv.docs.find(x => x.id === fv.dataset.fav); if (d) { d.fav = !d.fav; await rvSaveDoc(d); rvRender(true); rvListPaint(); } return; }
   const mo = q("[data-more]"); if (mo) { rvDocMenu(mo, mo.dataset.more); return; }
-  const g = q("[data-grp]"); if (g) { const k = g.dataset.grp; if (rv.grpClosed.has(k)) rv.grpClosed.delete(k); else rv.grpClosed.add(k); try { localStorage.setItem("4ddash-review-closed", JSON.stringify([...rv.grpClosed])); } catch (x) { /* */ } document.getElementById("rvList").innerHTML = rvListHtml(); return; }
-  const vt = q("[data-view]"); if (vt) { rv.view = vt.dataset.view; try { localStorage.setItem("4ddash-review-view", rv.view); } catch (x) { /* */ } rvRender(); return; }
-  const fd = q("[data-fold]"); if (fd) { if (fd.dataset.fold === "open") rv.grpClosed.clear(); else document.querySelectorAll("#rvList [data-grp]").forEach(b => rv.grpClosed.add(b.dataset.grp)); try { localStorage.setItem("4ddash-review-closed", JSON.stringify([...rv.grpClosed])); } catch (x) { /* */ } document.getElementById("rvList").innerHTML = rvListHtml(); return; }
+  const g = q("[data-grp]"); if (g) { const k = g.dataset.grp; if (rv.grpClosed.has(k)) rv.grpClosed.delete(k); else rv.grpClosed.add(k); try { localStorage.setItem("4ddash-review-closed", JSON.stringify([...rv.grpClosed])); } catch (x) { /* */ } rvListPaint(); return; }
+  const vt = q("[data-view]"); if (vt) { rv.view = vt.dataset.view; try { localStorage.setItem("4ddash-review-view", rv.view); } catch (x) { /* */ } rvRender(); if (rvv.fsWant && document.getElementById("rvMarks") && typeof rvvMarksPane === "function") rvvMarksPane(); return; }
+  const fd = q("[data-fold]"); if (fd) { if (fd.dataset.fold === "open") rv.grpClosed.clear(); else document.querySelectorAll("#rvList [data-grp]").forEach(b => rv.grpClosed.add(b.dataset.grp)); try { localStorage.setItem("4ddash-review-closed", JSON.stringify([...rv.grpClosed])); } catch (x) { /* */ } rvListPaint(); return; }
   if (q("#rvSync")) { await rvsSync(true); return; }
   if (q("#rvMainZip")) { if (typeof rvExportMain === "function") await rvExportMain(); return; }
   if (q("#rvRep")) { if (typeof rvReportMenu === "function") rvReportMenu(q("#rvRep")); return; }
@@ -330,9 +348,9 @@ async function rvChange(e) {
   const t = e.target;
   if (t.id === "rvPm") { await rvSelectPm(t.value); }
   else if (t.id === "rvFile" || t.id === "rvDir") { const files = [...t.files].filter(rvIsPdf); t.value = ""; await rvImport(files); await rvMarksCount(); rvRender(); }
-  else if (t.id === "rvSort") { rv.sort = t.value; document.getElementById("rvList").innerHTML = rvListHtml(); }
-  else if (t.id === "rvFilter") { rv.filter = t.value; document.getElementById("rvList").innerHTML = rvListHtml(); }
-  else if (t.id === "rvOld") { rv.showOld = t.checked; if (rv.q) rvSearch(rv.q); document.getElementById("rvList").innerHTML = rvListHtml(); }
+  else if (t.id === "rvSort") { rv.sort = t.value; rvListPaint(); }
+  else if (t.id === "rvFilter") { rv.filter = t.value; rvListPaint(); }
+  else if (t.id === "rvOld") { rv.showOld = t.checked; if (rv.q) rvSearch(rv.q); rvListPaint(); }
 }
 /* Små menyer (PM och ritning). */
 function rvMenu(anchor, items) {
@@ -343,15 +361,15 @@ function rvMenu(anchor, items) {
   m.onclick = async ev => { const b = ev.target.closest("[data-mi]"); if (!b) return; m.remove(); document.removeEventListener("pointerdown", off, true); await items[Number(b.dataset.mi)][1](); };
   setTimeout(() => document.addEventListener("pointerdown", off, true), 0);
 }
-function rvPmMenu(a) { rvMenu(a, [["Byt namn på PM …", async () => { const pm = rv.pms.find(p => p.id === rv.pm); const n = await (typeof dashPrompt === "function" ? dashPrompt("Nytt namn på PM", pm.name) : prompt("Nytt namn", pm.name)); if (n && n.trim()) { pm.name = n.trim(); await rvPut("pms", pm); rvRender(); } }], ["Ta bort PM …", rvDeletePm]]); }
+function rvPmMenu(a) { rvMenu(a, [["Sätt PM-kategori (STÅL, BYGG, MARK & VA) …", () => setTimeout(() => rvMenu(a, [...rvCatList().map(c => ["Kategori: " + c, async () => { await rvSetPmCat(c); }]), ["Ingen kategori", async () => { await rvSetPmCat(""); }], ["Egen kategori …", async () => { const n = await (typeof dashPrompt === "function" ? dashPrompt("Namn på kategorin", "") : prompt("Kategori", "")); if (n && n.trim()) { rvCatAdd(n.trim()); await rvSetPmCat(n.trim()); } }]]), 0)], ["Byt namn på PM …", async () => { const pm = rv.pms.find(p => p.id === rv.pm); const n = await (typeof dashPrompt === "function" ? dashPrompt("Nytt namn på PM", pm.name) : prompt("Nytt namn", pm.name)); if (n && n.trim()) { pm.name = n.trim(); await rvPut("pms", pm); rvRender(); } }], ["Ta bort PM …", rvDeletePm]]); }
 function rvDocMenu(a, id) {
-  const d = rv.docs.find(x => x.id === id); if (!d) return; const refresh = () => { rvPrep(); rvRender(true); const l = document.getElementById("rvList"); if (l) l.innerHTML = rvListHtml(); };
+  const d = rv.docs.find(x => x.id === id); if (!d) return; const refresh = () => { rvPrep(); rvRender(true); rvListPaint(); };
   const ask = async (t, v) => typeof dashPrompt === "function" ? dashPrompt(t, v) : prompt(t, v);
   const typeMenu = () => rvMenu(a, [["Handlingstyp: automatiskt", async () => { d.dtype = ""; await rvSaveDoc(d); refresh(); }], ...RV_TYPES.map(t => ["Handlingstyp: " + t + (rvTypeOf(d) === t ? " ✓" : ""), async () => { d.dtype = t; await rvSaveDoc(d); refresh(); }])]);
   const zoneMenu = () => { const codes = [...new Set([...(rvZoneKnown() || { codes: [] }).codes, ...rv.docs.map(rvZoneOf).filter(Boolean)])].sort(); rvMenu(a, [["Delområde: automatiskt", async () => { d.zone = ""; await rvSaveDoc(d); refresh(); }], ...codes.slice(0, 14).map(c => ["Delområde: " + rvZoneName(c), async () => { d.zone = c; await rvSaveDoc(d); refresh(); }]), ["Annat delområde …", async () => { const n = await ask("Delområde (kod, t.ex. 742)", rvZoneOf(d)); if (n != null) { d.zone = String(n).trim(); await rvSaveDoc(d); refresh(); } }]]); };
   const pkgMenu = () => rvMenu(a, rv.pms.filter(p => p.id !== d.pm).slice(0, 14).map(p => ["Flytta till paket: " + p.name, async () => { d.pm = p.id; await rvSaveDoc(d); refresh(); }]));
   const discMenu = () => { const groups = [...new Set([...rv.docs.map(x => x.grp || x.disc), ...Object.values(RV_PREFIX), "Övrigt"])].filter(Boolean).sort((x, y) => x.localeCompare(y, "sv")); rvMenu(a, [...groups.filter(g => g !== (d.grp || d.disc)).slice(0, 12).map(g => ["Disciplin: " + g, async () => { d.grp = g; await rvSaveDoc(d); refresh(); }]), ["Egen disciplin/grupp …", async () => { const n = await ask("Gruppnamn", d.grp || d.disc); if (n && n.trim()) { d.grp = n.trim(); await rvSaveDoc(d); refresh(); } }]]); };
-  rvMenu(a, [["Öppna", () => rvOpenDoc(id, {})], ["Ange handlingstyp …", () => setTimeout(typeMenu, 0)], ["Ange delområde …", () => setTimeout(zoneMenu, 0)], ["Ange disciplin …", () => setTimeout(discMenu, 0)], ["Flytta till annat paket …", () => setTimeout(pkgMenu, 0)], ["Redigera ritningsnr/revision …", async () => { const n = await ask("Ritningsnummer och revision, t.ex. A-10-001 B", `${d.no} ${d.rev}`.trim()); if (n == null) return; const m = /^(.*?)(?:\s+([A-Za-z0-9]{1,3}))?$/.exec(String(n).trim()); d.no = (m[1] || "").toUpperCase(); d.rev = (m[2] || "").toUpperCase(); d.key = (d.no || d.title || d.name).toLowerCase().replace(/[^a-z0-9åäö]/g, ""); await rvSaveDoc(d); refresh(); }], ["Ta bort ritningen …", async () => { if (await dashConfirm(`Ta bort ${d.name} och dess markeringar?`, { ok: "Ta bort" })) { await rvDeleteDoc(id); await rvMarksCount(); rvRender(); } }]]);
+  rvMenu(a, [["Öppna", () => rvOpenDoc(id, {})], ["Ange handlingstyp …", () => setTimeout(typeMenu, 0)], ["Ange delområde …", () => setTimeout(zoneMenu, 0)], ["Ange PM-kategori …", () => setTimeout(() => rvMenu(a, [...rvCatList().map(c => ["PM-kategori: " + c, async () => { d.cat = c; await rvSaveDoc(d); refresh(); }]), ["Ingen / automatiskt", async () => { d.cat = ""; await rvSaveDoc(d); refresh(); }]]), 0)], ["Ange disciplin …", () => setTimeout(discMenu, 0)], ["Flytta till annat paket …", () => setTimeout(pkgMenu, 0)], ["Redigera ritningsnr/revision …", async () => { const n = await ask("Ritningsnummer och revision, t.ex. A-10-001 B", `${d.no} ${d.rev}`.trim()); if (n == null) return; const m = /^(.*?)(?:\s+([A-Za-z0-9]{1,3}))?$/.exec(String(n).trim()); d.no = (m[1] || "").toUpperCase(); d.rev = (m[2] || "").toUpperCase(); d.key = (d.no || d.title || d.name).toLowerCase().replace(/[^a-z0-9åäö]/g, ""); await rvSaveDoc(d); refresh(); }], ["Ta bort ritningen …", async () => { if (await dashConfirm(`Ta bort ${d.name} och dess markeringar?`, { ok: "Ta bort" })) { await rvDeleteDoc(id); await rvMarksCount(); rvRender(); } }]]);
 }
 document.addEventListener("DOMContentLoaded", () => { rvInit(); });
 /* Områdesnamnen kommer från tidplanen, som kan läsas in efter PDF-listan: räkna om delområdena när den blir klar. */

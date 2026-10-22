@@ -3311,3 +3311,9 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .rv-row.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid var(--accent); }
 .rv-selbar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; background: var(--bg); border: 1px solid var(--accent); border-radius: 8px; padding: 4px 6px; margin-bottom: 4px; font-size: 12px; }
 .rv-selbar button { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
+.rv-fsl { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 6px; }
+.rv-fsl .rv-list { max-height: 55vh; overflow: auto; }
+.rv-fsl .rv-th { display: none; }
+.rv-fsl .rv-tab { padding: 2px 6px; font-size: 11px; }
+.rv-fsl .rv-fold { display: none; }
+#revBox.rv-fsm .rv-marks { width: 300px; overflow: auto; }

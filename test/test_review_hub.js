@@ -70,9 +70,12 @@ if (!PDFJS) { console.log('SKIP test_review_hub (hittar inte pdf.js lokalt)'); p
   await page.mouse.up({ button: 'middle' }); await page.waitForTimeout(100); if ((await page.evaluate(() => rvv.tool)) !== 'arrow' || (await page.$('.rv-hub'))) fail('släpp väljer verktyget och stänger hubben');
   { // helskärmen ska överleva Esc och byte av ritning
     await page.keyboard.press('Escape'); await page.waitForTimeout(150); const id0 = await page.evaluate(() => rvv.id); await page.click('[data-v="ndoc"], [data-v="pdoc"]'); await page.waitForFunction(i => rvv.id !== i && rvv.W > 0, id0, { timeout: 10000 }); await page.waitForTimeout(300);
-    const fsx = await page.evaluate(() => { const b = document.getElementById('revBox'); return { want: rvv.fsWant, cls: b.classList.contains('rv-fsm'), big: document.fullscreenElement === b || b.classList.contains('fsx'), sel: !!document.getElementById('rvDocSel') }; });
-    if (!fsx.want || !fsx.cls || !fsx.big || !fsx.sel) fail('helskärmen ligger kvar efter Esc och ritningsbyte: ' + JSON.stringify(fsx)); }
+    const fsx = await page.evaluate(() => { const b = document.getElementById('revBox'); return { want: rvv.fsWant, cls: b.classList.contains('rv-fsm'), big: document.fullscreenElement === b || b.classList.contains('fsx'), sel: !!document.getElementById('rvDocSel'), list2: document.querySelectorAll('#rvList2 .rv-row').length }; });
+    if (!fsx.want || !fsx.cls || !fsx.big || !fsx.sel || !fsx.list2) fail('helskärmen ligger kvar efter Esc och ritningsbyte: ' + JSON.stringify(fsx)); }
   await page.click('[data-v="fs"]'); await page.waitForTimeout(300);
+  // PM-kategorier
+  await page.evaluate(async () => { rv.pm = rv.pms.find(p => /NSV/.test(p.name)).id; await rvSetPmCat('STÅL'); }); await page.click('[data-view="pm"]'); const cg = (await page.$$eval('.rv-gh[data-grp]', e => e.map(x => x.textContent.replace(/\s+/g, ' ').trim()))).join('|'); if (!/STÅL/.test(cg) || !/NSV-Granskning PM14/.test(cg)) fail('PM i kategorin STÅL: ' + cg);
+  if ((await page.evaluate(() => rv.docs.every(d => d.cat === 'STÅL'))) !== true) fail('kategorin följer med filerna');
   // synk mot 4D-data
   await page.evaluate(() => rvsSync(true)); await page.waitForFunction(() => /Synkat/.test(rv.msg || ''), null, { timeout: 30000 });
   const keys = [...store.keys()].join('|'); if (!/review_pdf\/.*\.pdf/.test(keys) || !/review_marks\.json/.test(keys) || !/review_docs\.json/.test(keys)) fail('filer i 4D-data: ' + keys);

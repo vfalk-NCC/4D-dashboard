@@ -6,7 +6,7 @@
 
 const rvsPath = f => `projects/${encodeURIComponent(projectId)}/${f}`;
 const rvSid = d => d.sid || (d.sid = (() => { let h = 5381; for (const c of String(d.name)) h = ((h << 5) + h + c.charCodeAt(0)) >>> 0; return Number(d.size || 0).toString(36) + h.toString(36); })());
-const RVS_SHARED = ["no", "rev", "key", "title", "disc", "dtype", "zone", "grp", "scaleW", "date"], RVS_MAX = 40e6;
+const RVS_SHARED = ["no", "rev", "key", "title", "disc", "dtype", "zone", "grp", "scaleW", "date", "cat"], RVS_MAX = 40e6;
 const rvsOn = () => typeof settings !== "undefined" && settings && settings.githubToken && typeof projectId !== "undefined" && projectId;
 const rvsTomb = () => { try { return JSON.parse(localStorage.getItem("4ddash-review-tomb") || "[]"); } catch (e) { return []; } };
 function rvsTombAdd(id) { try { const t = rvsTomb().filter(x => x.id !== id); t.push({ id, upd: Date.now() }); localStorage.setItem("4ddash-review-tomb", JSON.stringify(t.slice(-2000))); } catch (e) { /* */ } }
