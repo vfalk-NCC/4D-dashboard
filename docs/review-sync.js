@@ -51,7 +51,7 @@ async function rvsSync(full) {
     await ghWriteJSON(tok, rvsPath("review_docs.json"), arr => { const mp = new Map(arr.map(x => [x.sid, x])); rv.docs.forEach(d => { const rec = rvsDocRec(d), o = mp.get(rec.sid); if (!o || o.del || (rec.upd || 0) >= (o.upd || 0)) mp.set(rec.sid, { ...(o && !o.del ? o : {}), ...rec, file: rec.file || !!(o && o.file) }); }); dt.forEach(t => mp.set(t.id.slice(4), { sid: t.id.slice(4), del: true, upd: t.upd })); return [...mp.values()]; }, "Granskning: ritningar");
     try { localStorage.removeItem("4ddash-review-sig"); } catch (e) { /* */ } await rvsPushMarks();
     rv.remoteOnly = rDocs.filter(r => !r.del && r.file && !bySid.has(r.sid)).length;
-    rvPrep(); await rvMarksCount(); rv.msg = full ? `Synkat: ${nGot} hämtade, ${nUp} skickade${skipped ? `, ${skipped} över 40 MB hoppades över` : ""}, ${nMarks} markeringar och ${nSet} inställningar uppdaterade.` : ""; if (rv.open) { rvRender(true); if (nMarks && !(rvv.drag || (document.activeElement && document.activeElement.tagName === "TEXTAREA"))) rvOpenDoc(rv.open, { again: true, page: rvv.num }); } else rvRender(); if (rv.queue.length) rvRunQueue();
-  } catch (e) { console.warn("Granskning: synk misslyckades", e); rv.msg = full ? "Synk misslyckades: " + ((e && e.message) || e) : ""; rvRender(true); }
+    rvPrep(); await rvMarksCount(); if (full) rv.msg = `Synkat: ${nGot} hämtade, ${nUp} skickade${skipped ? `, ${skipped} över 40 MB hoppades över` : ""}, ${nMarks} markeringar och ${nSet} inställningar uppdaterade.`; if (rv.open) { rvRender(true); if (nMarks && !(rvv.drag || (document.activeElement && document.activeElement.tagName === "TEXTAREA"))) rvOpenDoc(rv.open, { again: true, page: rvv.num }); } else rvRender(); if (rv.queue.length) rvRunQueue();
+  } catch (e) { console.warn("Granskning: synk misslyckades", e); if (full) rv.msg = "Synk misslyckades: " + ((e && e.message) || e); rvRender(true); }
   finally { rvsBusy = false; }
 }
