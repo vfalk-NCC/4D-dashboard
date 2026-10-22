@@ -80,14 +80,20 @@ async function dpLoad(force) {
   if (!dpLoading) dpLoading = (async () => {
     try { dayplans = await ghReadJSON(settings.githubToken, DP_PATH()); } catch (e) { dayplans = []; console.warn("Kunde inte läsa ue_dayplans.json", e); }
     try { dpAliases = await ghReadJSON(settings.githubToken, DP_ALIAS_PATH()); } catch (e) { dpAliases = []; }
-    dpLoaded = true; dpLoading = null;
+    dpLoaded = true; dpLoading = null; if (typeof dpRenderHistory === "function") dpRenderHistory();
     return dayplans;
   })();
   return dpLoading;
 }
+/* En tidigare version sparas kompakt i posten (högst 25), så att historiken visar vad som ändrats och går att återställa. */
+const dpSnap = r => ({ at: r.updated_at || r.created_at || "", by: r.updated_by || "", date: r.date, company: r.company || "", total: r.total, extras: r.extras || "", tasks: (r.tasks || []).map(t => ({ text: t.text, workers: t.workers, key: t.key || null, label: t.label || "", objs: t.objs && t.objs.length ? t.objs : undefined })) });
+const dpSame = (a, b) => JSON.stringify(dpSnap({ ...a, updated_at: "", updated_by: "" })) === JSON.stringify(dpSnap({ ...b, updated_at: "", updated_by: "" }));
 async function dpSave(rec) {
+  const prev = dayplans.find(r => r.id === rec.id);
+  if (prev && !dpSame(prev, rec)) rec.history = [...(prev.history || []), dpSnap(prev)].slice(-25); else if (prev) rec.history = prev.history || [];
+  if (!rec.created_at) rec.created_at = (prev && prev.created_at) || new Date().toISOString();
   await ghWriteJSON(settings.githubToken, DP_PATH(), arr => [...arr.filter(r => r.id !== rec.id), rec], `Dagsplan ${rec.date} ${rec.company || ""}`.trim());
-  dayplans = [...dayplans.filter(r => r.id !== rec.id), rec];
+  dayplans = [...dayplans.filter(r => r.id !== rec.id), rec]; if (typeof dpRenderHistory === "function") dpRenderHistory();
   const learned = rec.tasks.filter(t => t.key && t.text).map(t => ({ text: dpAliasKey(t.text), key: t.key, label: t.label || "" })).filter(x => x.text);
   if (learned.length) {
     await ghWriteJSON(settings.githubToken, DP_ALIAS_PATH(), arr => { const m = new Map(arr.map(x => [x.text, x])); learned.forEach(x => m.set(x.text, x)); return [...m.values()]; }, "Regler för dagsplanens rader");
@@ -96,7 +102,7 @@ async function dpSave(rec) {
 }
 async function dpDelete(id) {
   await ghWriteJSON(settings.githubToken, DP_PATH(), arr => arr.filter(r => r.id !== id), "Ta bort dagsplan");
-  dayplans = dayplans.filter(r => r.id !== id);
+  dayplans = dayplans.filter(r => r.id !== id); if (typeof dpRenderHistory === "function") dpRenderHistory();
 }
 
 /* ---- Vid aktiviteterna ---- */
@@ -134,14 +140,14 @@ async function dpOpen(opts = {}) {
   const saved = () => dayplans.slice().sort((a, b) => b.date.localeCompare(a.date));
   const render = () => {
     d.innerHTML = `<div class="dp-box">
-      <div class="dp-h"><b>👷 Dagsplan från underentreprenör</b><span class="dp-sp"></span>${saved().length ? `<select class="dp-load" aria-label="Sparade dagsplaner"><option value="">Sparade dagsplaner …</option>${saved().map(p => `<option value="${esc(p.id)}"${p.id === rec.id ? " selected" : ""}>${esc(p.date)} · ${esc(p.company || "")} · ${p.tasks.length} rader</option>`).join("")}</select>` : ""}<button type="button" class="dp-x" aria-label="Stäng">✕</button></div>
-      <div class="dp-body">
+      <div class="dp-h"><b>👷 Dagsplan från underentreprenör</b><span class="dp-sp"></span>${saved().length ? `<select class="dp-load" aria-label="Sparade dagsplaner"><option value="">Sparade dagsplaner …</option>${saved().map(p => `<option value="${esc(p.id)}"${p.id === rec.id ? " selected" : ""}>${esc(p.date)} · ${esc(p.company || "")} · ${p.tasks.length} rader</option>`).join("")}</select>` : ""}${(rec.history || []).length ? `<select class="dp-ver" aria-label="Tidigare versioner"><option value="">Versioner (${rec.history.length + 1}) …</option>${rec.history.map((h, i) => `<option value="${i}">${esc(String(h.at || "").slice(0, 16).replace("T", " ") || "äldre")} · ${h.tasks.length} rader · ${h.tasks.reduce((a, x) => a + (Number(x.workers) || 0), 0)} pers.</option>`).reverse().join("")}</select>` : ""}<button type="button" class="dp-x" aria-label="Stäng">✕</button></div>
+      <div class="dp-body">${rec.source_name ? `<div class="dp-from">Inläst från: <b>${esc(rec.source_name)}</b></div>` : ""}
         <details class="dp-paste"${rec.tasks.length ? "" : " open"}><summary>Klistra in mejlet</summary><textarea class="dp-text" rows="7" placeholder="Plan for 19.10.2026&#10;Procyon : 68+2 crane operators&#10;   * Formwork stodmur at J line - 8 workers&#10;   * Reinforcement prefabrication - 16 workers">${esc(rec.source || "")}</textarea><div class="dp-row"><button type="button" class="dp-read primary">Läs in</button><span class="hint">Raderna läses in och kopplas till aktiviteter. Du justerar allt nedan innan du sparar.</span></div></details>
         <div class="dp-fields"><label>Datum <input type="date" class="dp-date" value="${esc(rec.date)}"></label><label>Underentreprenör <input type="text" class="dp-co" value="${esc(rec.company || "")}"></label><label>Totalt antal <input type="number" class="dp-tot" min="0" value="${rec.total ?? ""}"></label><label class="dp-ex">Övrigt (kranförare m.m.) <input type="text" class="dp-extras" value="${esc(rec.extras || "")}"></label></div>
-        <div class="dp-tw"><table class="dp-t"><thead><tr><th>Arbete (enligt mejlet)</th><th>Pers.</th><th>Aktivitet i schemat</th><th></th></tr></thead><tbody>${rec.tasks.map((t, i) => `<tr data-i="${i}"><td><input type="text" class="dp-tx" value="${esc(t.text)}"></td><td><input type="number" class="dp-wk" min="0" value="${Number(t.workers) || 0}"></td><td><input type="text" class="dp-act${t.key ? " ok" : ""}" value="${esc(t.label || "")}" placeholder="Sök aktivitet …">${t.src ? `<small class="dp-src">${esc(t.src === "alias" ? "enligt tidigare val" : "förslag")}</small>` : ""}</td><td><button type="button" class="dp-del" aria-label="Ta bort raden">✕</button></td></tr>`).join("") || `<tr><td colspan="4" class="hint">Inga rader – klistra in mejlet eller lägg till en rad.</td></tr>`}</tbody></table></div>
+        <div class="dp-tw"><table class="dp-t"><thead><tr><th>Arbete (enligt mejlet)</th><th>Pers.</th><th>Aktivitet i schemat</th><th title="Koppling till modellen (valfri, kräver inte Trimble Connect)">Modell</th><th></th></tr></thead><tbody>${rec.tasks.map((t, i) => `<tr data-i="${i}"><td><input type="text" class="dp-tx" value="${esc(t.text)}"></td><td><input type="number" class="dp-wk" min="0" value="${Number(t.workers) || 0}"></td><td><input type="text" class="dp-act${t.key ? " ok" : ""}" value="${esc(t.label || "")}" placeholder="Sök aktivitet …">${t.src ? `<small class="dp-src">${esc(t.src === "alias" ? "enligt tidigare val" : "förslag")}</small>` : ""}</td><td class="dp-mo">${typeof dpObjBtn === "function" ? dpObjBtn(t) : ""}</td><td><button type="button" class="dp-del" aria-label="Ta bort raden">✕</button></td></tr>`).join("") || `<tr><td colspan="5" class="hint">Inga rader – klistra in mejlet eller lägg till en rad.</td></tr>`}</tbody></table></div>
         <div class="dp-sum"></div>
       </div>
-      <div class="dp-foot"><button type="button" class="dp-add">＋ Rad</button><span class="dp-sp"></span><button type="button" class="dp-del-all danger"${saved().some(p => p.id === rec.id) ? "" : " hidden"}>Ta bort dagsplanen</button><button type="button" class="dp-copy">Kopiera text</button><button type="button" class="dp-html">Exportera HTML</button><button type="button" class="dp-save primary">Spara</button></div></div>`;
+      <div class="dp-foot"><button type="button" class="dp-add">＋ Rad</button><span class="dp-sp"></span><button type="button" class="dp-del-all danger"${saved().some(p => p.id === rec.id) ? "" : " hidden"}>Ta bort dagsplanen</button><button type="button" class="dp-model" title="Visa dagens arbeten i modellen i Trimble Connect (kräver att 3D-styrningen är på)">🧊 Visa i modellen</button><button type="button" class="dp-copy">Kopiera text</button><button type="button" class="dp-html">Exportera HTML</button><button type="button" class="dp-save primary">Spara</button></div></div>`;
     bind();
   };
   const sum = () => { const n = rec.tasks.reduce((a, t) => a + (Number(t.workers) || 0), 0), un = rec.tasks.filter(t => !t.key).length; const el = d.querySelector(".dp-sum"); if (el) el.textContent = `${rec.tasks.length} rader · ${n} personer på raderna${rec.total ? ` av ${rec.total}` : ""}${un ? ` · ${un} utan kopplad aktivitet` : ""}`; };
@@ -154,7 +160,7 @@ async function dpOpen(opts = {}) {
   function bind() {
     d.querySelector(".dp-x").onclick = dpClose;
     const ld = d.querySelector(".dp-load"); if (ld) ld.onchange = () => { const p = dayplans.find(x => x.id === ld.value); if (p) { rec = JSON.parse(JSON.stringify(p)); render(); } };
-    d.querySelector(".dp-read").onclick = () => {
+    const readNow = () => {
       pull(); const p = dpParse(rec.source);
       if (!p.tasks.length) { modelToast("Hittade inga rader – raderna ska börja med * eller - och sluta med antal personer"); return; }
       if (p.date) rec.date = p.date; if (p.company) rec.company = p.company; if (p.total !== null) rec.total = p.total; if (p.extras) rec.extras = p.extras;
@@ -162,6 +168,15 @@ async function dpOpen(opts = {}) {
       rec.tasks = p.tasks.map(t => { const sg = dpSuggest(t.text, rec.date, cands); return { ...t, key: sg ? dpKeyOf(sg.act) : null, label: sg ? itemLabel(sg.act) : "", src: sg ? sg.src : null }; });
       render(); modelToast(`${rec.tasks.length} rader inlästa – ${rec.tasks.filter(t => t.key).length} kopplade till aktiviteter`);
     };
+    d.querySelector(".dp-read").onclick = readNow;
+    // Släpp mejlet (.msg, .eml, .txt, .html) eller markerad text direkt i dialogen
+    d.addEventListener("dragover", e => { if (e.dataTransfer && [...(e.dataTransfer.types || [])].some(x => x === "Files" || x === "text/plain" || x === "text/html")) { e.preventDefault(); d.classList.add("dp-over"); } });
+    d.addEventListener("dragleave", e => { if (!d.contains(e.relatedTarget)) d.classList.remove("dp-over"); });
+    d.addEventListener("drop", async e => { e.preventDefault(); d.classList.remove("dp-over"); if (typeof dpReadDrop !== "function") return; const m = await dpReadDrop(e.dataTransfer); if (m && m.length) { pull(); rec.source = m[0].text; rec.source_name = m[0].name || ""; readNow(); } else modelToast("Hittade inget mejl eller ingen text att läsa in"); });
+    d.addEventListener("paste", e => { const ta = d.querySelector(".dp-text"); if (ta && e.target === ta) return; const tx = e.clipboardData && e.clipboardData.getData("text/plain"); if (tx && tx.length > 20 && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) { e.preventDefault(); pull(); rec.source = tx; readNow(); } });
+    const vs = d.querySelector(".dp-ver"); if (vs) vs.onchange = () => { if (vs.value === "") return; const h = rec.history[Number(vs.value)]; if (h) { pull(); rec.total = h.total; rec.extras = h.extras; rec.company = h.company || rec.company; rec.tasks = h.tasks.map(x => ({ ...x, src: null })); render(); modelToast("Tidigare version inläst – spara för att ersätta den nuvarande"); } };
+    d.querySelectorAll(".dp-obj").forEach(b => { b.onclick = ev => { ev.stopPropagation(); pull(); const t = rec.tasks[Number(b.closest("tr").dataset.i)]; if (t && typeof dpObjMenu === "function") dpObjMenu(b, t, render, rec); }; });
+    const mb = d.querySelector(".dp-model"); if (mb) mb.onclick = () => { pull(); if (typeof dpModelShow === "function") dpModelShow(rec); };
     d.querySelector(".dp-add").onclick = () => { pull(); rec.tasks.push({ text: "", workers: 0, key: null, label: "" }); render(); };
     d.querySelectorAll(".dp-del").forEach(b => b.onclick = () => { pull(); rec.tasks.splice(Number(b.closest("tr").dataset.i), 1); render(); });
     d.querySelectorAll(".dp-t tbody tr[data-i]").forEach(tr => {
@@ -176,7 +191,7 @@ async function dpOpen(opts = {}) {
       try {
         const same = dayplans.find(p => p.date === rec.date && (p.company || "") === (rec.company || "") && p.id !== rec.id);
         if (same && !(await dashConfirm(`Det finns redan en dagsplan för ${rec.date} (${rec.company || "utan namn"}). Ersätta den?`, { ok: "Ersätt" }))) { btn.disabled = false; return; }
-        if (same) await dpDelete(same.id);
+        if (same) { rec.id = same.id; rec.history = same.history || []; rec.created_at = same.created_at; dayplans = dayplans.filter(p => p.id !== rec.id).concat([same]); } // den gamla blir en version i historiken
         rec.updated_at = new Date().toISOString(); rec.updated_by = settings.userName || null; rec.tasks = rec.tasks.filter(t => t.text || t.key);
         await dpSave(rec); modelToast(`Dagsplanen för ${rec.date} är sparad`); if (typeof renderAll === "function") renderAll(); render();
       } catch (e) { alert("Kunde inte spara dagsplanen: " + e.message); btn.disabled = false; }

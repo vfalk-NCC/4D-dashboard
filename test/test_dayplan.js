@@ -52,6 +52,7 @@ Procyon :  68+2 crane operators+2sennebogen operator+1manitue operator
   const saved = get('ue_dayplans.json'); if (saved.length !== 1 || saved[0].tasks[4].workers !== 12 || saved[0].total !== 68) fail('Dagsplanen ska sparas: ' + JSON.stringify(saved[0] && saved[0].tasks[4]));
   const al = get('ue_aliases.json'); if (!al.length) fail('Kopplingarna ska sparas som regler');
   // Antal syns på aktiviteten vid dagsplanens datum
+  await page.evaluate(() => { ganttAsOf = '2026-10-19'; }); // dagsplanens datum (annars räknas "idag")
   const w = await page.evaluate(() => { const it = mergeActivityGroups(items.filter(x => x.id === 'A1'))[0]; return dpWorkersFor(it); });
   if (!w || w.n !== 8) fail('Aktiviteten ska visa 8 personer: ' + JSON.stringify(w));
   // HTML-export
