@@ -25,6 +25,7 @@ function rvvBBox(m, W, H) {
 }
 function rvvDraw(ctx, marks, W, H, k, o = {}) {
   ctx.save(); ctx.scale(k, k); ctx.lineCap = "round"; ctx.lineJoin = "round";
+  (o.links || []).forEach(r => { ctx.fillStyle = "rgba(11,95,255,.10)"; ctx.fillRect(r[0] * W, r[1] * H, r[2] * W, r[3] * H); ctx.fillStyle = "rgba(11,95,255,.85)"; ctx.fillRect(r[0] * W, (r[1] + r[3]) * H - 1, r[2] * W, 1.6); });
   (o.hl || []).forEach(r => { ctx.fillStyle = "rgba(255,214,0,.5)"; ctx.fillRect(r[0] * W, r[1] * H, r[2] * W, r[3] * H); });
   marks.forEach(m => {
     const col = m.color || RVV_COLORS[0], ok = m.status === "ok", sel = o.sel === m.id; ctx.globalAlpha = ok ? 0.55 : 1; ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 2.5;
@@ -72,7 +73,7 @@ async function rvOpenDoc(id, opt = {}) {
 }
 function rvvBuild(main) {
   const d = rvv.doc, older = rv.docs.filter(x => x.key === d.key && x.id !== d.id);
-  main.innerHTML = `<div class="rv-view" id="rvView"><div class="rv-bar"><button data-v="back" class="rv-backb" title="Tillbaka till listan">‹ Lista</button><b class="rv-title" title="${rvEsc(d.name)}">${rvEsc(d.no || d.name)} <small>${rvEsc(d.title)}</small>${d.rev ? ` <i class="rv-rev">rev ${rvEsc(d.rev)}</i>` : ""}</b>
+  main.innerHTML = `<div class="rv-view" id="rvView"><div class="rv-bar"><button data-v="back" class="rv-backb" title="Tillbaka till listan">‹ Lista</button>${rv.nav.length ? `<button data-v="navback" title="Tillbaka till föregående ritning">↩ ${rvEsc((rv.docs.find(x => x.id === rv.nav[rv.nav.length - 1].id) || {}).no || "Tillbaka")}</button>` : ""}<b class="rv-title" title="${rvEsc(d.name)}">${rvEsc(d.no || d.name)} <small>${rvEsc(d.title)}</small>${d.rev ? ` <i class="rv-rev">rev ${rvEsc(d.rev)}</i>` : ""}</b>
     <span class="rv-grpb"><button data-v="prev" title="Föregående sida (←)">‹</button><input id="rvPageIn" type="number" min="1" max="${rvv.pdf.numPages}" value="${rvv.num}" aria-label="Sida"><span>/ ${rvv.pdf.numPages}</span><button data-v="next" title="Nästa sida (→)">›</button></span>
     <span class="rv-grpb"><button data-v="zout" title="Zooma ut (−)">−</button><button data-v="fit" title="Anpassa till bredden / hela sidan">⤢</button><button data-v="zin" title="Zooma in (+)">＋</button><span id="rvZ">100 %</span></span>
     <span class="rv-grpb rv-tl">${RVV_TOOLS.map(([k, ic, t]) => `<button data-tool="${k}" class="${rvv.tool === k ? "on" : ""}" title="${rvEsc(t)}">${ic}</button>`).join("")}</span>
@@ -91,7 +92,7 @@ function rvvWire() {
     if (a === "prev") rvvGo(rvv.num - 1); else if (a === "next") rvvGo(rvv.num + 1); else if (a === "zin") rvvZoom(rvv.zoom * 1.25); else if (a === "zout") rvvZoom(rvv.zoom / 1.25);
     else if (a === "fit") { rvv.fitMode = rvv.fitMode === "w" ? "p" : "w"; rvv.zoom = 1; rvvRender(); } else if (a === "undo") rvvUndo(); else if (a === "redo") rvvRedo();
     else if (a === "side") { v.classList.toggle("no-side"); setTimeout(() => rvvRender(), 60); } else if (a === "fs") rvvFs();
-    else if (a === "cmp") rvvCompareMenu(b); else if (a === "back") { rv.open = null; document.querySelector(".rv-wrap").classList.remove("has-doc"); const m = document.getElementById("rvMain"); rvRender(); }
+    else if (a === "cmp") rvvCompareMenu(b); else if (a === "navback") rvvNavBack(); else if (a === "back") { rv.open = null; rv.nav = []; document.querySelector(".rv-wrap").classList.remove("has-doc"); const m = document.getElementById("rvMain"); rvRender(); }
   };
   document.getElementById("rvPageIn").onchange = e => rvvGo(Number(e.target.value));
   st.addEventListener("wheel", e => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); const r = st.getBoundingClientRect(); rvvZoom(rvv.zoom * Math.exp(-e.deltaY * 0.0022), e.clientX - r.left, e.clientY - r.top); } }, { passive: false });
@@ -117,9 +118,30 @@ async function rvvRender(reset) {
   rvv.task = page.render({ canvasContext: og, viewport: vp }); try { await rvv.task.promise; } catch (e) { return; }
   if (tok !== rvv.tok) return;
   cv.width = off.width; cv.height = off.height; cv.getContext("2d").drawImage(off, 0, 0); ov.width = off.width; ov.height = off.height; const cm = document.getElementById("rvCmp"); cm.width = off.width; cm.height = off.height; rvv.k = off.width / rvv.W;
-  rvv.hlRects = rvv.hl ? await rvvHlRects(page, vp) : [];
+  rvv.hlRects = rvv.hl ? await rvvHlRects(page, vp) : []; if (tok !== rvv.tok) return; rvv.links = await rvvLinkRects(page, vp);
   if (rvv.cmpDoc) await rvvCompareDraw(); rvvOv(); rvvMarksPane(true);
 }
+/* Ritningsnummer i texten på sidan som finns som egen ritning i biblioteket blir klickbara (understrukna). Funkar bara på PDF:er med riktig text, inte på inskannade. */
+async function rvvLinkRects(page, vp) {
+  const out = [], cur = rvv.doc, self = rvNorm(cur && cur.no); if (!rv.numIdx || !rv.numIdx.size) return out;
+  try {
+    const tc = await page.getTextContent();
+    tc.items.forEach(it => {
+      const s = it.str || ""; if (s.length < 4) return;
+      for (const m of s.matchAll(/[A-ZÅÄÖ0-9][A-ZÅÄÖ0-9]*(?:[-._][A-ZÅÄÖ0-9]+){1,5}|[A-ZÅÄÖ]{1,3}\d{3,}/gi)) {
+        let raw = m[0], n = rvNorm(raw), d = n !== self ? rvLinkDoc(n, cur) : null;
+        if (!d) { const parts = raw.split(/[-._]/); if (parts.length > 2) { raw = raw.slice(0, raw.lastIndexOf(raw.match(/[-._]/g).pop())); n = rvNorm(raw); d = n !== self ? rvLinkDoc(n, cur) : null; } }
+        if (!d) continue;
+        const t = pdfjsLib.Util.transform(vp.transform, it.transform), wd = (it.width || 0) * vp.scale, h = Math.abs(it.height || Math.hypot(it.transform[2], it.transform[3])) * vp.scale;
+        out.push({ r: [(t[4] + wd * m.index / s.length) / vp.width, (t[5] - h) / vp.height, (wd * raw.length / s.length) / vp.width, (h * 1.15) / vp.height], id: d.id });
+      }
+    });
+  } catch (e) { /* utan länkar */ }
+  return out;
+}
+const rvvLinkAt = (px, py) => (rvv.links || []).find(l => px >= l.r[0] * rvv.W - 2 && px <= (l.r[0] + l.r[2]) * rvv.W + 2 && py >= l.r[1] * rvv.H - 2 && py <= (l.r[1] + l.r[3]) * rvv.H + 2);
+function rvvJump(id, page) { if (!id || !rv.docs.find(d => d.id === id)) return; if (rvv.id) rv.nav.push({ id: rvv.id, page: rvv.num }); if (rv.nav.length > 30) rv.nav.shift(); rvOpenDoc(id, { page: page || 1 }); }
+function rvvNavBack() { const p = rv.nav.pop(); if (p) rvOpenDoc(p.id, { page: p.page }); }
 async function rvvHlRects(page, vp) {
   const words = rvv.hl.toLowerCase().split(/\s+/).filter(w => w.length > 1), out = []; if (!words.length) return out;
   try { const tc = await page.getTextContent(); tc.items.forEach(it => { const s = it.str || "", low = s.toLowerCase(); if (!low) return; words.forEach(w => { let at = low.indexOf(w); while (at >= 0) { const t = pdfjsLib.Util.transform(vp.transform, it.transform), wd = (it.width || 0) * vp.scale * 1, h = Math.abs(it.height || Math.hypot(it.transform[2], it.transform[3])) * vp.scale, x = t[4] + wd * at / s.length, wn = wd * w.length / s.length; out.push([x / vp.width, (t[5] - h) / vp.height, wn / vp.width, (h * 1.15) / vp.height]); at = low.indexOf(w, at + w.length); } }); }); } catch (e) { /* utan träffbild */ }
@@ -127,7 +149,7 @@ async function rvvHlRects(page, vp) {
 }
 function rvvOv(draft) {
   const ov = document.getElementById("rvOv"); if (!ov) return; const g = ov.getContext("2d"); g.clearRect(0, 0, ov.width, ov.height);
-  rvvDraw(g, rvvMarks(), rvv.W, rvv.H, rvv.k || 1, { sel: rvv.sel, hl: rvv.hlRects, draft });
+  rvvDraw(g, rvvMarks(), rvv.W, rvv.H, rvv.k || 1, { sel: rvv.sel, hl: rvv.hlRects, links: (rvv.links || []).map(l => l.r), draft });
   const n = document.getElementById("rvMkN"); if (n) n.textContent = rvv.marks.length ? `(${rvv.marks.filter(m => m.status === "open").length}/${rvv.marks.length})` : "";
 }
 function rvvZoom(z, cx, cy) {
@@ -146,7 +168,8 @@ function rvvDown(e) {
   if (e.button === 1 || e.button === 2) { rvv.drag = { t: "pan", sx: e.clientX, sy: e.clientY, l: st.scrollLeft, tp: st.scrollTop }; return; }
   const [px, py] = rvvLocal(e), inside = px >= 0 && py >= 0 && px <= rvv.W && py <= rvv.H, tool = rvv.tool;
   if (tool === "hand" || !inside) {
-    const hit = inside ? rvvHit(px, py) : null; if (hit) { rvv.sel = hit.id; rvv.drag = { t: "move", m: hit, px, py, before: JSON.stringify(hit), moved: false }; rvvOv(); rvvMarksPane(); rvvCursor(); } else { if (rvv.sel) { rvv.sel = null; rvvOv(); rvvMarksPane(); } rvv.drag = { t: "pan", sx: e.clientX, sy: e.clientY, l: st.scrollLeft, tp: st.scrollTop }; st.style.cursor = "grabbing"; }
+    const hit = inside ? rvvHit(px, py) : null; const lk = inside && !hit && e.pointerType !== "pen" ? rvvLinkAt(px, py) : null; if (lk) { rvv.drag = { t: "link", id: lk.id, sx: e.clientX, sy: e.clientY, l: st.scrollLeft, tp: st.scrollTop }; return; }
+    if (hit) { rvv.sel = hit.id; rvv.drag = { t: "move", m: hit, px, py, before: JSON.stringify(hit), moved: false }; rvvOv(); rvvMarksPane(); rvvCursor(); } else { if (rvv.sel) { rvv.sel = null; rvvOv(); rvvMarksPane(); } rvv.drag = { t: "pan", sx: e.clientX, sy: e.clientY, l: st.scrollLeft, tp: st.scrollTop }; st.style.cursor = "grabbing"; }
     return;
   }
   const x = px / rvv.W, y = py / rvv.H;
@@ -158,7 +181,8 @@ function rvvDown(e) {
 function rvvMove(e) {
   const st = document.getElementById("rvStage"); if (rvv.ptrs.has(e.pointerId)) { rvv.ptrs.get(e.pointerId).x = e.clientX; rvv.ptrs.get(e.pointerId).y = e.clientY; }
   if (rvv.pinch && rvv.ptrs.size >= 2) { const [a, b] = [...rvv.ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y); rvvZoom(rvv.pinch.z0 * d / Math.max(1, rvv.pinch.d0), rvv.pinch.cx, rvv.pinch.cy); return; }
-  const dr = rvv.drag; if (!dr) return;
+  const dr = rvv.drag; if (!dr) { if (!e.buttons && e.pointerType === "mouse" && rvv.tool === "hand" && st) { const [px, py] = rvvLocal(e); st.style.cursor = px >= 0 && py >= 0 && px <= rvv.W && py <= rvv.H && !rvvHit(px, py) && rvvLinkAt(px, py) ? "pointer" : "grab"; } return; }
+  if (dr.t === "link") { if (Math.hypot(e.clientX - dr.sx, e.clientY - dr.sy) < 6) return; dr.t = "pan"; st.style.cursor = "grabbing"; }
   if (dr.t === "pan") { st.scrollLeft = dr.l - (e.clientX - dr.sx); st.scrollTop = dr.tp - (e.clientY - dr.sy); return; }
   const [px, py] = rvvLocal(e), x = Math.max(0, Math.min(1, px / rvv.W)), y = Math.max(0, Math.min(1, py / rvv.H));
   if (dr.t === "move") { const dx = (px - dr.px) / rvv.W, dy = (py - dr.py) / rvv.H, m = dr.m; if (Math.abs(px - dr.px) + Math.abs(py - dr.py) < 2 && !dr.moved) return; dr.moved = true; const b = JSON.parse(dr.before); if (m.pts) m.pts = b.pts.map(p => [p[0] + dx, p[1] + dy]); else { m.x = b.x + dx; m.y = b.y + dy; } rvvOv(); return; }
@@ -167,6 +191,7 @@ function rvvMove(e) {
 async function rvvUp(e) {
   rvv.ptrs.delete(e.pointerId); const st = document.getElementById("rvStage"); if (rvv.pinch && rvv.ptrs.size < 2) { rvv.pinch = null; rvv.drag = null; return; }
   const dr = rvv.drag; rvv.drag = null; rvvCursor(); if (!dr) return;
+  if (dr.t === "link") { rvvJump(dr.id, 1); return; }
   if (dr.t === "move") { if (dr.moved) { rvvPush({ t: "mod", id: dr.m.id, before: JSON.parse(dr.before) }); await rvPut("marks", dr.m); } return; }
   if (dr.t !== "draw") return; const m = dr.m, W = rvv.W, H = rvv.H;
   const size = m.pts ? (m.type === "pen" ? m.pts.length * 4 : Math.hypot((m.pts[1][0] - m.pts[0][0]) * W, (m.pts[1][1] - m.pts[0][1]) * H)) : Math.hypot(m.w * W, m.h * H);
@@ -215,7 +240,10 @@ function rvvMarksPane(soft, focusText) {
   const sel = rvv.marks.find(x => x.id === rvv.sel), list = [...rvv.marks].sort((a, b) => a.page - b.page || a.n - b.n);
   el.innerHTML = `${sel ? `<div class="rv-edit"><div class="rv-eh"><b>#${sel.n} ${RVV_TYPE[sel.type] || ""}</b><span>sida ${sel.page}</span><button data-mk="del" title="Ta bort (Delete)">🗑</button></div><textarea id="rvMkText" rows="3" placeholder="${sel.type === "text" ? "Text på ritningen" : "Skriv kommentar …"}">${rvEsc(sel.text)}</textarea><div class="rv-es">${Object.entries(RVV_STATUS).map(([k, [l, c]]) => `<button data-st="${k}" class="${sel.status === k ? "on" : ""}" style="--c:${c}">${l}</button>`).join("")}</div>${sel.type === "measure" ? `<div class="rv-meas">${rvEsc(rvvFmtLen(sel) || "Skala saknas – använd ⚖")}</div>` : ""}<small class="rv-by">${rvEsc(sel.by || "")} ${rvEsc(String(sel.created || "").slice(0, 16).replace("T", " "))}</small></div>` : `<p class="rv-hint">Välj ett verktyg ovan och markera på ritningen. Klicka på en markering för att kommentera den.</p>`}
     <div class="rv-ml"><div class="rv-mh">${rvv.marks.length} markeringar${rvv.doc && rvv.doc.scaleW ? ` · skala satt` : ""}</div>${list.map(m => `<button class="rv-mi${m.id === rvv.sel ? " on" : ""}" data-mi="${m.id}"><span class="rv-dot" style="background:${RVV_STATUS[m.status] ? RVV_STATUS[m.status][1] : "#999"}"></span><b>#${m.n}</b> <small>s.${m.page}</small> ${rvEsc((m.text || RVV_TYPE[m.type] || "").slice(0, 60))}</button>`).join("")}</div>`;
+  const refs = rvRefs(), outs = [...(refs.out.get(rvv.doc.id) || new Map())], ins = [...(refs.inc.get(rvv.doc.id) || new Map())], chip = go => ([id, pg]) => { const t = rv.docs.find(x => x.id === id); return t ? `<button class="rv-lk" data-lk="${id}" data-pg="${pg}" title="${rvEsc(t.title || t.name)} – nämns på sida ${pg}"><b>${rvEsc(t.no || t.name)}</b>${t.rev ? ` <i>${rvEsc(t.rev)}</i>` : ""} <small>s.${pg}</small></button>` : ""; };
+  if (outs.length || ins.length) el.insertAdjacentHTML("beforeend", `<div class="rv-links">${outs.length ? `<div class="rv-mh">Hänvisar till (${outs.length})</div><div class="rv-lkl">${outs.slice(0, 40).map(chip(false)).join("")}</div>` : ""}${ins.length ? `<div class="rv-mh">Hänvisas från (${ins.length})</div><div class="rv-lkl">${ins.slice(0, 40).map(chip(true)).join("")}</div>` : ""}</div>`);
   el.onclick = async e => {
+    const lk = e.target.closest("[data-lk]"); if (lk) { rvvJump(lk.dataset.lk, Number(lk.dataset.pg) || 1); return; }
     const mi = e.target.closest("[data-mi]"); if (mi) { const m = rvv.marks.find(x => x.id === mi.dataset.mi); if (m) { if (m.page !== rvv.num) { rvv.num = m.page; const i = document.getElementById("rvPageIn"); if (i) i.value = m.page; rvv.sel = m.id; await rvvRender(); } rvv.sel = m.id; rvvOv(); rvvMarksPane(); rvvReveal(m); } return; }
     const s = e.target.closest("[data-st]"); if (s && sel) { await rvvMod(sel, { status: s.dataset.st }); return; }
     if (e.target.closest('[data-mk="del"]') && sel) await rvvDelete(sel.id);

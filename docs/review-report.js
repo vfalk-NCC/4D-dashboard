@@ -3,7 +3,7 @@
 
 const rvrDl = (name, data, type) => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([data], { type: type || "text/plain;charset=utf-8" })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); };
 const rvrSafe = s => String(s || "granskning").replace(/[^\wåäöÅÄÖ.-]+/g, "_").slice(0, 50);
-async function rvrAllMarks() { const docs = new Map(rv.docs.map(d => [d.id, d])), all = (await rvAll("marks")).filter(m => docs.has(m.doc)); return all.map(m => ({ m, d: docs.get(m.doc) })).sort((a, b) => (a.d.no || a.d.name).localeCompare(b.d.no || b.d.name, "sv", { numeric: true }) || a.m.page - b.m.page || a.m.n - b.m.n); }
+async function rvrAllMarks() { const docs = new Map(rvScope().map(d => [d.id, d])), all = (await rvAll("marks")).filter(m => docs.has(m.doc)); return all.map(m => ({ m, d: docs.get(m.doc) })).sort((a, b) => (a.d.no || a.d.name).localeCompare(b.d.no || b.d.name, "sv", { numeric: true }) || a.m.page - b.m.page || a.m.n - b.m.n); }
 function rvReportMenu(anchor) {
   rvMenu(anchor, [["Granskningsrapport (HTML med bilder) …", rvReport], ["Markeringar som CSV (Excel)", rvrCsv], ["Spara markeringar som fil", rvrSave], ["Läs in markeringar från fil …", rvrLoad]]);
 }
