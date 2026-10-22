@@ -1,11 +1,11 @@
 /* Granskning – export och import (Victor 2026-10-22): granskningsrapport som HTML med bildutsnitt per markering, CSV, och markeringar som fil
    (för att flytta dem mellan datorer/telefon eller skicka till en kollega, som statusfilen i montage-rapporten). */
 
-const rvrDl = (name, data, type) => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([data], { type: type || "text/plain;charset=utf-8" })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); };
+const rvrDl = (name, data, type) => { const a = document.createElement("a"); a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type: type || "text/plain;charset=utf-8" })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); };
 const rvrSafe = s => String(s || "granskning").replace(/[^\wåäöÅÄÖ.-]+/g, "_").slice(0, 50);
 async function rvrAllMarks() { const docs = new Map(rvScope().map(d => [d.id, d])), all = (await rvAll("marks")).filter(m => docs.has(m.doc)); return all.map(m => ({ m, d: docs.get(m.doc) })).sort((a, b) => (a.d.no || a.d.name).localeCompare(b.d.no || b.d.name, "sv", { numeric: true }) || a.m.page - b.m.page || a.m.n - b.m.n); }
 function rvReportMenu(anchor) {
-  rvMenu(anchor, [["Granskningsrapport (HTML med bilder) …", rvReport], ["Markeringar som CSV (Excel)", rvrCsv], ["Spara markeringar som fil", rvrSave], ["Läs in markeringar från fil …", rvrLoad]]);
+  rvMenu(anchor, [["Exportera huvudmappen (ZIP, senaste ritningarna) …", rvExportMain], ["Granskningsrapport (HTML med bilder) …", rvReport], ["Markeringar som CSV (Excel)", rvrCsv], ["Spara markeringar som fil", rvrSave], ["Läs in markeringar från fil …", rvrLoad]]);
 }
 async function rvrCsv() {
   const rows = await rvrAllMarks(); if (!rows.length) { rvToast("Inga markeringar att exportera"); return; }
@@ -57,4 +57,26 @@ async function rvReport() {
     ${[...by.values()].map(list => { const d = list[0].d; return `<h2>${E(d.no || d.name)} <span class="mu">${E(d.title)}${d.rev ? " · rev " + E(d.rev) : ""}</span></h2>` + list.map(({ m, img }) => `<div class="card"><div><span class="st" style="background:${(RVV_STATUS[m.status] || ["", "#999"])[1]}">${E((RVV_STATUS[m.status] || [m.status])[0])}</span> <b>#${m.n}</b> <span class="mu">${E(RVV_TYPE[m.type] || m.type)} · sida ${m.page}${m.by ? " · " + E(m.by) : ""} · ${E(String(m.created || "").slice(0, 10))}</span><div class="tx">${E(m.text || "(ingen kommentar)")}</div></div>${img ? `<img src="${img}" alt="Utsnitt ur ritningen">` : ""}</div>`).join(""); }).join("")}</div></body></html>`;
   rvrDl(`granskningsrapport_${rvrSafe(pm)}_${today}.html`, html, "text/html;charset=utf-8");
   rvToast(`Rapport skapad (${(html.length / 1048576).toFixed(1)} MB)`);
+}
+
+/* Exportera huvudmappen: senaste revisionen av varje ritning som ZIP, en mapp per delområde. Ren "lagra"-ZIP (ingen komprimering, PDF är redan packat) utan bibliotek. */
+const rvzCrc = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return u8 => { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = t[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }; })();
+async function rvExportMain() {
+  const docs = rvScope().filter(d => !d.old && d.type === "Bygghandling"); if (!docs.length) { rvToast("Huvudmappen är tom"); return; }
+  const enc = new TextEncoder(), parts = [], central = [], used = new Set(); let off = 0; const clean = x => String(x).replace(/[\\/:*?"<>|]+/g, "_").trim() || "x";
+  const dt = new Date(), dosT = (dt.getHours() << 11) | (dt.getMinutes() << 5) | (dt.getSeconds() >> 1), dosD = ((dt.getFullYear() - 1980) << 9) | ((dt.getMonth() + 1) << 5) | dt.getDate();
+  let i = 0;
+  for (const d of docs) {
+    i++; rv.msg = `Packar huvudmappen … ${i} av ${docs.length}`; const bx = document.querySelector(".rv-msg"); if (bx) bx.textContent = rv.msg; else rvRender(true);
+    const b = await rvGet("blobs", d.id); if (!b) continue; const data = new Uint8Array(await b.blob.arrayBuffer());
+    let name = clean(rvZoneName(rvZoneOf(d))) + "/" + clean(d.name); while (used.has(name.toLowerCase())) name = name.replace(/(\.pdf)?$/i, "_" + i + "$1"); used.add(name.toLowerCase());
+    const nm = enc.encode(name), crc = rvzCrc(data), h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true); h.setUint16(10, dosT, true); h.setUint16(12, dosD, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, nm.length, true); h.setUint16(28, 0, true);
+    const c = new DataView(new ArrayBuffer(46)); c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true); c.setUint16(12, dosT, true); c.setUint16(14, dosD, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true); c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
+    central.push(c.buffer, nm); parts.push(h.buffer, nm, data); off += 30 + nm.length + data.length;
+  }
+  const cs = central.reduce((a, x) => a + (x.byteLength != null ? x.byteLength : x.length), 0), e = new DataView(new ArrayBuffer(22)); e.setUint32(0, 0x06054b50, true); e.setUint16(8, used.size, true); e.setUint16(10, used.size, true); e.setUint32(12, cs, true); e.setUint32(16, off, true);
+  rv.msg = ""; rvRender(true);
+  rvrDl(`huvudmapp_${new Date().toISOString().slice(0, 10)}.zip`, new Blob([...parts, ...central, e.buffer], { type: "application/zip" }), "application/zip");
+  rvToast(`Huvudmappen exporterad: ${used.size} ritningar`);
 }

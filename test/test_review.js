@@ -88,6 +88,8 @@ if (!PDFJS) { console.log('SKIP test_review (hittar inte pdf.js lokalt: sätt PD
     await page.click('[data-v="navback"]'); await page.waitForFunction(() => rvv.doc && /K-30-010/.test(rvv.doc.name), null, { timeout: 15000 });
     await page.click('[data-lk]'); await page.waitForFunction(() => rvv.doc && /^(A-10-001|E-01-100)$/.test(rvv.doc.no), null, { timeout: 15000 });
   }
+  { await page.selectOption('#rvMode', 'main'); const [dz] = await Promise.all([page.waitForEvent('download'), page.click('#rvMainZip')]); const zp = await dz.path(); const out = require('child_process').execFileSync('python3', ['-c', 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);assert z.testzip() is None;print("|".join(sorted(z.namelist())))', zp]).toString().trim();
+    if (!/742[^|]*\/K-30-010_Stomme_742\.pdf/.test(out) || /Rev A/.test(out) || !/Rev B/.test(out)) fail('ZIP av huvudmappen: ' + out); }
   // egen dialogruta med textfält (i Trimble Connects iframe blockeras webbläsarens prompt)
   { const r = await page.evaluate(async () => { window.__forceDashDialogs = true; const p = dashPrompt('Namn på PM', 'Start'); await new Promise(r => setTimeout(r, 60)); const inp = document.querySelector('.dash-in'); inp.value = 'Mitt PM'; document.querySelector('.okb').click(); const a = await p; const q = dashPrompt('Namn', 'x'); await new Promise(r => setTimeout(r, 60)); document.querySelector('.cancel').click(); const b = await q; window.__forceDashDialogs = false; return [a, b]; });
     if (r[0] !== 'Mitt PM' || r[1] !== null) fail('dashPrompt: ' + JSON.stringify(r)); }
