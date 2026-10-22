@@ -10,6 +10,8 @@ const base = { project_id: PID, model_id: null, actual_start_date: null, actual_
 seed('plan_items.json', [
   { ...base, id: 'A1', object_id: 'o1', model_id: 'M1', object_name: 'Form stödmur linje J', area: 'PRODUKTION / 742A Krönlinje J', activity: '742A Krönlinje J', start_date: '2026-10-15', end_date: '2026-10-25', source_key: 'PP a||1', origin: 'powerproject' },
   { ...base, id: 'A2', object_id: 'o2', model_id: 'M1', object_name: 'Kontrafor M12', area: 'PRODUKTION / 7421 Förtjockardel', activity: '7421 Förtjockardel', start_date: '2026-10-16', end_date: '2026-10-28', source_key: 'PP a||2', origin: 'powerproject' },
+  { ...base, id: 'A5', object_id: 'o5', object_name: 'Sikthall', area: 'PRODUKTION / 742 Sikthall', activity: '742', start_date: '2026-10-01', end_date: '2026-12-30', source_key: 'PP a||5', origin: 'powerproject' },
+  { ...base, id: 'A6', object_id: 'o6', object_name: 'Sektionsfickor', area: 'PRODUKTION / 741 Sektionsfickor', activity: '741', start_date: '2026-10-01', end_date: '2026-12-30', source_key: 'PP a||6', origin: 'powerproject' },
   { ...base, id: 'A4', object_id: 'o4', model_id: 'M1', object_name: 'Grovbetong för fundament linje E17-30', area: 'PRODUKTION / 744 Fläkthuset', activity: 'Grovbetong', start_date: '2026-10-15', end_date: '2026-10-30', source_key: 'PP a||4', origin: 'powerproject' },
 ]);
 ['plan_item_activities.json', 'plan_milestones.json', 'plan_deliveries.json', 'plan_item_baseline_history.json'].forEach(f => seed(f, []));
@@ -22,7 +24,7 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
   const errors = []; page.on('pageerror', e => errors.push(e.message)); page.on('dialog', d => d.accept());
   await page.route('https://components.connect.trimble.com/**', r => r.fulfill({ contentType: 'application/javascript', body: `window.TrimbleConnectWorkspace = { connect: () => Promise.resolve({ project: { getProject: () => Promise.resolve({ id: '${PID}', name: 'Test' }) },
     viewer: { getSelection: () => Promise.resolve([{ modelId: 'M1', objectRuntimeIds: [11, 12] }]), convertToObjectIds: (m, r) => Promise.resolve(r.map(x => 'sel' + x)), convertToObjectRuntimeIds: (m, ids) => Promise.resolve(ids.map((id, i) => /^sel/.test(id) ? Number(id.slice(3)) : 100 + i)),
-      isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__st = window.__st || []).push(b); return Promise.resolve(); }, setCamera: c => { (window.__cam = window.__cam || []).push(c); return Promise.resolve(); } } }) };` }));
+      isolateEntities: e => { (window.__iso = window.__iso || []).push(e); return Promise.resolve(); }, setObjectState: (a, b) => { (window.__st = window.__st || []).push(b); return Promise.resolve(); }, setCamera: c => { (window.__cam = window.__cam || []).push(c); return Promise.resolve(); }, setSelection: (s, m) => { (window.__sel = window.__sel || []).push([s, m]); return Promise.resolve(); } } }) };` }));
   await page.route('https://api.github.com/repos/vfalk-NCC/4D-data/contents/**', r => {
     const req = r.request(), f = decodeURIComponent(new URL(req.url()).pathname.replace('/repos/vfalk-NCC/4D-data/contents/', '')), e = store.get(f);
     if (req.method() === 'GET') return r.fulfill(e ? { status: 200, contentType: 'application/json', body: JSON.stringify({ content: Buffer.from(e.content).toString('base64'), sha: e.sha }) } : { status: 404, body: '{}' });
@@ -55,13 +57,14 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
   { const body = `Plan for 22.10.2026\r\nProcyon: 68 +1 crane operators + 1 operator manitou\r\n\r\n\r\nFirst shift:\r\n\r\n  *\r\nFormwork for lean concrete line E and F - 5 workers\r\n\r\n  *\r\nFormwork stodmur line J- 6 workers\r\n\r\n  *\r\nCasting of  kontrafor M/12 - 4 workers\r\n\r\n  *\r\nReinforcement prefabrication < ST=D6DMUR 1,2 -LAPPKYRKEV=C4GEN> - 6 workers\r\n\r\n\r\nSecond shift:\r\n\r\n  *\r\nFormwork for kontrafor line J/10- 5 workers\r\n\r\n  *\r\nPreparation for winter at elyta - 4 workers\r\n`;
     const raw = `From: Procyon <plan@example.invalid>\r\nSubject: Plan for 22.10.2026\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary="X"\r\n\r\n--X\r\nContent-Type: text/plain; charset="iso-8859-2"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${body}\r\n--X--\r\n`;
     await dropFiles([['Plan_for_22.10.2026.eml', raw, 'message/rfc822']]); await page.waitForSelector('.dp-dlg .dp-t tbody tr[data-i]');
-    const rs = await page.$$eval('.dp-t tbody tr[data-i]', e => e.map(tr => ({ tx: tr.querySelector('.dp-tx').value, wk: tr.querySelector('.dp-wk').value, sh: tr.querySelector('.dp-shift').value, act: tr.querySelector('.dp-act').value, area: tr.querySelector('.dp-area').value, sub: (tr.querySelector('.dp-ar small') || {}).textContent || '' })));
+    const rs = await page.$$eval('.dp-t tbody tr[data-i]', e => e.map(tr => ({ tx: tr.querySelector('.dp-tx').value, wk: tr.querySelector('.dp-wk').value, sh: tr.querySelector('.dp-shift').value, act: tr.querySelector('.dp-act').value, area: (tr.querySelector('.dp-ar small') || {}).textContent || '', sub: tr.querySelector('.dp-zone').options[tr.querySelector('.dp-zone').selectedIndex].textContent })));
     if (rs.length !== 6 || rs.filter(r => r.sh === '1').length !== 4 || rs.filter(r => r.sh === '2').length !== 2) fail('rader och skift ur Outlook-mejlet: ' + JSON.stringify(rs.map(r => [r.tx, r.sh])));
     if (rs[0].area !== 'Linje E, F' || rs[1].area !== 'Linje J' || rs[2].area !== 'M12' || !/STÖDMUR 1,2 -LAPPKYRKEVÄGEN/.test(rs[3].area) || rs[4].area !== 'Linje J · J10') fail('område ur raderna: ' + JSON.stringify(rs.map(r => r.area)));
     if (!/Grovbetong för fundament linje E17-30/.test(rs[0].act)) fail('grovbetong linje E och F kopplas till linje E17-30: ' + rs[0].act);
     if (!/Form stödmur/.test(rs[1].act) || !/Kontrafor M12/.test(rs[2].act)) fail('aktivitet kopplas (inkl. M/12): ' + JSON.stringify(rs.map(r => r.act)));
-    if (!/742A Krönlinje J/.test(rs[1].sub) || !/7421 Förtjockardel/.test(rs[2].sub)) fail('aktivitetens område visas: ' + JSON.stringify(rs.map(r => r.sub)));
-    const [dlH] = await Promise.all([page.waitForEvent('download'), page.click('.dp-html')]); const hh = fs.readFileSync(await dlH.path(), 'utf8'); if (!hh.includes('Skift 1') || !hh.includes('Linje E, F') || !/skift 2/.test(hh)) fail('HTML-exporten visar skift och område');
+    if (!/742 Sikthall/.test(rs[1].sub) || !/742 Sikthall/.test(rs[2].sub)) fail('område enligt aktiviteten: ' + JSON.stringify(rs.map(r => r.sub)));
+    const zs = await page.$$eval('.dp-t tbody tr[data-i] .dp-zone', e => e.map(s => s.options[s.selectedIndex].textContent)); if (zs[1] !== '742 Sikthall' || zs[2] !== '742 Sikthall') fail('område (742 Sikthall) ur raden/aktiviteten: ' + JSON.stringify(zs));
+    const [dlH] = await Promise.all([page.waitForEvent('download'), page.click('.dp-html')]); const hh = fs.readFileSync(await dlH.path(), 'utf8'); if (!hh.includes('Skift 1') || !hh.includes('Linje E, F') || !/skift 2/.test(hh) || !hh.includes('742 Sikthall')) fail('HTML-exporten visar skift och område');
     await page.click('.dp-x'); }
   // 3) .msg (Outlook) + .eml på en gång -> lista, spara båda
   const msg = fs.readFileSync(path.join(__dirname, 'fixtures', 'dayplan_mail.msg'));
@@ -78,6 +81,15 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
   await page.click('.dp-t tbody tr[data-i="0"] .dp-obj'); await page.click('.dp-menu button >> text=Koppla markeringen'); await page.waitForTimeout(200);
   if (!/🧊 3/.test(await page.textContent('.dp-t tbody tr[data-i="0"] .dp-obj'))) fail('egen markering + aktivitetens objekt = 3: ' + await page.textContent('.dp-t tbody tr[data-i="0"] .dp-obj'));
   await page.click('.dp-save'); await page.waitForTimeout(700); if (!get('ue_dayplans.json').some(r => r.tasks.some(t => (t.objs || []).length === 2))) fail('egna objekt sparas på raden');
+  // klick på en rad i historiken markerar objekten i modellen (när 3D-styrningen är på)
+  await page.click('.dp-x'); await page.evaluate(() => { modelCtl.on = false; window.__sel = []; }); await page.waitForSelector('.dph-row.open');
+  await page.click('tr.dph-tr.live >> nth=0'); await page.waitForTimeout(300); if ((await page.evaluate(() => (window.__sel || []).length)) !== 0) fail('3D-styrningen av: ingen markering i modellen');
+  await page.evaluate(() => { modelCtl.on = true; }); await page.click('tr.dph-tr.live >> nth=0'); await page.waitForTimeout(500);
+  const sel1 = await page.evaluate(() => window.__sel || []); if (!sel1.length || !sel1[0][0].modelObjectIds.length || sel1[0][1] !== 'set') fail('klick på rad markerar objekten i modellen: ' + JSON.stringify(sel1));
+  await page.keyboard.down('Control'); await page.click('tr.dph-tr.live >> nth=1'); await page.keyboard.up('Control'); await page.waitForTimeout(400); if ((await page.$$('tr.dph-tr.on')).length !== 2) fail('Ctrl+klick markerar flera rader');
+  // kolumnerna ligger på samma ställe i alla rader
+  const xs = await page.$$eval('.dph-row .dph-h', hs => hs.map(h => [...h.children].map(c => Math.round(c.getBoundingClientRect().left)).join(','))); if (new Set(xs).size !== 1) fail('kolumnerna linjerar: ' + JSON.stringify(xs));
+  await page.click('.dph-row.open [data-open]'); await page.waitForSelector('.dp-dlg .dp-obj');
   // "Visa i modellen" kräver 3D-styrningen: först av -> inget händer, sedan på
   await page.evaluate(() => { window.__iso = []; modelCtl.on = false; }); await page.click('.dp-model'); await page.waitForTimeout(300); if ((await page.evaluate(() => (window.__iso || []).length)) !== 0) fail('3D-styrningen av: modellen rörs inte');
   await page.evaluate(() => { modelCtl.on = true; }); await page.click('.dp-model'); await page.waitForTimeout(600);

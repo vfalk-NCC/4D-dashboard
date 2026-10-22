@@ -79,6 +79,22 @@ function dpScore(task, hay, nameHay) {
   if (tg.size && ag.size && ![...tg].some(g => ag.has(g))) s -= 3;
   return s;
 }
+/* Områden ur schemat: "742 Sikthall", "741 Sektionsfickor" … Kod = tre första siffrorna i områdesnamnen (742A Krönlinje J, 7421 Förtjockardel hör till 742). */
+function dpZones() {
+  const sig = items.length + ":" + (items[0] ? items[0].id : ""); if (dpZones.sig === sig && dpZones.v) return dpZones.v;
+  const names = new Map(), subs = new Map();
+  items.forEach(it => String(it.area || "").split(" / ").forEach(seg => { seg = seg.trim(); const m = /^(\d{3})(?=\D|$)/.exec(seg) || /^(\d{3})\d/.exec(seg); if (!m) return; subs.set(seg, m[1]); const pure = /^(\d{3})\s+(\S.*)$/.exec(seg); if (pure && !names.has(pure[1])) names.set(pure[1], pure[2].trim()); }));
+  dpZones.sig = sig; dpZones.v = { names, subs, codes: [...new Set([...subs.values()])].sort() }; return dpZones.v;
+}
+const dpZoneLabel = code => { if (!code) return ""; const n = dpZones().names.get(code); return n ? `${code} ${n}` : code; };
+function dpZoneOfActivity(a) { if (!a) return ""; const z = dpZones(); for (const seg of String(a.area || "").split(" / ").reverse()) { const c = z.subs.get(seg.trim()); if (c) return c; } return ""; }
+function dpZoneInfer(text) {
+  const z = dpZones(); let best = "", sc = 0;
+  z.subs.forEach((code, seg) => { const n = dpNorm(seg); const s = dpScore(text, n, n); if (s > sc) { sc = s; best = code; } });
+  return sc >= 3 ? best : "";
+}
+/* Område för en rad: aktivitetens (om kopplad), annars gissat ur texten. Ett område som valts för hand rörs inte. */
+function dpAssignZone(t, act) { if (t.zoneManual) return; const z = (act ? dpZoneOfActivity(act) : "") || dpZoneInfer(t.text); if (z) t.zone = z; else if (!t.zone) t.zone = ""; }
 function dpCandidates(date) {
   const merged = mergeActivityGroups(items.filter(x => x.startDate));
   const near = a => { const e = a.endDate || a.startDate; return a.startDate <= addDaysIso(date, 21) && e >= addDaysIso(date, -21); };
@@ -106,7 +122,7 @@ async function dpLoad(force) {
   return dpLoading;
 }
 /* En tidigare version sparas kompakt i posten (högst 25), så att historiken visar vad som ändrats och går att återställa. */
-const dpSnap = r => ({ at: r.updated_at || r.created_at || "", by: r.updated_by || "", date: r.date, company: r.company || "", total: r.total, extras: r.extras || "", tasks: (r.tasks || []).map(t => ({ text: t.text, workers: t.workers, key: t.key || null, label: t.label || "", shift: t.shift || undefined, area: t.area || undefined, objs: t.objs && t.objs.length ? t.objs : undefined })) });
+const dpSnap = r => ({ at: r.updated_at || r.created_at || "", by: r.updated_by || "", date: r.date, company: r.company || "", total: r.total, extras: r.extras || "", tasks: (r.tasks || []).map(t => ({ text: t.text, workers: t.workers, key: t.key || null, label: t.label || "", shift: t.shift || undefined, area: t.area || undefined, zone: t.zone || undefined, objs: t.objs && t.objs.length ? t.objs : undefined })) });
 const dpSame = (a, b) => JSON.stringify(dpSnap({ ...a, updated_at: "", updated_by: "" })) === JSON.stringify(dpSnap({ ...b, updated_at: "", updated_by: "" }));
 async function dpSave(rec) {
   const prev = dayplans.find(r => r.id === rec.id);
@@ -165,7 +181,7 @@ async function dpOpen(opts = {}) {
       <div class="dp-body">${rec.source_name ? `<div class="dp-from">Inläst från: <b>${esc(rec.source_name)}</b></div>` : ""}
         <details class="dp-paste"${rec.tasks.length ? "" : " open"}><summary>Klistra in mejlet</summary><textarea class="dp-text" rows="7" placeholder="Plan for 19.10.2026&#10;Procyon : 68+2 crane operators&#10;   * Formwork stodmur at J line - 8 workers&#10;   * Reinforcement prefabrication - 16 workers">${esc(rec.source || "")}</textarea><div class="dp-row"><button type="button" class="dp-read primary">Läs in</button><span class="hint">Raderna läses in och kopplas till aktiviteter. Du justerar allt nedan innan du sparar.</span></div></details>
         <div class="dp-fields"><label>Datum <input type="date" class="dp-date" value="${esc(rec.date)}"></label><label>Underentreprenör <input type="text" class="dp-co" value="${esc(rec.company || "")}"></label><label>Totalt antal <input type="number" class="dp-tot" min="0" value="${rec.total ?? ""}"></label><label class="dp-ex">Övrigt (kranförare m.m.) <input type="text" class="dp-extras" value="${esc(rec.extras || "")}"></label></div>
-        <div class="dp-tw"><table class="dp-t"><thead><tr><th>Arbete (enligt mejlet)</th><th>Pers.</th><th title="Skift enligt mejlet">Skift</th><th>Aktivitet i schemat</th><th title="Område: enligt aktiviteten i schemat, annars det som nämns i raden">Område</th><th title="Koppling till modellen (valfri, kräver inte Trimble Connect)">Modell</th><th></th></tr></thead><tbody>${rec.tasks.map((t, i) => `<tr data-i="${i}"><td><input type="text" class="dp-tx" value="${esc(t.text)}"></td><td><input type="number" class="dp-wk" min="0" value="${Number(t.workers) || 0}"></td><td><select class="dp-shift" aria-label="Skift"><option value="0"${!t.shift ? " selected" : ""}>–</option>${[1, 2, 3].map(n => `<option value="${n}"${Number(t.shift) === n ? " selected" : ""}>${n}</option>`).join("")}</select></td><td><input type="text" class="dp-act${t.key ? " ok" : ""}" value="${esc(t.label || "")}" placeholder="Sök aktivitet …">${t.src ? `<small class="dp-src">${esc(t.src === "alias" ? "enligt tidigare val" : "förslag")}</small>` : ""}</td><td class="dp-ar"><input type="text" class="dp-area" value="${esc(t.area || "")}" placeholder="${t.key ? "enligt schemat" : "område"}">${t.key && byKey.get(String(t.key)) ? `<small title="Aktivitetens område i schemat">${esc(String(byKey.get(String(t.key)).area || "").split(" / ").slice(-2).join(" / "))}</small>` : ""}</td><td class="dp-mo">${typeof dpObjBtn === "function" ? dpObjBtn(t) : ""}</td><td><button type="button" class="dp-del" aria-label="Ta bort raden">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="hint">Inga rader – klistra in mejlet eller lägg till en rad.</td></tr>`}</tbody></table></div>
+        <div class="dp-tw"><table class="dp-t"><thead><tr><th>Arbete (enligt mejlet)</th><th>Pers.</th><th title="Skift enligt mejlet">Skift</th><th>Aktivitet i schemat</th><th title="Område: enligt aktiviteten i schemat, annars det som nämns i raden">Område</th><th title="Koppling till modellen (valfri, kräver inte Trimble Connect)">Modell</th><th></th></tr></thead><tbody>${rec.tasks.map((t, i) => `<tr data-i="${i}"><td><input type="text" class="dp-tx" value="${esc(t.text)}"></td><td><input type="number" class="dp-wk" min="0" value="${Number(t.workers) || 0}"></td><td><select class="dp-shift" aria-label="Skift"><option value="0"${!t.shift ? " selected" : ""}>–</option>${[1, 2, 3].map(n => `<option value="${n}"${Number(t.shift) === n ? " selected" : ""}>${n}</option>`).join("")}</select></td><td><input type="text" class="dp-act${t.key ? " ok" : ""}" value="${esc(t.label || "")}" placeholder="Sök aktivitet …">${t.src ? `<small class="dp-src">${esc(t.src === "alias" ? "enligt tidigare val" : "förslag")}</small>` : ""}</td><td class="dp-ar"><select class="dp-zone" aria-label="Område"><option value="">–</option>${dpZones().codes.map(c => `<option value="${c}"${t.zone === c ? " selected" : ""}>${esc(dpZoneLabel(c))}</option>`).join("")}</select>${t.area ? `<small title="Plats enligt mejlet">${esc(t.area)}</small>` : ""}</td><td class="dp-mo">${typeof dpObjBtn === "function" ? dpObjBtn(t) : ""}</td><td><button type="button" class="dp-del" aria-label="Ta bort raden">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="hint">Inga rader – klistra in mejlet eller lägg till en rad.</td></tr>`}</tbody></table></div>
         <div class="dp-sum"></div>
       </div>
       <div class="dp-foot"><button type="button" class="dp-add">＋ Rad</button><span class="dp-sp"></span><button type="button" class="dp-del-all danger"${saved().some(p => p.id === rec.id) ? "" : " hidden"}>Ta bort dagsplanen</button><button type="button" class="dp-model" title="Visa dagens arbeten i modellen i Trimble Connect (kräver att 3D-styrningen är på)">🧊 Visa i modellen</button><button type="button" class="dp-copy">Kopiera text</button><button type="button" class="dp-html">Exportera HTML</button><button type="button" class="dp-save primary">Spara</button></div></div>`;
@@ -176,7 +192,7 @@ async function dpOpen(opts = {}) {
     rec.date = d.querySelector(".dp-date").value || rec.date; rec.company = d.querySelector(".dp-co").value.trim();
     const tot = d.querySelector(".dp-tot").value; rec.total = tot === "" ? null : Number(tot); rec.extras = d.querySelector(".dp-extras").value.trim();
     const ta = d.querySelector(".dp-text"); if (ta) rec.source = ta.value;
-    d.querySelectorAll(".dp-t tbody tr[data-i]").forEach(tr => { const t = rec.tasks[Number(tr.dataset.i)]; if (!t) return; t.text = tr.querySelector(".dp-tx").value.trim(); t.workers = Number(tr.querySelector(".dp-wk").value) || 0; t.shift = Number(tr.querySelector(".dp-shift").value) || 0; t.area = tr.querySelector(".dp-area").value.trim(); });
+    d.querySelectorAll(".dp-t tbody tr[data-i]").forEach(tr => { const t = rec.tasks[Number(tr.dataset.i)]; if (!t) return; t.text = tr.querySelector(".dp-tx").value.trim(); t.workers = Number(tr.querySelector(".dp-wk").value) || 0; t.shift = Number(tr.querySelector(".dp-shift").value) || 0; const zs = tr.querySelector(".dp-zone").value; if (zs !== (t.zone || "")) t.zoneManual = true; t.zone = zs; });
   };
   function bind() {
     d.querySelector(".dp-x").onclick = dpClose;
@@ -186,7 +202,7 @@ async function dpOpen(opts = {}) {
       if (!p.tasks.length) { modelToast("Hittade inga rader – raderna ska börja med * eller - och sluta med antal personer"); return; }
       if (p.date) rec.date = p.date; if (p.company) rec.company = p.company; if (p.total !== null) rec.total = p.total; if (p.extras) rec.extras = p.extras;
       const cands = dpCandidates(rec.date);
-      rec.tasks = p.tasks.map(t => { const sg = dpSuggest(t.text, rec.date, cands); return { ...t, key: sg ? dpKeyOf(sg.act) : null, label: sg ? itemLabel(sg.act) : "", src: sg ? sg.src : null }; });
+      rec.tasks = p.tasks.map(t => { const sg = dpSuggest(t.text, rec.date, cands), r = { ...t, key: sg ? dpKeyOf(sg.act) : null, label: sg ? itemLabel(sg.act) : "", src: sg ? sg.src : null }; dpAssignZone(r, sg && sg.act); return r; });
       render(); modelToast(`${rec.tasks.length} rader inlästa – ${rec.tasks.filter(t => t.key).length} kopplade till aktiviteter`);
     };
     d.querySelector(".dp-read").onclick = readNow;
@@ -202,9 +218,10 @@ async function dpOpen(opts = {}) {
     d.querySelectorAll(".dp-del").forEach(b => b.onclick = () => { pull(); rec.tasks.splice(Number(b.closest("tr").dataset.i), 1); render(); });
     d.querySelectorAll(".dp-t tbody tr[data-i]").forEach(tr => {
       const t = rec.tasks[Number(tr.dataset.i)], inp = tr.querySelector(".dp-act");
-      attachCombo(inp, () => dpCandidates(rec.date).map(a => ({ value: dpKeyOf(a), label: itemLabel(a), sub: [a.area, a.startDate && a.endDate ? tipRange(a.startDate, a.endDate) : ""].filter(Boolean).join(" · "), act: a })), { empty: "Ingen aktivitet matchar", onPick: o => { t.key = o.value; t.label = o.label; t.src = null; inp.value = o.label; inp.classList.add("ok"); const s = tr.querySelector(".dp-src"); if (s) s.remove(); sum(); } });
+      attachCombo(inp, () => dpCandidates(rec.date).map(a => ({ value: dpKeyOf(a), label: itemLabel(a), sub: [a.area, a.startDate && a.endDate ? tipRange(a.startDate, a.endDate) : ""].filter(Boolean).join(" · "), act: a })), { empty: "Ingen aktivitet matchar", onPick: o => { t.key = o.value; t.label = o.label; t.src = null; dpAssignZone(t, o.act); { const zs = tr.querySelector(".dp-zone"); if (zs) zs.value = t.zone || ""; } inp.value = o.label; inp.classList.add("ok"); const s = tr.querySelector(".dp-src"); if (s) s.remove(); sum(); } });
       inp.addEventListener("input", () => { if (!inp.value.trim()) { t.key = null; t.label = ""; inp.classList.remove("ok"); sum(); } });
       tr.querySelector(".dp-wk").addEventListener("input", () => { pull(); sum(); });
+      tr.addEventListener("click", ev => { if (ev.target.closest("input,select,button,textarea,.cb-list,a")) return; pull(); const tk = rec.tasks[Number(tr.dataset.i)]; if (tk && typeof dpModelPick === "function") dpModelPick([tk]); }); tr.title = "Klicka på raden för att markera dess objekt i modellen";
     });
     d.querySelector(".dp-save").onclick = async () => {
       pull(); if (!rec.date) { alert("Ange datum."); return; }
@@ -226,7 +243,7 @@ async function dpOpen(opts = {}) {
   d.addEventListener("keydown", e => { if (e.key === "Escape" && !e.defaultPrevented && !d.querySelector(".cb-list:not([hidden])")) { e.stopPropagation(); dpClose(); } });
   render();
 }
-function dpText(rec) { return `Dagsplan ${rec.date}${rec.company ? " – " + rec.company : ""}${rec.total ? `: ${rec.total}${rec.extras ? " + " + rec.extras : ""} personer` : ""}\n` + rec.tasks.map(t => `• ${t.shift ? `[Skift ${t.shift}] ` : ""}${t.text} – ${t.workers} pers.${t.label ? `  [${t.label}]` : ""}${t.area ? `  (${t.area})` : ""}`).join("\n"); }
+function dpText(rec) { return `Dagsplan ${rec.date}${rec.company ? " – " + rec.company : ""}${rec.total ? `: ${rec.total}${rec.extras ? " + " + rec.extras : ""} personer` : ""}\n` + rec.tasks.map(t => `• ${t.shift ? `[Skift ${t.shift}] ` : ""}${t.text} – ${t.workers} pers.${t.label ? `  [${t.label}]` : ""}${t.zone ? `  {${dpZoneLabel(t.zone)}}` : ""}${t.area ? `  (${t.area})` : ""}`).join("\n"); }
 
 /* ---- HTML-export ---- */
 function dpExportHtml(rec) {
@@ -234,7 +251,7 @@ function dpExportHtml(rec) {
   const fd = iso => /^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? `${+iso.slice(8)} ${MON[+iso.slice(5, 7) - 1]}` : "–";
   const dt = new Date(rec.date + "T00:00:00"), head = isNaN(dt) ? rec.date : `${WD[dt.getDay()]} ${dt.getDate()} ${MON[dt.getMonth()]} ${dt.getFullYear()}`;
   const merged = mergeActivityGroups(items.filter(x => x.startDate)), byKey = new Map(merged.map(a => [dpKeyOf(a), a]));
-  const rows = rec.tasks.map(t => { const a = t.key ? byKey.get(String(t.key)) : null; return { t, a, area: a ? String(a.area || "").split(" / ").pop() : "Ej kopplad", ph: a ? (typeof ganttPhaseAt === "function" ? ganttPhaseAt(a, rec.date) : a.status) : "" }; });
+  const rows = rec.tasks.map(t => { const a = t.key ? byKey.get(String(t.key)) : null; return { t, a, area: t.zone ? dpZoneLabel(t.zone) : a ? String(a.area || "").split(" / ").pop() : "Ej kopplad", ph: a ? (typeof ganttPhaseAt === "function" ? ganttPhaseAt(a, rec.date) : a.status) : "" }; });
   const groups = new Map(); rows.forEach(r => { if (!groups.has(r.area)) groups.set(r.area, []); groups.get(r.area).push(r); });
   const col = { pagaende: "#d4a90a", forsenad: "#e5262b", klar: "#2fa84f", planerad: "#9aa3af" };
   const sumW = rec.tasks.reduce((a, t) => a + (Number(t.workers) || 0), 0), max = Math.max(1, ...rec.tasks.map(t => Number(t.workers) || 0));
