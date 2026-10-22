@@ -59,6 +59,7 @@ Procyon :  68+2 crane operators+2sennebogen operator+1manitue operator
   const dl = page.waitForEvent('download'); await page.click('.dp-html'); const d = await dl;
   const html = fs.readFileSync(await d.path(), 'utf8');
   if (!/Dagsplan måndag 19 okt 2026/.test(html) || !/Procyon/.test(html)) fail('HTML-exporten saknar innehåll ' + [/Dagsplan måndag 19 okt 2026/.test(html), /Form stödmur linje J/.test(html), /Procyon/.test(html)] + html.slice(html.indexOf('<h1>'), html.indexOf('<h1>') + 300));
+  if (!/class="tag zn">/.test(html)) fail('Området ska stå som text på varje rad');
   if (/framdrift|Ingen kopplad aktivitet|data-f="ph"/.test(html)) fail('HTML-exporten ska inte ta med aktivitet från tidplan som standard');
   await page.check('.dp-withact'); const dl2 = page.waitForEvent('download'); await page.click('.dp-html'); const html2 = fs.readFileSync(await (await dl2).path(), 'utf8');
   if (!/Form stödmur linje J/.test(html2) || /Form stödmur linje J/.test(html) || !/framdrift/.test(html2) || !/data-f="ph"/.test(html2)) fail('Med bockrutan ska aktiviteten från tidplanen följa med');
