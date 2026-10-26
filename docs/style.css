@@ -3335,3 +3335,4 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .dph-menu[hidden] { display: none; } .dph-menu button, .dph-menu .dph-pick { text-align: left; text-decoration: none; color: var(--text); padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; font: inherit; cursor: pointer; }
 .dph-menu button:hover, .dph-menu .dph-pick:hover { background: var(--accent); color: #fff; } .dph-menu small { padding: 4px 10px 2px; color: var(--muted); font-size: 11px; line-height: 1.35; }
 .dph-box.dph-over { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 10px; }
+.dph-chart .dph-yr line { stroke: var(--muted); stroke-width: 1; opacity: .35; } .dph-chart .dph-yr text { font-size: 10px; font-weight: 800; fill: var(--text); letter-spacing: .04em; }

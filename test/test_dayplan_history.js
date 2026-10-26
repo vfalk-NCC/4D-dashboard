@@ -97,7 +97,7 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
   if (!(await page.evaluate(() => (window.__st || []).some(s => s && s.color && s.color.r === 245)))) fail('objekten färgas');
   await page.click('.dp-x');
   // Tidsaxeln: veckodag + datum under staplarna och veckoband
-  { const ax = await page.$$eval('.dph-chart text', e => e.map(t => t.textContent)); if (!ax.includes('Mån') || !ax.some(t => /^\d+ okt$/.test(t)) || !ax.some(t => /^(vecka|v)\s?\d+$/.test(t))) fail('veckodag, datum och vecka i diagrammet: ' + JSON.stringify(ax)); }
+  { const ax = await page.$$eval('.dph-chart text', e => e.map(t => t.textContent)); if (!ax.includes('Mån') || !ax.some(t => /^\d+ okt$/.test(t)) || !ax.some(t => /^V\.\d+$/.test(t))) fail('veckodag, datum och vecka i diagrammet: ' + JSON.stringify(ax)); }
   // Uppdatera: en ny, bättre passande aktivitet hittas för en obunden rad
   { const r = await page.evaluate(() => { const rec = JSON.parse(JSON.stringify(dayplans[0])); rec.tasks[0].key = null; rec.tasks[0].label = ''; rec.tasks[0].src = null; rec.tasks[0].text = 'Formwork stodmur line J';
       items.push({ ...items[0], id: 'NEW1', activityKey: 'NEWK', objectName: 'Ställningsmontage till formning stödmur linje J', area: 'PRODUKTION / 742A Krönlinje J', activity: 'Formning stödmur linje J', startDate: rec.date, endDate: rec.date, modelId: null });

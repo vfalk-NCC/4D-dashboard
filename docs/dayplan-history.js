@@ -165,7 +165,7 @@ function dpChartSvg(rows) {
   if (!rows.length) return ""; const by = new Map(); rows.forEach(r => by.set(r.date, (by.get(r.date) || 0) + dpTot(r)));
   const days = [...by.keys()].sort(), n = days.length, max = Math.max(1, ...by.values());
   // Tydlig tidsaxel: veckodag + datum under varje stapel och veckonummer som ett band under (Victor 2026-10-26).
-  const full = n <= 24, mid = n <= 45, step = full ? 40 : mid ? 26 : 14, W = Math.max(320, Math.min(1100, n * step + 40)), H = 156, base = H - 50, top = 18;
+  const full = n <= 24, mid = n <= 45, step = full ? 40 : mid ? 26 : 14, W = Math.max(320, Math.min(1100, n * step + 40)), H = 176, base = H - 72, top = 18;
   const slot = (W - 40) / n, bw = Math.max(4, Math.min(24, slot - 4)), today = typeof todayISO === "function" ? todayISO() : new Date().toISOString().slice(0, 10);
   const MON = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"], WD = ["Sön", "Mån", "Tis", "Ons", "Tor", "Fre", "Lör"];
   const dateOf = d => new Date(d + "T00:00:00"), cx = i => 30 + i * slot + slot / 2;
@@ -181,9 +181,12 @@ function dpChartSvg(rows) {
   // Veckoband: en parentes under dagarna i varje vecka med "v44".
   const weeks = []; days.forEach((d, i) => { const w = dpWeek(d), yr = d.slice(0, 4), last = weeks[weeks.length - 1]; if (last && last.w === w && last.yr === yr) last.to = i; else weeks.push({ w, yr, from: i, to: i }); });
   const wy = base + 33;
-  const band = weeks.map((g, k) => { const x0 = 30 + g.from * slot + 3, x1 = 30 + (g.to + 1) * slot - 3, mx = (x0 + x1) / 2, wide = x1 - x0 > 30;
-    return `<g class="dph-wk${k % 2 ? " alt" : ""}"><path d="M${x0} ${wy - 4}V${wy}H${x1}V${wy - 4}" fill="none"/><text x="${mx}" y="${wy + 11}" text-anchor="middle">${wide ? "vecka " + g.w : "v" + g.w}</text></g>`; }).join("");
-  return `<svg class="dph-chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Personer per dag och vecka"><line x1="28" y1="${base}" x2="${W - 6}" y2="${base}" stroke="currentColor" opacity=".25"/>${bars}${band}</svg>`;
+  const band = weeks.map((g, k) => { const x0 = 30 + g.from * slot + 3, x1 = 30 + (g.to + 1) * slot - 3, mx = (x0 + x1) / 2, w = x1 - x0;
+    return `<g class="dph-wk${k % 2 ? " alt" : ""}"><path d="M${x0} ${wy - 4}V${wy}H${x1}V${wy - 4}" fill="none"/><text x="${mx}" y="${wy + 11}" text-anchor="middle">${w >= 26 ? "V." + g.w : g.w}</text></g>`; }).join("");
+  // Årsrad längst ner: ett år per sammanhängande period, så det syns vilket år veckorna hör till.
+  const yrs = []; days.forEach((d, i) => { const y = d.slice(0, 4), last = yrs[yrs.length - 1]; if (last && last.y === y) last.to = i; else yrs.push({ y, from: i, to: i }); });
+  const yband = yrs.map(g => { const x0 = 30 + g.from * slot + 3, x1 = 30 + (g.to + 1) * slot - 3; return `<g class="dph-yr"><line x1="${x0}" x2="${x1}" y1="${wy + 20}" y2="${wy + 20}"/><text x="${(x0 + x1) / 2}" y="${wy + 33}" text-anchor="middle">${g.y}</text></g>`; }).join("");
+  return `<svg class="dph-chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Personer per dag och vecka"><line x1="28" y1="${base}" x2="${W - 6}" y2="${base}" stroke="currentColor" opacity=".25"/>${bars}${band}${yband}</svg>`;
 }
 function dpRenderHistory() {
   const box = document.getElementById("dpBox"); if (!box) return;
