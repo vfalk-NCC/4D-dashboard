@@ -3337,3 +3337,13 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .dph-box.dph-over { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 10px; }
 .dph-chart .dph-yr line { stroke: var(--muted); stroke-width: 1; opacity: .35; } .dph-chart .dph-yr text { font-size: 10px; font-weight: 800; fill: var(--text); letter-spacing: .04em; }
 .dph-bar .dph-col { padding: 3px 8px; font-size: 11px; line-height: 1; letter-spacing: -2px; color: var(--muted); background: transparent; border-color: transparent; } .dph-bar .dph-col:hover:not(:disabled) { color: var(--accent); border-color: var(--border); } .dph-bar .dph-col:disabled { opacity: .35; cursor: default; }
+
+/* Utskrift av Kommande veckor (Victor 2026-10-26): varje vecka börjar på en ny sida, och en aktivitet eller ett områdeskort delas aldrig mitt i. */
+@media print {
+  .panel[data-panel-id="lookahead"] { break-inside: auto; page-break-inside: auto; }
+  .lookahead-chart { display: block; }
+  .la-week { break-inside: auto; page-break-inside: auto; margin: 0 0 10px; }
+  .la-week + .la-week { break-before: page; page-break-before: always; }
+  .la-week-head { break-after: avoid; page-break-after: avoid; }
+  .la-note, .la-item, .la-notes > * { break-inside: avoid; page-break-inside: avoid; }
+}
