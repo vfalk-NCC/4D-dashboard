@@ -104,6 +104,16 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
       const ch = dpRefitPlan(rec); return { n: ch.length, to: ch[0] && ch[0].to, btn: !!document.getElementById('dphRefit') }; });
     if (!r.btn || !(await page.$('[data-refit]'))) fail('knappen Uppdatera finns (även per dagsplan)'); if (r.n < 1) fail('Uppdatera hittar en bättre aktivitet: ' + JSON.stringify(r)); }
   { if (!(await page.$$('.dph-row.open')).length) await page.click('.dph-row >> nth=0 >> .dph-h'); const o1 = await page.$$('.dph-row.open'); await page.click('#dphCollapse'); const o2 = await page.$$('.dph-row.open'); if (!o1.length || o2.length) fail('Fäll ihop alla: ' + o1.length + '/' + o2.length); }
+  // Utskrift: sidhuvud/filter, blockrubriker och veckosammanfattning kan väljas bort
+  { const r = await page.evaluate(async () => {
+      let seen = null; window.print = () => { seen = [...document.body.classList].filter(c => c.startsWith('print-no-')); };
+      onExportPdf(); const w = document.getElementById('printPick'); const boxes = [...w.querySelectorAll('[data-po]')].map(b => b.dataset.po);
+      w.querySelector('[data-po="head"]').checked = false; w.querySelector('[data-po="chips"]').checked = false;
+      w.querySelector('#printPickGo').click(); await new Promise(r => setTimeout(r, 300));
+      const during = seen; window.dispatchEvent(new Event('afterprint')); const after = [...document.body.classList].filter(c => c.startsWith('print-no-'));
+      return { boxes, during, after, saved: localStorage.getItem('4ddash-print-opts') };
+    });
+    if (r.boxes.join() !== 'head,h2,chips' || !r.during || r.during.join() !== 'print-no-head,print-no-chips' || r.after.length || !/"head":false/.test(r.saved)) fail('Utskriftsval: ' + JSON.stringify(r)); }
   if (process.env.SHOT) { await page.click('#dphAdd'); await (await page.$('.panel[data-panel-id="dayplans"]')).screenshot({ path: '/tmp/dph.png' }); }
   if (errors.filter(e => !/allow-same-origin/.test(e)).length) fail('sidfel: ' + errors.slice(0, 3));
   console.log('OK test_dayplan_history'); await browser.close(); server.close();

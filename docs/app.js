@@ -8839,15 +8839,21 @@ function onExportExcel() {
 // style.css döljer knappar/formulär/filter och lägger panelerna i en
 // enkel kolumn så resultatet blir en ren rapport.
 const PRINT_PANELS_KEY = "4ddash-print-panels-off";
+const PRINT_OPTS_KEY = "4ddash-print-opts";
+/* Delar av sidan som kan väljas bort i utskriften (Victor 2026-10-26): sidhuvud + varningar + filter, blockrubriker, veckosammanfattningen. */
+const PRINT_OPTS = [["head", "Sidhuvud, varningar och filter"], ["h2", "Blockrubriker (t.ex. KOMMANDE VECKOR)"], ["chips", "Veckosammanfattning (pågår, startar, klara …)"]];
 function onExportPdf() {
   const panels = [...document.querySelectorAll(".panel[data-panel-id]")].filter(p => !hiddenPanels.has(p.dataset.panelId));
   if (!panels.length) { window.print(); return; }
   let off = new Set(); try { off = new Set(JSON.parse(localStorage.getItem(PRINT_PANELS_KEY) || "[]")); } catch (e) { /* alla med */ }
+  let opts = {}; try { opts = JSON.parse(localStorage.getItem(PRINT_OPTS_KEY) || "{}") || {}; } catch (e) { /* alla med */ }
   const title = p => { const h2 = p.querySelector("h2"); return h2 && h2.childNodes[0] ? h2.childNodes[0].textContent.trim() : p.dataset.panelId; };
   document.getElementById("printPick")?.remove();
   const w = document.createElement("div"); w.id = "printPick"; w.className = "print-pick";
   w.innerHTML = `<div class="print-pick-box" role="dialog" aria-label="Välj block att skriva ut"><h3>Vilka block ska med i PDF:en?</h3>
     <div class="print-pick-list">${panels.map(p => `<label><input type="checkbox" data-pp="${escapeHtml(p.dataset.panelId)}"${off.has(p.dataset.panelId) ? "" : " checked"}> ${escapeHtml(title(p))}</label>`).join("")}</div>
+    <div class="print-pick-sub">Med på sidan</div>
+    <div class="print-pick-list print-pick-opts">${PRINT_OPTS.map(([k, l]) => `<label><input type="checkbox" data-po="${k}"${opts[k] === false ? "" : " checked"}> ${l}</label>`).join("")}</div>
     <div class="print-pick-row"><button type="button" id="printPickAll">Alla</button><button type="button" id="printPickNone">Inga</button><span class="sp"></span><button type="button" id="printPickCancel">Avbryt</button><button type="button" id="printPickGo" class="primary">Skriv ut / spara PDF</button></div>
     <div class="hint">Färger och bakgrunder följer med. Välj "Spara som PDF" som skrivare. Valet kommer ihåg till nästa gång.</div></div>`;
   document.body.appendChild(w);
@@ -8858,11 +8864,14 @@ function onExportPdf() {
   w.addEventListener("click", e => { if (e.target === w) w.remove(); });
   w.querySelector("#printPickGo").onclick = () => {
     const skip = boxes().filter(b => !b.checked).map(b => b.dataset.pp);
-    try { localStorage.setItem(PRINT_PANELS_KEY, JSON.stringify(skip)); } catch (e) { /* ingen lagring */ }
+    const o = {}; w.querySelectorAll("[data-po]").forEach(b => { o[b.dataset.po] = b.checked; });
+    try { localStorage.setItem(PRINT_PANELS_KEY, JSON.stringify(skip)); localStorage.setItem(PRINT_OPTS_KEY, JSON.stringify(o)); } catch (e) { /* ingen lagring */ }
     w.remove();
+    const cls = PRINT_OPTS.filter(([k]) => o[k] === false).map(([k]) => "print-no-" + k);
+    cls.forEach(c => document.body.classList.add(c));
     const hide = panels.filter(p => skip.includes(p.dataset.panelId));
     hide.forEach(p => p.classList.add("print-skip"));
-    const done = () => hide.forEach(p => p.classList.remove("print-skip"));
+    const done = () => { hide.forEach(p => p.classList.remove("print-skip")); cls.forEach(c => document.body.classList.remove(c)); };
     window.addEventListener("afterprint", done, { once: true });
     requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
   };

@@ -3347,3 +3347,12 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
   .la-week-head { break-after: avoid; page-break-after: avoid; }
   .la-note, .la-item, .la-notes > * { break-inside: avoid; page-break-inside: avoid; }
 }
+
+/* Utskriftsval: bort med sidhuvud/filter, blockrubriker och veckosammanfattning */
+.print-pick-sub { margin: 10px 0 4px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+@media print {
+  body.print-no-head header, body.print-no-head #planSourceBar, body.print-no-head #watchBanner, body.print-no-head #filterBar,
+  body.print-no-head #lastUpdated, body.print-no-head #connectionWarning { display: none !important; }
+  body.print-no-h2 .panel > h2 { display: none !important; }
+  body.print-no-chips .la-chips { display: none !important; }
+}
