@@ -40,10 +40,12 @@ seed('plan_items.json', [
   m1 = row('M1'); if (m1.start_date !== '2026-11-30' || m1.end_date !== '2026-12-07') fail('Kranen ska följa med efter ny import: ' + m1.start_date + ' – ' + m1.end_date);
   console.log('OK: kranen följer med när aktiviteten flyttas av en ny import');
   // Filter: bara egna aktiviteter
-  await page.click('#ganttOwnBtn'); await page.waitForTimeout(400);
+  await page.click('#ganttOwnBtn'); await page.click('#ganttOwnMenu [data-mode="only"]'); await page.waitForTimeout(400);
   const own = await page.evaluate(() => ({ names: ganttShownItems.map(x => x.objectName).sort().join('|'), n: document.getElementById('ganttOwnN').textContent, p: document.getElementById('ganttOwnBtn').getAttribute('aria-pressed') }));
   if (own.names !== 'Mobilkran|Pumpbil' || own.n !== '(2)' || own.p !== 'true') fail('Egna-filtret ska visa bara egna aktiviteter: ' + JSON.stringify(own));
-  await page.click('#ganttOwnBtn'); await page.waitForTimeout(300);
+  await page.click('#ganttOwnBtn'); await page.click('#ganttOwnMenu [data-mode="hide"]'); await page.waitForTimeout(300);
+  { const h = await page.evaluate(() => ganttShownItems.map(x => x.objectName).sort().join('|')); if (h.includes('Mobilkran') || h.includes('Pumpbil') || !h) fail('Släck egna: bara de importerade visas: ' + h); }
+  await page.click('#ganttOwnBtn'); await page.click('#ganttOwnMenu [data-mode="all"]'); await page.waitForTimeout(300);
   if ((await page.evaluate(() => ganttShownItems.length)) !== 3) fail('Av: alla visas igen');
   console.log('OK: filtret Egna visar bara egna aktiviteter');
   // Dialogen: välj aktivitet att följa

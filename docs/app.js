@@ -3629,7 +3629,7 @@ function renderGanttLegend() {
     ${ganttShowBaseline && ganttBaseline2Id ? `<span class="gantt-legend-item"><span class="gantt-legend-dot gantt-legend-baseline2"></span>Jämför: ${escapeHtml(baselineLabel(ganttBaseline2Id))}</span>` : ""}
     ${ganttEditable ? `<span class="gantt-legend-item gl-edit" title="${escapeHtml(editHelp)}" style="cursor:help">✏️</span>` : ""}
   `;
-  if (act) { el.appendChild(act); const n = ganttUncoupledCount(); const nb = document.getElementById("ganttUncoupledN"); if (nb) nb.textContent = n ? `(${n})` : ""; const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); const on = ganttOwnCount(), onb = document.getElementById("ganttOwnN"); if (onb) onb.textContent = on ? `(${on})` : ""; const ob = document.getElementById("ganttOwnBtn"); if (ob) ob.setAttribute("aria-pressed", String(ganttOnlyOwn)); }
+  if (act) { el.appendChild(act); const n = ganttUncoupledCount(); const nb = document.getElementById("ganttUncoupledN"); if (nb) nb.textContent = n ? `(${n})` : ""; const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); const on = ganttOwnCount(), onb = document.getElementById("ganttOwnN"); if (onb) onb.textContent = on ? `(${on})` : ""; const ob = document.getElementById("ganttOwnBtn"); if (ob) { ob.setAttribute("aria-pressed", String(ganttOwnMode !== "all")); ob.dataset.mode = ganttOwnMode; const t = ob.querySelector(".gantt-own-state"); if (t) t.textContent = ganttOwnMode === "hide" ? "släckta" : ganttOwnMode === "only" ? "bara" : ""; } }
   // Tavlans färger (Färga efter): en ruta per entreprenör/område/aktivitet – klicka för att välja egen färg.
   if (ganttView === "board") {
     const kind = ganttColorBy, none = { area: NO_AREA_LABEL, contractor: NO_CONTRACTOR_LABEL, activity: NO_ACTIVITY_LABEL }[kind];
@@ -4330,12 +4330,15 @@ const ganttActKey = it => it.activityKey || `i:${it.id}`;
 function ganttUncoupledOnly(list) { const coupled = new Set(list.filter(ganttIsCoupled).map(ganttActKey)); return list.filter(it => !ganttIsCoupled(it) && !coupled.has(ganttActKey(it))); }
 function ganttUncoupledCount() { return new Set(ganttUncoupledOnly(getFilteredItems()).map(ganttActKey)).size; }
 /* Filter: bara egna aktiviteter (Victor 2026-10-16) – de som skapats här (origin "manuell"), inte de från Powerproject/Excel. Kan kombineras med Ej kopplade. */
-let ganttOnlyOwn = false; try { ganttOnlyOwn = localStorage.getItem("4ddash-gantt-own") === "1"; } catch (e) { /* */ }
+/* Egna i Gantt-schemat (Victor 2026-10-26): en knapp med meny – visa alla, släck egna eller bara egna. Läge: "all" | "hide" | "only". */
+let ganttOwnMode = "all"; try { ganttOwnMode = localStorage.getItem("4ddash-gantt-ownmode") || (localStorage.getItem("4ddash-gantt-own") === "1" ? "only" : "all"); } catch (e) { /* */ }
+const ganttOwnModes = [["all", "Visa alla", "Egna och importerade aktiviteter"], ["hide", "Släck egna", "Dölj aktiviteterna jag skapat själv"], ["only", "Bara egna", "Visa bara aktiviteterna jag skapat själv"]];
+function ganttWithoutOwn(list) { const own = new Set(list.filter(x => x.origin === "manuell").map(ganttActKey)); return list.filter(x => !own.has(ganttActKey(x))); }
 function ganttOwnOnly(list) { const own = new Set(list.filter(x => x.origin === "manuell").map(ganttActKey)); return list.filter(x => own.has(ganttActKey(x))); }
 function ganttOwnCount() { return new Set(ganttOwnOnly(getFilteredItems()).map(ganttActKey)).size; }
 function renderGantt(list, target) {
   if (ganttOnlyUncoupled) list = ganttUncoupledOnly(list);
-  if (ganttOnlyOwn) list = ganttOwnOnly(list);
+  if (ganttOwnMode === "only") list = ganttOwnOnly(list); else if (ganttOwnMode === "hide") list = ganttWithoutOwn(list);
   // Resurskurvan följer Gantt-schemats urval (filter, sök, dolda områden, period) – ritas om efteråt.
   if (!target && typeof renderResourceCurve === "function") setTimeout(renderResourceCurve, 0);
   // target: ritar i ett annat element (utskriften, se printGantt) - utan anteckningar och interaktion.
@@ -6771,7 +6774,17 @@ function initGanttControls() {
     arrCb.checked = ganttShowArrows;
     arrCb.onchange = () => { ganttShowArrows = arrCb.checked; saveGanttPrefs(); renderGantt(getFilteredItems()); };
   }
-  { const ob = document.getElementById("ganttOwnBtn"); if (ob) ob.onclick = () => { ganttOnlyOwn = !ganttOnlyOwn; try { localStorage.setItem("4ddash-gantt-own", ganttOnlyOwn ? "1" : "0"); } catch (e) { /* */ } ob.setAttribute("aria-pressed", String(ganttOnlyOwn)); renderGantt(getFilteredItems()); }; }
+  { const ob = document.getElementById("ganttOwnBtn"); if (ob) ob.onclick = e => {
+      e.stopPropagation(); const old = document.getElementById("ganttOwnMenu"); if (old) { old.remove(); return; }
+      const m = document.createElement("div"); m.id = "ganttOwnMenu"; m.className = "gantt-own-menu"; m.setAttribute("role", "menu");
+      m.innerHTML = ganttOwnModes.map(([k, l, t]) => `<button type="button" role="menuitemradio" aria-checked="${ganttOwnMode === k}" data-mode="${k}" title="${escapeHtml(t)}"><i>${ganttOwnMode === k ? "✓" : ""}</i>${escapeHtml(l)}</button>`).join("");
+      const r = ob.getBoundingClientRect(); m.style.left = Math.round(r.left + scrollX) + "px"; m.style.top = Math.round(r.bottom + scrollY + 4) + "px";
+      document.body.appendChild(m);
+      const close = () => { m.remove(); document.removeEventListener("click", close, true); document.removeEventListener("keydown", esc, true); };
+      const esc = ev => { if (ev.key === "Escape") close(); };
+      m.addEventListener("click", ev => { const b = ev.target.closest("[data-mode]"); if (!b) return; ganttOwnMode = b.dataset.mode; try { localStorage.setItem("4ddash-gantt-ownmode", ganttOwnMode); } catch (x) { /* */ } close(); ob.setAttribute("aria-pressed", String(ganttOwnMode !== "all")); renderGantt(getFilteredItems()); });
+      setTimeout(() => { document.addEventListener("click", ev => { if (!m.contains(ev.target)) close(); }, true); document.addEventListener("keydown", esc, true); }, 0);
+    }; }
   { const ub = document.getElementById("ganttUncoupledBtn"); if (ub) ub.onclick = () => { ganttOnlyUncoupled = !ganttOnlyUncoupled; try { localStorage.setItem("4ddash-gantt-uncoupled", ganttOnlyUncoupled ? "1" : "0"); } catch (e) { /* */ } ub.setAttribute("aria-pressed", String(ganttOnlyUncoupled)); renderGantt(getFilteredItems()); }; }
   const addBtn = document.getElementById("ganttAddBtn");
   if (addBtn) addBtn.onclick = () => openNewActivityDialog();

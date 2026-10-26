@@ -3356,3 +3356,10 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
   body.print-no-h2 .panel > h2 { display: none !important; }
   body.print-no-chips .la-chips { display: none !important; }
 }
+
+/* Egna-knappen i Gantt: meny med Visa alla / Släck egna / Bara egna */
+.gantt-own-caret { font-size: 10px; opacity: .6; margin-left: 2px; } .gantt-own-state { font-style: normal; font-size: 10px; font-weight: 700; color: var(--accent); }
+.gantt-own-menu { position: absolute; z-index: 400; min-width: 170px; padding: 5px; background: var(--bg, #fff); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.22); display: flex; flex-direction: column; gap: 2px; }
+.gantt-own-menu button { display: flex; align-items: center; gap: 8px; text-align: left; font: inherit; font-size: 13px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; }
+.gantt-own-menu button i { width: 12px; font-style: normal; color: var(--accent); font-weight: 800; } .gantt-own-menu button:hover { background: var(--accent); color: #fff; } .gantt-own-menu button:hover i { color: #fff; }
+@media print { .gantt-own-menu { display: none !important; } }
