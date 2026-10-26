@@ -33,7 +33,7 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
   });
   await page.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"current_weather":{},"daily":{}}' }));
   await page.addInitScript(() => { localStorage.setItem('4ddash-settings', JSON.stringify({ githubToken: 't', userName: 'Victor' })); localStorage.setItem('4ddash-unlocked', '1'); });
-  await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' }); await page.waitForSelector('#dphDrop'); await page.waitForTimeout(600);
+  await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'networkidle' }); await page.waitForSelector('#dphAdd'); await page.waitForTimeout(600);
   const fail = m => { throw new Error(m); };
   const dropFiles = (files) => page.evaluate(async fs2 => { const dt = new DataTransfer(); fs2.forEach(([name, b64, type]) => dt.items.add(new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], name, { type: type || '' }))); document.getElementById('dpBox').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); }, files.map(([n2, buf, t]) => [n2, Buffer.from(buf).toString('base64'), t]));
   // 1) släpp ett .eml (quoted-printable, kodad rubrik) -> dialogen fylls i
@@ -96,7 +96,14 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
   const iso = await page.evaluate(() => window.__iso || []); const ids = [].concat(...iso.map(e => e.flatMap(x => x.entityIds))); if (!iso.length || ids.length < 3 || !ids.includes(11)) fail('dagens arbeten isoleras i modellen: ' + JSON.stringify(iso));
   if (!(await page.evaluate(() => (window.__st || []).some(s => s && s.color && s.color.r === 245)))) fail('objekten färgas');
   await page.click('.dp-x');
-  if (process.env.SHOT) { await page.click('.dph-row >> nth=0').catch(() => {}); await (await page.$('.panel[data-panel-id="dayplans"]')).screenshot({ path: '/tmp/dph.png' }); }
+  // Tidsaxeln: veckodag + datum under staplarna och veckoband
+  { const ax = await page.$$eval('.dph-chart text', e => e.map(t => t.textContent)); if (!ax.includes('Mån') || !ax.some(t => /^\d+ okt$/.test(t)) || !ax.some(t => /^(vecka|v)\s?\d+$/.test(t))) fail('veckodag, datum och vecka i diagrammet: ' + JSON.stringify(ax)); }
+  // Uppdatera: en ny, bättre passande aktivitet hittas för en obunden rad
+  { const r = await page.evaluate(() => { const rec = JSON.parse(JSON.stringify(dayplans[0])); rec.tasks[0].key = null; rec.tasks[0].label = ''; rec.tasks[0].src = null; rec.tasks[0].text = 'Formwork stodmur line J';
+      items.push({ ...items[0], id: 'NEW1', activityKey: 'NEWK', objectName: 'Ställningsmontage till formning stödmur linje J', area: 'PRODUKTION / 742A Krönlinje J', activity: 'Formning stödmur linje J', startDate: rec.date, endDate: rec.date, modelId: null });
+      const ch = dpRefitPlan(rec); return { n: ch.length, to: ch[0] && ch[0].to, btn: !!document.getElementById('dphRefit') }; });
+    if (!r.btn) fail('knappen Uppdatera finns'); if (r.n < 1) fail('Uppdatera hittar en bättre aktivitet: ' + JSON.stringify(r)); }
+  if (process.env.SHOT) { await page.click('#dphAdd'); await (await page.$('.panel[data-panel-id="dayplans"]')).screenshot({ path: '/tmp/dph.png' }); }
   if (errors.filter(e => !/allow-same-origin/.test(e)).length) fail('sidfel: ' + errors.slice(0, 3));
   console.log('OK test_dayplan_history'); await browser.close(); server.close();
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });

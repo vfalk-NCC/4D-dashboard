@@ -163,20 +163,68 @@ function dpHistRows() {
 }
 function dpChartSvg(rows) {
   if (!rows.length) return ""; const by = new Map(); rows.forEach(r => by.set(r.date, (by.get(r.date) || 0) + dpTot(r)));
-  const days = [...by.keys()].sort(), max = Math.max(1, ...by.values()), W = Math.max(320, Math.min(1100, days.length * 26 + 40)), H = 120, bw = Math.max(6, Math.min(22, (W - 40) / days.length - 4));
-  const bars = days.map((d, i) => { const v = by.get(d), h = Math.round(v / max * (H - 34)), x = 30 + i * ((W - 40) / days.length); return `<g data-d="${d}" class="dph-b"><rect x="${x}" y="${H - 18 - h}" width="${bw}" height="${h}" rx="3"><title>${d} ${dpWd(d)}: ${v} personer</title></rect><text x="${x + bw / 2}" y="${H - 5}" text-anchor="middle">${d.slice(8)}</text>${days.length <= 18 ? `<text x="${x + bw / 2}" y="${H - 21 - h}" text-anchor="middle" class="v">${v}</text>` : ""}</g>`; }).join("");
-  return `<svg class="dph-chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Personer per dag"><line x1="28" y1="${H - 18}" x2="${W - 6}" y2="${H - 18}" stroke="currentColor" opacity=".25"/>${bars}</svg>`;
+  const days = [...by.keys()].sort(), n = days.length, max = Math.max(1, ...by.values());
+  // Tydlig tidsaxel: veckodag + datum under varje stapel och veckonummer som ett band under (Victor 2026-10-26).
+  const full = n <= 24, mid = n <= 45, step = full ? 40 : mid ? 26 : 14, W = Math.max(320, Math.min(1100, n * step + 40)), H = 156, base = H - 50, top = 18;
+  const slot = (W - 40) / n, bw = Math.max(4, Math.min(24, slot - 4)), today = typeof todayISO === "function" ? todayISO() : new Date().toISOString().slice(0, 10);
+  const MON = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"], WD = ["Sön", "Mån", "Tis", "Ons", "Tor", "Fre", "Lör"];
+  const dateOf = d => new Date(d + "T00:00:00"), cx = i => 30 + i * slot + slot / 2;
+  const bars = days.map((d, i) => {
+    const v = by.get(d), h = Math.max(2, Math.round(v / max * (base - top - 14))), x = cx(i) - bw / 2, dt = dateOf(d), wd = dt.getDay(), wk = wd === 0 || wd === 6, isToday = d === today;
+    const prev = i ? dateOf(days[i - 1]) : null, newMonth = !prev || prev.getMonth() !== dt.getMonth();
+    const l1 = full ? WD[wd] : mid ? WD[wd][0] : "", l2 = full ? `${dt.getDate()} ${MON[dt.getMonth()]}` : mid ? String(dt.getDate()) : (newMonth || i % 7 === 0 ? String(dt.getDate()) : "");
+    return `<g data-d="${d}" class="dph-b${wk ? " wk" : ""}${isToday ? " today" : ""}"><rect x="${x}" y="${base - h}" width="${bw}" height="${h}" rx="3"><title>${WD[wd]} ${dt.getDate()} ${MON[dt.getMonth()]} · vecka ${dpWeek(d)}: ${v} personer</title></rect>`
+      + (n <= 30 ? `<text x="${cx(i)}" y="${base - h - 4}" text-anchor="middle" class="v">${v}</text>` : "")
+      + (l1 ? `<text x="${cx(i)}" y="${base + 12}" text-anchor="middle" class="wd">${l1}</text>` : "")
+      + (l2 ? `<text x="${cx(i)}" y="${base + (l1 ? 23 : 12)}" text-anchor="middle" class="dt">${l2}</text>` : "") + `</g>`;
+  }).join("");
+  // Veckoband: en parentes under dagarna i varje vecka med "v44".
+  const weeks = []; days.forEach((d, i) => { const w = dpWeek(d), yr = d.slice(0, 4), last = weeks[weeks.length - 1]; if (last && last.w === w && last.yr === yr) last.to = i; else weeks.push({ w, yr, from: i, to: i }); });
+  const wy = base + 33;
+  const band = weeks.map((g, k) => { const x0 = 30 + g.from * slot + 3, x1 = 30 + (g.to + 1) * slot - 3, mx = (x0 + x1) / 2, wide = x1 - x0 > 30;
+    return `<g class="dph-wk${k % 2 ? " alt" : ""}"><path d="M${x0} ${wy - 4}V${wy}H${x1}V${wy - 4}" fill="none"/><text x="${mx}" y="${wy + 11}" text-anchor="middle">${wide ? "vecka " + g.w : "v" + g.w}</text></g>`; }).join("");
+  return `<svg class="dph-chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Personer per dag och vecka"><line x1="28" y1="${base}" x2="${W - 6}" y2="${base}" stroke="currentColor" opacity=".25"/>${bars}${band}</svg>`;
 }
 function dpRenderHistory() {
   const box = document.getElementById("dpBox"); if (!box) return;
   const esc = escapeHtml, rows = dpHistRows(), companies = [...new Set(dayplans.map(r => r.company || "").filter(Boolean))].sort();
   const active = document.activeElement && document.activeElement.id === "dphQ";
-  box.innerHTML = `<div class="dph-drop" id="dphDrop" tabindex="0"><b>Släpp mejlet med dagsplanen här</b><span>.msg (Outlook), .eml, .txt, .html eller markerad text – flera mejl på en gång fyller historiken bakåt. Du kan också klistra in med Ctrl+V.</span><span class="dph-btns"><label class="dph-pick">välj filer<input type="file" id="dphFile" accept=".msg,.eml,.txt,.html,.htm,message/rfc822,text/plain" multiple hidden></label><button type="button" id="dphPaste">Klistra in från urklipp</button><button type="button" id="dphNew">Ny dagsplan</button></span></div>
-    <div class="dph-bar"><label>Period <select id="dphPeriod">${[["14", "14 dagar"], ["30", "30 dagar"], ["90", "90 dagar"], ["365", "1 år"], ["all", "Alla"]].map(([v, l]) => `<option value="${v}"${dph.period === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>${companies.length > 1 ? `<label>Företag <select id="dphCo"><option value="">Alla</option>${companies.map(c => `<option${dph.company === c ? " selected" : ""}>${esc(c)}</option>`).join("")}</select></label>` : ""}<input type="search" id="dphQ" placeholder="Sök i arbeten och aktiviteter …" value="${esc(dph.q)}"><span class="dph-sp"></span><span class="hint">${rows.length} av ${dayplans.length} dagsplaner</span><button type="button" id="dphStats"${dayplans.length ? "" : " disabled"} title="Mandagar per område, typ av arbete och skift – som HTML och PDF">📊 Statistik</button><button type="button" id="dphCsv"${rows.length ? "" : " disabled"}>Exportera CSV</button></div>
+  box.innerHTML = `<div class="dph-bar"><span class="dph-addw"><button type="button" id="dphAdd" class="dph-add" title="Läs in en dagsplan – eller släpp mejlet var som helst i rutan (.msg, .eml, .txt, .html eller markerad text)" aria-haspopup="true">＋ Dagsplan</button><span class="dph-menu" id="dphMenu" hidden><label class="dph-pick">Välj filer…<input type="file" id="dphFile" accept=".msg,.eml,.txt,.html,.htm,message/rfc822,text/plain" multiple hidden></label><button type="button" id="dphPaste">Klistra in från urklipp</button><button type="button" id="dphNew">Ny dagsplan</button><small>Eller släpp mejlet i rutan. Flera mejl på en gång fyller historiken bakåt. Ctrl+V fungerar också.</small></span></span><label>Period <select id="dphPeriod">${[["14", "14 dagar"], ["30", "30 dagar"], ["90", "90 dagar"], ["365", "1 år"], ["all", "Alla"]].map(([v, l]) => `<option value="${v}"${dph.period === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>${companies.length > 1 ? `<label>Företag <select id="dphCo"><option value="">Alla</option>${companies.map(c => `<option${dph.company === c ? " selected" : ""}>${esc(c)}</option>`).join("")}</select></label>` : ""}<input type="search" id="dphQ" placeholder="Sök i arbeten och aktiviteter …" value="${esc(dph.q)}"><span class="dph-sp"></span><span class="hint">${rows.length} av ${dayplans.length} dagsplaner</span><button type="button" id="dphRefit"${dayplans.length ? "" : " disabled"} title="Går igenom raderna i listan och kopplar om dem till en bättre passande eller nyligen planerad aktivitet">↻ Uppdatera</button><button type="button" id="dphStats"${dayplans.length ? "" : " disabled"} title="Mandagar per område, typ av arbete och skift – som HTML och PDF">📊 Statistik</button><button type="button" id="dphCsv"${rows.length ? "" : " disabled"}>Exportera CSV</button></div>
     ${dpChartSvg(rows)}
     <div class="dph-list">${rows.map(r => { const k = r.tasks.filter(t => t.key).length, o = r.tasks.reduce((a, t) => a + dpObjCount(t).all, 0), open = dph.open.has(r.id); return `<div class="dph-row${open ? " open" : ""}" data-id="${esc(r.id)}"><button class="dph-h" data-tog="${esc(r.id)}"><span class="dph-d"><b>${esc(dpDayShort(r.date))}</b><small>${esc(r.date.slice(0, 4))} · vecka ${dpWeek(r.date)}</small></span><span class="dph-c">${esc(r.company || "–")}</span><span class="dph-n"><b>${dpTot(r)}</b> pers.</span><span class="dph-t">${r.tasks.length} arbeten</span><span class="dph-k" title="Rader kopplade till aktiviteter i schemat">${k}/${r.tasks.length} kopplade</span><span class="dph-o" title="Objekt kopplade till modellen">${o ? "🧊 " + o : ""}</span><span class="dph-v" title="Antal versioner">${(r.history || []).length ? "v" + (r.history.length + 1) : ""}</span></button>
       ${open ? `<div class="dph-x"><table class="dp-t dph-t2"><thead><tr><th>Arbete</th><th>Skift</th><th>Pers.</th><th>Område</th><th>Aktivitet</th><th>Modell</th></tr></thead><tbody>${r.tasks.map((t, ti) => { const z = dpTaskZone(t), oc = dpObjCount(t).all; return `<tr class="dph-tr${dph.sel.has(r.id + ":" + ti) ? " on" : ""}${oc ? " live" : ""}" data-r="${esc(r.id)}" data-ti="${ti}" title="${oc ? "Klicka för att markera arbetets objekt i modellen (Ctrl = flera)" : "Inga objekt kopplade till raden"}"><td>${esc(t.text)}</td><td class="c">${t.shift || ""}</td><td class="c">${Number(t.workers) || 0}</td><td>${esc(dpZoneLabel(z) || t.area || "–")}</td><td>${esc(t.label || "–")}</td><td class="c">${oc ? "🧊 " + oc : ""}</td></tr>`; }).join("")}</tbody></table><div class="dph-act"><button data-open="${esc(r.id)}" class="primary">Öppna</button><button data-html="${esc(r.id)}">Exportera HTML</button><button data-copy="${esc(r.id)}">Kopiera text</button><button data-model="${esc(r.id)}"${dpHasModel() ? "" : " disabled title=\"Kräver Trimble Connect\""}>🧊 Visa i modellen</button>${r.source_name ? `<span class="hint">från: ${esc(r.source_name)}</span>` : ""}<span class="dph-sp"></span><button data-del="${esc(r.id)}" class="danger">Ta bort</button></div></div>` : ""}</div>`; }).join("") || `<p class="hint">${dayplans.length ? "Inga dagsplaner med det här filtret." : "Inga dagsplaner sparade än. Släpp ett mejl här ovanför så skapas historiken."}</p>`}</div>`;
   if (active) { const q = document.getElementById("dphQ"); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+}
+/* Uppdatera (Victor 2026-10-26): går igenom dagsplanernas rader och söker en bättre passande aktivitet i schemat (t.ex. en ny som planerats in
+   efter att mejlet lästes in). Rader som kopplats för hand eller via en inlärd regel rörs inte, bara obundna rader, automatiska förslag och rader
+   vars aktivitet försvunnit. En ersättare krävs vara tydligt bättre än nuvarande koppling. */
+function dpRefitPlan(rec) {
+  const cands = dpCandidates(rec.date), byKey = new Map(cands.map(a => [dpKeyOf(a), a])), out = [];
+  const scoreOf = (t, a) => dpScore(t.text, dpActHay(a), dpNorm(itemLabel(a))) + (a.startDate <= rec.date && (a.endDate || a.startDate) >= rec.date ? 0.5 : 0);
+  rec.tasks.forEach((t, ti) => {
+    if (!t.text || (t.key && t.src !== "förslag" && byKey.has(String(t.key)))) return;   // handkopplad (eller regel) och finns kvar
+    const cur = t.key ? byKey.get(String(t.key)) : null, curSc = cur ? scoreOf(t, cur) : 0;
+    let best = null, sc = 0; cands.forEach(a => { const v = scoreOf(t, a); if (v > sc) { sc = v; best = a; } });
+    if (!best || sc < 4 || (cur && (dpKeyOf(best) === dpKeyOf(cur) || sc < curSc + 1))) return;
+    out.push({ ti, from: cur ? itemLabel(cur) : (t.label || ""), to: itemLabel(best), act: best });
+  });
+  return out;
+}
+async function dpRefitAll() {
+  if (!items || !items.length) { modelToast("Schemat är inte inläst ännu – försök igen om en stund"); return; }
+  const rows = dpHistRows(), plan = rows.map(r => ({ r, ch: dpRefitPlan(r) })).filter(x => x.ch.length), n = plan.reduce((a, x) => a + x.ch.length, 0);
+  if (!n) { modelToast(`Gick igenom ${rows.length} dagsplaner – inget som passar bättre hittades`); return; }
+  const lines = plan.flatMap(x => x.ch.map(c => `${x.r.date} · ${x.r.tasks[c.ti].text.slice(0, 40)}: ${c.from || "ej kopplad"} → ${c.to}`)).slice(0, 12);
+  if (!await dashConfirm(`${n} rader får en bättre passande aktivitet:\n\n${lines.join("\n")}${n > lines.length ? `\n… och ${n - lines.length} till` : ""}\n\nUppdatera?`, { ok: "Uppdatera" })) return;
+  const btn = document.getElementById("dphRefit"); if (btn) btn.disabled = true;
+  try {
+    for (const x of plan) {
+      const rec = JSON.parse(JSON.stringify(x.r));
+      x.ch.forEach(c => { const t = rec.tasks[c.ti]; t.key = dpKeyOf(c.act); t.label = itemLabel(c.act); t.src = "förslag"; dpAssignZone(t, c.act); });
+      rec.updated_at = new Date().toISOString(); rec.updated_by = settings.userName || null; await dpSave(rec);
+    }
+    if (typeof renderAll === "function") renderAll(); modelToast(`${n} rader kopplades om`);
+  } catch (e) { alert("Kunde inte spara: " + e.message); } finally { dpRenderHistory(); }
 }
 function dpHistCsv() {
   const rows = dpHistRows(), q = v => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"', lines = [["Datum", "Veckodag", "Vecka", "Företag", "Totalt personer", "Skift", "Arbete", "Typ", "Personer", "Område", "Aktivitet", "Objekt i modellen", "Version"]];
@@ -186,14 +234,15 @@ function dpHistCsv() {
 (function () {
   const box = document.getElementById("dpBox"); if (!box) return;
   box.addEventListener("click", async e => {
-    const t = e.target, tog = t.closest("[data-tog]"); if (tog) { const id = tog.dataset.tog; if (dph.open.has(id)) dph.open.delete(id); else dph.open.add(id); dpRenderHistory(); return; }
+    const t = e.target, menu = document.getElementById("dphMenu"); if (menu) { if (t.closest("#dphAdd")) { menu.hidden = !menu.hidden; return; } if (!t.closest(".dph-pick") && !t.closest("#dphFile")) menu.hidden = true; }
+    const tog = t.closest("[data-tog]"); if (tog) { const id = tog.dataset.tog; if (dph.open.has(id)) dph.open.delete(id); else dph.open.add(id); dpRenderHistory(); return; }
     const trk = t.closest("tr.dph-tr"); if (trk) { const key = trk.dataset.r + ":" + trk.dataset.ti, r = dayplans.find(x => x.id === trk.dataset.r); if (r) { const multi = e.ctrlKey || e.metaKey || e.shiftKey; if (!multi) dph.sel.clear(); if (multi && dph.sel.has(key)) dph.sel.delete(key); else dph.sel.add(key); box.querySelectorAll("tr.dph-tr").forEach(x => x.classList.toggle("on", dph.sel.has(x.dataset.r + ":" + x.dataset.ti))); const tasks = [...dph.sel].map(k => { const [id, i] = k.split(":"), p = dayplans.find(z => z.id === id); return p && p.tasks[Number(i)]; }).filter(Boolean); await dpModelPick(tasks); } return; }
     const rec = id => dayplans.find(r => r.id === id), op = t.closest("[data-open]"); if (op) { dpOpen({ rec: rec(op.dataset.open) }); return; }
     const ht = t.closest("[data-html]"); if (ht) { dpExportHtml(rec(ht.dataset.html)); return; }
     const cp = t.closest("[data-copy]"); if (cp) { const tx = dpText(rec(cp.dataset.copy)); try { await navigator.clipboard.writeText(tx); modelToast("Dagsplanen kopierad"); } catch (x) { prompt("Kopiera:", tx); } return; }
     const md = t.closest("[data-model]"); if (md) { dpModelShow(rec(md.dataset.model)); return; }
     const dl = t.closest("[data-del]"); if (dl) { const r = rec(dl.dataset.del); if (r && await dashConfirm(`Ta bort dagsplanen för ${r.date}${r.company ? " (" + r.company + ")" : ""} och dess ${(r.history || []).length} tidigare versioner?`, { danger: true, ok: "Ta bort" })) { try { await dpDelete(r.id); if (typeof renderAll === "function") renderAll(); } catch (x) { alert("Kunde inte ta bort: " + x.message); } } return; }
-    if (t.closest("#dphStats")) { const today = typeof todayISO === "function" ? todayISO() : new Date().toISOString().slice(0, 10); dpsOpen(dph.period === "all" ? "" : addDaysIso(today, -Number(dph.period)), ""); return; } if (t.closest("#dphNew")) { dpOpen(); return; } if (t.closest("#dphCsv")) { dpHistCsv(); return; }
+    if (t.closest("#dphStats")) { const today = typeof todayISO === "function" ? todayISO() : new Date().toISOString().slice(0, 10); dpsOpen(dph.period === "all" ? "" : addDaysIso(today, -Number(dph.period)), ""); return; } if (t.closest("#dphRefit")) { dpRefitAll(); return; } if (t.closest("#dphNew")) { dpOpen(); return; } if (t.closest("#dphCsv")) { dpHistCsv(); return; }
     if (t.closest("#dphPaste")) { try { const tx = await navigator.clipboard.readText(); if (tx && tx.trim()) await dpIngest([{ name: "Urklipp", text: tx }]); else modelToast("Urklippet är tomt"); } catch (x) { modelToast("Kunde inte läsa urklippet – markera i rutan och tryck Ctrl+V i stället"); } return; }
     const bar = t.closest(".dph-b[data-d]"); if (bar) { const r = dayplans.find(x => x.date === bar.dataset.d); if (r) { dph.open.add(r.id); dpRenderHistory(); const el = box.querySelector(`[data-id="${r.id}"]`); if (el) el.scrollIntoView({ block: "nearest" }); } }
   });
