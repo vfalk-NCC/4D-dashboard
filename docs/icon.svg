@@ -1,8 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
-  <rect x="3" y="3" width="42" height="42" rx="8" fill="#0f2f73"/>
-  <rect x="9" y="28" width="7" height="11" rx="1.5" fill="#60a5fa"/>
-  <rect x="20.5" y="21" width="7" height="18" rx="1.5" fill="#60a5fa"/>
-  <rect x="32" y="14" width="7" height="25" rx="1.5" fill="#60a5fa"/>
-  <polyline points="9,22 20,15 28,18 39,8" fill="none" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="39" cy="8" r="2.6" fill="#f59e0b"/>
+  <defs>
+    <linearGradient id="gd" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e3a8a"/><stop offset="1" stop-color="#0b1f4d"/></linearGradient>
+  </defs>
+  <rect x="2" y="2" width="44" height="44" rx="11" fill="url(#gd)"/>
+  <circle cx="24" cy="19" r="9.5" fill="none" stroke="#2b4a99" stroke-width="4.6"/>
+  <circle cx="24" cy="19" r="9.5" fill="none" stroke="#60a5fa" stroke-width="4.6" stroke-linecap="round" stroke-dasharray="41 60" transform="rotate(-90 24 19)"/>
+  <rect x="11" y="37" width="6.5" height="4.5" rx="2" fill="#93c5fd"/>
+  <rect x="20.8" y="34.5" width="6.5" height="7" rx="2" fill="#60a5fa"/>
+  <rect x="30.5" y="32" width="6.5" height="9.5" rx="2" fill="#fbbf24"/>
 </svg>
