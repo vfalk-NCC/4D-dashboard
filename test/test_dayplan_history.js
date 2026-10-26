@@ -103,6 +103,7 @@ const eml = (subject, body) => `From: Procyon <plan@procyon.example>\r\nSubject:
       items.push({ ...items[0], id: 'NEW1', activityKey: 'NEWK', objectName: 'Ställningsmontage till formning stödmur linje J', area: 'PRODUKTION / 742A Krönlinje J', activity: 'Formning stödmur linje J', startDate: rec.date, endDate: rec.date, modelId: null });
       const ch = dpRefitPlan(rec); return { n: ch.length, to: ch[0] && ch[0].to, btn: !!document.getElementById('dphRefit') }; });
     if (!r.btn) fail('knappen Uppdatera finns'); if (r.n < 1) fail('Uppdatera hittar en bättre aktivitet: ' + JSON.stringify(r)); }
+  { if (!(await page.$$('.dph-row.open')).length) await page.click('.dph-row >> nth=0 >> .dph-h'); const o1 = await page.$$('.dph-row.open'); await page.click('#dphCollapse'); const o2 = await page.$$('.dph-row.open'); if (!o1.length || o2.length) fail('Fäll ihop alla: ' + o1.length + '/' + o2.length); }
   if (process.env.SHOT) { await page.click('#dphAdd'); await (await page.$('.panel[data-panel-id="dayplans"]')).screenshot({ path: '/tmp/dph.png' }); }
   if (errors.filter(e => !/allow-same-origin/.test(e)).length) fail('sidfel: ' + errors.slice(0, 3));
   console.log('OK test_dayplan_history'); await browser.close(); server.close();
