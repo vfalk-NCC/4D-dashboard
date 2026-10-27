@@ -7083,7 +7083,7 @@ function downstreamOf(itemId, byId, index) {
 // "Planstabilitet" kan räkna på den oavsett filter/zoom.
 function computeDependencyRisks() {
   const byId = itemsByIdAll();
-  const risks = [], dIndex = downstreamIndex();
+  const risks = [];
   items.forEach(it => {
     if (!Array.isArray(it.dependsOn) || it.dependsOn.length === 0) return;
     const overlapping = it.dependsOn
@@ -7093,8 +7093,15 @@ function computeDependencyRisks() {
         const predEnd = p.actualEndDate || p.endDate;
         return predEnd && it.startDate && predEnd >= it.startDate;
       });
-    if (overlapping.length > 0) risks.push({ it, blockers: overlapping, downstreamCount: downstreamOf(it.id, byId, dIndex).length });
+    if (overlapping.length > 0) risks.push({ it, blockers: overlapping });
   });
+  // Antalet objekt nedströms = UNIKA objekt som nås från något riskobjekt (en enda sökning över hela kedjan). Förut summerades varje
+  // riskobjekts egen nedströmslista, så samma objekt räknades om och om igen (537 445 "objekt" i ett projekt med 4 122) och en lista
+  // per riskobjekt byggdes vid varje ritning av sidan.
+  const { succ } = downstreamIndex(), seen = new Set(risks.map(r => String(r.it.id)));
+  const queue = risks.map(r => String(r.it.id)); let reached = 0;
+  for (let i = 0; i < queue.length; i++) (succ.get(queue[i]) || []).forEach(n => { const k = String(n.id); if (!seen.has(k)) { seen.add(k); queue.push(k); reached++; } });
+  risks.downstreamTotal = reached;
   return risks;
 }
 
@@ -7182,7 +7189,7 @@ function renderWatchBanner() {
     return td && td < today;
   });
   const depRisks = computeDependencyRisks();
-  const downstreamTotal = depRisks.reduce((sum, r) => sum + r.downstreamCount, 0);
+  const downstreamTotal = depRisks.downstreamTotal || 0;
 
   const chips = [];
   if (overdueMilestones.length > 0) {
