@@ -84,6 +84,23 @@ seed('plan_items.json', [
   if (row('i1').temporary !== false) fail('Urkryssad ska sparas som false');
   console.log('OK: Temporär i redigeringsdialogen');
 
+  // 2b. Egen färg/opacitet för temporär: raden visas bara när Temporär är ikryssad, sparas och töms.
+  await page.dblclick('#ganttChart .pnote[data-item-id="i2"] .pnote-title'); await page.waitForTimeout(200);
+  await page.evaluate(() => { document.querySelector('.na-res').open = true; });
+  if (!(await page.isVisible('.na-tmpv'))) fail('Egen färg/opacitet ska synas när Temporär är ikryssad');
+  await page.uncheck('.na-temp-chk'); if (await page.isVisible('.na-tmpv')) fail('Raden ska döljas utan Temporär'); await page.check('.na-temp-chk');
+  await page.fill('.na-tmpv-op', '40'); await page.waitForTimeout(50);
+  if (!(await page.isChecked('.na-tmpv-chk')) || (await page.textContent('.na-tmpv-val')) !== '40') fail('Reglaget kryssar i rutan och visar värdet');
+  await page.click('.na-save'); await page.waitForTimeout(900);
+  if (row('i2').temp_opacity !== 40 || !/^#[0-9a-f]{6}$/i.test(row('i2').temp_color || '')) fail('temp_opacity/temp_color ska sparas: ' + JSON.stringify(row('i2')));
+  const tcol = await page.evaluate(() => { const m = items.find(x => x.id === 'i2'); return ganttTimeColorOf({ phase: 'tempon', tempColor: m.tempColor, tempOpacity: m.tempOpacity }); });
+  if (!tcol || tcol.a !== 102) fail('3D-färgen ska ha opacitet 40 %: ' + JSON.stringify(tcol));
+  if ((await page.evaluate(() => ganttTimeColorOf({ phase: 'tempon', tempColor: null, tempOpacity: null }))) !== 'reset') fail('Utan egen färg: modellens originalfärg');
+  await page.dblclick('#ganttChart .pnote[data-item-id="i2"] .pnote-title'); await page.waitForTimeout(200);
+  await page.evaluate(() => { document.querySelector('.na-res').open = true; }); await page.uncheck('.na-tmpv-chk'); await page.click('.na-save'); await page.waitForTimeout(900);
+  if (row('i2').temp_opacity != null || row('i2').temp_color != null) fail('Urkryssad ska tömma: ' + JSON.stringify(row('i2')));
+  console.log('OK: egen färg/opacitet för temporär aktivitet');
+
   // 3. Ny aktivitet som temporär.
   await page.click('#ganttAddBtn'); await page.waitForTimeout(150);
   await page.fill('.na-name', 'Stämp'); await page.evaluate(() => { document.querySelector('.na-res').open = true; }); await page.check('.na-temp-chk');
