@@ -3785,7 +3785,7 @@ function initGanttMulti() {
   document.addEventListener("keydown", e => { if (e.key === "Escape" && ganttMultiSel.size && !document.querySelector(".ui-dlg-wrap, .board-pop")) clearGanttMulti(); });
 }
 function ganttCoupledTargets() {
-  const seen = new Set(), out = [], timed = !!(ganttAsOf && ganttTime3d);
+  const seen = new Set(), all = new Map(), out = [], timed = !!(ganttAsOf && ganttTime3d);
   (ganttIsoOverride && !timed ? ganttIsoOverride : ganttShownItems.flatMap(it => it.members || [it])).forEach(m => {
     if (!m.modelId || !m.objectId) return;
     let phase = "";
@@ -3802,7 +3802,18 @@ function ganttCoupledTargets() {
       if (phase === "planerad_syns") phase = "planerad"; // rivning före start: syns alltid
       if ((phase === "pagaende" || phase === "forsenad" || phase === "planerad") && Number(ganttOp[phase]) <= 0) phase = "dold"; // opacitet 0 = osynligt
     }
-    const k = `${m.modelId}|${m.objectId}`; if (!seen.has(k)) { seen.add(k); out.push({ modelId: m.modelId, objectId: String(m.objectId), phase, startDate: m.startDate || "", endDate: m.endDate || "", doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity, contractor: m.contractor || "" }); }
+    const k = `${m.modelId}|${m.objectId}`, t = { modelId: m.modelId, objectId: String(m.objectId), phase, startDate: m.startDate || "", endDate: m.endDate || "", doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity, contractor: m.contractor || "" };
+    if (!seen.has(k)) { seen.add(k); out.push(t); all.set(k, [t]); } else all.get(k).push(t);
+  });
+  // Ett objekt i flera aktiviteter (montage → rivning, Victor 2026-10-28): en gemensam fas vid datumet – samma regel som i 4D-planering/3D-editorn.
+  // Försenad först; allt klart = klar; pågår eller delvis klar = pågående; annars kommande. Dolda aktiviteter räknas inte om någon annan syns.
+  if (timed) out.forEach((t, i) => {
+    const g = all.get(`${t.modelId}|${t.objectId}`); if (!g || g.length < 2) return;
+    const vis = g.filter(x => x.phase !== "dold"); if (!vis.length) return;
+    const ph = vis.map(x => x.phase), has = p => ph.includes(p);
+    const pick = has("forsenad") ? "forsenad" : ph.every(p => p === "klar") ? "klar" : (has("pagaende") || has("klar")) ? "pagaende" : has("tempon") ? "tempon" : "planerad";
+    const rep = vis.find(x => x.phase === pick) || vis.find(x => x.phase === "pagaende") || vis[0];
+    out[i] = { ...rep, phase: pick };
   });
   return out;
 }
