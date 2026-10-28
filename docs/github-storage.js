@@ -87,11 +87,21 @@ async function ghDecodeRaw(res) {
   return new TextDecoder("utf-8").decode(buf);
 }
 
-function ghB64ToUtf8(b64) {
+function ghB64ToBytes(b64) {
   const binary = atob(b64.replace(/\n/g, ""));
   const bytes = new Uint8Array(binary.length); // enkel slinga: Uint8Array.from(sträng, fn) var flera gånger långsammare på tiotals MB
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new TextDecoder("utf-8").decode(bytes);
+  return bytes;
+}
+function ghB64ToUtf8(b64) { return new TextDecoder("utf-8").decode(ghB64ToBytes(b64)); }
+/* Filer under 1 MB kommer inline som base64 – en gzippad fil kan vara så liten, så den måste packas upp även här. */
+async function ghB64ToText(b64) {
+  const buf = ghB64ToBytes(b64);
+  if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
+    if (typeof DecompressionStream === "undefined") throw new Error("Webbläsaren kan inte packa upp gzip (DecompressionStream saknas)");
+    return new TextDecoder("utf-8").decode(await ghStreamBytes(buf, DecompressionStream, "gzip"));
+  }
+  return new TextDecoder("utf-8").decode(buf);
 }
 
 function ghContentsUrl(path) {
@@ -141,7 +151,7 @@ async function ghGetFile(token, path) {
   }
   let text;
   if (json.content) {
-    text = ghB64ToUtf8(json.content);
+    text = await ghB64ToText(json.content);
   } else {
     // Filer över 1 MB: Contents API skickar inget innehåll (encoding
     // "none"), bara metadata - hämta själva innehållet som rå text.
