@@ -705,12 +705,14 @@ function phbPreview(st) {
     const typing = /INPUT|SELECT|TEXTAREA/.test((e.target || {}).tagName || "");
     if ((e.key === "Delete" || e.key === "Backspace") && cur.sel && !typing) { e.preventDefault(); removeObj(selItem()); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); undoRemove(); }
-    else if (e.key === "Escape") { e.stopPropagation(); close(); }
+    else if (e.key === "Escape") { e.stopPropagation(); askClose(); }
   };
   document.addEventListener("keydown", keys, true);
   undoBtn.onclick = undoRemove;
   const close = () => { d.remove(); document.removeEventListener("keydown", keys, true); };
-  d.querySelector("#phbClose").onclick = close; d.addEventListener("pointerdown", e => { if (e.target === d) close(); });
+  // Frågar innan fönstret stängs (Victor 2026-10-28): ett tryck bredvid fönstret får inte kasta bort arbetet som inte sparats som vy eller bild.
+  const askClose = () => { if (confirm("Stänga bildredigeraren?\n\nBubblor och ändringar som du inte sparat som vy (eller hämtat som bild) försvinner.")) close(); };
+  d.querySelector("#phbClose").onclick = askClose; d.addEventListener("pointerdown", e => { if (e.target === d) askClose(); });
   d.querySelector("#phbCal").onclick = () => { const sel = cur.sel; let P = null; if (sel && sel.o && sel.o.P) P = sel.o.P; else if (sel && sel.objs) { const bs = sel.objs.map(o => o.box).filter(Boolean); if (bs.length) { const lo = { x: Infinity, y: Infinity, z: Infinity }, hi = { x: -Infinity, y: -Infinity, z: -Infinity }; bs.forEach(b => ["x", "y", "z"].forEach(k => { lo[k] = Math.min(lo[k], b.min[k]); hi[k] = Math.max(hi[k], b.max[k]); })); P = phbTopOnObject(bs, lo, hi); } }
     if (!P) { modelToast("Markera först en bubbla vars objekt du ser tydligt i bilden"); return; }
     cal = { P }; cv.style.cursor = "crosshair"; modelToast("Klicka nu på objektets riktiga plats i bilden"); };

@@ -201,11 +201,17 @@ seed('plan_items.json', [
         const m1 = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return { ax: c.ax, ay: c.ay, free: c.free }; });
         if (!m1.free || Math.abs(m1.ax - g.ax - 30 / g.f) > 2) fail('objektbubblans punkt går att flytta: ' + JSON.stringify({ g, m1 }));
         await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.cards[0]; window.__cardPos = null; if (c) { c.x = st.W * 0.31; c.y = st.H * 0.22; c.text = 'Flyttad bubbla'; c.scale = 1.2; phbCardMeasure(c, st); window.__cardPos = [c.x / st.W, c.y / st.H, phbKey(c.a)]; } });
+        await page.evaluate(() => { const st = document.getElementById('phbCv')._state(); st.list.on = true; window.__lsel = [...st.list.sel].sort().join('|'); const k = [...st.list.sel][0]; if (k) st.list.sel.delete(k); window.__lsel2 = [...st.list.sel].sort().join('|'); });
         await page.fill('#phbVwName', 'Flyttad'); await page.click('#phbVwSave'); await page.waitForTimeout(300);
         await page.selectOption('#phbVwSel', { label: 'Flyttad' }); await page.click('#phbVwUse'); await page.waitForTimeout(1200);
         const m2 = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return { ax: c.ax, ay: c.ay }; });
+        { const ls = await page.evaluate(() => [window.__lsel2, [...document.getElementById('phbCv')._state().list.sel].sort().join('|'), window.__lsel]); if (ls[0] !== ls[1]) fail('Listans valda aktiviteter ska sparas i vyn: ' + JSON.stringify(ls)); console.log('OK: listans aktiviteter sparas i vyn'); }
+        { const r = await page.evaluate(async () => { const st = document.getElementById('phbCv')._state(), n0 = st.cards.length; if (!n0) return null; const gone = st.cards.pop(); const k0 = st.cards.length; const add = await phbVwAddActive(st); const dn = phbVwDropDone(st); return { n0, k0, added: add.n, now: st.cards.length, dn }; });
+          if (r && (r.added > 1 || r.now > r.n0)) fail('Lägg till pågående / ta bort klara: ' + JSON.stringify(r)); console.log('OK: lägg till pågående / ta bort klara ' + JSON.stringify(r)); }
         { const cp0 = await page.evaluate(() => window.__cardPos); if (cp0) { const cp = await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.cards.find(k => phbKey(k.a) === window.__cardPos[2]); return c ? [c.x / st.W, c.y / st.H, c.text, c.scale] : null; });
           if (!cp || Math.abs(cp[0] - cp0[0]) > 0.002 || Math.abs(cp[1] - cp0[1]) > 0.002 || cp[2] !== 'Flyttad bubbla' || cp[3] !== 1.2) fail('Aktivitetsbubblan ska ligga kvar på exakt samma plats i den sparade vyn: ' + JSON.stringify([cp0, cp])); console.log('OK: aktivitetsbubblor sparas i vyn'); } else console.log('(inga aktivitetsbubblor i testet – hoppade över)'); }
+        { await page.waitForTimeout(700); const files = [...store.keys()].filter(k => /plan_photo_views\.json$/.test(k)); if (files.length !== 1) fail('Vyerna ska ligga i plan_photo_views.json: ' + [...store.keys()].join());
+    const arr = JSON.parse(store.get(files[0]).content); if (!arr.length || !arr.every(v => v.id && v.name && v.data)) fail('Vyerna i 4D-datan: ' + JSON.stringify(arr).slice(0, 200)); console.log('OK: vyerna sparas i 4D-datan (' + arr.length + ')'); }
 
         if (Math.abs(m2.ax - m1.ax) > 2 || Math.abs(m2.ay - m1.ay) > 2) fail('flyttad punkt behåller sitt läge efter inläsning: ' + JSON.stringify({ m1, m2 }));
         const g3 = await page.evaluate(() => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.ocards[0], r = cv.getBoundingClientRect(); return { x: r.left + c.ax * r.width / st.W, y: r.top + c.ay * r.height / st.H }; });
@@ -241,7 +247,12 @@ seed('plan_items.json', [
       await page.selectOption('#phbScope', 'marked'); await page.waitForTimeout(500);
       const i2 = await page.textContent('.phb-info'); if (!/^0 bubblor/.test(i2)) fail('Bara markerade utan markering: ' + i2);
     }
-    await page.click('#phbClose');
+    const nd = dialogs.length; await page.click('#phbClose'); await page.waitForTimeout(150);
+    if (dialogs.length !== nd + 1 || !/Stänga bildredigeraren/.test(dialogs[dialogs.length - 1])) fail('Stängning ska fråga först: ' + JSON.stringify(dialogs.slice(-2)));
+    if (await page.$('#phbDlg')) fail('Fönstret ska stängas efter ja');
+    console.log('OK: frågar innan bildredigeraren stängs');
+    // Avvisa: fönstret ska vara kvar (tryck utanför / Esc)
+    await page.evaluate(() => { window.__nc = 0; });
   }
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));
   console.log('ALLA TESTER OK'); await browser.close(); server.close();

@@ -286,14 +286,55 @@ function phbOcBind(api, side) {
 
 /* ---- Sparade vyer (hela uppsättningen i bildredigeraren) ------------------------------------------------------------------------------ */
 const PHB_VW_KEY = "4ddash-phb-views";
-const phbVwLoad = () => { try { const a = JSON.parse(localStorage.getItem(PHB_VW_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
-const phbVwStore = a => { try { localStorage.setItem(PHB_VW_KEY, JSON.stringify(a)); return true; } catch (e) { return false; } };
+/* Sparade vyer ligger i projektets 4D-data (plan_photo_views.json) och delas med alla i projektet (Victor 2026-10-28). Tidigare lades de bara i
+   webbläsaren – de som finns där flyttas över första gången. Webbläsarens kopia finns kvar som reserv, och används om 4D-datan inte är ansluten. */
+const phbVwLocal = () => { try { const a = JSON.parse(localStorage.getItem(PHB_VW_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+const phbVwRemoteOn = () => typeof isBackendConfigured === "function" && isBackendConfigured() && typeof ghReadJSON === "function" && typeof ghWriteJSON === "function" && typeof tablePath === "function";
+const phbVwPath = () => tablePath("plan_photo_views");
+const phbVwUid = () => "v" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const phbVwMe = () => (typeof settings !== "undefined" && settings && (settings.userName || settings.name)) || "";
+let phbVwCache = null, phbVwPid = null, phbVwReadyPid = null, phbVwPromise = null;
+const phbVwDeleted = new Set();
+const phbVwReady = () => !phbVwRemoteOn() || phbVwReadyPid === (typeof projectId !== "undefined" ? projectId : "");
+const phbVwLoad = () => { const pid = typeof projectId !== "undefined" ? projectId : ""; if (!phbVwCache || phbVwPid !== pid) { phbVwCache = phbVwRemoteOn() ? [] : phbVwLocal(); phbVwPid = pid; } return phbVwCache; };
+function phbVwFlush(a) {
+  if (!phbVwRemoteOn()) return;
+  const mine = new Map(a.filter(v => v && v.id).map(v => [v.id, v]));
+  ghWriteJSON(settings.githubToken, phbVwPath(), remote => [...(Array.isArray(remote) ? remote : []).filter(r => r && r.id && !mine.has(r.id) && !phbVwDeleted.has(r.id)), ...a.filter(v => v && v.id)], "Foto med bubblor: sparade vyer")
+    .catch(e => { console.warn("Sparade vyer", e); if (typeof modelToast === "function") modelToast("Kunde inte spara vyerna i 4D-datan – de finns kvar i den här webbläsaren"); });
+}
+const phbVwStore = a => {
+  phbVwCache = a; phbVwPid = typeof projectId !== "undefined" ? projectId : "";
+  let ok = true; try { localStorage.setItem(PHB_VW_KEY, JSON.stringify(a)); } catch (e) { ok = false; }
+  if (phbVwRemoteOn()) { phbVwFlush(a); return true; }
+  return ok;
+};
+/* Läser vyerna från 4D-datan en gång per projekt och flyttar över de som bara finns i webbläsaren. */
+function phbVwEnsure() {
+  if (phbVwReady()) return Promise.resolve();
+  if (phbVwPromise) return phbVwPromise;
+  const pid = typeof projectId !== "undefined" ? projectId : "";
+  phbVwPromise = (async () => {
+    let remote = [];
+    try { remote = await ghReadJSON(settings.githubToken, phbVwPath()); } catch (e) { console.warn("Sparade vyer: kunde inte läsa", e); phbVwCache = phbVwLocal(); phbVwPid = pid; phbVwReadyPid = pid; return; }
+    remote = (Array.isArray(remote) ? remote : []).filter(v => v && v.id && v.name);
+    const migKey = "4ddash-phb-views-migrated:" + pid; let migrated = false; try { migrated = localStorage.getItem(migKey) === "1"; } catch (e) { /* */ }
+    let add = [];
+    if (!migrated) {
+      add = phbVwLocal().filter(v => v && v.name && v.data && !remote.some(r => r.name === v.name)).map(v => ({ id: v.id || phbVwUid(), name: v.name, by: v.by || phbVwMe(), at: v.at || new Date().toISOString(), data: v.data }));
+      try { localStorage.setItem(migKey, "1"); } catch (e) { /* */ }
+    }
+    phbVwCache = [...remote, ...add]; phbVwPid = pid; phbVwReadyPid = pid;
+    if (add.length) { phbVwFlush(phbVwCache); if (typeof modelToast === "function") modelToast(`${add.length} sparade vyer flyttades från webbläsaren till projektets 4D-data`); }
+  })().finally(() => { phbVwPromise = null; });
+  return phbVwPromise;
+}
 function phbVwSnap(st) {
   const W = st.W, H = st.H, lst = st.list, dt = st.dateObj;
   return {
     cam: st.cam ? JSON.parse(JSON.stringify(st.cam)) : null, // TC-kameran när fotot togs – vyn flyttar modellen dit först
     g: { ...st.g }, progMode: st.progMode, sharp: st.sharp,
-    list: { on: lst.on, title: lst.title, max: lst.max, scale: lst.scale, weeks: lst.weeks, fx: lst.x / W, fy: lst.y / H },
+    list: { on: lst.on, title: lst.title, max: lst.max, scale: lst.scale, weeks: lst.weeks, sel: [...lst.sel], fx: lst.x / W, fy: lst.y / H }, // sel: vilka aktiviteter som står i listan (Victor 2026-10-28)
     dateObj: { on: dt.on, scale: dt.scale, fx: dt.x / W, fy: dt.y / H },
     tables: (st.tables || []).map(t => ({ src: t.src, keys: t.keys, area: t.area, cols: t.cols, dec: t.dec, max: t.max, scale: t.scale, title: t.title, col: t.col, fx: t.x / W, fy: t.y / H })),
     // Aktivitetsbubblorna (Victor 2026-10-28): vilka som ligger på fotot och exakt var – plats, insättningspunkt, text, storlek och färg.
@@ -306,7 +347,17 @@ function phbVwSnap(st) {
 function phbVwApply(st, v) {
   const W = st.W, H = st.H;
   Object.assign(st.g, v.g || {}); if (v.progMode) st.progMode = v.progMode; if (v.sharp != null) st.sharp = v.sharp;
-  if (v.list) Object.assign(st.list, { on: v.list.on, title: v.list.title, max: v.list.max, scale: v.list.scale, weeks: v.list.weeks, x: v.list.fx * W, y: v.list.fy * H });
+  if (v.list) {
+    Object.assign(st.list, { on: v.list.on, title: v.list.title, max: v.list.max, scale: v.list.scale, weeks: v.list.weeks, x: v.list.fx * W, y: v.list.fy * H });
+    if (Array.isArray(v.list.sel)) { // samma aktiviteter som när vyn sparades: kandidaterna räknas om för veckorna och de sparade bockas i
+      try { if (typeof phbCandidates === "function") st.list.cands = phbCandidates(st.at, st.list.weeks || 2); } catch (e) { /* behåller */ }
+      st.list.sel = new Set(v.list.sel);
+      try { // sparade aktiviteter utanför veckofönstret (vyn används ett annat datum) tas med ändå
+        const have = new Set(st.list.cands.map(phbKey)), extra = mergeActivityGroups((typeof ganttShownItems !== "undefined" ? ganttShownItems : []).filter(x => x.startDate)).filter(a => st.list.sel.has(phbKey(a)) && !have.has(phbKey(a)));
+        if (extra.length) st.list.cands = [...st.list.cands, ...extra];
+      } catch (e) { /* utan */ }
+    }
+  }
   if (v.dateObj) Object.assign(st.dateObj, { on: v.dateObj.on, scale: v.dateObj.scale, x: v.dateObj.fx * W, y: v.dateObj.fy * H });
   st.texts = (v.texts || []).map(t => { const c = { ...t, id: st.nextId++, x: t.fx * W, y: t.fy * H }; delete c.fx; delete c.fy; if (typeof phbTextMeasure === "function") phbTextMeasure(c, st); return c; });
   st.ocards = (v.oc || []).map(d => {
@@ -320,6 +371,27 @@ function phbVwApply(st, v) {
   st.tables = (v.tables || []).map(d => ({ ...d, id: st.nextId++, x: d.fx * W, y: d.fy * H }));
   st.sel = st.ocards[0] || st.tables[0] || null; st.ocDraft = null; st.qtDraft = null;
 }
+/* Vecka för vecka med samma vy (Victor 2026-10-28): lägg till de pågående aktiviteter som saknas och ta bort de som blivit klara – resten ligger kvar på sina platser. */
+async function phbVwAddActive(st) {
+  const W = st.W, H = st.H, have = new Set(st.cards.map(c => phbKey(c.a)));
+  const want = phbActiveList(st.at).filter(a => !have.has(phbKey(a)) && (a.members || [a]).some(m => m.modelId && m.objectId));
+  if (!want.length || !st.camC) return { n: 0, noCam: !st.camC && want.length > 0 };
+  const added = [];
+  (await phbAnchors(want)).forEach(o => {
+    const q = phbProject(st.camC, o.P, W, H); if (!q || q.x < -0.05 * W || q.x > 1.05 * W || q.y < -0.05 * H || q.y > 1.05 * H) return;
+    const c = phbNewCard(o, st); c.ax = q.x; c.ay = q.y; c.x = c.ax - c.W / 2; c.y = c.ay - c.h - 56 * c.kk; added.push(c);
+  });
+  const m = 10 * st.k, gap = 8 * st.k, all = [...st.cards, ...added];
+  for (let it = 0; it < 80; it++) {
+    added.forEach(a => all.forEach(b => {
+      if (a === b) return; const ox = Math.min(a.x + a.W, b.x + b.W) - Math.max(a.x, b.x) + gap, oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) + gap;
+      if (ox > 0 && oy > 0) { if (oy < ox) a.y += (a.y + a.h / 2 <= b.y + b.h / 2 ? -1 : 1) * oy; else a.x += (a.x + a.W / 2 <= b.x + b.W / 2 ? -1 : 1) * ox; }
+      a.x = Math.max(m, Math.min(W - a.W - m, a.x)); a.y = Math.max(m, Math.min(H - a.h - m, a.y));
+    }));
+  }
+  st.cards.push(...added); return { n: added.length };
+}
+function phbVwDropDone(st) { const keep = st.cards.filter(c => ganttPhaseAt(c.a, st.at) !== "klar"), n = st.cards.length - keep.length; st.cards = keep; return n; }
 /* Läser in aktivitetsbubblorna från en sparad vy på exakt samma platser. Aktiviteter som inte är med i fotot just nu hämtas in; saknas de helt räknas de. */
 async function phbVwApplyCards(st, v) {
   if (!Array.isArray(v.cards)) return { missing: 0 };
@@ -345,26 +417,33 @@ async function phbVwApplyCards(st, v) {
   return { missing };
 }
 function phbVwSide(api) {
+  if (!phbVwReady()) phbVwEnsure().then(() => { try { api.renderSide(); } catch (e) { /* stängd */ } });
   const esc = api.esc, vs = phbVwLoad(), sel = (api.cur.vwSel != null && vs[api.cur.vwSel]) ? api.cur.vwSel : -1;
   return `<div class="phb-sec"><div class="phb-h">Sparade vyer</div>
     <div class="phb-row"><input type="text" id="phbVwName" placeholder="Namn på vyn" maxlength="60"><button type="button" id="phbVwSave" class="primary">Spara vy</button></div>
-    ${vs.length ? `<div class="phb-row"><select id="phbVwSel">${vs.map((v, i) => `<option value="${i}"${i === sel ? " selected" : ""}>${esc(v.name)}</option>`).join("")}</select></div>
+    ${vs.length ? `<div class="phb-row"><select id="phbVwSel">${vs.map((v, i) => `<option value="${i}"${i === sel ? " selected" : ""}>${esc(v.name)}${v.by ? ` · ${esc(v.by)}` : ""}</option>`).join("")}</select></div>
     <div class="phb-row"><button type="button" id="phbVwUse">Använd</button><button type="button" id="phbVwUpd" title="Skriv över den valda vyn med det som är på bilden nu">Uppdatera</button><button type="button" id="phbVwDel" class="danger">Ta bort</button></div>` : ""}
-    <div class="phb-note" id="phbVwMsg">${vs.length ? "" : "Spara bubblor, text, lista, datum och inställningar som en vy och återanvänd dem på nästa foto."} Vyerna sparas i den här webbläsaren.</div></div>`;
+    <div class="phb-row"><button type="button" id="phbVwAdd" title="Lägger till bubblor för de aktiviteter som pågår nu och inte redan har en bubbla – de gamla ligger kvar på sina platser">Lägg till pågående</button><button type="button" id="phbVwDone" title="Tar bort bubblorna för aktiviteter som är klara vid fotots datum">Ta bort klara</button></div>
+    <div class="phb-note" id="phbVwMsg">${vs.length ? "" : "Spara bubblor, text, lista, datum och inställningar som en vy och återanvänd dem på nästa foto."} ${phbVwRemoteOn() ? (phbVwReady() ? "Vyerna sparas i projektets 4D-data och delas med alla i projektet." : "Hämtar vyerna …") : "Vyerna sparas i den här webbläsaren (4D-datan är inte ansluten)."}</div></div>`;
 }
 function phbVwBind(api, side) {
   const q = id => side.querySelector("#" + id), on = (id, fn) => { const e = q(id); if (e) e.addEventListener("click", fn); }, cur = api.cur;
   const say = t => { const m = q("phbVwMsg"); if (m) m.textContent = t; };
   on("phbVwSave", () => { const nm = (q("phbVwName").value || "").trim(); if (!nm) { say("Skriv ett namn först."); return; }
-    const vs = phbVwLoad(), i = vs.findIndex(v => v.name === nm), rec = { name: nm, data: phbVwSnap(cur) }; if (i >= 0) vs[i] = rec; else vs.push(rec);
+    const vs = phbVwLoad(), i = vs.findIndex(v => v.name === nm), rec = { id: i >= 0 && vs[i].id ? vs[i].id : phbVwUid(), name: nm, by: phbVwMe(), at: new Date().toISOString(), data: phbVwSnap(cur) };
+    if (i >= 0 && phbVwRemoteOn() && !confirm(`Det finns redan en vy som heter "${nm}". Skriva över den för alla i projektet?`)) return;
+    if (i >= 0) vs[i] = rec; else vs.push(rec);
     if (!phbVwStore(vs)) { say("Kunde inte spara – webbläsarens lagring är full eller avstängd."); return; } cur.vwSel = i >= 0 ? i : vs.length - 1; api.renderSide(); if (typeof modelToast === "function") modelToast(`Vyn "${nm}" sparad`); });
+  on("phbVwAdd", async () => { try { const r = await phbVwAddActive(api.cur); api.remeasure(); say(r.noCam ? "Kunde inte avgöra var objekten ligger i bilden – ta ett nytt foto först." : r.n ? `${r.n} ny${r.n === 1 ? " bubbla" : "a bubblor"} tillagda – dra dem dit du vill och tryck Uppdatera för att spara vyn.` : "Alla pågående aktiviteter har redan en bubbla."); } catch (e) { say("Kunde inte lägga till: " + ((e && e.message) || e)); } });
+  on("phbVwDone", () => { const n = phbVwDropDone(api.cur); api.remeasure(); say(n ? `${n} bubbla${n === 1 ? "" : "r"} för klara aktiviteter borttagna – tryck Uppdatera för att spara vyn.` : "Inga klara aktiviteter bland bubblorna."); });
   on("phbVwUse", async () => {
     const vs = phbVwLoad(), i = Number(q("phbVwSel").value), v = vs[i]; if (!v) return;
     let moved = false;
     if (v.data.cam && typeof api.retake === "function") { try { moved = await api.retake(v.data.cam); } catch (e) { console.warn("Vyn: kameran", e); } }
     const st = api.cur; phbVwApply(st, v.data); let cardInfo = { missing: 0 }; try { cardInfo = await phbVwApplyCards(st, v.data); } catch (e) { console.warn("Vyn: bubblor", e); } st.vwSel = i; api.remeasure(); api.renderSide();
-    if (typeof modelToast === "function") modelToast(`Vyn "${v.name}" inläst${cardInfo.missing ? ` (${cardInfo.missing} aktivitetsbubbla${cardInfo.missing === 1 ? "" : "r"} kunde inte läggas in – aktiviteten finns inte i schemat eller objektet syns inte)` : ""}${moved ? " – modellen flyttades till vyns kamera och ett nytt foto togs" : v.data.cam ? " – kameran kunde inte flyttas, vyn lades på det nuvarande fotot" : " – den saknar kamera (spara om den så följer modellen med)"}`);
+    let nextInfo = ""; try { const have = new Set(st.cards.map(c => phbKey(c.a))), nw = phbActiveList(st.at).filter(a => !have.has(phbKey(a)) && (a.members || [a]).some(m => m.modelId && m.objectId)).length, dn = st.cards.filter(c => ganttPhaseAt(c.a, st.at) === "klar").length; nextInfo = `${nw ? ` · ${nw} pågående saknar bubbla (Lägg till pågående)` : ""}${dn ? ` · ${dn} är klara (Ta bort klara)` : ""}`; } catch (e) { /* */ }
+    if (typeof modelToast === "function") modelToast(`Vyn "${v.name}" inläst${nextInfo}${cardInfo.missing ? ` (${cardInfo.missing} aktivitetsbubbla${cardInfo.missing === 1 ? "" : "r"} kunde inte läggas in – aktiviteten finns inte i schemat eller objektet syns inte)` : ""}${moved ? " – modellen flyttades till vyns kamera och ett nytt foto togs" : v.data.cam ? " – kameran kunde inte flyttas, vyn lades på det nuvarande fotot" : " – den saknar kamera (spara om den så följer modellen med)"}`);
   });
-  on("phbVwUpd", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i]) return; vs[i].data = phbVwSnap(cur); if (!phbVwStore(vs)) { say("Kunde inte spara."); return; } if (typeof modelToast === "function") modelToast(`Vyn "${vs[i].name}" uppdaterad`); });
-  on("phbVwDel", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i] || !confirm(`Ta bort vyn "${vs[i].name}"?`)) return; vs.splice(i, 1); phbVwStore(vs); cur.vwSel = null; api.renderSide(); });
+  on("phbVwUpd", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i]) return; if (phbVwRemoteOn() && !confirm(`Skriva över vyn "${vs[i].name}" för alla i projektet med det som är på bilden nu?`)) return; vs[i].data = phbVwSnap(cur); vs[i].at = new Date().toISOString(); if (phbVwMe()) vs[i].by = phbVwMe(); if (!phbVwStore(vs)) { say("Kunde inte spara."); return; } if (typeof modelToast === "function") modelToast(`Vyn "${vs[i].name}" uppdaterad`); });
+  on("phbVwDel", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i] || !confirm(`Ta bort vyn "${vs[i].name}"${phbVwRemoteOn() ? " för alla i projektet" : ""}?`)) return; if (vs[i].id) phbVwDeleted.add(vs[i].id); vs.splice(i, 1); phbVwStore(vs); cur.vwSel = null; api.renderSide(); });
 }
