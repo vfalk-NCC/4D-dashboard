@@ -3363,3 +3363,10 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .gantt-own-menu button { display: flex; align-items: center; gap: 8px; text-align: left; font: inherit; font-size: 13px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; }
 .gantt-own-menu button i { width: 12px; font-style: normal; color: var(--accent); font-weight: 800; } .gantt-own-menu button:hover { background: var(--accent); color: #fff; } .gantt-own-menu button:hover i { color: #fff; }
 @media print { .gantt-own-menu { display: none !important; } }
+
+/* 3D-filter i filterraden: slutdatum */
+.fe-wrap { display: inline-flex; align-items: center; gap: 2px; }
+.fe-date { min-width: 8.5em; }
+.fe-date.on { border-color: var(--accent, #2563eb); box-shadow: 0 0 0 1px var(--accent, #2563eb) inset; }
+.fe-clear { padding: 0 8px; line-height: 1.6; }
+.fe-clear.hidden { display: none; }

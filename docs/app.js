@@ -368,7 +368,7 @@ function bindUI() {
   updateConnectionWarning();
 
   initAreaFilter();
-  initActivityFilter(); initSavedFilters();
+  initActivityFilter(); initSavedFilters(); initGanttFilters3d();
   initContractorFilter();
   document.getElementById("btnResetFilters").onclick = onResetFilters;
 
@@ -588,6 +588,7 @@ function onFilterChange() {
 function onResetFilters() {
   filters = { area: [], activity: [], contractor: [], status: [] };
   renderAreaFilter(); renderActivityFilter(); renderContractorFilter(); if (typeof renderStatusFilter === "function") renderStatusFilter();
+  if (ganttEndCap) ganttApplyEndCap("");
   renderAll();
 }
 
@@ -859,6 +860,50 @@ function openSavedPop(btn) {
 function savedPopOutside(e) { const p = document.getElementById("savedFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterSavedBtn") closeSavedPop(); }
 function savedPopKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeSavedPop(); } }
 function closeSavedPop() { document.getElementById("savedFilterPop")?.remove(); document.removeEventListener("mousedown", savedPopOutside, true); document.removeEventListener("keydown", savedPopKey, true); }
+
+/* ---- 3D-filter i filterraden (Victor 2026-10-28): vilka modeller som visas, och ett slutdatum för vad som ska synas. ---- */
+function ganttApplyEndCap(v) {
+  ganttEndCap = /^\d{4}-\d{2}-\d{2}$/.test(v || "") ? v : "";
+  try { localStorage.setItem("4ddash-gantt-endcap", ganttEndCap); } catch (e) {}
+  const inp = document.getElementById("filterEndDate"), clr = document.getElementById("filterEndClear");
+  if (inp && inp.value !== ganttEndCap) inp.value = ganttEndCap;
+  if (clr) clr.classList.toggle("hidden", !ganttEndCap);
+  if (inp) inp.classList.toggle("on", !!ganttEndCap);
+  ganttTimeReset();
+  if (ganttEndCap && ganttMode === "off") { setGanttMode("isolate"); return; }
+  if (ganttIsolate) scheduleGanttIsolate();
+}
+function initGanttFilters3d() {
+  const inp = document.getElementById("filterEndDate"), clr = document.getElementById("filterEndClear");
+  if (inp) { inp.value = ganttEndCap; inp.onchange = () => ganttApplyEndCap(inp.value); }
+  if (clr) clr.onclick = () => ganttApplyEndCap("");
+  if (inp) inp.classList.toggle("on", !!ganttEndCap); if (clr) clr.classList.toggle("hidden", !ganttEndCap);
+  const b = document.getElementById("filterModelsBtn"); if (!b) return;
+  b.onclick = e => { e.stopPropagation(); if (document.getElementById("modelsFilterPop")) closeModelsPop(); else openModelsPop(b); };
+}
+async function openModelsPop(btn) {
+  closeModelsPop(); closeSavedPop(); closeAreaPop(); closeActivityPop(); closeContractorPop();
+  const p = document.createElement("div"); p.id = "modelsFilterPop"; p.className = "gantt-group-picker cf-pop";
+  p.innerHTML = `<div class="hint" style="padding:6px 10px">Hämtar modeller…</div>`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect(); p.style.left = Math.max(4, Math.min(r.left, innerWidth - 340)) + "px"; p.style.top = (r.bottom + 4) + "px"; p.style.maxHeight = Math.max(200, innerHeight - r.bottom - 16) + "px"; p.style.minWidth = "280px";
+  setTimeout(() => document.addEventListener("mousedown", modelsPopOutside, true), 0); document.addEventListener("keydown", modelsPopKey, true);
+  const V = API && API.viewer;
+  if (!V || typeof V.getModels !== "function") { p.innerHTML = `<div class="hint" style="padding:6px 10px">Modellen är inte ansluten – öppna dashboarden i Trimble Connect.</div>`; return; }
+  let list = []; try { list = (await V.getModels()) || []; } catch (e) { list = []; }
+  if (!document.getElementById("modelsFilterPop")) return;
+  if (!list.length) { p.innerHTML = `<div class="hint" style="padding:6px 10px">Inga modeller hittades i projektet.</div>`; return; }
+  const coupled = new Set(items.flatMap(it => it.members || [it]).map(m => m.modelId).filter(Boolean));
+  const row = m => `<label class="ggp-row" title="${escapeHtml(m.name || m.id)}"><input type="checkbox" data-mid="${escapeHtml(m.id)}"${m.state === "loaded" ? " checked" : ""} /><span>${escapeHtml(m.name || m.id)}</span>${coupled.has(m.id) || coupled.has(m.versionId) ? ` <span class="hint">· kopplad</span>` : ""}</label>`;
+  p.innerHTML = `<div class="hint" style="padding:6px 10px 2px">Bocka av en modell för att släcka den i 3D-vyn.</div><div class="ggp-list">${list.map(row).join("")}</div><div style="padding:6px 10px;display:flex;gap:8px"><button type="button" class="mf-all">Tänd alla</button><button type="button" class="mf-none">Släck alla</button></div>`;
+  const set = async (cb, on) => { cb.disabled = true; try { await V.toggleModel(cb.dataset.mid, on, false); cb.checked = on; } catch (e) { cb.checked = !on; modelToast("Kunde inte " + (on ? "tända" : "släcka") + " modellen: " + ((e && (e.message || e.error)) || "Trimble Connect svarade inte")); } cb.disabled = false; };
+  p.onchange = async e => { const cb = e.target.closest("input[data-mid]"); if (!cb) return; await set(cb, cb.checked); ganttTimeReset(); if (ganttIsolate) scheduleGanttIsolate(); };
+  const all = async on => { for (const cb of p.querySelectorAll("input[data-mid]")) if (cb.checked !== on) await set(cb, on); ganttTimeReset(); if (ganttIsolate) scheduleGanttIsolate(); };
+  p.querySelector(".mf-all").onclick = () => all(true); p.querySelector(".mf-none").onclick = () => all(false);
+}
+function modelsPopOutside(e) { const p = document.getElementById("modelsFilterPop"); if (p && !p.contains(e.target) && e.target.id !== "filterModelsBtn") closeModelsPop(); }
+function modelsPopKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeModelsPop(); } }
+function closeModelsPop() { document.getElementById("modelsFilterPop")?.remove(); document.removeEventListener("mousedown", modelsPopOutside, true); document.removeEventListener("keydown", modelsPopKey, true); }
 
 function uniqueValues(keyFn) {
   const set = new Set();
@@ -3677,7 +3722,7 @@ function ganttScaleHex(t) {
   const h = x => [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16)), A = h(ganttScale.a), B = h(ganttScale.b);
   return "#" + A.map((c, i) => Math.round(c + (B[i] - c) * k).toString(16).padStart(2, "0")).join("");
 }
-let ganttStrict = false, ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
+let ganttEndCap = (() => { try { return localStorage.getItem("4ddash-gantt-endcap") || ""; } catch (e) { return ""; } })(), ganttStrict = false, ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
 const ganttMarkerIso = () => todayISO(); // "Idag"-linjen står kvar; datumet för tidslinjen är dragstrecket (se renderGanttScrub)
 let ganttInRangeItems = null; // det som faktiskt ritas i Gantt (inom visat datumintervall) – mängdavtagningen utgår från det
 let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
@@ -3798,20 +3843,23 @@ function ganttCoupledTargets() {
       if (m.temporary && ((m.startDate && m.startDate > ganttAsOf) || (tEnd && tEnd < ganttAsOf))) phase = "dold";
       else if (m.temporary) phase = "tempon"; // temporär mellan start och slut: modellens originalfärg
       else if (m.demolition) { if (tEnd && tEnd < ganttAsOf) phase = "dold"; else if (phase === "planerad") phase = "planerad_syns"; }
+      if (ganttEndCap && m.startDate && m.startDate > ganttEndCap && phase !== "dold") phase = "planerad"; // efter slutdatumet: kommande
       if (phase === "planerad" && !ganttTimeFuture) phase = "dold"; // släckt i 3D vid det här datumet
       if (phase === "planerad_syns") phase = "planerad"; // rivning före start: syns alltid
       if ((phase === "pagaende" || phase === "forsenad" || phase === "planerad") && Number(ganttOp[phase]) <= 0) phase = "dold"; // opacitet 0 = osynligt
+    } else if (ganttEndCap && m.startDate && m.startDate > ganttEndCap) { // slutdatum utan tidslinje: det som startar efter datumet visas som kommande
+      phase = ganttTimeFuture && Number(ganttOp.planerad) !== 0 ? "planerad" : "dold";
     }
     const k = `${m.modelId}|${m.objectId}`, t = { modelId: m.modelId, objectId: String(m.objectId), phase, startDate: m.startDate || "", endDate: m.endDate || "", doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity, contractor: m.contractor || "" };
     if (!seen.has(k)) { seen.add(k); out.push(t); all.set(k, [t]); } else all.get(k).push(t);
   });
   // Ett objekt i flera aktiviteter (montage → rivning, Victor 2026-10-28): en gemensam fas vid datumet – samma regel som i 4D-planering/3D-editorn.
   // Försenad först; allt klart = klar; pågår eller delvis klar = pågående; annars kommande. Dolda aktiviteter räknas inte om någon annan syns.
-  if (timed) out.forEach((t, i) => {
+  if (timed || ganttEndCap) out.forEach((t, i) => {
     const g = all.get(`${t.modelId}|${t.objectId}`); if (!g || g.length < 2) return;
     const vis = g.filter(x => x.phase !== "dold"); if (!vis.length) return;
     const ph = vis.map(x => x.phase), has = p => ph.includes(p);
-    const pick = has("forsenad") ? "forsenad" : ph.every(p => p === "klar") ? "klar" : (has("pagaende") || has("klar")) ? "pagaende" : has("tempon") ? "tempon" : "planerad";
+    const pick = !timed ? (has("") ? "" : "planerad") : has("forsenad") ? "forsenad" : ph.every(p => p === "klar") ? "klar" : (has("pagaende") || has("klar")) ? "pagaende" : has("tempon") ? "tempon" : "planerad";
     const rep = vis.find(x => x.phase === pick) || vis.find(x => x.phase === "pagaende") || vis[0];
     out[i] = { ...rep, phase: pick };
   });
@@ -4001,7 +4049,7 @@ async function applyGanttIsolate(force) {
   if (!ganttIsolate) return;
   if (ganttAsOf && ganttTime3d) return ganttTimeApply3d();
   ganttPhaseNow = new Map(); ganttTimeBase = false; // lämnade tidslinjen: nästa gång börjar den om
-  const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}|${t.phase}`).sort().join(",") + (ganttAsOf && ganttTime3d ? `#${STATUS_COLORS.klar}${STATUS_COLORS.pagaende}${STATUS_COLORS.forsenad}${STATUS_COLORS.planerad}` : "");
+  const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}|${t.phase}`).sort().join(",") + (ganttAsOf && ganttTime3d ? `#${STATUS_COLORS.klar}${STATUS_COLORS.pagaende}${STATUS_COLORS.forsenad}${STATUS_COLORS.planerad}` : "") + (ganttEndCap ? `#cap${ganttEndCap}${ganttTimeFuture}${ganttOp.planerad}${STATUS_COLORS.planerad}` : "");
   if (!force && sig === isolateSig) return; // oförändrat urval
   if (!API || !API.viewer || typeof API.viewer.isolateEntities !== "function" || typeof API.viewer.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttMode("off", true); return; }
   if (!targets.length) { modelToast("Inget av det som visas i schemat är kopplat till modellen"); isolateSig = sig; return; }
@@ -4016,14 +4064,27 @@ async function applyGanttIsolate(force) {
         const r = await dashRuntimeIds(API.viewer, modelId, byModel[modelId][phase]);
         if (r.modelFailed) { failed = true; break; }
         const rids = [...r.map.values()].filter(id => id !== undefined && id !== null);
-        if (rids.length) { all.push(...rids); phaseGroups.push({ modelId, phase, rids }); }
+        if (rids.length) { if (phase !== "dold") all.push(...rids); phaseGroups.push({ modelId, phase, rids }); } // "dold" = efter slutdatumet och Kommande är av
       }
       if (failed) { console.warn("Hoppar över modell som inte är inläst", modelId); skippedModels++; continue; }
       if (all.length) entities.push({ modelId, entityIds: all });
     }
     if (!ganttIsolate) return; // avstängd medan vi väntade
-    if (!entities.length) { modelToast(skippedModels ? "Modellerna som schemat är kopplat till är inte inlästa i vyn – tänd rätt modell (och version) i Trimble Connect" : "Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); isolateSig = sig; return; }
-    try { await API.viewer.isolateEntities(entities); }
+    if (!entities.length && !(ganttEndCap && phaseGroups.length)) { modelToast(skippedModels ? "Modellerna som schemat är kopplat till är inte inlästa i vyn – tänd rätt modell (och version) i Trimble Connect" : "Objekten finns inte i den inlästa modellen – är rätt modellversion tänd?"); isolateSig = sig; return; }
+    // Slutdatum (Victor 2026-10-28): det som startar efter datumet visas som Kommande – och är Kommande på visas även allt som inte är kopplat så.
+    const capAll = !!ganttEndCap && !(ganttAsOf && ganttTime3d) && ganttTimeFuture && Number(ganttOp.planerad) !== 0 && typeof API.viewer.setObjectState === "function";
+    if (capAll) {
+      const V = API.viewer;
+      await V.setObjectState(undefined, { visible: "reset" });
+      await V.setObjectState(undefined, { color: ganttTimeColorOf({ phase: "planerad" }) });
+      for (const g of phaseGroups) {
+        const sel = { modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] };
+        if (g.phase === "dold") await V.setObjectState(sel, { visible: false });
+        else if (g.phase === "") await V.setObjectState(sel, { color: "reset" });
+      }
+      ganttColored = true;
+    } else if (!entities.length) { await API.viewer.setObjectState(undefined, { visible: false }); }
+    else try { await API.viewer.isolateEntities(entities); }
     catch (e1) {
       // Trimble Connect avvisar isolateEntities i vissa versioner (fel utan text) – samma resultat med synlighet:
       // släck allt, tänd sedan de kopplade objekten.
@@ -4038,11 +4099,11 @@ async function applyGanttIsolate(force) {
         await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {});
         for (const g of phaseGroups) if (!ganttNoColor && g.phase && STATUS_COLORS[g.phase]) await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: STATUS_COLORS[g.phase] });
         ganttColored = true;
-      } else if (ganttColored) { await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {}); ganttColored = false; }
+      } else if (ganttColored && !capAll) { await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {}); ganttColored = false; }
     }
     isolateSig = sig;
     const n = entities.reduce((a, m) => a + m.entityIds.length, 0);
-    modelToast(`Visar endast ${n} kopplade objekt${skippedModels ? ` (${skippedModels} ${skippedModels === 1 ? "modell" : "modeller"} är inte inlästa och hoppades över)` : ""}${document.fullscreenElement ? " – stäng helskärmen för att se modellen" : ""}`);
+    if (capAll) modelToast(`Visar till ${ganttEndCap} – senare och okopplat som Kommande`); else modelToast(`Visar endast ${n} kopplade objekt${skippedModels ? ` (${skippedModels} ${skippedModels === 1 ? "modell" : "modeller"} är inte inlästa och hoppades över)` : ""}${document.fullscreenElement ? " – stäng helskärmen för att se modellen" : ""}`);
   } catch (e) { console.warn("Kunde inte isolera kopplade objekt", e); modelToast("Kunde inte visa endast kopplade: " + ((e && (e.message || e.error || e.reason)) || (typeof e === "string" ? e : "") || "Trimble Connect svarade inte (försök igen)")); }
 }
 /* "Dölj kopplade objekt" (Victor 2026-10-13): släcker alla objekt som är kopplade till någon aktivitet, så att det som
