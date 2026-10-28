@@ -296,6 +296,8 @@ function phbVwSnap(st) {
     list: { on: lst.on, title: lst.title, max: lst.max, scale: lst.scale, weeks: lst.weeks, fx: lst.x / W, fy: lst.y / H },
     dateObj: { on: dt.on, scale: dt.scale, fx: dt.x / W, fy: dt.y / H },
     tables: (st.tables || []).map(t => ({ src: t.src, keys: t.keys, area: t.area, cols: t.cols, dec: t.dec, max: t.max, scale: t.scale, title: t.title, col: t.col, fx: t.x / W, fy: t.y / H })),
+    // Aktivitetsbubblorna (Victor 2026-10-28): vilka som ligger på fotot och exakt var – plats, insättningspunkt, text, storlek och färg.
+    cards: (st.cards || []).map(c => { const q = st.camC ? phbProject(st.camC, c.o.P, W, H) : null; return { key: phbKey(c.a), fx: c.x / W, fy: c.y / H, free: !!c.free, ofx: q && c.free ? (c.ax - q.x) / W : undefined, ofy: q && c.free ? (c.ay - q.y) / H : undefined, scale: c.scale, text: c.text, colOver: c.colOver, show: { ...c.show } }; }),
     texts: st.texts.map(t => { const c = { ...t, fx: t.x / W, fy: t.y / H }; delete c.id; delete c.x; delete c.y; return c; }),
     oc: (st.ocards || []).map(c => { phbOcEnsureCam(st, c.objs); const q = phbOcAnchor(st, c.objs); return ({ ofx: q && isFinite(c.ax) ? (c.ax - q.x) / W : undefined, ofy: q && isFinite(c.ay) ? (c.ay - q.y) / H : undefined, fields: c.fields.slice(), sum: c.sum !== false, text: c.text, title: c.title, dec: c.dec, titleSrc: c.titleSrc || "", scale: c.scale, colOver: c.colOver, fx: c.x / W, fy: c.y / H, fax: c.ax / W, fay: c.ay / H, free: !!c.free,
       objs: c.objs.slice(0, 60).map(o => ({ modelId: o.modelId, objectId: o.objectId, rid: o.rid, box: o.box, flat: o.flat })) }); })
@@ -318,6 +320,30 @@ function phbVwApply(st, v) {
   st.tables = (v.tables || []).map(d => ({ ...d, id: st.nextId++, x: d.fx * W, y: d.fy * H }));
   st.sel = st.ocards[0] || st.tables[0] || null; st.ocDraft = null; st.qtDraft = null;
 }
+/* Läser in aktivitetsbubblorna från en sparad vy på exakt samma platser. Aktiviteter som inte är med i fotot just nu hämtas in; saknas de helt räknas de. */
+async function phbVwApplyCards(st, v) {
+  if (!Array.isArray(v.cards)) return { missing: 0 };
+  const W = st.W, H = st.H, by = new Map(v.cards.map(d => [d.key, d])), have = new Set(st.cards.map(c => phbKey(c.a)));
+  const miss = [...by.keys()].filter(k => !have.has(k));
+  let missing = miss.length;
+  if (miss.length && st.camC) {
+    const all = mergeActivityGroups((typeof ganttShownItems !== "undefined" ? ganttShownItems : []).filter(x => x.startDate)), want = all.filter(a => miss.includes(phbKey(a)));
+    try {
+      const anchors = await phbAnchors(want);
+      anchors.forEach(o => { const q = phbProject(st.camC, o.P, W, H); if (!q) return; const c = phbNewCard(o, st); c.ax = q.x; c.ay = q.y; st.cards.push(c); missing--; });
+    } catch (e) { console.warn("Vyn: saknade bubblor", e); }
+  }
+  st.cards = st.cards.filter(c => by.has(phbKey(c.a)));
+  st.cards.forEach(c => {
+    const d = by.get(phbKey(c.a)); if (!d) return;
+    c.scale = d.scale || 1; c.text = d.text == null || d.text === "" ? null : d.text; c.colOver = d.colOver || null; if (d.show) c.show = { ...c.show, ...d.show };
+    phbCardMeasure(c, st); c.x = d.fx * W; c.y = d.fy * H;
+    const q = st.camC ? phbProject(st.camC, c.o.P, W, H) : null;
+    if (q && d.free && d.ofx !== undefined && d.ofy !== undefined) { c.ax = q.x + d.ofx * W; c.ay = q.y + d.ofy * H; c.free = true; c.manual = true; }
+    else if (q) { c.ax = q.x; c.ay = q.y; c.free = false; c.manual = false; }
+  });
+  return { missing };
+}
 function phbVwSide(api) {
   const esc = api.esc, vs = phbVwLoad(), sel = (api.cur.vwSel != null && vs[api.cur.vwSel]) ? api.cur.vwSel : -1;
   return `<div class="phb-sec"><div class="phb-h">Sparade vyer</div>
@@ -336,8 +362,8 @@ function phbVwBind(api, side) {
     const vs = phbVwLoad(), i = Number(q("phbVwSel").value), v = vs[i]; if (!v) return;
     let moved = false;
     if (v.data.cam && typeof api.retake === "function") { try { moved = await api.retake(v.data.cam); } catch (e) { console.warn("Vyn: kameran", e); } }
-    const st = api.cur; phbVwApply(st, v.data); st.vwSel = i; api.remeasure(); api.renderSide();
-    if (typeof modelToast === "function") modelToast(`Vyn "${v.name}" inläst${moved ? " – modellen flyttades till vyns kamera och ett nytt foto togs" : v.data.cam ? " – kameran kunde inte flyttas, vyn lades på det nuvarande fotot" : " – den saknar kamera (spara om den så följer modellen med)"}`);
+    const st = api.cur; phbVwApply(st, v.data); let cardInfo = { missing: 0 }; try { cardInfo = await phbVwApplyCards(st, v.data); } catch (e) { console.warn("Vyn: bubblor", e); } st.vwSel = i; api.remeasure(); api.renderSide();
+    if (typeof modelToast === "function") modelToast(`Vyn "${v.name}" inläst${cardInfo.missing ? ` (${cardInfo.missing} aktivitetsbubbla${cardInfo.missing === 1 ? "" : "r"} kunde inte läggas in – aktiviteten finns inte i schemat eller objektet syns inte)` : ""}${moved ? " – modellen flyttades till vyns kamera och ett nytt foto togs" : v.data.cam ? " – kameran kunde inte flyttas, vyn lades på det nuvarande fotot" : " – den saknar kamera (spara om den så följer modellen med)"}`);
   });
   on("phbVwUpd", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i]) return; vs[i].data = phbVwSnap(cur); if (!phbVwStore(vs)) { say("Kunde inte spara."); return; } if (typeof modelToast === "function") modelToast(`Vyn "${vs[i].name}" uppdaterad`); });
   on("phbVwDel", () => { const vs = phbVwLoad(), i = Number(q("phbVwSel").value); if (!vs[i] || !confirm(`Ta bort vyn "${vs[i].name}"?`)) return; vs.splice(i, 1); phbVwStore(vs); cur.vwSel = null; api.renderSide(); });

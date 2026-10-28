@@ -200,9 +200,13 @@ seed('plan_items.json', [
         await page.mouse.move(g.x, g.y); await page.mouse.down(); await page.mouse.move(g.x + 30, g.y + 20, { steps: 4 }); await page.mouse.up();
         const m1 = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return { ax: c.ax, ay: c.ay, free: c.free }; });
         if (!m1.free || Math.abs(m1.ax - g.ax - 30 / g.f) > 2) fail('objektbubblans punkt går att flytta: ' + JSON.stringify({ g, m1 }));
+        await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.cards[0]; window.__cardPos = null; if (c) { c.x = st.W * 0.31; c.y = st.H * 0.22; c.text = 'Flyttad bubbla'; c.scale = 1.2; phbCardMeasure(c, st); window.__cardPos = [c.x / st.W, c.y / st.H, phbKey(c.a)]; } });
         await page.fill('#phbVwName', 'Flyttad'); await page.click('#phbVwSave'); await page.waitForTimeout(300);
         await page.selectOption('#phbVwSel', { label: 'Flyttad' }); await page.click('#phbVwUse'); await page.waitForTimeout(1200);
         const m2 = await page.evaluate(() => { const c = document.getElementById('phbCv')._state().ocards[0]; return { ax: c.ax, ay: c.ay }; });
+        { const cp0 = await page.evaluate(() => window.__cardPos); if (cp0) { const cp = await page.evaluate(() => { const st = document.getElementById('phbCv')._state(), c = st.cards.find(k => phbKey(k.a) === window.__cardPos[2]); return c ? [c.x / st.W, c.y / st.H, c.text, c.scale] : null; });
+          if (!cp || Math.abs(cp[0] - cp0[0]) > 0.002 || Math.abs(cp[1] - cp0[1]) > 0.002 || cp[2] !== 'Flyttad bubbla' || cp[3] !== 1.2) fail('Aktivitetsbubblan ska ligga kvar på exakt samma plats i den sparade vyn: ' + JSON.stringify([cp0, cp])); console.log('OK: aktivitetsbubblor sparas i vyn'); } else console.log('(inga aktivitetsbubblor i testet – hoppade över)'); }
+
         if (Math.abs(m2.ax - m1.ax) > 2 || Math.abs(m2.ay - m1.ay) > 2) fail('flyttad punkt behåller sitt läge efter inläsning: ' + JSON.stringify({ m1, m2 }));
         const g3 = await page.evaluate(() => { const cv = document.getElementById('phbCv'), st = cv._state(), c = st.ocards[0], r = cv.getBoundingClientRect(); return { x: r.left + c.ax * r.width / st.W, y: r.top + c.ay * r.height / st.H }; });
         await page.mouse.dblclick(g3.x, g3.y); await page.waitForTimeout(200);
