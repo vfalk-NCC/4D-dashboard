@@ -3370,3 +3370,17 @@ html[data-theme="dark"] :is(img, video, canvas, picture, iframe, input[type="col
 .fe-date.on { border-color: var(--accent, #2563eb); box-shadow: 0 0 0 1px var(--accent, #2563eb) inset; }
 .fe-clear { padding: 0 8px; line-height: 1.6; }
 .fe-clear.hidden { display: none; }
+
+/* UI/UX-genomgång 2026-10-30 */
+/* Mörkt läge: lagren syns (sidan svart, paneler och kort något ljusare) – värdena är före inverteringen. */
+html[data-theme="dark"] { --bg: #f7f7f9; --panel: #e6e8ed; --border: #c3c8d2; }
+html[data-theme="dark"] .kpi-tile { background: #eceef2; }
+/* Smal skärm: huvudet bryts i stället för att göra sidan bredare än skärmen. */
+@media (max-width: 640px) {
+  header { flex-wrap: wrap; gap: 6px; }
+  .header-brand { flex-wrap: wrap; min-width: 0; }
+  .header-actions { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+  .filter-bar { gap: 6px; }
+}
+/* Synlig fokusring vid tangentbordsnavigering (utan att störa musklick). */
+:is(button, select, input, textarea, a, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
