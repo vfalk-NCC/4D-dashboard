@@ -42,6 +42,11 @@ let n = 0; const puts = [];
   if (pi[1].head !== 'H4sI') fail('stor fil ska vara gzip (base64 börjar H4sI): ' + pi[1].head);
   if (!(pi[1].len < R.len / 4)) fail('gzip ska krympa kraftigt: ' + pi[1].len + ' mot ' + R.len);
   if (R.n !== 60000 || !R.same) fail('läsning ska ge identiskt innehåll: ' + JSON.stringify(R));
+  // Regression 2026-10-28: en gzippad fil under 1 MB kommer inline (base64) från GitHub och måste packas upp även där ("Unexpected token" vid hämtning).
+  { const b64 = await page.evaluate(async () => { const rows = Array.from({ length: 300 }, (_, i) => ({ id: 'g' + i, object_name: 'Åäö ' + i })); const gz = await ghStreamBytes(new TextEncoder().encode(JSON.stringify(rows)), CompressionStream, 'gzip'); return ghBytesToB64(gz); });
+    store.set(`projects/${PID}/plan_small_gz.json`, { b64, sha: 'sg1' });
+    const r2 = await page.evaluate(async pid => { ghFileCache.clear(); const d = (await ghGetFile('t', `projects/${pid}/plan_small_gz.json`)).data; return { n: d.length, first: d[0].object_name, last: d[299].id }; }, PID);
+    if (Buffer.from(b64, 'base64').length > 1e6 || r2.n !== 300 || r2.first !== 'Åäö 0' || r2.last !== 'g299') fail('liten gzippad fil (inline) ska läsas: ' + JSON.stringify(r2)); console.log('OK: liten gzippad fil läses (inline)'); }
   if (errors.length) fail('sidfel: ' + errors.slice(0, 3));
   console.log('ALLA TESTER OK', `(${Math.round(R.len / 1e6)} MB → ${Math.round(pi[1].len * 0.75 / 1e6 * 10) / 10} MB)`); await browser.close(); server.close();
 })().catch(e => { console.error('FEL: ' + e.message); process.exit(1); });
