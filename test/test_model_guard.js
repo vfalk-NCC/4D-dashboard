@@ -79,6 +79,18 @@ seed('plan_item_activities.json', []);
   await page.evaluate(() => { window.__calls = []; });
   await page.click('#mgLabel'); await page.waitForTimeout(500);
   const after = await calls(); if (!after.some(c => c.b && c.b.color === 'reset') || !after.some(c => c.b && c.b.visible === 'reset')) fail('avstängning återställer färg och synlighet: ' + JSON.stringify(after));
+  // Skyddet håller även om API:t ger ett nytt viewer-objekt vid varje åtkomst (Victor 2026-11-03)
+  const getter = await page.evaluate(async () => { const keep = mgReal.viewer, calls = []; const fake = { get viewer() { return { setObjectState: (a, b) => { calls.push(b); return Promise.resolve(); }, getSelection: () => Promise.resolve(['sel']) }; } }; modelGuardInstall(fake); await fake.viewer.setObjectState(undefined, { color: 'x' }); const sel = await fake.viewer.getSelection(); mgReal.viewer = keep; return { calls: calls.length, sel }; });
+  if (getter.calls !== 0 || getter.sel[0] !== 'sel') fail('skyddet ska hålla även med getter-viewer: ' + JSON.stringify(getter));
+  // Av efter en period då reglaget var på: allt återställs även om inget anrop hunnit gå via skyddet
+  await page.evaluate(() => { window.__calls = []; });
+  await page.click('#mgLabel'); await page.waitForTimeout(150); await page.click('#mgLabel'); await page.waitForTimeout(500);
+  { const c = await calls(); if (!c.some(x => x.b && x.b.color === 'reset')) fail('av återställer alltid färgerna: ' + JSON.stringify(c)); }
+  // Rester från ett tidigare pass (flaggan finns kvar efter omladdning) städas när reglaget är av
+  await page.evaluate(() => localStorage.setItem('4ddash-model-touched', '1'));
+  await page.addInitScript(() => { window.__boot = true; });
+  await page.reload({ waitUntil: 'networkidle' }); await page.waitForSelector('#mgSwitch'); await page.waitForTimeout(500);
+  { const c = await calls(); if (!c.some(x => x.b && x.b.color === 'reset') || await page.evaluate(() => localStorage.getItem('4ddash-model-touched'))) fail('rester städas vid start: ' + JSON.stringify(c)); }
   // Omladdning: alltid av igen
   await page.click('#mgLabel'); await page.waitForTimeout(150);
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForSelector('#mgSwitch');
