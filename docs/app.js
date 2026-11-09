@@ -3725,7 +3725,7 @@ function ganttScaleHex(t) {
   const h = x => [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16)), A = h(ganttScale.a), B = h(ganttScale.b);
   return "#" + A.map((c, i) => Math.round(c + (B[i] - c) * k).toString(16).padStart(2, "0")).join("");
 }
-let ganttEndCap = (() => { try { return localStorage.getItem("4ddash-gantt-endcap") || ""; } catch (e) { return ""; } })(), ganttStrict = false, ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
+let ganttEndCap = (() => { try { return localStorage.getItem("4ddash-gantt-endcap") || ""; } catch (e) { return ""; } })(), ganttStrict = false, ganttExact = false, ganttAsOf = null, ganttTime3d = false, ganttTimeFuture = false, ganttTimeFrom = "", ganttTimeTo = "", ganttTimeTimer = null, ganttTimeRender = null;
 const ganttMarkerIso = () => todayISO(); // "Idag"-linjen står kvar; datumet för tidslinjen är dragstrecket (se renderGanttScrub)
 let ganttInRangeItems = null; // det som faktiskt ritas i Gantt (inom visat datumintervall) – mängdavtagningen utgår från det
 let ganttIsolate = false, ganttShownItems = [], isolateSig = "", isolateTimer = null;
@@ -3753,6 +3753,9 @@ function ganttPhaseAt(m, d) {
   if (end && end < d) return done ? "klar" : "forsenad";
   return started ? "pagaende" : "forsenad";
 }
+/* Följ exakt framdrift (Victor 2026-11-09): i Isolera/Visa kopplade färgas objekten efter dagens status enligt framdriften – 100 % eller Klar = grön, pågående,
+   försenat, planerat – oavsett datumen och oavsett läge. Samma regler som Gantt-schemat (ganttPhaseAt utan "Följ datum"). */
+function ganttExactPhase(m) { const keep = ganttStrict; ganttStrict = false; try { return ganttPhaseAt(m, todayISO()); } finally { ganttStrict = keep; } }
 /* ---- Flera aktiviteter markerade med Ctrl/Cmd-klick (Victor 2026-10-13): visas samtidigt i 3D och kan isoleras. ---- */
 const ganttMultiSel = new Set(); // aktivitets-id (strängar)
 let ganttIsoOverride = null, ganttMultiTimer = null; // ganttIsoOverride: bara de markerade (objektlista) i läget Kopplade
@@ -3857,6 +3860,7 @@ function ganttCoupledTargets() {
     } else if (ganttEndCap && m.startDate && m.startDate > ganttEndCap) { // slutdatum utan tidslinje: det som startar efter datumet visas som kommande
       phase = ganttTimeFuture && Number(ganttOp.planerad) !== 0 ? "planerad" : "dold";
     }
+    if (ganttExact && !timed && !phase && !m.temporary && !m.demolition) phase = ganttExactPhase(m);
     const k = `${m.modelId}|${m.objectId}`, t = { modelId: m.modelId, objectId: String(m.objectId), phase, startDate: m.startDate || "", endDate: m.endDate || "", tempColor: m.tempColor || null, tempOpacity: m.tempOpacity === undefined ? null : m.tempOpacity, doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity, contractor: m.contractor || "" };
     if (!seen.has(k)) { seen.add(k); out.push(t); all.set(k, [t]); } else all.get(k).push(t);
   });
@@ -4105,6 +4109,10 @@ async function applyGanttIsolate(force) {
       if (ganttAsOf && ganttTime3d) {
         await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {});
         for (const g of phaseGroups) if (!ganttNoColor && g.phase && STATUS_COLORS[g.phase]) await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: STATUS_COLORS[g.phase] });
+        ganttColored = true;
+      } else if (ganttExact && !ganttNoColor) {
+        await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {});
+        for (const g of phaseGroups) if (g.phase && STATUS_COLORS[g.phase]) await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: STATUS_COLORS[g.phase] });
         ganttColored = true;
       } else if (ganttColored && !capAll) { await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {}); ganttColored = false; }
     }
@@ -4370,6 +4378,12 @@ function initGanttTime() {
       ["#gsOn", "#gsBy"].forEach(i => { q(i).onchange = apply; }); ["#gsA", "#gsB"].forEach(i => { q(i).oninput = apply; });
       const off = ev => { if (pop.contains(ev.target) || gb.contains(ev.target)) return; pop.remove(); document.removeEventListener("pointerdown", off, true); }; setTimeout(() => document.addEventListener("pointerdown", off, true), 0);
     };
+  } }
+  { const eb = document.getElementById("ganttExactBtn"); if (eb) {
+    try { ganttExact = localStorage.getItem("4ddash-gantt-exact") === "1"; } catch (e) {}
+    const paint = () => { eb.classList.toggle("on", ganttExact); eb.setAttribute("aria-pressed", String(ganttExact)); };
+    paint();
+    eb.onclick = () => { ganttExact = !ganttExact; try { localStorage.setItem("4ddash-gantt-exact", ganttExact ? "1" : "0"); } catch (e) {} paint(); if (ganttIsolate && !(ganttAsOf && ganttTime3d)) applyGanttIsolate(true); modelToast(ganttExact ? "Följer exakt framdrift – Klar/100 % är grön, pågående, försenat och planerat får sina färger i 3D" : "Följer inte framdriften i 3D längre – modellens egna färger"); };
   } }
   { const sb = document.getElementById("ganttStrictBtn"); if (sb) {
     try { ganttStrict = localStorage.getItem("4ddash-gantt-strict") === "1"; } catch (e) {}

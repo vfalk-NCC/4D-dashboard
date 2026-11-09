@@ -195,6 +195,13 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (sp.norm.join() !== 'forsenad,pagaende' && sp.norm.join() !== 'forsenad,klar' && !sp.norm.length) fail('Förkontroll: ' + JSON.stringify(sp));
   if (!sp.on || sp.off || sp.strict.join() !== 'planerad/planerad,pagaende/pagaende,pagaende/pagaende,klar/klar') fail('Följ datum: ' + JSON.stringify(sp));
   console.log('OK: Följ datum – färgen följer start- och slutdatumen strikt, procent ignoreras');
+  // Följ exakt framdrift: 100 % / Klar = klar (grön) även med planerade datum i framtiden, oavsett Följ datum.
+  const ex = await page.evaluate(() => { const fut = addDaysIso(todayISO(), 14), fut2 = addDaysIso(todayISO(), 19);
+    const D = { startDate: fut, endDate: fut2, progress: 100 }, P = { startDate: addDaysIso(todayISO(), -3), endDate: fut2, progress: 40 }, N = { startDate: fut, endDate: fut2, progress: 0 };
+    const b = document.getElementById('ganttExactBtn'); b.click(); const on = ganttExact; ganttStrict = true;
+    const r = [ganttExactPhase(D), ganttExactPhase(P), ganttExactPhase(N)]; ganttStrict = false; b.click(); return { on, r, off: ganttExact }; });
+  if (!ex.on || ex.off || ex.r.join() !== 'klar,pagaende,planerad') fail('Följ exakt framdrift: ' + JSON.stringify(ex));
+  console.log('OK: Följ exakt framdrift – 100 % blir klar (grön) även före planerat slut, pågående och planerat följer framdriften');
   // Färgskala efter datum med egna färger: tidigast = färg A, senast = färg B; egen färg efter slut går före.
   const gs = await page.evaluate(() => {
     const ds = items.map(x => x.startDate).filter(Boolean).sort(), lo = ds[0], hi = ds[ds.length - 1];
