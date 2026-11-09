@@ -3743,6 +3743,8 @@ function ganttPhaseAt(m, d) {
   // 100 % eller Klar utan verkligt slut: klar från i dag, även om planerat slut ligger i framtiden (samma som statusen/filtret Klar, liveStatusOfRow).
   // Datum före i dag påverkas inte (klar går inte bakåt i tiden), och ett verkligt slutdatum gäller som förut.
   const doneNow = prog >= 100 || m.status === "klar", today = todayISO();
+  // Följ exakt framdrift: 100 % / Klar utan verkligt slut är klar vid alla datum i tidslinjen (inte bara från i dag) – grön oavsett var man står.
+  if (ganttExact && doneNow && !m.actualEndDate) return "klar";
   if (doneNow && !m.actualEndDate && end && end > today && d >= today) return "klar";
   if (done && (m.actualEndDate || end) && (m.actualEndDate || end) < d) return "klar";
   // Påbörjad (samma som computeItemPhase i 4D-planering): framdrift minst 1 % betyder att arbetet är igång från verklig start, annars från
