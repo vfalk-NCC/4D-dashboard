@@ -3740,6 +3740,10 @@ function ganttPhaseAt(m, d) {
   }
   const prog = Number(m.progress) || 0, end = m.endDate, start = m.startDate;
   const done = !!m.actualEndDate || prog >= 100 || m.status === "klar";
+  // 100 % eller Klar utan verkligt slut: klar från i dag, även om planerat slut ligger i framtiden (samma som statusen/filtret Klar, liveStatusOfRow).
+  // Datum före i dag påverkas inte (klar går inte bakåt i tiden), och ett verkligt slutdatum gäller som förut.
+  const doneNow = prog >= 100 || m.status === "klar", today = todayISO();
+  if (doneNow && !m.actualEndDate && end && end > today && d >= today) return "klar";
   if (done && (m.actualEndDate || end) && (m.actualEndDate || end) < d) return "klar";
   // Påbörjad (samma som computeItemPhase i 4D-planering): framdrift minst 1 % betyder att arbetet är igång från verklig start, annars från
   // planerad start. Dagens datum spelar ingen roll. Ett datum FÖRE det är "planerad" (objekt ska inte synas före tidslinjen nått dem).

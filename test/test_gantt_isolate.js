@@ -143,6 +143,8 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   R = await replay();
   if (hx(R.col.G7) !== '#112233' || Math.abs(R.col.G7.a - Math.round(0.10 * 255)) > 1) fail('Aktivitetens egen färg efter slut: ' + JSON.stringify(R.col.G7));
   // Färg på Pågående slår igenom.
+  // (G7 har 100 % här och räknas nu som klar från i dag även före planerat slut – tillbaka till 20 % så att den är pågående vid dag 4)
+  await page.evaluate(() => { const g = items.find(x => x.objectId === 'G7'); g.progress = 20; ganttShownItems.forEach(x => { if (x.objectId === 'G7') x.progress = 20; }); ganttTimeReset(); });
   await page.fill('#ganttTimeDate', day(4)); await page.dispatchEvent('#ganttTimeDate', 'change'); await page.waitForTimeout(600);
   await page.evaluate(() => { const i = document.querySelector('[data-tcol="pagaende"]'); i.value = '#123456'; i.dispatchEvent(new Event('input')); }); await page.waitForTimeout(1200);
   R = await replay();
