@@ -81,7 +81,7 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
     if (Number(await f.evaluate(() => (items.find(x => String(x.id) === 'i3') || {}).progress)) !== 77) fail('popup läste inte om efter ändring i dashboarden');
     // Markera i modellen från popup -> dashboardens riktiga markering (setSelection)
     await page.evaluate(() => { window.__setsel = []; });
-    await f.evaluate(() => selectActivityInModel({ id: 'i2', name: 'Schakt', members: [{ id: 'i2' }] }));
+    await f.evaluate(() => selectActivityInModel({ id: 'i2', name: 'Schakt', members: [{ id: 'i2', modelId: 'M1', objectId: 'G5' }] }));
     await page.waitForTimeout(800);
     const sel = await page.evaluate(() => (window.__setsel || []).slice(-1)[0]);
     if (!sel || sel.modelObjectIds.flatMap(m => m.objectRuntimeIds).join() !== 'G5') fail('markera i modellen från popup: ' + JSON.stringify(sel));
@@ -89,6 +89,16 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
     await page.waitForTimeout(1800); await page.evaluate(() => { window.__sel = [{ modelId: 'M1', objectRuntimeIds: ['7'] }]; onTcEvent('viewer.onSelectionChanged'); });
     await f.waitForFunction(() => typeof ganttModelSel !== 'undefined' && ganttModelSel.has('i3'), null, { timeout: 8000 }).catch(() => {});
     if (!(await f.evaluate(() => ganttModelSel.has('i3')))) fail('popup hoppade inte till aktiviteten vid markering i modellen');
+    // Fullständig Gantt i fönstret: 3D-läge, Modeller, Tid och färg, tidslinje – och 3D-anropen går via dashboarden
+    const FV = await f.evaluate(() => { const vis = sel => { const e = document.querySelector(sel); return !!e && getComputedStyle(e).display !== 'none'; }; return { mode: vis('.gdd[data-dd="mode"]'), out: vis('.gdd[data-dd="out"]'), time: vis('.gdd[data-dd="time"]'), tools: vis('.gdd[data-dd="tools"]'), row: !!document.getElementById('ganttTimeRow'), mg: !!document.getElementById('embedMg') }; });
+    console.log(JSON.stringify(FV));
+    if (!FV.mode || !FV.out || !FV.time || !FV.tools || !FV.row || !FV.mg) fail('popup saknar delar av verktygsraden: ' + JSON.stringify(FV));
+    await page.evaluate(() => { window.__iso = []; });
+    await f.evaluate(() => document.querySelector('[data-gmode="isolate"]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await page.waitForFunction(() => (window.__iso || []).length > 0, null, { timeout: 8000 }).catch(() => {});
+    const iso = await page.evaluate(() => (window.__iso || []).map(e => e.flatMap(m => m.entityIds).sort().join()));
+    if (!iso.length || !/G5/.test(iso[0])) fail('3D-läget Kopplade i popup ska isolera i Trimble Connect (via dashboarden): ' + JSON.stringify(iso));
+    await f.evaluate(() => document.querySelector('[data-gmode="off"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))); await page.waitForTimeout(500);
     await popup.close(); await page.waitForTimeout(2000);
     if (await page.evaluate(() => dashPopOn())) fail('knappen ska släppas när fönstret stängs');
     console.log('OK: Gantt i eget fönster – synkat åt båda hållen, markera i modellen, hoppar till aktivitet');
