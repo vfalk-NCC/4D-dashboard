@@ -3865,6 +3865,8 @@ function ganttCoupledTargets() {
     } else if (ganttEndCap && m.startDate && m.startDate > ganttEndCap) { // slutdatum utan tidslinje: det som startar efter datumet visas som kommande
       phase = ganttTimeFuture && Number(ganttOp.planerad) !== 0 ? "planerad" : "dold";
     }
+    // Temporär (Victor 2026-11-11): alltid exakt den färg och opacitet som är inställd på aktiviteten – oavsett läge och oavsett "Följ exakt framdrift".
+    if (!timed && !phase && m.temporary && (m.tempColor || (m.tempOpacity !== null && m.tempOpacity !== undefined))) phase = "tempon";
     if (ganttExact && !timed && !phase && !m.temporary && !m.demolition) phase = ganttExactPhase(m);
     const k = `${m.modelId}|${m.objectId}`, t = { modelId: m.modelId, objectId: String(m.objectId), phase, startDate: m.startDate || "", endDate: m.endDate || "", tempColor: m.tempColor || null, tempOpacity: m.tempOpacity === undefined ? null : m.tempOpacity, doneColor: m.doneColor || null, doneOpacity: m.doneOpacity === undefined ? null : m.doneOpacity, contractor: m.contractor || "" };
     if (!seen.has(k)) { seen.add(k); out.push(t); all.set(k, [t]); } else all.get(k).push(t);
@@ -3906,7 +3908,7 @@ const ganttRidCache = new Map(); // "modell|objekt" -> runtime-id (eller null)
 let ganttPhaseNow = new Map(), ganttTimeBusy = false, ganttTimePending = false, ganttTimeBase = false, ganttDoneOp = 30;
 const hexToRgbaObj = (hex, op) => ({ r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16), a: Math.round(Math.max(0, Math.min(1, op)) * 255) });
 function ganttTimeColorOf(t) {
-  if (t.phase === "tempon") return t.tempColor || t.tempOpacity !== null ? hexToRgbaObj(t.tempColor || STATUS_COLORS.pagaende, (t.tempOpacity !== null ? t.tempOpacity : 100) / 100) : "reset";
+  if (t.phase === "tempon") { const to = t.tempOpacity === undefined ? null : t.tempOpacity; return t.tempColor || to !== null ? hexToRgbaObj(t.tempColor || STATUS_COLORS.pagaende, (to !== null ? to : 100) / 100) : "reset"; }
   if (ganttNoColor) return "reset"; // Ingen färgning: allt behåller originalfärgerna, tidslinjen styr bara vad som syns (Victor 2026-10-21)
   if (t.phase === "klar" && ganttDoneOrig && !t.doneColor && t.doneOpacity === null) return "reset"; // klart i modellens originalfärg (Victor 2026-10-16)
   if (ganttScale.on && !(t.phase === "klar" && (t.doneColor || t.doneOpacity !== null))) { // egen färg efter slut ligger överst
@@ -4065,14 +4067,14 @@ async function applyGanttIsolate(force) {
   if (!ganttIsolate) return;
   if (ganttAsOf && ganttTime3d) return ganttTimeApply3d();
   ganttPhaseNow = new Map(); ganttTimeBase = false; // lämnade tidslinjen: nästa gång börjar den om
-  const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}|${t.phase}`).sort().join(",") + (ganttAsOf && ganttTime3d ? `#${STATUS_COLORS.klar}${STATUS_COLORS.pagaende}${STATUS_COLORS.forsenad}${STATUS_COLORS.planerad}` : "") + (ganttEndCap ? `#cap${ganttEndCap}${ganttTimeFuture}${ganttOp.planerad}${STATUS_COLORS.planerad}` : "");
+  const targets = ganttCoupledTargets(), sig = targets.map(t => `${t.modelId}|${t.objectId}|${t.phase}${t.phase === "tempon" ? JSON.stringify(ganttTimeColorOf(t)) : ""}`).sort().join(",") + (ganttAsOf && ganttTime3d ? `#${STATUS_COLORS.klar}${STATUS_COLORS.pagaende}${STATUS_COLORS.forsenad}${STATUS_COLORS.planerad}` : "") + (ganttEndCap ? `#cap${ganttEndCap}${ganttTimeFuture}${ganttOp.planerad}${STATUS_COLORS.planerad}` : "");
   if (!force && sig === isolateSig) return; // oförändrat urval
   if (!API || !API.viewer || typeof API.viewer.isolateEntities !== "function" || typeof API.viewer.convertToObjectRuntimeIds !== "function") { modelToast("Modellen är inte ansluten"); setGanttMode("off", true); return; }
   if (!targets.length) { modelToast("Inget av det som visas i schemat är kopplat till modellen"); isolateSig = sig; return; }
   try {
     const byModel = {}; // modell -> fas -> objekt-id
     targets.forEach(t => { const m = byModel[t.modelId] = byModel[t.modelId] || {}; (m[t.phase] = m[t.phase] || []).push(t.objectId); });
-    const entities = [], phaseGroups = []; let skippedModels = 0;
+    const entities = [], phaseGroups = [], tempGroups = new Map(); let skippedModels = 0;
     for (const modelId of Object.keys(byModel)) {
       // En modell som inte är inläst i vyn (äldre version, avtänd) ger "Invalid model id" – hoppa över den, inte hela urvalet.
       const all = []; let failed = false;
@@ -4080,6 +4082,7 @@ async function applyGanttIsolate(force) {
         const r = await dashRuntimeIds(API.viewer, modelId, byModel[modelId][phase]);
         if (r.modelFailed) { failed = true; break; }
         const rids = [...r.map.values()].filter(id => id !== undefined && id !== null);
+        if (phase === "tempon") byModel[modelId][phase].forEach(oid => { const rid = r.map.get(oid), t = targets.find(x => x.modelId === modelId && x.objectId === String(oid) && x.phase === "tempon"); if (rid === undefined || rid === null || !t) return; const col = ganttTimeColorOf(t), k = modelId + "\u0001" + JSON.stringify(col); (tempGroups.get(k) || tempGroups.set(k, { modelId, color: col, rids: [] }).get(k)).rids.push(rid); });
         if (rids.length) { if (phase !== "dold") all.push(...rids); phaseGroups.push({ modelId, phase, rids }); } // "dold" = efter slutdatumet och Kommande är av
       }
       if (failed) { console.warn("Hoppar över modell som inte är inläst", modelId); skippedModels++; continue; }
@@ -4120,6 +4123,8 @@ async function applyGanttIsolate(force) {
         for (const g of phaseGroups) if (g.phase && STATUS_COLORS[g.phase]) await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: STATUS_COLORS[g.phase] });
         ganttColored = true;
       } else if (ganttColored && !capAll) { await API.viewer.setObjectState(undefined, { color: "reset" }).catch(() => {}); ganttColored = false; }
+      // Temporära objekt: exakt inställd färg/opacitet – sätts sist så att varken "Följ exakt framdrift" eller återställningen ovan skriver över den.
+      for (const g of tempGroups.values()) { try { await API.viewer.setObjectState({ modelObjectIds: [{ modelId: g.modelId, objectRuntimeIds: g.rids }] }, { color: g.color }); ganttColored = true; } catch (e) { console.warn("Temporär färg", e); } }
     }
     isolateSig = sig;
     const n = entities.reduce((a, m) => a + m.entityIds.length, 0);

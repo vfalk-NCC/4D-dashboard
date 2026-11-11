@@ -305,6 +305,15 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (!(await page.evaluate(() => document.getElementById('ganttTimeRow').classList.contains('gantt-time-off'))) || await page.$('.gantt-scrub')) fail('Av: raden ska tonas ned och dragstrecket försvinna');
 
   console.log('OK: tidslinje-dragare över schemat – datummarkering, realtid i 3D, färger/opacitet efter slut, intervall, kommande');
+  // Temporära objekt: exakt inställd färg och opacitet i Kopplade – även med Följ exakt framdrift (Victor 2026-11-11)
+  await page.evaluate(() => { const g = items.find(x => x.objectId === 'G7'); g.temporary = true; g.tempColor = '#ff8800'; g.tempOpacity = 40; ganttExact = true; window.__state = []; isolateSig = ''; });
+  await page.dispatchEvent('[data-gmode="isolate"]', 'click'); await page.waitForTimeout(900);
+  const tmp = await page.evaluate(() => window.__state.map(x => JSON.stringify(x)));
+  await page.evaluate(() => { const g = items.find(x => x.objectId === 'G7'); g.temporary = false; g.tempColor = null; g.tempOpacity = null; ganttExact = false; });
+  await page.dispatchEvent('[data-gmode="off"]', 'click'); await page.waitForTimeout(300);
+  const last = tmp.filter(x => /"color":\{/.test(x)).pop() || '';
+  if (!/"r":255,"g":136,"b":0,"a":102/.test(last) || tmp.findIndex(x => x.includes('"color":"reset"')) > tmp.lastIndexOf(last)) fail('Temporärt objekt ska ha exakt inställd färg/opacitet (255,136,0, 40 %) efter återställningen: ' + JSON.stringify(tmp));
+  console.log('OK: temporära objekt får exakt inställd färg och opacitet i Kopplade, även med Följ exakt framdrift');
   // Avvisar Trimble Connect isolateEntities (fel utan text, som hos Victor): släck allt och tänd de kopplade i stället.
   await page.evaluate(() => { window.__state = []; API.viewer.isolateEntities = () => Promise.reject(undefined); });
   await page.fill('#ganttSearch', ''); await page.waitForTimeout(600);
