@@ -13,6 +13,8 @@
    ========================================================================= */
 
 let API = null;              // Workspace API-instans
+/* Inbäddat läge (4D-planeringens 3D-editor visar den här Gantten i en iframe: ?embed=gantt) – ingen Trimble Connect-anslutning, tidplanen och token kommer från sidan runtom (embed.js). */
+const EMBED_GANTT = new URLSearchParams(location.search).get("embed") === "gantt";
 let projectId = null;        // Aktuellt Trimble Connect-projekt
 let projectName = "";       // projektets namn (rubrik i utskrifter)
 /* Planeringskälla (Victors önskemål 2026-10-06, samma växel som i 4D-planering): "excel" =
@@ -319,7 +321,7 @@ function bindAccessGate() {
 window.addEventListener("DOMContentLoaded", boot);
 
 function boot() {
-  if (isUnlocked()) {
+  if (EMBED_GANTT || isUnlocked()) {
     document.getElementById("accessGate").classList.add("hidden");
     initApp();
   } else {
@@ -332,6 +334,7 @@ async function initApp() {
   loadStatusColorOverrides();
   bindUI();
 
+  if (EMBED_GANTT && typeof embedBoot === "function") { await embedBoot(); return; }
   API = await TrimbleConnectWorkspace.connect(window.parent, (event, data) => onTcEvent(event, data), 30000);
   if (typeof modelGuardInstall === "function") modelGuardInstall(API); // 3D-styrningen är av tills reglaget slås på
 
