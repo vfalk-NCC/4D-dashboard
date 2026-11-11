@@ -5474,7 +5474,16 @@ function openActivityDialog({ after = null, edit = null, copy = null } = {}) {
     bar.querySelector(".na-ob-none").onclick = () => { chk.clear(); renderObjs(); };
     bar.querySelector(".na-ob-del").onclick = async () => {
       const sel = members.filter(m => chk.has(String(m.id))); if (!sel.length) return;
-      if (sel.length >= members.length) { modelToast("Minst ett objekt måste vara kvar – ta bort hela aktiviteten i stället"); return; }
+      if (sel.length >= members.length) {   // alla objekt (Victor 2026-11-11): aktiviteten finns kvar utan 3D-objekt – en rad behålls som aktiviteten (3D-kopplingen tas bort), resten tas bort
+        const act0 = itemLabel(edit), keep = members[0], rest = members.slice(1), coupled0 = members.filter(m => m.modelId).length;
+        if (!ganttEditable) { modelToast("Slå på Redigerbar för att ändra aktiviteten"); return; }
+        const msg0 = `Ta bort alla ${members.length} objekt ur aktiviteten "${act0}"?\n\nAktiviteten finns kvar (datum, entreprenör, framdrift) men utan objekt i modellen.${coupled0 ? `\n⚠ ${coupled0} 3D-koppling${coupled0 === 1 ? "" : "ar"} försvinner.` : ""}${members.some(m => m.origin !== "manuell") ? `\n⚠ Objekt från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen kommer tillbaka vid nästa import.` : ""}`;
+        if (rest.length) { const ok0 = await deleteActivity({ ...rest[0], members: rest }, { ok: `Ta bort alla ${members.length} objekt`, msg: msg0 }); if (!ok0) return; }
+        else if (!(await dashConfirm(msg0, { danger: true, ok: "Ta bort objektet" }))) return;
+        if (keep.modelId) await uncoupleItem(keep);
+        const ids0 = new Set(rest.map(m => String(m.id))); for (let i = members.length - 1; i >= 0; i--) if (ids0.has(String(members[i].id))) members.splice(i, 1); ids0.forEach(i => { own.delete(i); chk.delete(i); }); chk.clear(); renderObjs();
+        return;
+      }
       const act = itemLabel(edit), coupled = sel.filter(m => m.modelId).length;
       const ok = await deleteActivity({ ...sel[0], members: sel }, { ok: `Ta bort ${sel.length} objekt`, msg: `Ta bort ${sel.length} objekt ur aktiviteten "${act}"?\n\nAktiviteten finns kvar med de ${members.length - sel.length} andra objekten.${coupled ? `\n⚠ ${coupled} 3D-koppling${coupled === 1 ? "" : "ar"} försvinner.` : ""}${sel.some(m => m.origin !== "manuell") ? `\n⚠ Objekt från ${planSource === "pp" ? "Powerproject" : "Excel"}-filen kommer tillbaka vid nästa import.` : ""}` });
       if (ok) { const ids = new Set(sel.map(m => String(m.id))); for (let i = members.length - 1; i >= 0; i--) if (ids.has(String(members[i].id))) members.splice(i, 1); ids.forEach(i => { own.delete(i); chk.delete(i); }); renderObjs(); }

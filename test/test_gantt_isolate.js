@@ -423,6 +423,16 @@ seed('plan_item_activities.json', [{ id: 'a1', plan_item_id: 'i1', name: 'Form',
   if (fit.top < 0 || fit.bottom > fit.vh + 1) fail('Fönstret ska rymmas i bilden: ' + JSON.stringify(fit));
   await page.click('.na-cancel'); await page.setViewportSize({ width: 1400, height: 1000 }); await page.evaluate(() => { ganttEditable = false; });
   console.log('OK: ett objekt kan tas bort ur aktiviteten (redigeringsdialogen)');
+  // Ta bort ALLA objekt ur en aktivitet (Victor 2026-11-11): aktiviteten finns kvar utan 3D-objekt
+  await page.evaluate(async () => { await ghWriteJSON(settings.githubToken, tablePath('plan_items'), a => [...a, { id: 'q1', project_id: 'test-project', object_id: 'GX1', model_id: 'M1', object_name: 'Vägg X1', area: 'Z', activity: 'Alla bort', start_date: '2026-01-01', end_date: '2026-01-05', group_id: 'g9', source_key: 'pp:g9', origin: 'powerproject', depends_on: [] }, { id: 'q2', project_id: 'test-project', object_id: 'GX2', model_id: 'M1', object_name: 'Vägg X2', area: 'Z', activity: 'Alla bort', start_date: '2026-01-01', end_date: '2026-01-05', group_id: 'g9', source_key: 'pp:g9', origin: 'powerproject', depends_on: [] }], 'test'); await refreshAll(); });
+  await page.evaluate(() => { ganttEditable = true; openActivityDialog({ edit: mergeActivityGroups(items.filter(x => x.activityKey === 'g:g9'))[0] }); });
+  await page.waitForTimeout(200);
+  if ((await page.locator('.na-obj').count()) !== 2) fail('Aktiviteten Alla bort ska ha två objekt');
+  await page.click('.na-ob-all'); await page.click('.na-ob-del'); await page.waitForTimeout(1200);
+  const rem = get('plan_items.json').filter(r => r.group_id === 'g9');
+  if (rem.length !== 1 || rem[0].model_id) fail('Alla objekt bort: aktiviteten ska finnas kvar som en rad utan 3D-koppling: ' + JSON.stringify(rem.map(r => [r.id, r.model_id])));
+  await page.click('.na-cancel'); await page.evaluate(() => { ganttEditable = false; });
+  console.log('OK: alla objekt kan tas bort ur en aktivitet – aktiviteten finns kvar utan 3D-objekt');
   // Export till Powerproject (MS Project-XML): hierarki från området, kopplingar med glapp, resurser.
   const px = await page.evaluate(() => {
     const A = { id: 'x1', objectName: 'Grund', area: 'PRODUKTION / 741 Sikthall', startDate: '2026-10-05', endDate: '2026-10-09', progress: 40, resources: [{ name: 'Betongarbetare', qty: 4, hours: 160 }], dependsOn: [] };
