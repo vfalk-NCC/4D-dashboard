@@ -24,8 +24,25 @@ function mgProxy(real, names, key, empty) {
     return typeof v === "function" ? v.bind(t) : v;
   } });
 }
+/* Skyddet på API-nivå (Victor 2026-11-11: "när jag öppnar en helt ny view i TC så hoppar dashboarden igång och färgar modellen"): i en ny vy finns api.viewer ofta inte ännu när tillägget startar
+   (3D-vyn skapas efter), och då sattes inget skydd alls – de sparade lägena (Kopplade/Tid) färgade modellen trots att reglaget var av. Nu är det API:t självt som är inslaget:
+   varje gång koden hämtar api.viewer / api.markup (även första gången, långt senare) får den den skyddade varianten. */
+let mgApi = null;
+function modelGuardWrap(api) {
+  if (!api || api.__mgWrapped) return api; mgApi = api;
+  const cache = new WeakMap();
+  const guard = (real, names, key, empty) => { if (!real || (typeof real !== "object" && typeof real !== "function")) return real; let g = cache.get(real); if (!g) { g = mgProxy(real, names, key, empty); cache.set(real, g); } return g; };
+  return new Proxy(api, { get(t, k) {
+    if (k === "__mgWrapped") return true;
+    const v = Reflect.get(t, k, t);
+    if (k === "viewer") { if (v) mgReal.viewer = v; return guard(v, MG_VIEWER, "viewer", () => undefined); }
+    if (k === "markup") return guard(v, MG_MARKUP, "markup", n => (/^add/.test(n) ? [] : undefined));
+    return typeof v === "function" ? v.bind(t) : v;
+  } });
+}
 function modelGuardInstall(api) {
   if (!api) return;
+  if (api.__mgWrapped) { mgSyncUi(); mgCleanLeftovers(); return; }
   const put = (name, names, key, empty) => { const real = api[name]; if (!real || real.__mgGuarded) return; if (key === "viewer") mgReal.viewer = real;
     const px = mgProxy(real, names, key, empty); let ok = false;
     try { Object.defineProperty(api, name, { value: px, configurable: true, writable: true, enumerable: true }); ok = api[name] === px; } catch (e) { /* */ }
@@ -38,11 +55,14 @@ function modelGuardInstall(api) {
 /* Har dashboarden färgat modellen i ett tidigare pass (reglaget slogs på och fliken stängdes) ligger färgerna kvar i Trimble Connect: återställ dem när reglaget är av. */
 async function mgCleanLeftovers() {
   let flag = null; try { flag = localStorage.getItem(MG_FLAG); } catch (e) { /* */ } if (flag !== "1" || modelCtl.on) return;
-  await mgResetModel(); try { localStorage.removeItem(MG_FLAG); } catch (e) { /* */ }
+  for (let i = 0; i < 60 && !mgViewer(); i++) await new Promise(r => setTimeout(r, 1000));   // ny vy: 3D-vyn kan komma efter tillägget
+  if (modelCtl.on) return;
+  if (await mgResetModel()) { try { localStorage.removeItem(MG_FLAG); } catch (e) { /* */ } }
 }
+const mgViewer = () => (mgApi && mgApi.viewer) || mgReal.viewer || null;   // det riktiga (oskyddade) viewer-objektet, som reglaget använder för att återställa
 async function mgResetModel() {
-  const V = mgReal.viewer; if (!V || typeof V.setObjectState !== "function") return;
-  try { await V.setObjectState(undefined, { color: "reset" }); await V.setObjectState(undefined, { visible: "reset" }); } catch (e) { console.warn("Kunde inte återställa modellen", e); }
+  const V = mgViewer(); if (!V || typeof V.setObjectState !== "function") return false;
+  try { await V.setObjectState(undefined, { color: "reset" }); await V.setObjectState(undefined, { visible: "reset" }); return true; } catch (e) { console.warn("Kunde inte återställa modellen", e); return false; }
 }
 async function modelGuardSet(on) {
   if (on === modelCtl.on) { mgSyncUi(); return; }

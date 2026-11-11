@@ -82,6 +82,9 @@ seed('plan_item_activities.json', []);
   // Skyddet håller även om API:t ger ett nytt viewer-objekt vid varje åtkomst (Victor 2026-11-03)
   const getter = await page.evaluate(async () => { const keep = mgReal.viewer, calls = []; const fake = { get viewer() { return { setObjectState: (a, b) => { calls.push(b); return Promise.resolve(); }, getSelection: () => Promise.resolve(['sel']) }; } }; modelGuardInstall(fake); await fake.viewer.setObjectState(undefined, { color: 'x' }); const sel = await fake.viewer.getSelection(); mgReal.viewer = keep; return { calls: calls.length, sel }; });
   if (getter.calls !== 0 || getter.sel[0] !== 'sel') fail('skyddet ska hålla även med getter-viewer: ' + JSON.stringify(getter));
+  // Ny vy (Victor 2026-11-11): viewer finns inte när tillägget startar utan skapas senare – skyddet ska ändå hålla
+  const late = await page.evaluate(async () => { const keepApi = mgApi, keepV = mgReal.viewer, calls = []; const raw = { project: {} }, w = modelGuardWrap(raw); const before = w.viewer; raw.viewer = { setObjectState: (a, b) => { calls.push(b); return Promise.resolve(); }, getSelection: () => Promise.resolve('sel') }; await w.viewer.setObjectState(undefined, { color: 'red' }); await w.viewer.isolateEntities && w.viewer.isolateEntities([]); const sel = await w.viewer.getSelection(); mgApi = keepApi; mgReal.viewer = keepV; return { before: before === undefined, calls: calls.length, sel }; });
+  if (!late.before || late.calls !== 0 || late.sel !== 'sel') fail('skyddet ska hålla även när viewer skapas efter start: ' + JSON.stringify(late));
   // Av efter en period då reglaget var på: allt återställs även om inget anrop hunnit gå via skyddet
   await page.evaluate(() => { window.__calls = []; });
   await page.click('#mgLabel'); await page.waitForTimeout(150); await page.click('#mgLabel'); await page.waitForTimeout(500);

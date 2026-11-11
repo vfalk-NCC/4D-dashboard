@@ -336,6 +336,7 @@ async function initApp() {
 
   if (EMBED_GANTT && typeof embedBoot === "function") { await embedBoot(); return; }
   API = await TrimbleConnectWorkspace.connect(window.parent, (event, data) => onTcEvent(event, data), 30000);
+  if (typeof modelGuardWrap === "function") API = modelGuardWrap(API); // skyddet ligger på API-nivå: även en viewer som skapas senare (ny vy) är skyddad
   if (typeof modelGuardInstall === "function") modelGuardInstall(API); // 3D-styrningen är av tills reglaget slås på
 
   const project = await API.project.getProject();
