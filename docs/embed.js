@@ -13,6 +13,7 @@ html.embed-gantt #filterModelsBtn, html.embed-gantt label:has(#filterModelsBtn),
 html.embed-gantt #ganttModeSeg, html.embed-gantt #ganttLoadModelsBtn, html.embed-gantt #ganttOpen3d, html.embed-gantt #ganttPhotoBtn, html.embed-gantt #ganttAssemblyBtn,
 html.embed-gantt [data-gantt-view="montage"], html.embed-gantt .gantt-time-menu-wrap, html.embed-gantt #ganttScaleBtn, html.embed-gantt #ganttExactBtn,
 html.embed-gantt #ganttStrictBtn, html.embed-gantt #ganttTimeAuto, html.embed-gantt #ganttFsTime, html.embed-gantt #ganttHelp, html.embed-gantt .panel[data-panel-id="gantt"] > h2{display:none!important}
+html.embed-compact #filterBar, html.embed-compact #lastUpdated, html.embed-compact #connectionWarning, html.embed-compact .gantt-fs-bar, html.embed-compact .gantt-head-row:not(:first-child){display:none!important}
 html.embed-gantt .panel[data-panel-id="gantt"]{margin:0!important;border-radius:0!important;box-shadow:none!important;border-width:0!important}`;
   document.head.appendChild(st);
   const post = m => { try { window.parent.postMessage(m, "*"); } catch (e) { /* ingen förälder */ } };
@@ -20,8 +21,26 @@ html.embed-gantt .panel[data-panel-id="gantt"]{margin:0!important;border-radius:
   window.addEventListener("message", ev => {
     if (ev.source !== window.parent) return; const m = ev.data || {};
     if (m.t === "init") initRes(m);
+    else if (m.t === "compact") document.documentElement.classList.toggle("embed-compact", !!m.on);
+    else if (m.t === "focus") embedFocus(m.ids || [], !!m.any);
     else if (m.t === "refresh") { const b = document.getElementById("ganttRefreshBtn"); if (typeof embedBusy !== "undefined" && embedBusy) return; if (b) b.click(); else if (typeof refreshAll === "function") refreshAll(); }
   });
+  /* 3D-markering → Gantten: samma sak som när man markerar i Trimble Connects modell (syncGanttFromModel): aktiviteterna ramas in och pulserar, hopfällda grupper fälls ut,
+     och ligger de utanför perioden eller dolda av sökningen hoppar Gantten dit automatiskt. */
+  window.embedFocus = function (ids, any) {
+    try {
+      const set = new Set(ids.map(String)); ganttModelSel = set;
+      if (!set.size) { applyGanttModelSel(false); return; }
+      const hits = items.filter(it => set.has(String(it.id))); if (!hits.length) { applyGanttModelSel(false); return; }
+      let opened = false; if (ganttGroupBy) hits.forEach(it => { const k = `${ganttGroupBy}:${ganttGroupKeyFor(it)}`; if (ganttCollapsedGroups.has(k)) { ganttCollapsedGroups.delete(k); opened = true; } });
+      if (opened) { saveGanttPrefs(); renderGantt(getFilteredItems()); }
+      let shown = applyGanttModelSel(true);
+      if (!shown) {
+        if (ganttSearch && !hits.some(ganttSearchMatch)) { const s2 = document.getElementById("ganttSearch"); if (s2) s2.value = ""; ganttSearch = ""; renderGantt(getFilteredItems()); shown = applyGanttModelSel(true); }
+        if (!shown) { const first = hits.slice().sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")))[0]; if (first && first.startDate) ganttJumpToDate(first.startDate); }
+      }
+    } catch (e) { console.warn("Hoppa till aktivitet", e); }
+  };
   /* "API" utan Trimble Connect: alla anrop går att göra men gör inget. */
   const nop = new Proxy(function () {}, { get: (t, k) => (k === "then" ? undefined : nop), apply: () => Promise.resolve(undefined) });
   window.embedBoot = async function () {
