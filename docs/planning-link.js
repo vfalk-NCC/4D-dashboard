@@ -9,6 +9,7 @@
   let ch = null, last = "", lastAt = 0;
   try { if (typeof BroadcastChannel !== "undefined") ch = new BroadcastChannel("4d-gantt-link"); } catch (e) { ch = null; }
   if (!ch) return;
+  window.mgBroadcastOff = () => { try { ch.postMessage({ t: "modelOff" }); } catch (e) { /* ingen kanal */ } };   // 3D-styrningen avslagen här: 4D-planering stänger av sin också
   const state = () => ({ t: "state", mode: typeof ganttMode !== "undefined" ? ganttMode : "off", date: typeof ganttAsOf !== "undefined" && ganttAsOf ? ganttAsOf : "" });
   const send = force => {
     try {
@@ -21,6 +22,7 @@
     try {
       const m = e.data || {};
       if (m.t === "hello") send(true);
+      else if (m.t === "modelOff" && typeof modelGuardSet === "function" && typeof modelCtl !== "undefined" && modelCtl.on) modelGuardSet(false, true).catch(() => {});   // 3D-styrningen avslagen i 4D-planering: även här
       else if (m.t === "setDate" && m.date && typeof ganttMode !== "undefined" && ganttMode === "time" && typeof setGanttAsOf === "function" && m.date !== ganttAsOf) setGanttAsOf(m.date, { now: true });
     } catch (err) { console.warn("Koppling till 4D-planering", err); }
   };

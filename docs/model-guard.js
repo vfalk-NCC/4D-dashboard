@@ -64,7 +64,7 @@ async function mgResetModel() {
   const V = mgViewer(); if (!V || typeof V.setObjectState !== "function") return false;
   try { await V.setObjectState(undefined, { color: "reset" }); await V.setObjectState(undefined, { visible: "reset" }); return true; } catch (e) { console.warn("Kunde inte återställa modellen", e); return false; }
 }
-async function modelGuardSet(on) {
+async function modelGuardSet(on, fromRemote) {
   if (on === modelCtl.on) { mgSyncUi(); return; }
   if (!on) { // stäng av: lämna alla lägen och återställ det vi ändrat, medan anropen ännu går igenom
     try { if (typeof setGanttMode === "function" && typeof ganttMode !== "undefined" && ganttMode !== "off") await setGanttMode("off", true); } catch (e) { console.warn(e); }
@@ -72,6 +72,7 @@ async function modelGuardSet(on) {
     try { if (typeof msLeave === "function" && typeof ms !== "undefined" && ms.view) { ms.touched3d = true; await msRestoreModel(); } } catch (e) { console.warn(e); }
     await mgResetModel();   // alltid – även om färgerna kommer från ett tidigare pass
     modelCtl.touched = false; try { localStorage.removeItem(MG_FLAG); } catch (e) { /* */ }
+    if (!fromRemote && typeof mgBroadcastOff === "function") mgBroadcastOff();   // delas bara som "av" – på slås aldrig på av ett annat tillägg
   }
   modelCtl.on = on; mgSyncUi();
   if (typeof modelToast === "function") modelToast(on ? "3D-styrningen är på – dashboarden kan nu ändra modellen i Trimble Connect" : "3D-styrningen är av – modellen är återställd");
