@@ -68,12 +68,14 @@ function vidCamClose(a, b) {
    då blir flytten i filmen inte som i förhandsvisningen). */
 async function vidSetCam(cam, verify) {
   const V = API && API.viewer; if (!cam || !V || typeof V.setCamera !== "function") return;
-  try { await V.setCamera(cam, { animationTime: 0 }); } catch (e) { console.warn("Kamera", e); return; }
-  if (!verify || typeof V.getCamera !== "function") return;
-  for (let i = 0; i < 40; i++) { // högst ~2 s
-    try { const cur = await V.getCamera(); if (vidCamClose(cur, cam)) { await vidSleep(40); return; } } catch (e) { return; }
+  try { await V.setCamera(cam, { animationTime: 0 }); } catch (e) { console.warn("Kamera", e); return false; }
+  if (!verify || typeof V.getCamera !== "function") return true;
+  for (let i = 0; i < 60; i++) { // högst ~3 s
+    try { const cur = await V.getCamera(); if (vidCamClose(cur, cam)) { await vidSleep(40); return true; } } catch (e) { return true; }
     await vidSleep(50);
+    if (i === 30) { try { await V.setCamera(cam, { animationTime: 0 }); } catch (e) { /* ett försök till */ } }
   }
+  return false; // kameran kom inte exakt dit
 }
 /* En stillbild ur TC som Blob. */
 async function vidSnapshot() {

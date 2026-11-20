@@ -140,15 +140,18 @@ function phbCardMeasure(c, st) {
   ctx.font = `700 ${15 * kk}px ${PHB_FAM}`;
   c.name = phbWrap(ctx, c.text != null && c.text !== "" ? c.text : itemLabel(a), W - 30 * kk, 3);
   const sub = [];
-  if (sh.date && a.startDate) sub.push(`${phbFmtDate(a.startDate)} – ${phbFmtDate(a.actualEndDate && a.actualEndDate > (a.endDate || "") ? a.actualEndDate : a.endDate || a.startDate)}`);
-  const ar = String(a.area || "").trim(); if (sh.area && ar) sub.push(ar);
+  // Egna värden (Victor 2026-11-20): datumtext, område och framdrift kan skrivas in för hand när Gantt-schemat inte hunnit uppdateras.
+  const dt = String(c.dtOver || "").trim();
+  if (sh.date && dt) sub.push(dt);
+  else if (sh.date && a.startDate) sub.push(`${phbFmtDate(a.startDate)} – ${phbFmtDate(a.actualEndDate && a.actualEndDate > (a.endDate || "") ? a.actualEndDate : a.endDate || a.startDate)}`);
+  const ar = String(c.areaOver != null && c.areaOver !== "" ? c.areaOver : a.area || "").trim(); if (sh.area && ar) sub.push(ar);
   ctx.font = `${11.5 * kk}px ${PHB_FAM}`; c.sub = sub.map(t => phbWrap(ctx, t, W - 24 * kk, 1)[0] || "");
-  c.prog = phbProg(a, st);
+  c.prog = Number.isFinite(c.progOver) ? Math.max(0, Math.min(100, Math.round(c.progOver))) : a.__free ? 0 : phbProg(a, st);
   c.kk = kk; c.W = W; c.h = (c.name.length * 18 + c.sub.length * 16 + (sh.prog ? 34 : 20)) * kk;
 }
 function phbNewCard(o, st) {
-  const ph = ganttPhaseAt(o.a, st.at);
-  const c = { o, a: o.a, ph, autoCol: PHB_COL[ph] || PHB_COL.planerad, colOver: null, text: null, scale: 1, show: { date: true, area: true, prog: true }, x: 0, y: 0, ax: 0, ay: 0 };
+  const ph = o.a.__free ? "planerad" : ganttPhaseAt(o.a, st.at);
+  const c = { o, a: o.a, ph, autoCol: o.a.__free ? "#2563eb" : PHB_COL[ph] || PHB_COL.planerad, colOver: null, text: null, progOver: null, dtOver: "", areaOver: "", lock: false, scale: 1, show: { date: true, area: true, prog: true }, x: 0, y: 0, ax: 0, ay: 0 };
   phbCardMeasure(c, st); return c;
 }
 function phbDrawCard(ctx, c, k) {
@@ -277,17 +280,18 @@ function phbLayout(cards, W, H, k, anchored) {
     cards.forEach(c => { if (y + c.h > H - m) { x -= colW + gap; y = m; colW = 0; } c.x = x - c.W; c.y = y; y += c.h + gap; colW = Math.max(colW, c.W); });
     return;
   }
-  cards.forEach(c => { c.x = c.ax - c.W / 2; c.y = c.ay - c.h - 56 * c.kk; });
+  cards.forEach(c => { if (!c.lock) { c.x = c.ax - c.W / 2; c.y = c.ay - c.h - 56 * c.kk; } }); // låsta bubblor ligger kvar där de är
   for (let it = 0; it < 80; it++) {
     for (let i = 0; i < cards.length; i++) for (let j = i + 1; j < cards.length; j++) {
-      const a = cards[i], b = cards[j];
+      const a = cards[i], b = cards[j]; if (a.lock && b.lock) continue;
       const ox = Math.min(a.x + a.W, b.x + b.W) - Math.max(a.x, b.x) + gap, oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) + gap;
       if (ox > 0 && oy > 0) {
-        if (oy < ox) { const s = (a.y + a.h / 2 <= b.y + b.h / 2) ? -1 : 1; a.y += s * oy / 2; b.y -= s * oy / 2; }
-        else { const s = (a.x + a.W / 2 <= b.x + b.W / 2) ? -1 : 1; a.x += s * ox / 2; b.x -= s * ox / 2; }
+        const fa = a.lock ? 0 : b.lock ? 2 : 1, fb = b.lock ? 0 : a.lock ? 2 : 1; // den ena flyttar allt om den andra är låst
+        if (oy < ox) { const s = (a.y + a.h / 2 <= b.y + b.h / 2) ? -1 : 1; a.y += s * oy / 2 * fa; b.y -= s * oy / 2 * fb; }
+        else { const s = (a.x + a.W / 2 <= b.x + b.W / 2) ? -1 : 1; a.x += s * ox / 2 * fa; b.x -= s * ox / 2 * fb; }
       }
     }
-    cards.forEach(c => { c.x = Math.max(m, Math.min(W - c.W - m, c.x)); c.y = Math.max(m, Math.min(H - c.h - m, c.y)); });
+    cards.forEach(c => { if (!c.lock) { c.x = Math.max(m, Math.min(W - c.W - m, c.x)); c.y = Math.max(m, Math.min(H - c.h - m, c.y)); } });
   }
 }
 
@@ -339,6 +343,14 @@ async function phbBuild(blob, cam, scopeOverride) {
   st.cards = cards; phbLayout(cards, W, H, k, st.placed); phbListMeasure(st); phbDateMeasure(st);
   return st;
 }
+/* Fri bubbla: inte kopplad till någon aktivitet – namn, datum och procent styrs helt för hand. Sparas i vyn som en egen aktivitet. */
+function phbFreeAct(id, name) { return { id: "free:" + id, activityKey: "free:" + id, objectName: name || "Ny bubbla", area: "", activity: "", startDate: "", endDate: "", progress: 0, members: [], __free: true }; }
+function phbAddFree(st, a0, geo) {
+  const a = a0 || phbFreeAct(Date.now().toString(36) + Math.random().toString(36).slice(2, 5)), c = phbNewCard({ a, P: null }, st);
+  c.free = true; c.manual = true; const n = st.cards.filter(x => x.a.__free).length;
+  c.ax = geo ? geo.ax : st.W * (0.5 + 0.04 * n); c.ay = geo ? geo.ay : st.H * 0.5; c.x = geo ? geo.x : c.ax - c.W / 2; c.y = geo ? geo.y : c.ay - c.h - 56 * c.kk;
+  st.cards.push(c); return c;
+}
 /* Mått om efter en ändring (skala, text, fält). Bubblan behåller sin övre vänstra hörn. */
 function phbRemeasure(st) { st.cards.forEach(c => phbCardMeasure(c, st)); if (typeof phbOcMeasureAll === "function") phbOcMeasureAll(st); if (typeof phbQtMeasureAll === "function") phbQtMeasureAll(st); st.texts.forEach(t => phbTextMeasure(t, st)); phbListMeasure(st); phbDateMeasure(st); }
 /* Insättningspunkten följer objektets läge i bilden tills man flyttar den för hand (då blir den "fri" och behåller sitt läge; dubbelklick på punkten återställer). */
@@ -357,12 +369,14 @@ const phbCloseBox = (it, k) => { const b = phbBox(it); return { x: b.x + b.W - 2
 function phbRender(ctx, st) {
   const { W, H, k } = st;
   ctx.imageSmoothingQuality = "high"; ctx.drawImage(st.photo || st.bmp, 0, 0, W, H);
-  if (st.placed && st.g.lines) st.cards.forEach(c => {
+  if (st.g.lines) st.cards.forEach(c => {
+    if (!st.placed && !c.a.__free) return;
     const p = phbLeaderStart(c); if (!p) return;
     ctx.strokeStyle = phbCol(c); ctx.lineWidth = 2.5 * k * st.g.lineW; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(c.ax, c.ay); ctx.stroke();
     ctx.fillStyle = phbCol(c); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * k; ctx.beginPath(); ctx.arc(c.ax, c.ay, 6 * k * st.g.dot, 0, 7); ctx.fill(); ctx.stroke();
   });
   st.cards.forEach(c => phbDrawCard(ctx, c, k));
+  if (st.ui !== false) st.cards.filter(c => c.lock).forEach(c => { ctx.save(); ctx.font = `${13 * c.kk}px ${PHB_FAM}`; ctx.textBaseline = "top"; ctx.fillStyle = "#334155"; ctx.fillText("🔒", c.x + c.W - 22 * c.kk, c.y + 4 * c.kk); ctx.restore(); }); // låsmärke syns bara på skärmen
   if (typeof phbOcRender === "function") phbOcRender(ctx, st); // objektbubblor (photo-bubbles-obj.js)
   if (typeof phbQtRender === "function") phbQtRender(ctx, st); // mängdtabeller (photo-bubbles-qt.js)
   if (st.list.on) phbDrawList(ctx, st);
@@ -547,14 +561,14 @@ function phbPreview(st) {
     const hadBubbles = typeof bubbleCfg !== "undefined" && bubbleCfg.on; info.textContent = "Flyttar modellen till vyns kamera och tar nytt foto …";
     try {
       if (hadBubbles) { await bubblesClear(); await new Promise(r => setTimeout(r, 250)); }
-      await vidSetCam(cam, true); await new Promise(r => setTimeout(r, 350));
+      const camOk = await vidSetCam(cam, true); await new Promise(r => setTimeout(r, 350)); api.camOk = camOk !== false;
       let now = null; try { now = await V.getCamera(); } catch (e) { /* okänd kamera */ }
       const blob = await vidSnapshot(); phbLast = { blob, cam: now || cam };
       const n = await phbBuild(blob, now || cam, d.querySelector("#phbScope").value);
       cur = n; removed = []; cv.width = n.W; cv.height = n.H; window.dispatchEvent(new Event("resize")); draw(); return true;
     } finally { if (hadBubbles) bubblesSchedule(true); }
   };
-  const api = { get cur() { return cur; }, set cur(v) { cur = v; }, draw, remeasure, retake, renderSide: () => renderSide(), removeObj, esc: phbEsc, rng: (...a) => rng(...a), chk: (...a) => chk(...a) };
+  const api = { camOk: true, get cur() { return cur; }, set cur(v) { cur = v; }, draw, remeasure, retake, renderSide: () => renderSide(), removeObj, esc: phbEsc, rng: (...a) => rng(...a), chk: (...a) => chk(...a) };
   /* Sidopanelen: allmänt överst, sedan det som är valt. */
   const rng = (id, lbl, v, min, max, step, unit = "%") => `<label class="phb-f"><span>${lbl} <b id="${id}V">${v}${unit}</b></span><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${v}"></label>`;
   const chk = (id, lbl, on) => `<label class="phb-c"><input type="checkbox" id="${id}"${on ? " checked" : ""}> ${lbl}</label>`;
@@ -576,14 +590,14 @@ function phbPreview(st) {
     const g = cur.g, g0 = cur, L = cur.list, D = cur.dateObj, it = selItem(), o = it && it.o;
     let h = `<div class="phb-sec"><div class="phb-h">Allmänt</div>${rng("phbGScale", "Bubblornas skala", Math.round(g.bscale * 100), 40, 250, 5)}${chk("phbLines", "Linjer till objekten", g.lines)}${g.lines ? rng("phbLineW", "Linjetjocklek", Math.round(g.lineW * 100), 40, 300, 10) + rng("phbDot", "Punktstorlek", Math.round(g.dot * 100), 40, 300, 10) : ""}
       <label class="phb-f"><span>Framdrift som visas</span><select id="phbProgMode"><option value="entered"${g0.progMode !== "plan" ? " selected" : ""}>Inskriven framdrift</option><option value="plan"${g0.progMode === "plan" ? " selected" : ""}>Enligt tidplanen (datum)</option></select></label>${rng("phbSharp", "Skärpa på fotot", Math.round(g0.sharp * 100), 0, 150, 10)}<div class="phb-note">Fotots källa: ${g0.bmp.width}×${g0.bmp.height} px (TC-vyns storlek), arbetsbild ${g0.W}×${g0.H}. Mer detaljer: gör TC-vyn större innan du tar fotot (dölj sidopaneler, helskärm F11) – API:t har ingen upplösningsinställning.</div>
-      <button type="button" id="phbArrange" title="Lägg bubblorna ovanför sina punkter igen, utan överlapp">Ordna om bubblorna</button></div>
+      <div class="phb-row phb-ic"><button type="button" id="phbAddFree" title="Ny fri bubbla – inte kopplad till Gantt-schemat, du styr namn, datum och procent själv">＋ Fri bubbla</button><button type="button" id="phbArrange" title="Lägg de olåsta bubblorna ovanför sina punkter igen, utan överlapp">⇅ Ordna</button><button type="button" id="phbLockAll" title="Lås alla bubblor där de sitter (eller lås upp alla)">🔒 Alla</button></div></div>
       <div class="phb-sec"><div class="phb-h">Pågår just nu</div>${chk("phbListOn", `Visa listan (${L.items.length} aktiviteter)`, L.on)}${L.on ? `<label class="phb-f"><span>Rubrik</span><input type="text" id="phbListTitle" value="${phbEsc(L.title)}" maxlength="60"></label>${phbListPick(L)}<label class="phb-f"><span>Högst antal rader</span><input type="number" id="phbListMax" min="1" max="60" value="${L.max}"></label>${rng("phbListScale", "Skala", Math.round(L.scale * 100), 40, 250, 5)}` : ""}</div>
       <div class="phb-sec"><div class="phb-h">Datumskylt</div>${chk("phbDateOn", "Visa datumskylten", D.on)}${D.on ? `<label class="phb-f"><span>Datum</span><input type="date" id="phbDateVal" value="${D.iso}"></label>${rng("phbDateScale", "Skala", Math.round(D.scale * 100), 40, 250, 5)}` : ""}</div>
       ${typeof phbOcSide === "function" ? phbOcSide(api) : ""}
       ${typeof phbQtSide === "function" ? phbQtSide(api) : ""}
       ${typeof phbVwSide === "function" ? phbVwSide(api) : ""}
       <div class="phb-sec"><button type="button" id="phbAddText">＋ Text</button></div>`;
-    if (it && it.type === "card") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald bubbla</div><label class="phb-f"><span>Rubrik <small>(tomt = aktivitetens namn)</small></span><textarea id="phbCText" rows="3">${phbEsc(o.text != null ? o.text : "")}</textarea></label>${rng("phbCScale", "Bubblans skala", Math.round(o.scale * 100), 40, 300, 5)}<div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbCCol" value="${phbCol(o)}"></label><button type="button" id="phbCAuto" title="Färg efter status"${o.colOver ? "" : " disabled"}>Auto</button></div>${chk("phbCDate", "Datum", o.show.date)}${chk("phbCArea", "Område", o.show.area)}${chk("phbCProg", "Framdrift", o.show.prog)}<button type="button" id="phbCDel" class="danger">Ta bort bubblan</button></div>`;
+    if (it && it.type === "card") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald bubbla</div><label class="phb-f"><span>Rubrik <small>(tomt = aktivitetens namn)</small></span><textarea id="phbCText" rows="3">${phbEsc(o.text != null ? o.text : "")}</textarea></label>${rng("phbCScale", "Bubblans skala", Math.round(o.scale * 100), 40, 300, 5)}<div class="phb-row"><label class="phb-f"><span>Färg</span><input type="color" id="phbCCol" value="${phbCol(o)}"></label><button type="button" id="phbCAuto" title="Färg efter status"${o.colOver ? "" : " disabled"}>Auto</button></div>${chk("phbCDate", "Datum", o.show.date)}${chk("phbCArea", "Område", o.show.area)}${chk("phbCProg", "Framdrift", o.show.prog)}<div class="phb-sec-sub"><label class="phb-f"><span>Datum <small>(tomt = från schemat)</small></span><input type="text" id="phbCDt" maxlength="40" placeholder="t.ex. 3 dec – 12 dec" value="${phbEsc(o.dtOver || "")}"></label><label class="phb-f"><span>Område <small>(tomt = från schemat)</small></span><input type="text" id="phbCAr" maxlength="60" value="${phbEsc(o.areaOver || "")}"></label><div class="phb-row"><label class="phb-f" style="flex:1"><span>Framdrift %${Number.isFinite(o.progOver) ? " · ändrad" : ""}</span><input type="number" id="phbCPr" min="0" max="100" step="5" value="${o.prog}"></label><button type="button" id="phbCPrAuto" title="Tillbaka till schemats framdrift"${Number.isFinite(o.progOver) ? "" : " disabled"}>↺</button><button type="button" id="phbCLock" class="${o.lock ? "on" : ""}" title="${o.lock ? "Låst – klicka för att låsa upp" : "Lås bubblan där den sitter (den kan inte dras och ligger kvar i sparade vyer)"}">${o.lock ? "🔒" : "🔓"}</button></div></div><button type="button" id="phbCDel" class="danger">Ta bort bubblan</button></div>`;
     else if (it && it.type === "ocard" && typeof phbOcSelSide === "function") h += phbOcSelSide(api, o);
     else if (it && it.type === "qtable" && typeof phbQtSelSide === "function") h += phbQtSelSide(api, o);
     else if (it && it.type === "text") h += `<div class="phb-sec phb-sel-sec"><div class="phb-h">Vald text</div><label class="phb-f"><span>Text</span><textarea id="phbTText" rows="3">${phbEsc(o.text)}</textarea></label>${rng("phbTSize", "Storlek", o.size, 8, 80, 1, " px")}<div class="phb-row"><label class="phb-f"><span>Textfärg</span><input type="color" id="phbTCol" value="${o.col}"></label>${chk("phbTBold", "Fet", o.bold)}</div><div class="phb-row">${chk("phbTBg", "Bakgrund", o.bg)}${o.bg ? `<input type="color" id="phbTBgCol" value="${o.bgCol}">` : ""}</div><button type="button" id="phbTDel" class="danger">Ta bort texten</button></div>`;
@@ -608,6 +622,8 @@ function phbPreview(st) {
     let shT = 0; range("phbSharp", v => { cur.sharp = v; clearTimeout(shT); shT = setTimeout(() => { phbPhoto(cur); draw(); }, 120); });
     on("phbLines", "change", e => { cur.g.lines = e.target.checked; draw(); renderSide(); });
     on("phbArrange", "click", () => { phbLayout([...cur.cards, ...(cur.ocards || [])], cur.W, cur.H, cur.k, cur.placed); draw(); });
+    on("phbAddFree", "click", () => { const c = phbAddFree(cur); cur.sel = c; remeasure(); renderSide(); const t = q("phbCText"); if (t) { t.focus(); t.select(); } });
+    on("phbLockAll", "click", () => { const all = cur.cards.some(c => !c.lock); cur.cards.forEach(c => { c.lock = all; }); draw(); renderSide(); modelToast(all ? "Alla bubblor låsta" : "Alla bubblor upplåsta"); });
     on("phbListOn", "change", e => { cur.list.on = e.target.checked; if (cur.list.on) cur.sel = cur.list; draw(); renderSide(); });
     on("phbListTitle", "input", e => { cur.list.title = e.target.value; draw(); });
     on("phbListWeeks", "change", e => { const L = cur.list; L.weeks = Math.max(0, Math.min(26, Number(e.target.value) || 0)); L.cands = phbCandidates(cur.at, L.weeks); const keep = new Set(L.cands.map(phbKey)); [...L.sel].forEach(k => { if (!keep.has(k)) L.sel.delete(k); }); remeasure(); renderSide(); });
@@ -633,6 +649,10 @@ function phbPreview(st) {
       on("phbCCol", "input", e => { c.colOver = e.target.value; const a = q("phbCAuto"); if (a) a.disabled = false; draw(); });
       on("phbCAuto", "click", () => { c.colOver = null; draw(); renderSide(); });
       on("phbCDate", "change", e => { c.show.date = e.target.checked; remeasure(); }); on("phbCArea", "change", e => { c.show.area = e.target.checked; remeasure(); }); on("phbCProg", "change", e => { c.show.prog = e.target.checked; remeasure(); });
+      on("phbCDt", "input", e => { c.dtOver = e.target.value; remeasure(); }); on("phbCAr", "input", e => { c.areaOver = e.target.value; remeasure(); });
+      on("phbCPr", "change", e => { const v = e.target.value; c.progOver = v === "" ? null : Math.max(0, Math.min(100, Number(v))); remeasure(); renderSide(); });
+      on("phbCPrAuto", "click", () => { c.progOver = null; remeasure(); renderSide(); });
+      on("phbCLock", "click", () => { c.lock = !c.lock; draw(); renderSide(); });
       on("phbCDel", "click", () => removeObj(selItem()));
     }
     if (t) {
@@ -673,7 +693,7 @@ function phbPreview(st) {
   cv._zoom = () => zoom;
   const pos = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * cur.W / r.width, y: (e.clientY - r.top) * cur.H / r.height }; };
   const hit = p => [...phbObjects(cur)].reverse().find(i => { const b = phbBox(i); return p.x >= b.x && p.x <= b.x + b.W && p.y >= b.y && p.y <= b.y + b.h; });
-  const hitDot = p => cur.g.lines ? [...(cur.placed ? cur.cards : []), ...(cur.ocards || [])].reverse().find(c => isFinite(c.ax) && Math.hypot(p.x - c.ax, p.y - c.ay) <= (8 * cur.g.dot + 5) * cur.k) : null;
+  const hitDot = p => cur.g.lines ? [...cur.cards.filter(c => cur.placed || c.a.__free), ...(cur.ocards || [])].reverse().find(c => isFinite(c.ax) && Math.hypot(p.x - c.ax, p.y - c.ay) <= (8 * cur.g.dot + 5) * cur.k) : null;
   const onClose = (p, it) => { const b = phbCloseBox(it, cur.k); return Math.hypot(p.x - b.x, p.y - b.y) <= b.r * 1.15; };
   cv.addEventListener("pointerdown", e => {
     if (cal) { e.preventDefault(); e.stopImmediatePropagation(); const p0 = pos(e), sel0 = cal; cal = null; cv.style.cursor = "";
@@ -684,9 +704,11 @@ function phbPreview(st) {
     if (e.button === 2) return; const p = pos(e), hv = phbObjects(cur).find(i => i.o === cur.hover);
     if (hv && onClose(p, hv)) { removeObj(hv); e.preventDefault(); return; }
     const dot = hitDot(p);
+    if (dot && !hit(p) && dot.lock) { const w0 = cur.sel; cur.sel = dot; draw(); if (w0 !== dot) renderSide(); e.preventDefault(); return; } // låst: markeras men flyttas inte
     if (dot && !hit(p)) { const was0 = cur.sel; cur.sel = dot; drag = { dot: true, o: dot, dx: p.x - dot.ax, dy: p.y - dot.ay }; cv.setPointerCapture(e.pointerId); cv.style.cursor = "move"; draw(); if (was0 !== dot) renderSide(); e.preventDefault(); return; }
     const it = hit(p); if (!it) { if (cur.sel) { cur.sel = null; draw(); renderSide(); } return; }
-    const was = cur.sel; cur.sel = it.o; drag = { o: it.o, dx: p.x - it.o.x, dy: p.y - it.o.y };
+    const was = cur.sel; cur.sel = it.o; if (it.type === "card" && it.o.lock) { draw(); if (was !== it.o) renderSide(); e.preventDefault(); return; } // låst bubbla: markeras men går inte att dra
+    drag = { o: it.o, dx: p.x - it.o.x, dy: p.y - it.o.y };
     if (it.type === "card") { cur.cards.splice(cur.cards.indexOf(it.o), 1); cur.cards.push(it.o); }
     cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; draw(); if (was !== it.o) renderSide(); e.preventDefault();
   });
@@ -720,13 +742,13 @@ function phbPreview(st) {
   d.querySelector("#phbCamCopy").onclick = async () => { const t = JSON.stringify(phbLast && phbLast.cam, null, 1); try { await navigator.clipboard.writeText(t); modelToast("Kameradata kopierad"); } catch (e) { prompt("Kopiera kameradata", t); } };
   { const ps = d.querySelector("#phbProj"), an = d.querySelector("#phbAnch"); ps.value = phbProj; an.value = phbAnchorMode;
     const rebuild = async what => {
-      try { const n = await phbBuild(phbLast.blob, phbLast.cam, d.querySelector("#phbScope").value); n.ocards = cur.ocards || []; n.tables = cur.tables || []; n.camC = n.camC || null;
+      try { const n = await phbBuild(phbLast.blob, phbLast.cam, d.querySelector("#phbScope").value); n.cards.push(...cur.cards.filter(c => c.a.__free)); n.ocards = cur.ocards || []; n.tables = cur.tables || []; n.camC = n.camC || null;
         n.ocards.forEach(c => { if (!c.free && typeof phbOcAnchor === "function") { phbOcEnsureCam(n, c.objs); const q = phbOcAnchor(n, c.objs); if (q) { c.ax = q.x; c.ay = q.y; } } });
         phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); modelToast(what);
       } catch (err) { modelToast("Kunde inte räkna om punkterna: " + ((err && err.message) || err)); } };
     ps.onchange = () => { phbProj = ps.value; rebuild(phbProj === "auto" ? "Vy: auto" : phbProj === "ortho" ? "Vy: parallell – punkterna är räknade om" : "Vy: perspektiv – punkterna är räknade om"); };
     an.onchange = () => { phbAnchorMode = an.value; rebuild(phbAnchorMode === "mid" ? "Punkterna ligger mitt i objekten" : "Punkterna ligger på objektens överkant"); }; }
-  d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); n.ocards = cur.ocards || []; n.tables = cur.tables || []; phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
+  d.querySelector("#phbScope").onchange = async e => { try { const n = await phbBuild(phbLast.blob, phbLast.cam, e.target.value); n.cards.push(...cur.cards.filter(c => c.a.__free)); n.ocards = cur.ocards || []; n.tables = cur.tables || []; phbRemeasure(n); cur = n; removed = []; draw(); renderSide(); } catch (err) { modelToast("Kunde inte byta urval: " + ((err && err.message) || err)); } };
   const dl = (blob, ext) => { const url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = `4D-foto-${stamp}.${ext}`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); };
   d.querySelector("#phbPng").onclick = () => { cur.ui = false; phbRender(ctx, cur); cv.toBlob(b => { cur.ui = true; draw(); dl(b, "png"); }, "image/png"); };
   d.querySelector("#phbPdf").onclick = async () => { try { dl(await phbPdf(cur), "pdf"); } catch (err) { console.warn("PDF", err); modelToast("Kunde inte skapa PDF: " + ((err && err.message) || err)); } };
