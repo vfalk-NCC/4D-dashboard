@@ -113,6 +113,10 @@ seed('plan_items.json', [
   // 8) Sparad PNG/PDF fungerar med fria bubblor
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#phbPng')]); ok(!!dl, 'PNG');
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('#phbPdf')]); ok(!!dl2, 'PDF');
+  // Regression (felrapport 2026-11-20): kort som inte hunnit mätas (vy under inläsning) får inte kasta fel vid ritning
+  const rr = await page.evaluate(() => { try { const cv = document.getElementById('phbCv'), st = cv._state(); st.ocards = [{ objs: [], fields: [], x: 10, y: 10, ax: NaN, ay: NaN }]; st.tables = [{ x: 5, y: 5 }]; phbRender(cv.getContext('2d'), st); st.ocards = []; st.tables = []; return 'ok'; } catch (e) { return String(e); } });
+  ok(rr === 'ok', 'Omätta kort ska inte ge fel: ' + rr);
+  if (process.env.PHB_SHOT) { await page.evaluate(() => { document.querySelector('#phbSide').scrollTop = 0; }); await page.locator('#phbSide').screenshot({ path: process.env.PHB_SHOT }); }
   if (errors.length) fail('Sidfel: ' + errors.join(' | '));
   console.log('OK test_photo_bubble_views'); await browser.close(); server.close();
 })().catch(e => { console.error('FEL:', e.message); process.exit(1); });

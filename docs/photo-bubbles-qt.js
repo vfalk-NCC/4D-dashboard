@@ -63,6 +63,7 @@ function phbQtMeasure(t, st) {
 const phbQtMeasureAll = st => (st.tables || []).forEach(t => phbQtMeasure(t, st));
 const phbQtCol = t => t.col || "#2563eb";
 function phbQtDraw(ctx, t) {
+  if (!t.cells || !t.lines) return; // inte uppmätt än
   const kk = t.kk, { x, y } = t;
   ctx.save(); ctx.shadowColor = "rgba(15,23,42,.28)"; ctx.shadowBlur = 14 * kk; ctx.shadowOffsetY = 3 * kk; ctx.fillStyle = "#fff"; phbRR(ctx, x, y, t.W, t.h, 5 * kk); ctx.fill(); ctx.restore();
   ctx.fillStyle = phbQtCol(t); ctx.fillRect(x, y + 1, 5 * kk, t.h - 2);

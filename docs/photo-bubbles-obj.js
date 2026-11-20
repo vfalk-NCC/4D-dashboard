@@ -126,6 +126,7 @@ function phbOcMeasure(oc, st) {
 }
 function phbOcMeasureAll(st) { (st.ocards || []).forEach(oc => phbOcMeasure(oc, st)); }
 function phbOcDraw(ctx, c) {
+  if (!c.tl || !c.rows || !c.tx) return; // inte uppmätt än (vy under inläsning) – ritas när måtten finns
   const { x, y } = c, kk = c.kk, col = phbOcCol(c);
   ctx.save(); ctx.shadowColor = "rgba(15,23,42,.28)"; ctx.shadowBlur = 14 * kk; ctx.shadowOffsetY = 3 * kk; ctx.fillStyle = "#fff"; phbRR(ctx, x, y, c.W, c.h, 5 * kk); ctx.fill(); ctx.restore();
   ctx.fillStyle = col; ctx.fillRect(x, y + 1, 5 * kk, c.h - 2);
@@ -369,9 +370,10 @@ function phbVwApply(st, v) {
     phbOcEnsureCam(st, oc.objs); const q = phbOcAnchor(st, oc.objs);
     // Punkten följer objektet tills den flyttas för hand; då lagras justeringen (ofx/ofy) och läses in igen.
     if (q && (!d.free || (d.ofx !== undefined && d.ofy !== undefined))) { const ax = !d.free ? q.x : q.x + d.ofx * W, ay = !d.free ? q.y : q.y + d.ofy * H; if (ax > -0.05 * W && ax < 1.05 * W && ay > -0.05 * H && ay < 1.05 * H) { oc.ax = ax; oc.ay = ay; oc.free = !!d.free; oc.manual = !!d.free; } }
+    try { phbOcMeasure(oc, st); } catch (e) { /* mäts om vid nästa ommätning */ }
     return oc;
   });
-  st.tables = (v.tables || []).map(d => ({ ...d, id: st.nextId++, x: d.fx * W, y: d.fy * H }));
+  st.tables = (v.tables || []).map(d => { const t = { ...d, id: st.nextId++, x: d.fx * W, y: d.fy * H }; try { if (typeof phbQtMeasure === "function") phbQtMeasure(t, st); } catch (e) { /* */ } return t; });
   st.sel = st.ocards[0] || st.tables[0] || null; st.ocDraft = null; st.qtDraft = null;
 }
 /* Vecka för vecka med samma vy (Victor 2026-10-28): lägg till de pågående aktiviteter som saknas och ta bort de som blivit klara – resten ligger kvar på sina platser. */
